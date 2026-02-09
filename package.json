@@ -1,0 +1,13 @@
+{
+  "name": "tubs-bot",
+  "version": "1.0.0",
+  "description": "Tubs Bot — Animated Chatbot Face Interface",
+  "main": "bridge-server.js",
+  "scripts": {
+    "start": "node src/bridge-server.js",
+    "dev": "node src/bridge-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

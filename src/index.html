@@ -1,0 +1,1170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TUBS BOT</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --panel-bg: rgba(15, 18, 30, 0.85);
+    --panel-border: rgba(60, 70, 110, 0.3);
+    --text: #c8cce0;
+    --text-dim: #5a5f7a;
+    --text-bright: #e8ebf5;
+    --accent: #00e5a0;
+    --accent-glow: rgba(0, 229, 160, 0.15);
+    --warn: #ffa726;
+    --error: #ff5252;
+    --blue: #42a5f5;
+    --purple: #b388ff;
+    --eye-white: #e8ebf5;
+    --pupil: #0d0d15;
+    --mouth: #e8ebf5;
+    --face-shadow: rgba(0, 229, 160, 0.05);
+    --msg-in: #00e5a0;
+    --msg-out: #42a5f5;
+    --msg-sys: #ffa726;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    transition: filter 1s ease;
+  }
+
+  body.sleeping {
+    filter: brightness(0.12);
+  }
+
+  /* ── Grid Layout ── */
+  #grid {
+    display: grid;
+    grid-template-columns: 280px 1fr 280px;
+    grid-template-rows: auto 1fr auto;
+    height: 100vh;
+    width: 100vw;
+    gap: 0;
+  }
+
+  /* ── Corner Panels ── */
+  .panel {
+    padding: 16px 20px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    backdrop-filter: blur(12px);
+    font-size: 11px;
+    letter-spacing: 0.03em;
+    transition: opacity 0.6s ease;
+    z-index: 10;
+  }
+
+  body.sleeping .panel {
+    opacity: 0;
+  }
+  body.sleeping #panel-tl {
+    opacity: 0.3;
+  }
+
+  .panel-title {
+    font-family: 'Outfit', sans-serif;
+    font-weight: 700;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .panel-title::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  #panel-tl {
+    grid-column: 1; grid-row: 1;
+    border-radius: 0 0 12px 0;
+    border-top: none; border-left: none;
+  }
+  #panel-tr {
+    grid-column: 3; grid-row: 1;
+    border-radius: 0 0 0 12px;
+    border-top: none; border-right: none;
+  }
+  #panel-bl {
+    grid-column: 1; grid-row: 3;
+    border-radius: 0 12px 0 0;
+    border-bottom: none; border-left: none;
+    max-height: 260px;
+    overflow: hidden;
+  }
+  #panel-br {
+    grid-column: 3; grid-row: 3;
+    border-radius: 12px 0 0 0;
+    border-bottom: none; border-right: none;
+  }
+
+  /* ── Stat Rows ── */
+  .stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid rgba(60, 70, 110, 0.12);
+  }
+  .stat-row:last-child { border-bottom: none; }
+
+  .stat-label {
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  .stat-value {
+    color: var(--text-bright);
+    font-weight: 500;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat-value.online { color: var(--accent); }
+  .stat-value.offline { color: var(--error); }
+  .stat-value.warn { color: var(--warn); }
+
+  .dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: middle;
+  }
+  .dot.green { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+  .dot.red { background: var(--error); box-shadow: 0 0 6px var(--error); }
+  .dot.yellow { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+
+  /* ── Volume Meter ── */
+  .volume-bar-container {
+    width: 80px; height: 6px;
+    background: rgba(60,70,110,0.3);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .volume-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.08s ease;
+    width: 0%;
+  }
+
+  /* ── Chat Log ── */
+  #chat-log {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    max-height: 190px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(60,70,110,0.3) transparent;
+  }
+  #chat-log::-webkit-scrollbar { width: 3px; }
+  #chat-log::-webkit-scrollbar-thumb { background: rgba(60,70,110,0.4); border-radius: 2px; }
+
+  .chat-msg {
+    font-size: 10px;
+    line-height: 1.5;
+    padding: 2px 0;
+    animation: fadeIn 0.3s ease;
+  }
+  .chat-msg .ts {
+    color: var(--text-dim);
+    margin-right: 6px;
+    font-size: 9px;
+  }
+  .chat-msg.in .content { color: var(--msg-in); }
+  .chat-msg.out .content { color: var(--msg-out); }
+  .chat-msg.sys .content { color: var(--msg-sys); }
+
+  /* ── Center Stage ── */
+  #center {
+    grid-column: 2; grid-row: 1 / 4;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* Subtle background glow */
+  #center::before {
+    content: '';
+    position: absolute;
+    width: 500px; height: 500px;
+    border-radius: 50%;
+    background: radial-gradient(circle, var(--face-shadow) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ── Face Container ── */
+  #face {
+    position: relative;
+    width: 280px;
+    height: 220px;
+    transition: transform 3s ease;
+  }
+
+  body.sleeping #face {
+    animation: breathe 3s ease-in-out infinite;
+  }
+
+  @keyframes breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.03); }
+  }
+
+  /* ── Eyes ── */
+  .eye {
+    position: absolute;
+    top: 30px;
+    width: 62px;
+    height: 72px;
+    background: var(--eye-white);
+    border-radius: 18px;
+    overflow: hidden;
+    box-shadow: 0 0 30px rgba(0, 229, 160, 0.08), inset 0 2px 8px rgba(0,0,0,0.1);
+    transition: height 0.2s ease, top 0.2s ease, border-radius 0.2s ease;
+  }
+  .eye.left { left: 50px; }
+  .eye.right { right: 50px; }
+
+  /* Eyelids */
+  .eyelid {
+    position: absolute;
+    width: 100%;
+    height: 0%;
+    background: var(--bg);
+    left: 0;
+    z-index: 2;
+    transition: height 0.4s ease;
+  }
+  .eyelid.top { top: 0; border-radius: 18px 18px 0 0; }
+  .eyelid.bottom { bottom: 0; border-radius: 0 0 18px 18px; }
+
+  /* Blink */
+  .eye.blink .eyelid.top { height: 52%; }
+  .eye.blink .eyelid.bottom { height: 52%; }
+
+  /* Sleep — eyes closed */
+  body.sleeping .eye .eyelid.top { height: 52%; }
+  body.sleeping .eye .eyelid.bottom { height: 52%; }
+
+  /* ── Mouth ── */
+  #mouth {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 8px;
+    background: var(--mouth);
+    border-radius: 4px;
+    transition: all 0.15s ease;
+    box-shadow: 0 0 12px rgba(0, 229, 160, 0.06);
+  }
+
+  #mouth.speaking {
+    animation: talk 0.18s ease infinite alternate;
+  }
+
+  @keyframes talk {
+    0% { height: 8px; border-radius: 4px; width: 60px; }
+    50% { height: 22px; border-radius: 30px; width: 48px; }
+    100% { height: 14px; border-radius: 20px; width: 54px; }
+  }
+
+  #mouth.smile {
+    height: 10px;
+    width: 70px;
+    border-radius: 0 0 35px 35px;
+    background: transparent;
+    border-bottom: 4px solid var(--mouth);
+  }
+
+  #mouth.thinking {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: transparent;
+    border: 3px solid var(--mouth);
+  }
+
+  /* ── Loading Bar ── */
+  #loading-bar {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 120px;
+    height: 3px;
+    background: rgba(60,70,110,0.2);
+    border-radius: 2px;
+    overflow: hidden;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  #loading-bar.active { opacity: 1; }
+  #loading-bar .fill {
+    height: 100%;
+    width: 30%;
+    background: var(--accent);
+    border-radius: 2px;
+    animation: loadSlide 1.2s ease-in-out infinite;
+  }
+  @keyframes loadSlide {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+  }
+
+  /* ── Speech Bubble ── */
+  #speech-bubble {
+    position: absolute;
+    bottom: -60px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 500px;
+    padding: 10px 18px;
+    background: rgba(15, 18, 30, 0.9);
+    border: 1px solid var(--panel-border);
+    border-radius: 12px;
+    font-family: 'Outfit', sans-serif;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text-bright);
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.4s ease, transform 0.4s ease;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+  }
+  #speech-bubble.visible {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-8px);
+  }
+
+  /* ── ZZZ Animation ── */
+  .zzz {
+    position: absolute;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 800;
+    color: var(--text-dim);
+    opacity: 0;
+    pointer-events: none;
+    font-size: 18px;
+  }
+  body.sleeping .zzz { animation: zzzFloat 3s ease-in-out infinite; }
+  .zzz:nth-child(1) { right: 20px; top: 10px; animation-delay: 0s; }
+  .zzz:nth-child(2) { right: 5px; top: -5px; font-size: 14px; animation-delay: 1s; }
+  .zzz:nth-child(3) { right: 30px; top: -15px; font-size: 10px; animation-delay: 2s; }
+
+  @keyframes zzzFloat {
+    0% { opacity: 0; transform: translateY(0) translateX(0); }
+    30% { opacity: 0.5; }
+    100% { opacity: 0; transform: translateY(-40px) translateX(15px); }
+  }
+
+  /* ── Waveform ── */
+  #waveform-container {
+    position: absolute;
+    bottom: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    height: 30px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  #waveform-container.active { opacity: 1; }
+
+  .wave-bar {
+    width: 3px;
+    background: var(--accent);
+    border-radius: 2px;
+    height: 4px;
+    transition: height 0.08s ease;
+    opacity: 0.7;
+  }
+
+  /* ── Push to Talk Indicator ── */
+  #ptt-indicator {
+    position: absolute;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Outfit', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    opacity: 0.4;
+    transition: opacity 0.3s ease, color 0.3s ease;
+  }
+  #ptt-indicator.recording {
+    color: var(--accent);
+    opacity: 1;
+    animation: pttPulse 1s ease-in-out infinite;
+  }
+  #ptt-indicator.mic-ready {
+    opacity: 0.5;
+  }
+  #ptt-indicator.mic-denied {
+    color: var(--error);
+    opacity: 0.6;
+  }
+  body.sleeping #ptt-indicator { opacity: 0; }
+  @keyframes pttPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ── Utility ── */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .stagger-1 { animation: panelFadeIn 0.5s ease 0.1s both; }
+  .stagger-2 { animation: panelFadeIn 0.5s ease 0.3s both; }
+  .stagger-3 { animation: panelFadeIn 0.5s ease 0.5s both; }
+  .stagger-4 { animation: panelFadeIn 0.5s ease 0.7s both; }
+
+  @keyframes panelFadeIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    #grid {
+      grid-template-columns: 200px 1fr 200px;
+    }
+    .panel { padding: 10px 14px; font-size: 10px; }
+    #face { width: 200px; height: 160px; }
+    .eye { width: 56px; height: 56px; }
+    .pupil { width: 24px; height: 24px; }
+  }
+
+  @media (max-width: 600px) {
+    #grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 1fr auto;
+    }
+    .panel { display: none; }
+    #panel-bl { display: block; grid-column: 1; grid-row: 3; border-radius: 0; max-height: 150px; }
+    #center { grid-column: 1; grid-row: 2; }
+  }
+</style>
+</head>
+<body>
+
+<div id="grid">
+
+  <!-- TOP-LEFT: System Vitals -->
+  <div class="panel stagger-1" id="panel-tl">
+    <div class="panel-title">System Vitals</div>
+    <div class="stat-row">
+      <span class="stat-label">Connection</span>
+      <span class="stat-value" id="stat-conn"><span class="dot red" id="conn-dot"></span>Offline</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Uptime</span>
+      <span class="stat-value" id="stat-uptime">00:00:00</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Awake Since</span>
+      <span class="stat-value" id="stat-awake">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">WS Latency</span>
+      <span class="stat-value" id="stat-latency">— ms</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Model</span>
+      <span class="stat-value" id="stat-model">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Clock</span>
+      <span class="stat-value" id="stat-clock">—</span>
+    </div>
+  </div>
+
+  <!-- CENTER: Face -->
+  <div id="center">
+    <div id="face">
+      <div class="eye left">
+        <div class="eyelid top"></div>
+        <div class="eyelid bottom"></div>
+      </div>
+      <div class="eye right">
+        <div class="eyelid top"></div>
+        <div class="eyelid bottom"></div>
+      </div>
+      <div id="mouth"></div>
+      <span class="zzz">z</span>
+      <span class="zzz">z</span>
+      <span class="zzz">z</span>
+    </div>
+    <div id="loading-bar"><div class="fill"></div></div>
+    <div id="waveform-container"></div>
+    <div id="ptt-indicator">Hold Space to Talk</div>
+    <div id="speech-bubble"></div>
+  </div>
+
+  <!-- TOP-RIGHT: Input Status -->
+  <div class="panel stagger-2" id="panel-tr">
+    <div class="panel-title">Input Status</div>
+    <div class="stat-row">
+      <span class="stat-label">Mic Active</span>
+      <span class="stat-value" id="stat-mic">Off</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Volume</span>
+      <span class="stat-value"><div class="volume-bar-container"><div class="volume-bar-fill" id="stat-vol"></div></div></span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Input Source</span>
+      <span class="stat-value" id="stat-input-src">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Last Heard</span>
+      <span class="stat-value" id="stat-last-heard">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">STT Confidence</span>
+      <span class="stat-value" id="stat-stt">—</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">State</span>
+      <span class="stat-value" id="stat-listen-state">Idle</span>
+    </div>
+  </div>
+
+  <!-- BOTTOM-LEFT: Chat Log -->
+  <div class="panel stagger-3" id="panel-bl">
+    <div class="panel-title">Chat Log <span style="margin-left:auto;font-weight:400;color:var(--text-dim)" id="turn-counter">0 turns</span></div>
+    <div id="chat-log"></div>
+  </div>
+
+  <!-- BOTTOM-RIGHT: Bot Stats -->
+  <div class="panel stagger-4" id="panel-br">
+    <div class="panel-title">Bot Stats</div>
+    <div class="stat-row">
+      <span class="stat-label">Response Time</span>
+      <span class="stat-value" id="stat-resp-time">— ms</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Tokens In</span>
+      <span class="stat-value" id="stat-tok-in">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Tokens Out</span>
+      <span class="stat-value" id="stat-tok-out">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Queue Depth</span>
+      <span class="stat-value" id="stat-queue">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Expression</span>
+      <span class="stat-value" id="stat-expression">IDLE</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Session Cost</span>
+      <span class="stat-value" id="stat-cost">$0.00</span>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  TUBS BOT — Face UI Controller
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const STATE = {
+  connected: false,
+  sleeping: false,
+  speaking: false,
+  recording: false,
+  expression: 'idle',
+  turns: 0,
+  totalMessages: 0,
+  tokensIn: 0,
+  tokensOut: 0,
+  totalCost: 0,
+  ttsQueue: [],
+  wakeTime: Date.now(),
+  sleepTimeout: 300000,
+  lastActivity: Date.now(),
+  model: 'Tubs Bot v1',
+};
+
+// ── DOM References ──
+const $ = (sel) => document.querySelector(sel);
+const body = document.body;
+const face = $('#face');
+const mouth = $('#mouth');
+const eyes = document.querySelectorAll('.eye');
+const loadingBar = $('#loading-bar');
+const speechBubble = $('#speech-bubble');
+const pttIndicator = $('#ptt-indicator');
+const waveformContainer = $('#waveform-container');
+const chatLog = $('#chat-log');
+
+// ── WebSocket ──
+let ws = null;
+let pingInterval = null;
+let lastPingTs = null;
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => {
+    STATE.connected = true;
+    updateConnectionUI(true);
+    logChat('sys', 'Connected to bridge server');
+    startPing();
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      handleMessage(msg);
+    } catch (err) {
+      console.error('Bad WS message:', err);
+    }
+  };
+
+  ws.onclose = () => {
+    STATE.connected = false;
+    updateConnectionUI(false);
+    logChat('sys', 'Disconnected — reconnecting...');
+    stopPing();
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
+function startPing() {
+  pingInterval = setInterval(() => {
+    if (ws && ws.readyState === 1) {
+      lastPingTs = Date.now();
+      ws.send(JSON.stringify({ type: 'ping', ts: lastPingTs }));
+    }
+  }, 5000);
+}
+
+function stopPing() {
+  clearInterval(pingInterval);
+}
+
+// ── Message Handler ──
+function handleMessage(msg) {
+  STATE.lastActivity = Date.now();
+
+  switch (msg.type) {
+    case 'speak':
+      enqueueSpeech(msg.text);
+      logChat('in', msg.text);
+      STATE.totalMessages++;
+      break;
+    case 'incoming':
+      logChat('out', msg.text);
+      setExpression('listening');
+      break;
+    case 'thinking':
+      setExpression('thinking');
+      loadingBar.classList.add('active');
+      break;
+    case 'expression':
+      setExpression(msg.expression);
+      break;
+    case 'system':
+      logChat('sys', msg.text);
+      break;
+    case 'error':
+      logChat('sys', `ERROR: ${msg.text}`);
+      loadingBar.classList.remove('active');
+      setExpression('idle');
+      break;
+    case 'sleep':
+      enterSleep();
+      break;
+    case 'wake':
+      exitSleep();
+      break;
+    case 'stats':
+      if (msg.latency) $('#stat-resp-time').textContent = `${msg.latency} ms`;
+      if (msg.tokens) {
+        STATE.tokensIn += msg.tokens.in || 0;
+        STATE.tokensOut += msg.tokens.out || 0;
+        $('#stat-tok-in').textContent = STATE.tokensIn;
+        $('#stat-tok-out').textContent = STATE.tokensOut;
+      }
+      if (msg.model) {
+        STATE.model = msg.model;
+        $('#stat-model').textContent = msg.model;
+      }
+      if (msg.cost != null) {
+        STATE.totalCost += msg.cost;
+        $('#stat-cost').textContent = `$${STATE.totalCost.toFixed(4)}`;
+      }
+      break;
+    case 'config':
+      if (msg.sleepTimeout) STATE.sleepTimeout = msg.sleepTimeout;
+      if (msg.model) {
+        STATE.model = msg.model;
+        $('#stat-model').textContent = msg.model;
+      }
+      break;
+    case 'ping':
+      if (lastPingTs) {
+        const latency = Date.now() - lastPingTs;
+        $('#stat-latency').textContent = `${latency} ms`;
+      }
+      break;
+  }
+}
+
+// ── Connection UI ──
+function updateConnectionUI(connected) {
+  const el = $('#stat-conn');
+  const dot = $('#conn-dot');
+  if (connected) {
+    el.innerHTML = '<span class="dot green"></span>Online';
+    el.className = 'stat-value online';
+  } else {
+    el.innerHTML = '<span class="dot red"></span>Offline';
+    el.className = 'stat-value offline';
+  }
+}
+
+// ── Chat Log ──
+function logChat(type, text) {
+  const msg = document.createElement('div');
+  msg.className = `chat-msg ${type}`;
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const prefix = type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
+  msg.innerHTML = `<span class="ts">${ts}</span><span class="content">${prefix} ${escapeHTML(text)}</span>`;
+  chatLog.appendChild(msg);
+  chatLog.scrollTop = chatLog.scrollHeight;
+
+  // Trim old messages
+  while (chatLog.children.length > 100) {
+    chatLog.removeChild(chatLog.firstChild);
+  }
+
+  // Update counters
+  if (type === 'in' || type === 'out') {
+    STATE.turns = Math.floor(STATE.totalMessages / 2);
+    $('#turn-counter').textContent = `${STATE.turns} turns`;
+  }
+  $('#stat-last-heard').textContent = ts;
+}
+
+function escapeHTML(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ── Expressions ──
+function setExpression(expr) {
+  STATE.expression = expr;
+  $('#stat-expression').textContent = expr.toUpperCase();
+
+  // Reset
+  mouth.className = '';
+  loadingBar.classList.remove('active');
+
+  switch (expr) {
+    case 'idle':
+      break;
+    case 'listening':
+      mouth.className = '';
+      break;
+    case 'speaking':
+      mouth.className = 'speaking';
+      break;
+    case 'thinking':
+      mouth.className = 'thinking';
+      loadingBar.classList.add('active');
+      break;
+    case 'smile':
+      mouth.className = 'smile';
+      break;
+    case 'happy':
+      mouth.className = 'smile';
+      break;
+  }
+}
+
+// ── TTS Queue ──
+function enqueueSpeech(text) {
+  STATE.ttsQueue.push(text);
+  $('#stat-queue').textContent = STATE.ttsQueue.length;
+  if (!STATE.speaking) processQueue();
+}
+
+function processQueue() {
+  if (STATE.ttsQueue.length === 0) {
+    STATE.speaking = false;
+    setExpression('smile');
+    speechBubble.classList.remove('visible');
+    setTimeout(() => setExpression('idle'), 2000);
+    return;
+  }
+
+  STATE.speaking = true;
+  const text = STATE.ttsQueue.shift();
+  $('#stat-queue').textContent = STATE.ttsQueue.length;
+
+  // Show speech bubble
+  speechBubble.textContent = text;
+  speechBubble.classList.add('visible');
+
+  // Animate mouth
+  setExpression('speaking');
+  loadingBar.classList.remove('active');
+
+  // Use Web Speech API
+  if ('speechSynthesis' in window) {
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = 1.0;
+    utt.pitch = 0.9;
+    utt.volume = 0.8;
+    utt.onend = () => {
+      processQueue();
+    };
+    utt.onerror = () => {
+      processQueue();
+    };
+    speechSynthesis.speak(utt);
+  } else {
+    // Fallback: just show text for a while
+    setTimeout(processQueue, Math.max(2000, text.length * 60));
+  }
+}
+
+// ── Sleep Mode ──
+let sleepTimer = null;
+
+function resetSleepTimer() {
+  clearTimeout(sleepTimer);
+  if (STATE.sleepTimeout > 0 && !STATE.sleeping) {
+    sleepTimer = setInterval(() => {
+      if (Date.now() - STATE.lastActivity > STATE.sleepTimeout) {
+        enterSleep();
+      }
+    }, 10000);
+  }
+}
+
+function enterSleep() {
+  if (STATE.sleeping) return;
+  STATE.sleeping = true;
+  body.classList.add('sleeping');
+  speechSynthesis?.cancel();
+  STATE.ttsQueue = [];
+  STATE.speaking = false;
+  setExpression('idle');
+  logChat('sys', '💤 Sleep mode');
+}
+
+function exitSleep() {
+  if (!STATE.sleeping) return;
+  STATE.sleeping = false;
+  body.classList.remove('sleeping');
+  STATE.wakeTime = Date.now();
+  STATE.lastActivity = Date.now();
+  $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+  // Staggered panel fade-in
+  document.querySelectorAll('.panel').forEach((p, i) => {
+    p.style.opacity = '0';
+    setTimeout(() => { p.style.opacity = ''; }, 100 + i * 200);
+  });
+
+  logChat('sys', '☀️ Awake!');
+  resetSleepTimer();
+
+  // Blink on wake
+  triggerBlink();
+}
+
+// ── Blinking ──
+function triggerBlink() {
+  eyes.forEach(e => e.classList.add('blink'));
+  setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 200);
+}
+
+// Random blinking
+setInterval(() => {
+  if (!STATE.sleeping && Math.random() < 0.3) {
+    triggerBlink();
+  }
+}, 3000);
+
+// ── Voice Input (Push-to-Talk) ──
+// Mic stream is acquired ONCE on page load and kept alive.
+// Spacebar just starts/stops the MediaRecorder reusing the same stream.
+let mediaRecorder = null;
+let audioChunks = [];
+let audioContext = null;
+let analyser = null;
+let micStream = null;
+let micReady = false;
+
+// Create waveform bars
+for (let i = 0; i < 20; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'wave-bar';
+  waveformContainer.appendChild(bar);
+}
+
+async function initMicrophone() {
+  // Check if getUserMedia is even available (requires localhost or HTTPS)
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    logChat('sys', '⚠️ Mic unavailable — requires localhost or HTTPS');
+    $('#stat-mic').textContent = 'Unavailable';
+    $('#stat-mic').style.color = 'var(--error)';
+    pttIndicator.textContent = '⚠ Mic requires localhost/HTTPS';
+    pttIndicator.classList.add('mic-denied');
+    return;
+  }
+
+  try {
+    logChat('sys', 'Requesting microphone access...');
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext();
+    const source = audioContext.createMediaStreamSource(micStream);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 64;
+    source.connect(analyser);
+    micReady = true;
+    logChat('sys', '🎙️ Microphone ready — hold Space to talk');
+    $('#stat-mic').textContent = 'Ready';
+    $('#stat-mic').style.color = 'var(--accent)';
+    pttIndicator.textContent = 'Hold Space to Talk';
+    pttIndicator.classList.add('mic-ready');
+  } catch (err) {
+    logChat('sys', `⚠️ Mic denied: ${err.message}`);
+    $('#stat-mic').textContent = 'Denied';
+    $('#stat-mic').style.color = 'var(--error)';
+    pttIndicator.textContent = '⚠ Mic Access Denied';
+    pttIndicator.classList.add('mic-denied');
+  }
+}
+
+function startRecording() {
+  if (STATE.recording || STATE.sleeping || !micReady) return;
+
+  // Resume AudioContext if it was suspended (browser autoplay policy)
+  if (audioContext.state === 'suspended') audioContext.resume();
+
+  audioChunks = [];
+  mediaRecorder = new MediaRecorder(micStream);
+  mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(audioChunks, { type: 'audio/webm' });
+    sendVoice(blob);
+  };
+
+  mediaRecorder.start();
+  STATE.recording = true;
+  pttIndicator.textContent = '● Recording';
+  pttIndicator.classList.remove('mic-ready');
+  pttIndicator.classList.add('recording');
+  waveformContainer.classList.add('active');
+  $('#stat-mic').textContent = 'ON';
+  $('#stat-mic').style.color = 'var(--accent)';
+  $('#stat-input-src').textContent = 'Voice';
+  $('#stat-listen-state').textContent = 'Recording';
+  visualizeAudio();
+}
+
+function stopRecording() {
+  if (!STATE.recording) return;
+  STATE.recording = false;
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+  }
+  pttIndicator.textContent = 'Hold Space to Talk';
+  pttIndicator.classList.remove('recording');
+  pttIndicator.classList.add('mic-ready');
+  waveformContainer.classList.remove('active');
+  $('#stat-mic').textContent = 'Ready';
+  $('#stat-mic').style.color = '';
+  $('#stat-listen-state').textContent = 'Processing';
+}
+
+function visualizeAudio() {
+  if (!STATE.recording || !analyser) return;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+
+  const bars = waveformContainer.children;
+  for (let i = 0; i < bars.length; i++) {
+    const val = data[i] || 0;
+    bars[i].style.height = `${Math.max(4, (val / 255) * 30)}px`;
+  }
+
+  // Volume meter
+  const avg = data.reduce((a, b) => a + b, 0) / data.length;
+  const volPct = Math.min(100, (avg / 128) * 100);
+  $('#stat-vol').style.width = `${volPct}%`;
+
+  requestAnimationFrame(visualizeAudio);
+}
+
+async function sendVoice(blob) {
+  if (!STATE.connected) {
+    logChat('sys', 'Not connected — voice not sent');
+    return;
+  }
+  try {
+    const fd = new FormData();
+    fd.append('audio', blob, 'recording.webm');
+    const res = await fetch('/voice', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    $('#stat-listen-state').textContent = 'Idle';
+  } catch (err) {
+    // Fallback: send as text via WS (demo mode)
+    logChat('sys', 'Voice endpoint unavailable — using demo mode');
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'incoming', text: '[voice input]' }));
+      logChat('out', '[voice input]');
+    }
+    $('#stat-listen-state').textContent = 'Idle';
+  }
+}
+
+// ── Keyboard Input ──
+let keyInputBuffer = '';
+
+document.addEventListener('keydown', (e) => {
+  // Spacebar push-to-talk
+  if (e.code === 'Space' && !e.repeat && document.activeElement === document.body) {
+    e.preventDefault();
+    if (STATE.sleeping) {
+      exitSleep();
+      return;
+    }
+    startRecording();
+    return;
+  }
+
+  // Escape = sleep
+  if (e.code === 'Escape') {
+    if (STATE.sleeping) exitSleep();
+    else enterSleep();
+    return;
+  }
+
+  // Enter = send typed text
+  if (e.code === 'Enter' && keyInputBuffer.trim()) {
+    e.preventDefault();
+    const text = keyInputBuffer.trim();
+    keyInputBuffer = '';
+
+    if (STATE.sleeping) exitSleep();
+
+    // Check for sleep command
+    if (/go to sleep/i.test(text)) {
+      enterSleep();
+      return;
+    }
+
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'incoming', text }));
+      logChat('out', text);
+      STATE.totalMessages++;
+      $('#stat-input-src').textContent = 'Keyboard';
+      STATE.lastActivity = Date.now();
+    }
+    return;
+  }
+
+  // Buffer printable keys
+  if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+    keyInputBuffer += e.key;
+  }
+  if (e.code === 'Backspace') {
+    keyInputBuffer = keyInputBuffer.slice(0, -1);
+  }
+});
+
+document.addEventListener('keyup', (e) => {
+  if (e.code === 'Space' && STATE.recording) {
+    stopRecording();
+  }
+});
+
+// Wake on click
+document.addEventListener('click', () => {
+  if (STATE.sleeping) exitSleep();
+});
+
+// ── Timers ──
+
+// Uptime
+setInterval(() => {
+  if (STATE.sleeping) return;
+  const elapsed = Math.floor((Date.now() - STATE.wakeTime) / 1000);
+  const h = String(Math.floor(elapsed / 3600)).padStart(2, '0');
+  const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
+  const s = String(elapsed % 60).padStart(2, '0');
+  $('#stat-uptime').textContent = `${h}:${m}:${s}`;
+}, 1000);
+
+// Clock
+setInterval(() => {
+  $('#stat-clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+}, 10000);
+$('#stat-clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+// ── Init ──
+function init() {
+  STATE.wakeTime = Date.now();
+  $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  $('#stat-model').textContent = STATE.model;
+  logChat('sys', 'Tubs Bot initializing...');
+  connectWS();
+  resetSleepTimer();
+  initMicrophone();
+}
+
+init();
+</script>
+</body>
+</html>
