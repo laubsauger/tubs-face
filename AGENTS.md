@@ -1,39 +1,64 @@
 # Agent Configuration
 
-This document outlines the agent personas and configuration for the Tubs Bot interface.
+This document describes the active persona and runtime behavior for the Tubs face interface.
 
 ## Current Agent: Tubs
 
-**Model**: Tubs Bot v1
-**Role**: Animated Chatbot Face Interface
-**Personality**: Helpful, slightly robotic but friendly, expressive.
+- Model label: `Tubs Bot v1`
+- Role: Animated chatbot face interface
+- Personality: Helpful, slightly robotic, friendly, expressive
 
-### Configuration
+## Runtime Configuration
 
-The agent configuration is managed via the bridge server and can be updated at runtime.
+The bridge server keeps mutable runtime config in `src/bridge-server.js` and exposes it over `/config`.
+
+Default runtime config:
 
 ```json
 {
-  "sleepTimeout": 300000, 
+  "sleepTimeout": 300000,
   "model": "Tubs Bot v1",
   "prompt": "Default personality"
 }
 ```
 
-### Capabilities
+## Active Capabilities
 
-- **Speech**: Uses browser TTS (SpeechSynthesis API) to speak response text.
-- **Listening**: Uses Web Audio API for volume visualization and MediaRecorder for capturing voice input.
-- **Expressions**: 
-    - `idle`: Neutral state, occasional blinking.
-    - `listening`: Alert state, waiting for input.
-    - `thinking`: Processing state, loading bar active.
-    - `speaking`: Mouth moves in sync with speech (simulated).
-    - `sleep`: Eyes closed, breathing animation, low power mode.
+- Speech output:
+  - Primary path: `POST /tts` on the bridge, proxied to Python service on port `3001`.
+  - Frontend playback: returned WAV audio.
+  - Fallback: browser `SpeechSynthesis` if TTS service fails.
+- Listening / voice input:
+  - Browser captures audio (`MediaRecorder` + Web Audio visualization).
+  - Audio is sent to `POST /voice` on the bridge.
+  - Bridge forwards audio to Python `/transcribe` (Whisper via `faster-whisper`).
+  - Optional wake-word gate is supported via `/voice?wakeWord=true`.
+- Expressions:
+  - `idle`: Neutral state.
+  - `listening`: Alert, awaiting or receiving input.
+  - `thinking`: Processing state, loading bar active.
+  - `speaking`: Mouth animation during playback.
+  - `sleep`: Sleep visuals (dimmed UI, eyes closed).
+  - Also supported by UI state machine: `smile`, `happy`.
 
-## Adding New Agents
+## Bridge API Surface
 
-To define a new agent or persona:
+Implemented in `src/bridge-server.js`:
 
-1.  Update the `runtimeConfig` in `src/bridge-server.js` or send a `/config` POST request.
-2.  (Optional) Extend `generateDemoResponse` or connect a real LLM backend to provide distinct personalities.
+- `GET /` serve UI
+- `GET /health` health + connected clients
+- `GET /stats` session stats
+- `POST /speak` inject speech text to UI
+- `POST /voice` upload recorded audio for STT + response flow
+- `POST /tts` proxy TTS request to Python service
+- `POST /sleep` enter sleep mode
+- `POST /wake` wake mode
+- `POST /config` update runtime config
+
+## Adding / Changing Agents
+
+1. Update `runtimeConfig` in `src/bridge-server.js` (or send `POST /config`).
+2. Update response behavior in `generateDemoResponse` or replace with a real LLM backend.
+3. If voice/TTS behavior changes, update both:
+   - `public/js/main.js`
+   - `src/transcription-service.py`

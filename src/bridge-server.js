@@ -54,52 +54,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Serve static files from ../public
-  const staticPath = path.join(__dirname, '../public');
-  let filePath = url.pathname === '/' ? 'index.html' : url.pathname;
-  // Prevent directory traversal
-  const safePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
-  const ext = path.extname(safePath);
 
-  if (!ext || url.pathname === '/') {
-    filePath = 'index.html';
-  }
-
-  const fullPath = path.join(staticPath, filePath);
-
-  // Check if file exists in public dir (basic static server)
-  if (fs.existsSync(fullPath) && fs.lstatSync(fullPath).isFile()) {
-    const mimeTypes = {
-      '.html': 'text/html',
-      '.js': 'text/javascript',
-      '.css': 'text/css',
-      '.json': 'application/json',
-      '.png': 'image/png',
-      '.jpg': 'image/jpg',
-      '.gif': 'image/gif',
-      '.svg': 'image/svg+xml',
-      '.wav': 'audio/wav',
-      '.mp4': 'video/mp4',
-      '.woff': 'application/font-woff',
-      '.ttf': 'application/font-ttf',
-      '.eot': 'application/vnd.ms-fontobject',
-      '.otf': 'application/font-otf',
-      '.wasm': 'application/wasm'
-    };
-
-    const contentType = mimeTypes[ext] || 'application/octet-stream';
-
-    fs.readFile(fullPath, (err, data) => {
-      if (err) {
-        res.writeHead(500);
-        res.end(`Error loading ${safePath}`);
-      } else {
-        res.writeHead(200, { 'Content-Type': contentType });
-        res.end(data);
-      }
-    });
-    return;
-  }
 
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -157,12 +112,30 @@ const server = http.createServer((req, res) => {
         // Wake word check
         if (wakeWord) {
           const trigger = text.toLowerCase();
-          if (!trigger.includes("hey tubs") && !trigger.includes("hey tabs") && !trigger.includes("hey tub")) {
+          if (!trigger.includes("hey tubs") &&
+            !trigger.includes("hey tabs") &&
+            !trigger.includes("hey tub") &&
+            !trigger.includes("okay dub") &&
+            !trigger.includes("okay das") &&
+            !trigger.includes("okay dabs") &&
+            !trigger.includes("hi tubs") &&
+            !trigger.includes("yo tubs") &&
+            !trigger.includes("yo tab") &&
+            !trigger.includes("yo tub") &&
+            !trigger.includes("okay tubs") &&
+            !trigger.includes("tubs") &&
+            !trigger.includes("tabs") &&
+            !trigger.includes("toobs") &&
+            !trigger.includes("tap") &&
+            !trigger.includes("tup") &&
+            !trigger.includes("ey tab") &&
+            !trigger.includes("ey tub") &&
+            !trigger.includes("ey toobs")) {
             console.log('[Voice] Wake word not detected, ignoring.');
             broadcast({ type: 'expression', expression: 'idle' });
             // Maybe send a "ignored" signal or just nothing
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, ignored: true }));
+            res.end(JSON.stringify({ ok: true, ignored: true, text: text }));
             return;
           }
         }
@@ -198,8 +171,10 @@ const server = http.createServer((req, res) => {
       } catch (err) {
         console.error('[Voice] Transcription error:', err);
         broadcast({ type: 'error', text: 'Transcription failed' });
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: err.message }));
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
       }
     });
     return;
@@ -233,8 +208,10 @@ const server = http.createServer((req, res) => {
 
       proxyReq.on('error', (e) => {
         console.error('[Bridge] TTS Proxy execution error:', e);
-        res.writeHead(500, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'TTS Service unavailable' }));
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'TTS Service unavailable', details: e.message }));
+        }
       });
 
       proxyReq.write(body);
@@ -263,6 +240,53 @@ const server = http.createServer((req, res) => {
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // Serve static files from ../public
+  const staticPath = path.join(__dirname, '../public');
+  let filePath = url.pathname === '/' ? 'index.html' : url.pathname;
+  // Prevent directory traversal
+  const safePath = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
+  const ext = path.extname(safePath);
+
+  if (!ext || url.pathname === '/') {
+    filePath = 'index.html';
+  }
+
+  const fullPath = path.join(staticPath, filePath);
+
+  // Check if file exists in public dir (basic static server)
+  if (fs.existsSync(fullPath) && fs.lstatSync(fullPath).isFile()) {
+    const mimeTypes = {
+      '.html': 'text/html',
+      '.js': 'text/javascript',
+      '.css': 'text/css',
+      '.json': 'application/json',
+      '.png': 'image/png',
+      '.jpg': 'image/jpg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.wav': 'audio/wav',
+      '.mp4': 'video/mp4',
+      '.woff': 'application/font-woff',
+      '.ttf': 'application/font-ttf',
+      '.eot': 'application/vnd.ms-fontobject',
+      '.otf': 'application/font-otf',
+      '.wasm': 'application/wasm'
+    };
+
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        res.writeHead(500);
+        res.end(`Error loading ${safePath}`);
+      } else {
+        res.writeHead(200, { 'Content-Type': contentType });
+        res.end(data);
       }
     });
     return;
@@ -388,43 +412,55 @@ pythonProcess.on('close', (code) => {
 // Proxy function
 function transcribeAudio(audioBuffer) {
   return new Promise((resolve, reject) => {
-    // Send to Python Flask server
-    const req = http.request({
-      hostname: 'localhost',
-      port: 3001,
-      path: '/transcribe',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'multipart/form-data; boundary=---BOUNDARY'
-      }
-    }, (res) => {
-      let body = '';
-      res.on('data', chunk => body += chunk);
-      res.on('end', () => {
-        if (res.statusCode === 200) {
-          try {
-            resolve(JSON.parse(body));
-          } catch (e) {
-            reject(new Error('Invalid JSON from transcription service'));
-          }
-        } else {
-          reject(new Error(`Transcription failed: ${body}`));
-        }
-      });
-    });
-
-    req.on('error', reject);
-
     // Manually construct multipart body because we don't have form-data pkg
     const boundary = '---BOUNDARY';
-    req.write(`--${boundary}\r\n`);
-    req.write(`Content-Disposition: form-data; name="audio"; filename="audio.webm"\r\n`);
-    req.write(`Content-Type: audio/webm\r\n\r\n`);
-    req.write(audioBuffer);
-    req.write(`\r\n--${boundary}--\r\n`);
-    req.end();
+
+    const tryRequest = (retries = 10) => {
+      const req = http.request({
+        hostname: 'localhost',
+        port: 3001,
+        path: '/transcribe',
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`
+        }
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 200) {
+            try {
+              resolve(JSON.parse(body));
+            } catch (e) {
+              reject(new Error('Invalid JSON from transcription service'));
+            }
+          } else {
+            reject(new Error(`Transcription failed: ${body}`));
+          }
+        });
+      });
+
+      req.on('error', (err) => {
+        if (retries > 0 && err.code === 'ECONNREFUSED') {
+          console.log(`[Bridge] Transcription service busy/loading, retrying... (${retries})`);
+          setTimeout(() => tryRequest(retries - 1), 2000);
+        } else {
+          reject(err);
+        }
+      });
+
+      req.write(`--${boundary}\r\n`);
+      req.write(`Content-Disposition: form-data; name="audio"; filename="audio.webm"\r\n`);
+      req.write(`Content-Type: audio/webm\r\n\r\n`);
+      req.write(audioBuffer);
+      req.write(`\r\n--${boundary}--\r\n`);
+      req.end();
+    };
+
+    tryRequest();
   });
 }
+
 
 server.listen(PORT, () => {
   console.log(`\n  🤖 TUBS BOT Bridge Server`);

@@ -142,25 +142,34 @@ function handleMessage(msg) {
                 $('#stat-model').textContent = msg.model;
             }
             break;
-        case 'ping':
-            if (lastPingTs) {
-                const latency = Date.now() - lastPingTs;
-                $('#stat-latency').textContent = `${latency} ms`;
-            }
-            break;
+        // case 'ping' removed
+        // case 'ping':
+        //     if (lastPingTs) {
+        //         const latency = Date.now() - lastPingTs;
+        //         // $('#stat-latency').textContent = `${latency} ms`;
+        //     }
+        //     break;
     }
 }
 
 // ── Connection UI ──
-function updateConnectionUI(connected) {
-    const el = $('#stat-conn');
+function updateConnectionUI(isConnected) {
     const dot = $('#conn-dot');
-    if (connected) {
-        el.innerHTML = '<span class="dot green"></span>Online';
-        el.className = 'stat-value online';
+    const headerDot = $('#header-conn-dot');
+    const val = $('#stat-conn');
+
+    if (isConnected) {
+        dot.className = 'dot green';
+        if (headerDot) headerDot.className = 'dot green header-dot';
+        val.innerHTML = '<span class="dot green" id="conn-dot"></span>Online';
+        val.classList.remove('offline');
+        val.classList.add('online');
     } else {
-        el.innerHTML = '<span class="dot red"></span>Offline';
-        el.className = 'stat-value offline';
+        dot.className = 'dot red';
+        if (headerDot) headerDot.className = 'dot red header-dot';
+        val.innerHTML = '<span class="dot red" id="conn-dot"></span>Offline';
+        val.classList.remove('online');
+        val.classList.add('offline');
     }
 }
 
@@ -234,27 +243,27 @@ function enqueueSpeech(text) {
 function processQueue() {
     if (STATE.ttsQueue.length === 0) {
         STATE.speaking = false;
-        setExpression('smile');
-        speechBubble.classList.remove('visible');
+        setExpression('idle');
         $('#stat-listen-state').textContent = 'Idle';
-        setTimeout(() => setExpression('idle'), 2000);
+        speechBubble.classList.remove('visible');
         return;
     }
 
-    STATE.speaking = true;
     const text = STATE.ttsQueue.shift();
     $('#stat-queue').textContent = STATE.ttsQueue.length;
+
+    STATE.speaking = true;
+    setExpression('speaking');
 
     // Show speech bubble
     speechBubble.textContent = text;
     speechBubble.classList.add('visible');
-
-    // Animate mouth
-    setExpression('speaking');
     loadingBar.classList.remove('active');
 
-    // Use Python TTS
-    playTTS(text);
+    playTTS(text).catch(() => {
+        STATE.speaking = false;
+        processQueue();
+    });
 }
 
 // ── Sleep Mode ──
@@ -324,6 +333,12 @@ let isTranscribing = false;
 async function initVAD() {
     try {
         logChat('sys', 'Initializing VAD...');
+
+        // Suppress ONNX warnings
+        if (window.ort) {
+            ort.env.logLevel = 'error';
+        }
+
         // Note: vad is exposed globally by the script tag as `vad`
         myvad = await vad.MicVAD.new({
             onSpeechStart: () => {
@@ -364,10 +379,13 @@ $('#vad-toggle').addEventListener('change', (e) => {
     if (vadActive) {
         logChat('sys', 'Always On: ENABLED');
         pttIndicator.textContent = 'Listening (Always On)';
-        pttIndicator.classList.add('mic-ready'); // reuse style
+        pttIndicator.classList.add('mic-ready');
+        waveformContainer.classList.add('active'); // Show bars
+        visualizeAudio(); // Start loop
     } else {
         logChat('sys', 'Always On: DISABLED');
         pttIndicator.textContent = 'Hold Space to Talk';
+        waveformContainer.classList.remove('active'); // Hide bars
         $('#stat-listen-state').textContent = 'Idle';
     }
 });
@@ -511,7 +529,7 @@ function stopRecording() {
 }
 
 function visualizeAudio() {
-    if (!STATE.recording || !analyser) return;
+    if ((!STATE.recording && !vadActive) || !analyser) return;
     const data = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(data);
 
@@ -566,14 +584,19 @@ async function sendVoice(blob, isVad = false) {
 
         const data = await res.json();
 
+        if (data.text) {
+            // Log everything for debug
+            const prefix = data.ignored ? '[Ignored] ' : '';
+            logChat('sys', `${prefix}"${data.text}"`);
+        }
+
         if (data.ignored) {
-            logChat('sys', '(Ignored - No Wake Word)');
             $('#stat-listen-state').textContent = 'Idle';
             setExpression('idle');
         } else {
             // Success, text processed in background via WS
             // Bridge already broadcasts processing state
-            logChat('sys', 'Audio processed.');
+            // logChat('sys', 'Audio processed.'); // Duplicate
         }
 
     } catch (err) {
@@ -600,21 +623,47 @@ async function playTTS(text) {
         if (!res.ok) throw new Error('TTS Failed');
 
         const blob = await res.blob();
+
+        // Debug blob size
+        console.log(`[TTS] Received blob size: ${blob.size}, type: ${blob.type}`);
+
+        if (blob.size < 100) {
+            throw new Error('TTS Audio too small (likely error)');
+        }
+
         const audioURL = URL.createObjectURL(blob);
-        const audio = new Audio(audioURL);
+        const audio = new Audio();
+        audio.src = audioURL;
+
+        audio.oncanplaythrough = () => {
+            audio.play().catch(e => {
+                console.error("Audio play failed:", e);
+                processQueue();
+            });
+        };
+
+        audio.onerror = (e) => {
+            console.error("Audio load failed", e);
+            speakFallback(text);
+        };
 
         audio.onended = () => {
             processQueue(); // Call next
             URL.revokeObjectURL(audioURL);
         };
 
-        audio.play();
-
     } catch (e) {
         console.error("TTS Error:", e);
-        // Fallback?
-        processQueue();
+        speakFallback(text);
     }
+}
+
+function speakFallback(text) {
+    console.log('[TTS] Using fallback speech synthesis');
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.onend = () => processQueue();
+    utterance.onerror = () => processQueue();
+    speechSynthesis.speak(utterance);
 }
 
 // Update processQueue to use `playTTS` instead of `speechSynthesis`
@@ -700,37 +749,30 @@ setInterval(() => {
     $('#stat-uptime').textContent = `${h}:${m}:${s}`;
 }, 1000);
 
-// Clock
-setInterval(() => {
-    $('#stat-clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
-}, 10000);
-$('#stat-clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+// Clock removed
 
-// ── Responsive Face ──
-function resizeFace() {
-    const center = $('#center');
-    const face = $('#face');
-    if (!center || !face) return;
+// ── Interaction: Collapsible Panels ──
+// Ensure this runs after DOM is ready
+document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.panel-title').forEach(title => {
+        title.addEventListener('click', () => {
+            console.log('Panel clicked'); // Debug
+            const panel = title.parentElement;
+            panel.classList.toggle('collapsed');
+        });
+    });
+});
 
-    const navHeight = 0; // Adjust if header/footer exists
-    const availableWidth = center.clientWidth;
-    const availableHeight = center.clientHeight - navHeight;
-
-    const baseWidth = 350;
-    const baseHeight = 220;
-    const padding = 40;
-
-    const scaleX = (availableWidth - 20) / baseWidth; // Reduced padding
-    const scaleY = (availableHeight - 20) / baseHeight;
-
-    // Fit to whichever dimension is more constrained, but allow it to go as big as needed
-    const scale = Math.min(scaleX, scaleY);
-
-    // Apply scale while preserving centering (translate)
-    face.style.transform = `translate(-50%, -50%) scale(${scale})`;
-}
-
-window.addEventListener('resize', resizeFace);
+// ── Interaction: Zen Mode & Sleep Toggle ──
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'z' || e.key === 'Z') {
+        document.getElementById('grid').classList.toggle('hidden-ui');
+    }
+    if (e.key === 's' || e.key === 'S') {
+        if (STATE.sleeping) exitSleep();
+        else enterSleep();
+    }
+});
 
 // ── Init ──
 function init() {
@@ -739,15 +781,47 @@ function init() {
     $('#stat-model').textContent = STATE.model;
     logChat('sys', 'Tubs Bot initializing...');
 
-    // Debug
     console.log('[Init] Initializing...');
 
     connectWS();
     resetSleepTimer();
     initMicrophone();
+    initVAD();
 
-    // Initial resize
-    setTimeout(resizeFace, 100);
+    // Resize handled by CSS now
+
+    // ── Idle Loop (Alive) ──
+    startIdleLoop();
 }
+
+// ── Alive Animations ──
+function startIdleLoop() {
+    // Blink loop
+    setInterval(() => {
+        if (STATE.sleeping) return;
+        blink();
+    }, 4000 + Math.random() * 2000);
+
+    // Smile loop
+    setInterval(() => {
+        if (STATE.sleeping || STATE.speaking || STATE.expression !== 'idle') return;
+
+        const r = Math.random();
+        if (r < 0.2) {
+            setExpression('smile');
+            setTimeout(() => {
+                if (STATE.expression === 'smile') setExpression('idle');
+            }, 2000);
+        }
+    }, 5000);
+}
+
+function blink() {
+    eyes.forEach(eye => eye.classList.add('blink'));
+    setTimeout(() => {
+        eyes.forEach(eye => eye.classList.remove('blink'));
+    }, 150);
+}
+
 
 init();
