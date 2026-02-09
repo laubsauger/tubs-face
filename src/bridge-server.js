@@ -120,6 +120,11 @@ const server = http.createServer((req, res) => {
             !trigger.includes("okay dabs") &&
             !trigger.includes("hi tubs") &&
             !trigger.includes("yo tubs") &&
+            !trigger.includes("yo tobs") &&
+            !trigger.includes("okay tops") &&
+            !trigger.includes("okay top") &&
+            !trigger.includes("hey top") &&
+            !trigger.includes("yo top") &&
             !trigger.includes("yo tab") &&
             !trigger.includes("yo tub") &&
             !trigger.includes("okay tubs") &&
