@@ -17,11 +17,11 @@ Layer
 Component
 Description
 Frontend
-index.html
-Animated face, stats panels, voice input, TTS output
+public/{index.html, css/, js/}
+Animated face, stats panels, voice input, TTS output (HTML/CSS/JS split)
 Bridge
-bridge-server.js
-Node.js WebSocket server relaying messages between frontend and backend
+src/bridge-server.js
+Node.js WebSocket server relaying messages and serving static files from public/
 Backend
 Any LLM / chatbot
 Connected via HTTP POST to /speak endpoint or WebSocket

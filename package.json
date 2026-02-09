@@ -5,6 +5,8 @@
   "main": "bridge-server.js",
   "scripts": {
     "start": "node src/bridge-server.js",
+    "kill": "pkill -f 'node src/bridge-server.js' && pkill -f 'transcription-service.py' || true",
+    "restart": "npm run kill && sleep 1 && npm start",
     "dev": "node src/bridge-server.js"
   },
   "dependencies": {

@@ -28,3 +28,4 @@ release
 .env*
 !.env.example
 thumbnails/
+venv
