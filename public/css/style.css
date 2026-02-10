@@ -186,7 +186,7 @@ body {
 
 #panel-br {
   bottom: 20px;
-  right: 20px;
+  right: 340px;
 }
 
 /* ── Stat Rows ── */
@@ -825,9 +825,10 @@ body.sleeping #ptt-indicator {
 #camera-pip {
   position: absolute;
   bottom: 20px;
-  right: 320px;
-  width: 260px;
-  height: 195px;
+  right: 20px;
+  width: 320px;
+  height: 240px;
+  resize: both;
   z-index: 100;
   border-radius: 12px;
   overflow: hidden;
@@ -852,7 +853,8 @@ body.sleeping #ptt-indicator {
 
 #camera-pip.collapsed {
   height: auto;
-  width: 260px;
+  width: 320px;
+  resize: none;
 }
 
 #camera-pip-header {
@@ -895,7 +897,7 @@ body.sleeping #ptt-indicator {
   left: 0;
   width: 100%;
   height: calc(100% - 30px);
-  transform: scaleX(-1);
+  /* No scaleX(-1) — coordinates are pre-mirrored in JS so text renders correctly */
   pointer-events: none;
 }
 

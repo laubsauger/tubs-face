@@ -147,7 +147,15 @@ function handleMessage(msg) {
             }
             break;
         case 'config':
-            if (msg.sleepTimeout) STATE.sleepTimeout = msg.sleepTimeout;
+            if (msg.sleepTimeout) {
+                STATE.sleepTimeout = msg.sleepTimeout;
+                // Sync the slider UI
+                const secs = Math.round(msg.sleepTimeout / 1000);
+                const slider = document.getElementById('sleep-timeout');
+                const label = document.getElementById('sleep-timeout-val');
+                if (slider) slider.value = secs;
+                if (label) label.textContent = secs >= 60 ? `${Math.round(secs / 60)}m` : `${secs}s`;
+            }
             if (msg.model) {
                 STATE.model = msg.model;
                 $('#stat-model').textContent = msg.model;
@@ -293,9 +301,15 @@ function resetSleepTimer() {
 }
 
 function enterSleep() {
-    if (STATE.sleeping) return;
-    // Don't sleep while faces are visible
-    if (STATE.facesDetected > 0) return;
+    if (STATE.sleeping) {
+        console.log('[Sleep] enterSleep blocked: already sleeping');
+        return;
+    }
+    if (STATE.facesDetected > 0) {
+        console.log('[Sleep] enterSleep blocked: facesDetected=' + STATE.facesDetected);
+        return;
+    }
+    console.log('[Sleep] >>> ENTERING SLEEP');
     STATE.sleeping = true;
     body.classList.add('sleeping');
     clearInterval(sleepTimer);
@@ -310,7 +324,11 @@ function enterSleep() {
 }
 
 function exitSleep() {
-    if (!STATE.sleeping) return;
+    if (!STATE.sleeping) {
+        console.log('[Sleep] exitSleep blocked: not sleeping');
+        return;
+    }
+    console.log('[Sleep] >>> EXITING SLEEP');
     STATE.sleeping = false;
     body.classList.remove('sleeping');
     STATE.wakeTime = Date.now();
@@ -605,7 +623,7 @@ async function sendVoice(blob, isVad = false) {
         if (data.text) {
             // Log everything for debug
             const wakeInfo = data.wake
-                ? ` [wake:${data.wake.version || 'unknown'} ${data.wake.reason || 'n/a'} ${data.wake.matchedToken || ''}]`
+                ? ` [wake:${data.wake.version || 'unknown'} ${data.wake.reason || 'n/a'} ${data.wake.matchedSource || ''} ${data.wake.matchedToken || ''}]`
                 : '';
             const prefix = data.ignored ? `[Ignored${wakeInfo}] ` : '';
             logChat('sys', `${prefix}"${data.text}"`);
@@ -948,6 +966,7 @@ function resetGaze() {
 
 // ── Expose for face-manager.js ──
 window.STATE = STATE;
+window.enterSleep = enterSleep;
 window.exitSleep = exitSleep;
 window.logChat = logChat;
 window.lookAt = lookAt;

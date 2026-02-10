@@ -37,7 +37,7 @@ let sessionStats = {
   model: 'Tubs Bot v1',
 };
 let runtimeConfig = {
-  sleepTimeout: 300000, // 5 minutes
+  sleepTimeout: 10000, // 10 seconds
   model: 'Tubs Bot v1',
   prompt: 'Default personality',
   sttModel: DEFAULT_STT_MODEL,
@@ -142,6 +142,30 @@ function isWakeAlias(token) {
   return false;
 }
 
+function findWakeToken(tokens) {
+  const directIndex = tokens.findIndex(isWakeAlias);
+  if (directIndex !== -1) {
+    return { index: directIndex, token: tokens[directIndex], source: 'token' };
+  }
+
+  // For very short utterances, Whisper sometimes splits one name into fragments.
+  if (tokens.length <= 3) {
+    const compact = tokens.join('');
+    if (isWakeAlias(compact)) {
+      return { index: 0, token: compact, source: 'compact' };
+    }
+
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const merged = `${tokens[i]}${tokens[i + 1]}`;
+      if (isWakeAlias(merged)) {
+        return { index: i, token: merged, source: 'merged' };
+      }
+    }
+  }
+
+  return { index: -1, token: null, source: null };
+}
+
 function detectWakeWord(text) {
   const normalized = normalizeWakeText(text);
   if (!normalized) {
@@ -151,11 +175,13 @@ function detectWakeWord(text) {
       normalized,
       tokens: [],
       matchedToken: null,
+      matchedSource: null,
     };
   }
 
   const tokens = normalized.split(' ');
-  const wakeIndex = tokens.findIndex(isWakeAlias);
+  const wakeMatch = findWakeToken(tokens);
+  const wakeIndex = wakeMatch.index;
   const prefixIndex = tokens.findIndex(token => WAKE_PREFIXES.has(token));
 
   const hasWakeToken = wakeIndex !== -1;
@@ -189,7 +215,8 @@ function detectWakeWord(text) {
     reason,
     normalized,
     tokens,
-    matchedToken: hasWakeToken ? tokens[wakeIndex] : null,
+    matchedToken: hasWakeToken ? wakeMatch.token : null,
+    matchedSource: wakeMatch.source,
   };
 }
 
@@ -381,7 +408,7 @@ const server = http.createServer((req, res) => {
         if (wakeWord) {
           wake = detectWakeWord(text);
           console.log(
-            `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} reason=${wake.reason} normalized="${wake.normalized}" matched="${wake.matchedToken || ''}"`
+            `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} reason=${wake.reason} source=${wake.matchedSource || ''} normalized="${wake.normalized}" matched="${wake.matchedToken || ''}"`
           );
           if (!wake.detected) {
             console.log('[Voice] Wake word not detected, ignoring.');

@@ -299,15 +299,16 @@
         }
       }
 
-      // Scale box to overlay
-      const scaleX = overlay.width / (captureCanvas.width || overlay.width);
-      const scaleY = overlay.height / (captureCanvas.height || overlay.height);
+      // Scale box to overlay (mirror X to match CSS-mirrored video)
+      const sX = overlay.width / (captureCanvas.width || overlay.width);
+      const sY = overlay.height / (captureCanvas.height || overlay.height);
 
       const [x1, y1, x2, y2] = face.box;
-      const bx = x1 * scaleX;
-      const by = y1 * scaleY;
-      const bw = (x2 - x1) * scaleX;
-      const bh = (y2 - y1) * scaleY;
+      // Mirror: overlay.width - right edge becomes left edge
+      const bx = overlay.width - x2 * sX;
+      const by = y1 * sY;
+      const bw = (x2 - x1) * sX;
+      const bh = (y2 - y1) * sY;
 
       const color = bestMatch ? '#00e5a0' : '#ffa726';
       if (bestMatch) recognized.push(bestMatch.name);
@@ -380,7 +381,6 @@
       const faceCY = (fy1 + fy2) / 2;
       const frameW = captureCanvas.width || 640;
       const frameH = captureCanvas.height || 480;
-      // Normalize to [-1, 1], invert X because camera is mirrored
       const normX = -((faceCX / frameW) * 2 - 1);
       const normY = (faceCY / frameH) * 2 - 1;
       if (window.lookAt) window.lookAt(normX, normY * 0.6);
@@ -400,9 +400,37 @@
         window.exitSleep();
         // Greeting after wake
         setTimeout(() => {
-          const greetings = greetName
-            ? [`Hey ${greetName}!`, `Hi ${greetName}!`, `Oh hey, ${greetName}!`]
-            : ['Hey there!', 'Hi!', 'Oh, hello!', 'Hey!'];
+          const n = greetName;
+          const greetings = n
+            ? [
+                `Hey ${n}!`,
+                `Hi ${n}!`,
+                `Oh hey, ${n}!`,
+                `${n}! Good to see you.`,
+                `Well well, ${n}.`,
+                `There you are, ${n}.`,
+                `Ah, ${n}. What's up?`,
+                `Oh! Hey ${n}.`,
+                `${n}, hello!`,
+                `Look who it is. Hey ${n}.`,
+                `Yo ${n}!`,
+                `${n}! I was just thinking about you.`,
+                `Hey hey, ${n}.`,
+                `Oh hi ${n}, didn't see you there.`,
+                `${n}. Welcome back.`,
+              ]
+            : [
+                `Hey there!`,
+                `Hi!`,
+                `Oh, hello!`,
+                `Hey!`,
+                `Well hello there.`,
+                `Oh! Hi.`,
+                `Hey, what's up?`,
+                `Hello hello.`,
+                `Ah, there you are.`,
+                `Hi there!`,
+              ];
           const greeting = greetings[Math.floor(Math.random() * greetings.length)];
           if (window.enqueueSpeech) window.enqueueSpeech(greeting);
         }, 400);
@@ -426,6 +454,15 @@
       if (!lastNoFaceTime) lastNoFaceTime = now;
       if (STATE.presenceDetected && !presenceTimer) {
         presenceTimer = setTimeout(checkPresenceTimeout, PRESENCE_TIMEOUT);
+      }
+
+      // Direct elapsed-time check: sleep if no face for sleepTimeout
+      if (!STATE.sleeping && lastFaceSeen > 0 && STATE.sleepTimeout > 0) {
+        const elapsed = now - lastFaceSeen;
+        if (elapsed > STATE.sleepTimeout) {
+          console.log(`[Face] No faces for ${Math.round(elapsed / 1000)}s (timeout: ${STATE.sleepTimeout / 1000}s) — entering sleep`);
+          window.enterSleep();
+        }
       }
     }
   }
@@ -549,7 +586,12 @@
       return;
     }
 
-    const name = prompt('Enter name for this face (multiple samples will be captured):');
+    // Pre-fill with recognized name if a face is currently detected
+    const defaultName = STATE.personsPresent.length > 0 ? STATE.personsPresent[0] : '';
+    const promptMsg = defaultName
+      ? `Adding samples to "${defaultName}" (or enter a different name):`
+      : 'Enter name for this face (multiple samples will be captured):';
+    const name = prompt(promptMsg, defaultName);
     if (!name || !name.trim()) return;
     const trimmedName = name.trim();
 
