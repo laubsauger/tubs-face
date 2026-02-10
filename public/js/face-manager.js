@@ -373,6 +373,18 @@
     const now = Date.now();
 
     if (faces.length > 0) {
+      // ── Eye tracking: look toward the primary face ──
+      const primary = faces[0];
+      const [fx1, fy1, fx2, fy2] = primary.box;
+      const faceCX = (fx1 + fx2) / 2;
+      const faceCY = (fy1 + fy2) / 2;
+      const frameW = captureCanvas.width || 640;
+      const frameH = captureCanvas.height || 480;
+      // Normalize to [-1, 1], invert X because camera is mirrored
+      const normX = -((faceCX / frameW) * 2 - 1);
+      const normY = (faceCY / frameH) * 2 - 1;
+      if (window.lookAt) window.lookAt(normX, normY * 0.6);
+
       lastFaceSeen = now;
       lastNoFaceTime = 0;
       STATE.lastActivity = now;
@@ -383,8 +395,17 @@
       }
 
       if (STATE.sleeping) {
+        const greetName = recognized.length > 0 ? recognized[0] : null;
         window.logChat('sys', 'Face detected — waking up');
         window.exitSleep();
+        // Greeting after wake
+        setTimeout(() => {
+          const greetings = greetName
+            ? [`Hey ${greetName}!`, `Hi ${greetName}!`, `Oh hey, ${greetName}!`]
+            : ['Hey there!', 'Hi!', 'Oh, hello!', 'Hey!'];
+          const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+          if (window.enqueueSpeech) window.enqueueSpeech(greeting);
+        }, 400);
       }
 
       if (recognized.length > 0) {
@@ -399,6 +420,9 @@
       presenceTimer = setTimeout(checkPresenceTimeout, PRESENCE_TIMEOUT);
 
     } else {
+      // No faces — reset gaze to center
+      if (window.resetGaze) window.resetGaze();
+
       if (!lastNoFaceTime) lastNoFaceTime = now;
       if (STATE.presenceDetected && !presenceTimer) {
         presenceTimer = setTimeout(checkPresenceTimeout, PRESENCE_TIMEOUT);

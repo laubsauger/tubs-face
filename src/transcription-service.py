@@ -8,7 +8,7 @@ import pyttsx3
 app = Flask(__name__)
 
 # Configuration
-MODEL_SIZE = "small"  # 'tiny', 'base', 'small', 'medium', 'large'
+MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")  # e.g. tiny, base, small, medium, large-v3
 DEVICE = "cpu"       # 'cuda' if GPU available, else 'cpu'
 COMPUTE_TYPE = "int8" # 'float16' for GPU, 'int8' for CPU
 

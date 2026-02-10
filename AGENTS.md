@@ -18,7 +18,8 @@ Default runtime config:
 {
   "sleepTimeout": 300000,
   "model": "Tubs Bot v1",
-  "prompt": "Default personality"
+  "prompt": "Default personality",
+  "sttModel": "small"
 }
 ```
 

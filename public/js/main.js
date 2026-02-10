@@ -15,7 +15,7 @@ const STATE = {
     totalCost: 0,
     ttsQueue: [],
     wakeTime: Date.now(),
-    sleepTimeout: 300000,
+    sleepTimeout: 10000,
     lastActivity: Date.now(),
     model: 'Tubs Bot v1',
     // Face detection
@@ -93,7 +93,10 @@ function stopPing() {
 
 // ── Message Handler ──
 function handleMessage(msg) {
-    STATE.lastActivity = Date.now();
+    // Only count real interactions as activity (not pings/stats/config)
+    if (msg.type !== 'ping' && msg.type !== 'stats' && msg.type !== 'config') {
+        STATE.lastActivity = Date.now();
+    }
 
     switch (msg.type) {
         case 'speak':
@@ -278,24 +281,31 @@ function processQueue() {
 let sleepTimer = null;
 
 function resetSleepTimer() {
-    clearTimeout(sleepTimer);
+    clearInterval(sleepTimer);
+    sleepTimer = null;
     if (STATE.sleepTimeout > 0 && !STATE.sleeping) {
         sleepTimer = setInterval(() => {
             if (Date.now() - STATE.lastActivity > STATE.sleepTimeout) {
                 enterSleep();
             }
-        }, 10000);
+        }, 2000);
     }
 }
 
 function enterSleep() {
     if (STATE.sleeping) return;
+    // Don't sleep while faces are visible
+    if (STATE.facesDetected > 0) return;
     STATE.sleeping = true;
     body.classList.add('sleeping');
+    clearInterval(sleepTimer);
+    sleepTimer = null;
     speechSynthesis?.cancel();
     STATE.ttsQueue = [];
     STATE.speaking = false;
+    STATE.presenceDetected = false;
     setExpression('idle');
+    if (window.resetGaze) window.resetGaze();
     logChat('sys', '💤 Sleep mode');
 }
 
@@ -594,7 +604,10 @@ async function sendVoice(blob, isVad = false) {
 
         if (data.text) {
             // Log everything for debug
-            const prefix = data.ignored ? '[Ignored] ' : '';
+            const wakeInfo = data.wake
+                ? ` [wake:${data.wake.version || 'unknown'} ${data.wake.reason || 'n/a'} ${data.wake.matchedToken || ''}]`
+                : '';
+            const prefix = data.ignored ? `[Ignored${wakeInfo}] ` : '';
             logChat('sys', `${prefix}"${data.text}"`);
         }
 
@@ -776,6 +789,21 @@ document.addEventListener('click', () => {
     if (STATE.sleeping) exitSleep();
 });
 
+// ── Sleep Timeout Slider ──
+const sleepSlider = document.getElementById('sleep-timeout');
+const sleepSliderVal = document.getElementById('sleep-timeout-val');
+
+sleepSlider.addEventListener('input', () => {
+    const secs = parseInt(sleepSlider.value, 10);
+    STATE.sleepTimeout = secs * 1000;
+    if (secs >= 60) {
+        sleepSliderVal.textContent = `${Math.round(secs / 60)}m`;
+    } else {
+        sleepSliderVal.textContent = `${secs}s`;
+    }
+    resetSleepTimer();
+});
+
 // ── Timers ──
 
 // Uptime
@@ -818,10 +846,20 @@ function init() {
     initMicrophone();
     initVAD();
 
-    // Resize handled by CSS now
-
     // ── Idle Loop (Alive) ──
     startIdleLoop();
+
+    // Start asleep — camera will wake us when a face is detected
+    enterSleep();
+
+    // Auto-start camera for presence detection while sleeping
+    setTimeout(() => {
+        const camToggle = document.getElementById('camera-toggle');
+        if (camToggle && !camToggle.checked) {
+            camToggle.checked = true;
+            camToggle.dispatchEvent(new Event('change'));
+        }
+    }, 500);
 }
 
 // ── Alive Animations ──
@@ -885,9 +923,35 @@ function blink() {
     }
 })();
 
+// ── Eye Tracking ──
+const pupils = document.querySelectorAll('.pupil');
+
+// lookAt(x, y) — x,y in [-1, 1] range (0,0 = center)
+function lookAt(x, y) {
+    // Max pixel offset proportional to eye size (~30% of eye width)
+    const maxX = 6;
+    const maxY = 4;
+    const px = Math.max(-maxX, Math.min(maxX, x * maxX));
+    const py = Math.max(-maxY, Math.min(maxY, y * maxY));
+    pupils.forEach(p => {
+        p.style.setProperty('--look-x', `${px}px`);
+        p.style.setProperty('--look-y', `${py}px`);
+    });
+}
+
+function resetGaze() {
+    pupils.forEach(p => {
+        p.style.setProperty('--look-x', '0px');
+        p.style.setProperty('--look-y', '0px');
+    });
+}
+
 // ── Expose for face-manager.js ──
 window.STATE = STATE;
 window.exitSleep = exitSleep;
 window.logChat = logChat;
+window.lookAt = lookAt;
+window.resetGaze = resetGaze;
+window.enqueueSpeech = enqueueSpeech;
 
 init();

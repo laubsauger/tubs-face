@@ -12,15 +12,18 @@
  *   POST /sleep     — Trigger sleep mode
  *   POST /wake      — Trigger wake mode
  *   GET  /stats     — Return current session stats
- *   POST /config    — Update runtime config: { sleepTimeout, model, prompt }
+ *   GET  /config    — Get runtime config
+ *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel }
  */
 
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
+const { spawn } = require('child_process');
 
 const PORT = process.env.PORT || 3000;
+const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
 
 // Runtime state
 let clients = new Set();
@@ -37,7 +40,252 @@ let runtimeConfig = {
   sleepTimeout: 300000, // 5 minutes
   model: 'Tubs Bot v1',
   prompt: 'Default personality',
+  sttModel: DEFAULT_STT_MODEL,
 };
+
+const WAKE_PREFIXES = new Set(['hey', 'hi', 'yo', 'okay', 'ok', 'oi', 'ey', 'ay']);
+const WAKE_NOISE_PREFIXES = new Set(['a', 'at', 'ah', 'uh', 'oh', 'um', 'hm', 'hmm']);
+const WAKE_MATCHER_VERSION = '2026-02-10.3';
+const WAKE_ALIASES = new Set([
+  'tubs',
+  'tub',
+  'tubbs',
+  'top',
+  'tops',
+  'tab',
+  'tap',
+  'tup',
+  'tob',
+  'toob',
+  'dub',
+  'dubs',
+  'tobbs',
+  'etab',
+  'hotops',
+]);
+const WAKE_GLUE_PREFIXES = ['h', 'ho', 'hey', 'e', 'eh', 'a', 'at', 'yo', 'ok', 'okay'];
+
+function normalizeSttModel(model) {
+  const normalized = String(model || '').trim().toLowerCase();
+  if (!normalized) {
+    const err = new Error('sttModel must be a non-empty string');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  if (!/^[a-z0-9._-]+$/.test(normalized)) {
+    const err = new Error('sttModel contains invalid characters');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
+function normalizeWakeText(text) {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function levenshteinDistance(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const prev = new Array(b.length + 1);
+  const curr = new Array(b.length + 1);
+  for (let j = 0; j <= b.length; j++) prev[j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        curr[j - 1] + 1,
+        prev[j] + 1,
+        prev[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= b.length; j++) prev[j] = curr[j];
+  }
+
+  return prev[b.length];
+}
+
+function isWakeAlias(token) {
+  if (!token || token.length < 3 || token.length > 8) return false;
+  const candidates = new Set([token, token.replace(/(.)\1+/g, '$1')]);
+
+  for (const prefix of WAKE_GLUE_PREFIXES) {
+    if (token.startsWith(prefix) && token.length > prefix.length + 2) {
+      const stripped = token.slice(prefix.length);
+      candidates.add(stripped);
+      candidates.add(stripped.replace(/(.)\1+/g, '$1'));
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (WAKE_ALIASES.has(candidate)) return true;
+    if (candidate.length < 3 || candidate.length > 6) continue;
+
+    // Whisper often misses one phoneme; tolerate small edit distances.
+    if (levenshteinDistance(candidate, 'tubs') <= 1) return true;
+    if (levenshteinDistance(candidate, 'tub') <= 1) return true;
+    if (/^[td]/.test(candidate) && candidate.length >= 4 && levenshteinDistance(candidate, 'tubs') <= 2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function detectWakeWord(text) {
+  const normalized = normalizeWakeText(text);
+  if (!normalized) {
+    return {
+      detected: false,
+      reason: 'empty',
+      normalized,
+      tokens: [],
+      matchedToken: null,
+    };
+  }
+
+  const tokens = normalized.split(' ');
+  const wakeIndex = tokens.findIndex(isWakeAlias);
+  const prefixIndex = tokens.findIndex(token => WAKE_PREFIXES.has(token));
+
+  const hasWakeToken = wakeIndex !== -1;
+  const greetingNearWake = prefixIndex !== -1 && prefixIndex <= 1 && wakeIndex <= prefixIndex + 2;
+  const greetingWithTrailingWake = hasWakeToken && prefixIndex === 0 && wakeIndex === tokens.length - 1 && tokens.length <= 8;
+  const wakeFirst = wakeIndex === 0 && tokens.length <= 6;
+  const standaloneWake = hasWakeToken && (
+    tokens.length === 1 ||
+    (tokens.length === 2 && (
+      wakeIndex === 0 ||
+      WAKE_PREFIXES.has(tokens[0]) ||
+      WAKE_NOISE_PREFIXES.has(tokens[0])
+    ))
+  );
+
+  const detected = hasWakeToken && (greetingNearWake || greetingWithTrailingWake || wakeFirst || standaloneWake);
+  const reason = !hasWakeToken
+    ? 'no_wake_token'
+    : greetingNearWake
+      ? 'greeting_near_wake'
+      : greetingWithTrailingWake
+        ? 'greeting_with_trailing_wake'
+      : wakeFirst
+        ? 'wake_first'
+        : standaloneWake
+          ? 'standalone_wake'
+          : 'wake_token_not_addressed';
+
+  return {
+    detected,
+    reason,
+    normalized,
+    tokens,
+    matchedToken: hasWakeToken ? tokens[wakeIndex] : null,
+  };
+}
+
+let pythonProcess = null;
+const pythonPath = path.join(__dirname, '../venv/bin/python');
+
+function startTranscriptionService(modelName = runtimeConfig.sttModel) {
+  const resolvedModel = normalizeSttModel(modelName);
+  runtimeConfig.sttModel = resolvedModel;
+  console.log(`[Bridge] Spawning Python service (Whisper=${resolvedModel})...`);
+
+  const proc = spawn(
+    pythonPath,
+    ['-u', path.join(__dirname, 'transcription-service.py')],
+    {
+      env: {
+        ...process.env,
+        WHISPER_MODEL: resolvedModel,
+      },
+    }
+  );
+  pythonProcess = proc;
+
+  proc.stdout.on('data', (data) => {
+    console.log(`[Python] ${data.toString().trim()}`);
+  });
+
+  proc.stderr.on('data', (data) => {
+    console.error(`[Python Err] ${data.toString().trim()}`);
+  });
+
+  proc.on('error', (err) => {
+    console.error('[Python] Failed to spawn process:', err);
+  });
+
+  proc.on('close', (code) => {
+    if (pythonProcess === proc) {
+      pythonProcess = null;
+    }
+    console.log(`[Python] Exited with code ${code}`);
+  });
+}
+
+function stopTranscriptionService(timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    if (!pythonProcess) {
+      resolve(false);
+      return;
+    }
+
+    const proc = pythonProcess;
+    let done = false;
+    const finish = (didStop) => {
+      if (done) return;
+      done = true;
+      resolve(didStop);
+    };
+
+    proc.once('close', () => {
+      if (pythonProcess === proc) {
+        pythonProcess = null;
+      }
+      finish(true);
+    });
+
+    try {
+      proc.kill('SIGTERM');
+    } catch {
+      finish(false);
+      return;
+    }
+
+    setTimeout(() => {
+      if (done) return;
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        // no-op
+      }
+    }, timeoutMs);
+
+    setTimeout(() => finish(false), timeoutMs + 500);
+  });
+}
+
+async function restartTranscriptionService(modelName, reason = 'runtime config update') {
+  const resolvedModel = normalizeSttModel(modelName);
+  console.log(`[Bridge] Restarting transcription service (${reason}) with Whisper=${resolvedModel}...`);
+  await stopTranscriptionService();
+  if (pythonProcess) {
+    const err = new Error('Failed to stop existing transcription service process');
+    err.code = 'STT_RESTART_FAILED';
+    throw err;
+  }
+  startTranscriptionService(resolvedModel);
+}
 
 // ── Face Library helpers ──
 const faceLibPath = path.join(__dirname, '../data/face-library.json');
@@ -127,37 +375,27 @@ const server = http.createServer((req, res) => {
         const result = await transcribeAudio(audioBuffer);
         const text = result.text;
         console.log(`[Transcribed] "${text}"`);
+        let wake = null;
 
         // Wake word check
         if (wakeWord) {
-          const trigger = text.toLowerCase().replace(',', '').replace('.', '').replace('!', '').replace('?', '').replace(';', '').replace(':', '').replace('-', '').replace('_').replace(' ', '');
-          console.log(`[Trigger] "${trigger}"`);
-          if (!trigger.includes("hey tub") &&
-            !trigger.includes("hey tab") &&
-            !trigger.includes("okay dub") &&
-            !trigger.includes("okay dab") &&
-            !trigger.includes("hi tub") &&
-            !trigger.includes("yo tub") &&
-            !trigger.includes("yo tob") &&
-            !trigger.includes("okay top") &&
-            !trigger.includes("hey top") &&
-            !trigger.includes("yo top") &&
-            !trigger.includes("yo tab") &&
-            !trigger.includes("yo tub") &&
-            !trigger.includes("okay tub") &&
-            !trigger.includes("tub") &&
-            !trigger.includes("tab") &&
-            !trigger.includes("toob") &&
-            !trigger.includes("tap") &&
-            !trigger.includes("tup") &&
-            !trigger.includes("ey tab") &&
-            !trigger.includes("ey tub") &&
-            !trigger.includes("ey toob")) {
+          wake = detectWakeWord(text);
+          console.log(
+            `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} reason=${wake.reason} normalized="${wake.normalized}" matched="${wake.matchedToken || ''}"`
+          );
+          if (!wake.detected) {
             console.log('[Voice] Wake word not detected, ignoring.');
             broadcast({ type: 'expression', expression: 'idle' });
-            // Maybe send a "ignored" signal or just nothing
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true, ignored: true, text: text }));
+            res.end(JSON.stringify({
+              ok: true,
+              ignored: true,
+              text: text,
+              wake: {
+                ...wake,
+                version: WAKE_MATCHER_VERSION,
+              },
+            }));
             return;
           }
         }
@@ -188,7 +426,16 @@ const server = http.createServer((req, res) => {
         }, 500);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, text: text }));
+        res.end(JSON.stringify({
+          ok: true,
+          text: text,
+          wake: wakeWord && wake
+            ? {
+              ...wake,
+              version: WAKE_MATCHER_VERSION,
+            }
+            : undefined,
+        }));
 
       } catch (err) {
         console.error('[Voice] Transcription error:', err);
@@ -298,18 +545,46 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/config') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(runtimeConfig));
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/config') {
     let body = '';
     req.on('data', chunk => body += chunk);
-    req.on('end', () => {
+    req.on('end', async () => {
       try {
-        const config = JSON.parse(body);
-        Object.assign(runtimeConfig, config);
+        const config = JSON.parse(body || '{}');
+        if (!config || typeof config !== 'object' || Array.isArray(config)) {
+          const err = new Error('Config payload must be a JSON object');
+          err.code = 'BAD_CONFIG';
+          throw err;
+        }
+
+        if (Object.hasOwn(config, 'sttModel')) {
+          config.sttModel = normalizeSttModel(config.sttModel);
+        }
+
+        const nextConfig = { ...runtimeConfig, ...config };
+        const shouldRestartStt = nextConfig.sttModel !== runtimeConfig.sttModel;
+
+        if (shouldRestartStt) {
+          await restartTranscriptionService(nextConfig.sttModel);
+        }
+
+        Object.assign(runtimeConfig, nextConfig);
         broadcast({ type: 'config', ...runtimeConfig });
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, config: runtimeConfig }));
+        res.end(JSON.stringify({
+          ok: true,
+          config: runtimeConfig,
+          sttRestarted: shouldRestartStt,
+        }));
       } catch (e) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
+        const status = e.code === 'BAD_CONFIG' || e instanceof SyntaxError ? 400 : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
       }
     });
@@ -455,33 +730,6 @@ function generateDemoResponse(input) {
   return responses[Math.floor(Math.random() * responses.length)];
 }
 
-// ── Python Transcription Service ──
-const { spawn } = require('child_process');
-
-console.log('[Bridge] Spawning Python service...');
-// Use venv python for self-contained environment
-const pythonPath = path.join(__dirname, '../venv/bin/python');
-const pythonProcess = spawn(pythonPath, [
-  '-u', // Unbuffered output
-  path.join(__dirname, 'transcription-service.py')
-]);
-
-pythonProcess.stdout.on('data', (data) => {
-  console.log(`[Python] ${data.toString().trim()}`);
-});
-
-pythonProcess.stderr.on('data', (data) => {
-  console.error(`[Python Err] ${data.toString().trim()}`);
-});
-
-pythonProcess.on('error', (err) => {
-  console.error('[Python] Failed to spawn process:', err);
-});
-
-pythonProcess.on('close', (code) => {
-  console.log(`[Python] Exited with code ${code}`);
-});
-
 // Proxy function
 function transcribeAudio(audioBuffer) {
   return new Promise((resolve, reject) => {
@@ -534,6 +782,13 @@ function transcribeAudio(audioBuffer) {
   });
 }
 
+startTranscriptionService(runtimeConfig.sttModel);
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    stopTranscriptionService(2000).finally(() => process.exit(0));
+  });
+}
 
 server.listen(PORT, () => {
   console.log(`\n  🤖 TUBS BOT Bridge Server`);
