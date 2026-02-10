@@ -20,4 +20,5 @@ export const STATE = {
     facesDetected: 0,
     personsPresent: [],
     presenceDetected: false,
+    lastDonationSignalAt: 0,
 };

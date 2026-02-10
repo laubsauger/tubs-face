@@ -6,6 +6,14 @@ import { setExpression } from './expressions.js';
 let myvad = null;
 let vadActive = false;
 let isTranscribing = false;
+let interruptionTimer = null;
+let interruptionRecorder = null;
+let interruptionChunks = [];
+let interrupted = false;
+// Chance to interrupt (0.0 - 1.0). 0.2 = 20% chance to set a short timer.
+const INTERRUPTION_CHANCE = 0.3;
+const SHORT_LIMIT_MS = 5000;  // Interrupt after 5s if active
+const LONG_LIMIT_MS = 15000;  // Always interrupt after 15s (safety)
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -65,17 +73,30 @@ export async function initVAD() {
                 console.log('Speech start detected');
                 $('#stat-listen-state').textContent = 'Listening...';
                 setExpression('listening');
+                startInterruptionTimer();
             },
             onSpeechEnd: (audio) => {
+                if (interrupted) {
+                    console.log('Ignoring VAD speech end (already interrupted)');
+                    interrupted = false;
+                    return;
+                }
+                clearInterruptionTimer();
                 if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
                 console.log('Speech end detected');
                 processVadAudio(audio);
             },
             onVADMisfire: () => {
+                clearInterruptionTimer();
                 console.log('VAD Misfire');
                 $('#stat-listen-state').textContent = 'Idle';
                 setExpression('idle');
-            }
+            },
+            positiveSpeechThreshold: 0.6,
+            minSpeechFrames: 4,
+            redemptionFrames: 15,
+            preSpeechPadFrames: 1,
+            frameSamples: 1536
         });
 
         myvad.start();
@@ -140,6 +161,70 @@ function audioBufferToWav(float32Array) {
 function writeString(view, offset, string) {
     for (let i = 0; i < string.length; i++) {
         view.setUint8(offset + i, string.charCodeAt(i));
+    }
+}
+
+function startInterruptionTimer() {
+    clearInterruptionTimer();
+    interrupted = false;
+
+    // Decide if we want to be "rude" (interrupt early) or just safe (interrupt very long speech)
+    const isRude = Math.random() < INTERRUPTION_CHANCE;
+    const limit = isRude ? (3000 + Math.random() * 4000) : LONG_LIMIT_MS; // 3-7s or 15s
+
+    console.log(`[VAD] Starting interruption timer: ${Math.round(limit)}ms (Rude: ${isRude})`);
+
+    // Start parallel recording
+    if (micStream) {
+        try {
+            interruptionChunks = [];
+            interruptionRecorder = new MediaRecorder(micStream, { mimeType: 'audio/webm' });
+            interruptionRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) interruptionChunks.push(e.data);
+            };
+            interruptionRecorder.onstop = () => {
+                if (interrupted) {
+                    const blob = new Blob(interruptionChunks, { type: 'audio/webm' });
+                    console.log('[VAD] Interruption triggered! Sending audio...');
+                    sendVoice(blob, true);
+
+                    // Reset UI to indicate we stopped listening
+                    $('#stat-listen-state').textContent = 'Interrupted!';
+                    // Maybe trigger a specific expression?
+                    setExpression('thinking');
+                }
+            };
+            interruptionRecorder.start();
+        } catch (e) {
+            console.error('Failed to start interruption recorder:', e);
+        }
+    }
+
+    interruptionTimer = setTimeout(() => {
+        if (!vadActive) return;
+        console.log('[VAD] Interruption timer fired!');
+        interrupted = true;
+
+        // Stop the recorder, which triggers onstop -> sendVoice
+        if (interruptionRecorder && interruptionRecorder.state === 'recording') {
+            interruptionRecorder.stop();
+        }
+
+    }, limit);
+}
+
+function clearInterruptionTimer() {
+    if (interruptionTimer) {
+        clearTimeout(interruptionTimer);
+        interruptionTimer = null;
+    }
+    if (interruptionRecorder) {
+        if (interruptionRecorder.state === 'recording') {
+            // Stop but don't trigger the "interrupted" logic in onstop
+            // effectively discarding or just stopping cleanly
+            interruptionRecorder.stop();
+        }
+        interruptionRecorder = null;
     }
 }
 

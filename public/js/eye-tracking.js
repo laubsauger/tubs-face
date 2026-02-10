@@ -1,19 +1,19 @@
-import { pupils } from './dom.js';
+import { eyes } from './dom.js';
 
 export function lookAt(x, y) {
-    const maxX = 6;
-    const maxY = 4;
+    const maxX = 12;
+    const maxY = 8;
     const px = Math.max(-maxX, Math.min(maxX, x * maxX));
     const py = Math.max(-maxY, Math.min(maxY, y * maxY));
-    pupils.forEach(p => {
-        p.style.setProperty('--look-x', `${px}px`);
-        p.style.setProperty('--look-y', `${py}px`);
+    eyes.forEach(e => {
+        e.style.setProperty('--look-x', `${px}px`);
+        e.style.setProperty('--look-y', `${py}px`);
     });
 }
 
 export function resetGaze() {
-    pupils.forEach(p => {
-        p.style.setProperty('--look-x', '0px');
-        p.style.setProperty('--look-y', '0px');
+    eyes.forEach(e => {
+        e.style.setProperty('--look-x', '0px');
+        e.style.setProperty('--look-y', '0px');
     });
 }

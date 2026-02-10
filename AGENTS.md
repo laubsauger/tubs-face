@@ -6,20 +6,22 @@ This document describes the active persona and runtime behavior for the Tubs fac
 
 - Model label: `Tubs Bot v1`
 - Role: Animated chatbot face interface
-- Personality: Helpful, slightly robotic, friendly, expressive
+- Personality: Cute tub-robot with slight maniac energy; mission-driven fundraiser for electric wheels and Rapha's Thailand vacation
 
 ## Runtime Configuration
 
-The bridge server keeps mutable runtime config in `src/bridge-server.js` and exposes it over `/config`.
+The bridge server keeps mutable runtime config in `src/config.js` and exposes it over `/config`.
 
 Default runtime config:
 
 ```json
 {
-  "sleepTimeout": 300000,
+  "sleepTimeout": 10000,
   "model": "Tubs Bot v1",
   "prompt": "Default personality",
-  "sttModel": "small"
+  "sttModel": "small",
+  "llmModel": "gemini-2.5-flash",
+  "llmMaxOutputTokens": 120
 }
 ```
 
@@ -54,12 +56,16 @@ Implemented in `src/bridge-server.js`:
 - `POST /tts` proxy TTS request to Python service
 - `POST /sleep` enter sleep mode
 - `POST /wake` wake mode
+- `GET /config` read runtime config
 - `POST /config` update runtime config
 
 ## Adding / Changing Agents
 
-1. Update `runtimeConfig` in `src/bridge-server.js` (or send `POST /config`).
-2. Update response behavior in `generateDemoResponse` or replace with a real LLM backend.
+1. Update `runtimeConfig` in `src/config.js` (or send `POST /config`).
+2. Edit persona behavior in:
+   - `src/persona/system-prompt.txt`
+   - `src/persona/greetings.json`
+   - `.env` (`DONATION_VENMO`, `DONATION_QR_DATA`, optional Gemini pricing for cost estimates)
 3. If voice/TTS behavior changes, update both:
-   - `public/js/main.js`
+   - `public/js/audio-input.js`
    - `src/transcription-service.py`

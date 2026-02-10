@@ -1,0 +1,24 @@
+{
+  "maxWords": 5,
+  "triggers": [
+    "hi",
+    "hello",
+    "hey",
+    "yo",
+    "good morning",
+    "good afternoon",
+    "good evening",
+    "what's up",
+    "sup"
+  ],
+  "responses": [
+    "Hey.",
+    "Yo, hi.",
+    "Yo.",
+    "Hey, stranger.",
+    "Hi. Good timing.",
+    "Hey. What's up?",
+    "Hey. Cute face, expensive wheel mission.",
+    "Hi. Small talk is fine, Venmo is better."
+  ]
+}

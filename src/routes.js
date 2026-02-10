@@ -1,12 +1,18 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { runtimeConfig, sessionStats, normalizeSttModel } = require('./config');
+const {
+  runtimeConfig,
+  sessionStats,
+  normalizeSttModel,
+  normalizeLlmModel,
+  normalizeLlmMaxOutputTokens,
+} = require('./config');
 const { broadcast, getClients } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
 const { transcribeAudio, restartTranscriptionService } = require('./python-service');
 const { readFaceLib, writeFaceLib } = require('./face-library');
-const { generateDemoResponse } = require('./demo-response');
+const { generateAssistantReply } = require('./assistant-service');
 
 const staticPath = path.join(__dirname, '../public');
 
@@ -122,23 +128,35 @@ function handleRequest(req, res) {
         broadcast({ type: 'incoming', text: text });
         sessionStats.messagesIn++;
 
-        const responseText = generateDemoResponse(text);
+        const reply = await generateAssistantReply(text);
+        broadcast({
+          type: 'speak',
+          text: reply.text,
+          donation: reply.donation,
+          ts: Date.now(),
+        });
 
-        setTimeout(() => {
-          broadcast({ type: 'speak', text: responseText, ts: Date.now() });
+        sessionStats.messagesOut++;
+        sessionStats.lastActivity = Date.now();
+        sessionStats.tokensIn += reply.tokens.in || 0;
+        sessionStats.tokensOut += reply.tokens.out || 0;
+        sessionStats.costUsd += reply.costUsd || 0;
+        if (reply.model) {
+          sessionStats.model = reply.model;
+        }
 
-          sessionStats.messagesOut++;
-          const tokensIn = text.split(' ').length;
-          const tokensOut = responseText.split(' ').length;
-
-          broadcast({
-            type: 'stats',
-            tokens: { in: tokensIn, out: tokensOut },
-            latency: 100,
-            model: runtimeConfig.model,
-            cost: 0.00,
-          });
-        }, 500);
+        broadcast({
+          type: 'stats',
+          tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
+          totals: {
+            in: sessionStats.tokensIn,
+            out: sessionStats.tokensOut,
+            cost: sessionStats.costUsd,
+          },
+          latency: reply.latencyMs,
+          model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
+          cost: reply.costUsd || 0,
+        });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
@@ -280,6 +298,12 @@ function handleRequest(req, res) {
 
         if (Object.hasOwn(config, 'sttModel')) {
           config.sttModel = normalizeSttModel(config.sttModel);
+        }
+        if (Object.hasOwn(config, 'llmModel')) {
+          config.llmModel = normalizeLlmModel(config.llmModel);
+        }
+        if (Object.hasOwn(config, 'llmMaxOutputTokens')) {
+          config.llmMaxOutputTokens = normalizeLlmMaxOutputTokens(config.llmMaxOutputTokens);
         }
 
         const nextConfig = { ...runtimeConfig, ...config };

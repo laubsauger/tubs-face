@@ -12,6 +12,7 @@
 .hidden-ui #waveform-container,
 .hidden-ui #ptt-indicator,
 .hidden-ui .speech-bubble,
+.hidden-ui #donation-card,
 .hidden-ui #camera-pip {
   opacity: 0 !important;
   pointer-events: none;
@@ -50,7 +51,7 @@
 }
 
 body.sleeping #center {
-  filter: brightness(0.12);
+  filter: brightness(0.3);
 }
 
 body.sleeping .panel {

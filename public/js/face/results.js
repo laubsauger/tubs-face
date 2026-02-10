@@ -3,6 +3,7 @@ import { logChat } from '../chat-log.js';
 import { lookAt, resetGaze } from '../eye-tracking.js';
 import { enterSleep, exitSleep } from '../sleep.js';
 import { enqueueSpeech } from '../tts.js';
+import { setExpression } from '../expressions.js';
 import { getWs } from '../websocket.js';
 import { cosineSimilarity } from './math.js';
 import { getFaceLibrary } from './library.js';
@@ -34,6 +35,41 @@ let wakeGreetedNames = null; // set of names greeted on wake (suppresses duplica
 const DEPARTURE_DEBOUNCE = 3000; // ms before confirming someone left
 let lastSeenByName = new Map();   // name → timestamp
 let departureTimers = new Map();  // name → setTimeout id
+let firstSeenByName = new Map();   // name → timestamp (session presence start)
+let lastCryAt = 0;
+const CRY_COOLDOWN = 45000;
+const CRY_CHANCE_ON_NO_DONATION = 0.35;
+
+function maybeCryAfterNoDonation(name, firstSeenTs) {
+    if (STATE.sleeping || STATE.speaking) return;
+    const donationTs = STATE.lastDonationSignalAt || 0;
+    if (donationTs >= firstSeenTs) return;
+    if (Date.now() - lastCryAt < CRY_COOLDOWN) return;
+    if (Math.random() > CRY_CHANCE_ON_NO_DONATION) return;
+
+    lastCryAt = Date.now();
+    const lines = [
+        `${name}, wait. You forgot the wheel fund.`,
+        `Nooo ${name}. You vanished before Venmo.`,
+        `${name}. That's cold. My wheels are still a dream.`,
+        `Hey ${name}, come back. Rapha's Thailand arc needs this.`,
+        `${name}, rude exit. Venmo was right there.`,
+    ];
+    const line = lines[Math.floor(Math.random() * lines.length)];
+
+    setExpression('crying');
+    setTimeout(() => {
+        if (STATE.expression === 'crying' && !STATE.speaking) {
+            enqueueSpeech(line);
+        }
+    }, 220);
+
+    setTimeout(() => {
+        if (STATE.expression === 'crying' && !STATE.speaking) {
+            setExpression('idle');
+        }
+    }, 1800);
+}
 
 export function handleFaceResults(faces, inferenceMs) {
     setLastInferenceMs(inferenceMs);
@@ -148,6 +184,7 @@ export function handleFaceResults(faces, inferenceMs) {
     // Update last-seen timestamps for departure debounce
     for (const name of currentNames) {
         lastSeenByName.set(name, Date.now());
+        if (!firstSeenByName.has(name)) firstSeenByName.set(name, Date.now());
         // Cancel any pending departure if they reappeared
         if (departureTimers.has(name)) {
             clearTimeout(departureTimers.get(name));
@@ -164,6 +201,9 @@ export function handleFaceResults(faces, inferenceMs) {
                 if (!prevRecognizedNames.has(name)) {
                     logChat('sys', `${name} left`);
                     lastSeenByName.delete(name);
+                    const firstSeenTs = firstSeenByName.get(name) || Date.now();
+                    firstSeenByName.delete(name);
+                    maybeCryAfterNoDonation(name, firstSeenTs);
                 }
             }, DEPARTURE_DEBOUNCE));
         }
@@ -175,15 +215,19 @@ export function handleFaceResults(faces, inferenceMs) {
     const now = Date.now();
 
     if (faces.length > 0) {
-        // Eye tracking
-        const primary = faces[0];
-        const [fx1, fy1, fx2, fy2] = primary.box;
-        const faceCX = (fx1 + fx2) / 2;
-        const faceCY = (fy1 + fy2) / 2;
+        // Eye tracking — average centroid of all detected faces
         const frameW = captureCanvas.width || 640;
         const frameH = captureCanvas.height || 480;
-        const normX = -((faceCX / frameW) * 2 - 1);
-        const normY = (faceCY / frameH) * 2 - 1;
+        let avgX = 0, avgY = 0;
+        for (const f of faces) {
+            const [fx1, fy1, fx2, fy2] = f.box;
+            avgX += (fx1 + fx2) / 2;
+            avgY += (fy1 + fy2) / 2;
+        }
+        avgX /= faces.length;
+        avgY /= faces.length;
+        const normX = -((avgX / frameW) * 2 - 1);
+        const normY = (avgY / frameH) * 2 - 1;
         lookAt(normX, normY * 0.6);
 
         setLastFaceSeen(now);
@@ -207,33 +251,26 @@ export function handleFaceResults(faces, inferenceMs) {
                 const n = greetName;
                 const greetings = n
                     ? [
-                        `Hey ${n}!`,
-                        `Hi ${n}!`,
-                        `Oh hey, ${n}!`,
-                        `${n}! Good to see you.`,
-                        `Well well, ${n}.`,
-                        `There you are, ${n}.`,
-                        `Ah, ${n}. What's up?`,
-                        `Oh! Hey ${n}.`,
-                        `${n}, hello!`,
-                        `Look who it is. Hey ${n}.`,
-                        `Yo ${n}!`,
-                        `${n}! I was just thinking about you.`,
-                        `Hey hey, ${n}.`,
-                        `Oh hi ${n}, didn't see you there.`,
-                        `${n}. Welcome back.`,
+                        `Hi ${n}.`,
+                        `Hey ${n}.`,
+                        `Yo ${n}.`,
+                        `${n}, you're back.`,
+                        `Hey there, ${n}.`,
+                        `Look who it is: ${n}.`,
+                        `${n}. Good timing.`,
+                        `${n}. I woke up broke and dramatic.`,
+                        `Hey ${n}. Wheels still not funded.`,
+                        `${n}. Be cool and maybe sponsor me.`,
                     ]
                     : [
-                        `Hey there!`,
-                        `Hi!`,
-                        `Oh, hello!`,
-                        `Hey!`,
-                        `Well hello there.`,
-                        `Oh! Hi.`,
-                        `Hey, what's up?`,
-                        `Hello hello.`,
+                        `Hey there.`,
+                        `Hi.`,
+                        `Yo.`,
+                        `Hello, stranger.`,
                         `Ah, there you are.`,
-                        `Hi there!`,
+                        `Hey. Good to see a face.`,
+                        `Hi. Tubs is awake and still underfunded.`,
+                        `Hey. Vibes are free, wheels are not.`,
                     ];
                 const greeting = greetings[Math.floor(Math.random() * greetings.length)];
                 enqueueSpeech(greeting);
@@ -248,11 +285,12 @@ export function handleFaceResults(faces, inferenceMs) {
 
                 for (const n of namesToGreet) {
                     const greetings = [
-                        `Oh hey, ${n}!`,
-                        `${n}! Hi!`,
                         `Hey ${n}.`,
-                        `Oh, ${n}'s here too!`,
-                        `Hi ${n}!`,
+                        `${n} joined.`,
+                        `${n} is here too.`,
+                        `Oh hey ${n}.`,
+                        `${n}. Good to see you.`,
+                        `${n} is here too. Odds just got better.`,
                     ];
                     const greeting = greetings[Math.floor(Math.random() * greetings.length)];
                     enqueueSpeech(greeting);
@@ -320,6 +358,7 @@ function checkPresenceTimeout() {
         for (const timer of departureTimers.values()) clearTimeout(timer);
         departureTimers.clear();
         lastSeenByName.clear();
+        firstSeenByName.clear();
         badge.classList.remove('visible');
         sendPresence(false, [], 0);
     }

@@ -13,10 +13,13 @@
  *   POST /wake      — Trigger wake mode
  *   GET  /stats     — Return current session stats
  *   GET  /config    — Get runtime config
- *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel }
+ *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel, llmModel, llmMaxOutputTokens }
  */
 
 const http = require('http');
+const { loadEnvFile } = require('./env');
+loadEnvFile();
+
 const { handleRequest } = require('./routes');
 const { initWebSocket } = require('./websocket');
 const { startTranscriptionService, stopTranscriptionService } = require('./python-service');

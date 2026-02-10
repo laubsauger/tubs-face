@@ -3,6 +3,7 @@ import { $, body } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression, triggerBlink } from './expressions.js';
 import { resetGaze } from './eye-tracking.js';
+import { hideDonationQr } from './donation-ui.js';
 
 let sleepTimer = null;
 
@@ -36,6 +37,7 @@ export function enterSleep() {
     STATE.ttsQueue = [];
     STATE.speaking = false;
     STATE.presenceDetected = false;
+    hideDonationQr();
     setExpression('idle');
     resetGaze();
     logChat('sys', '💤 Sleep mode');

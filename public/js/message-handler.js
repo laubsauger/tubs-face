@@ -3,7 +3,18 @@ import { $, loadingBar } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression } from './expressions.js';
 import { enqueueSpeech } from './tts.js';
+import { hideDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
+
+const DONATION_CONFIRM_RE = /\b(?:i(?:'ve| have| just)?\s*(?:sent|donated|paid|venmoed)|sent you|i got you|i did donate|donation sent|venmo sent|paid you)\b/i;
+
+function trackDonationSignal(text) {
+    if (!text) return;
+    if (DONATION_CONFIRM_RE.test(text)) {
+        STATE.lastDonationSignalAt = Date.now();
+        logChat('sys', 'Donation signal detected.');
+    }
+}
 
 export function handleMessage(msg) {
     if (msg.type !== 'ping' && msg.type !== 'stats' && msg.type !== 'config') {
@@ -12,11 +23,12 @@ export function handleMessage(msg) {
 
     switch (msg.type) {
         case 'speak':
-            enqueueSpeech(msg.text);
+            enqueueSpeech(msg.text, msg.donation);
             logChat('in', msg.text);
             STATE.totalMessages++;
             break;
         case 'incoming':
+            trackDonationSignal(msg.text);
             logChat('out', msg.text);
             setExpression('listening');
             break;
@@ -36,16 +48,22 @@ export function handleMessage(msg) {
             setExpression('idle');
             break;
         case 'sleep':
+            hideDonationQr();
             enterSleep();
             break;
         case 'wake':
             exitSleep();
             break;
         case 'stats':
-            if (msg.latency) $('#stat-resp-time').textContent = `${msg.latency} ms`;
+            if (msg.latency != null) $('#stat-resp-time').textContent = `${msg.latency} ms`;
             if (msg.tokens) {
-                STATE.tokensIn += msg.tokens.in || 0;
-                STATE.tokensOut += msg.tokens.out || 0;
+                if (msg.totals) {
+                    STATE.tokensIn = msg.totals.in ?? STATE.tokensIn;
+                    STATE.tokensOut = msg.totals.out ?? STATE.tokensOut;
+                } else {
+                    STATE.tokensIn += msg.tokens.in || 0;
+                    STATE.tokensOut += msg.tokens.out || 0;
+                }
                 $('#stat-tok-in').textContent = STATE.tokensIn;
                 $('#stat-tok-out').textContent = STATE.tokensOut;
             }
@@ -54,8 +72,13 @@ export function handleMessage(msg) {
                 $('#stat-model').textContent = msg.model;
             }
             if (msg.cost != null) {
-                STATE.totalCost += msg.cost;
-                $('#stat-cost').textContent = `$${STATE.totalCost.toFixed(4)}`;
+                if (msg.totals && msg.totals.cost != null) {
+                    STATE.totalCost = msg.totals.cost;
+                } else {
+                    STATE.totalCost += msg.cost;
+                }
+                const precision = STATE.totalCost >= 1 ? 2 : 4;
+                $('#stat-cost').textContent = `$${STATE.totalCost.toFixed(precision)}`;
             }
             break;
         case 'config':

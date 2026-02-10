@@ -17,6 +17,8 @@
   --pupil: #0d0d15;
   --mouth: #e8ebf5;
   --face-shadow: rgba(0, 229, 160, 0.05);
+  --face-glow: #ffffff;
+  --face-glow-rgb: 255, 255, 255;
   --msg-in: #00e5a0;
   --msg-out: #42a5f5;
   --msg-sys: #ffa726;

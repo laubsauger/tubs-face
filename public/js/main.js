@@ -54,6 +54,13 @@ function init() {
             camToggle.checked = true;
             camToggle.dispatchEvent(new Event('change'));
         }
+
+        // Auto-start "Always On" microphone
+        const vadToggle = document.getElementById('vad-toggle');
+        if (vadToggle && !vadToggle.checked) {
+            vadToggle.checked = true;
+            vadToggle.dispatchEvent(new Event('change'));
+        }
     }, 500);
 }
 

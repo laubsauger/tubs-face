@@ -1,8 +1,24 @@
 import { STATE } from './state.js';
 import { $, loadingBar, speechBubble } from './dom.js';
 import { setExpression } from './expressions.js';
+import { showDonationQr } from './donation-ui.js';
 
-export function enqueueSpeech(text) {
+const DONATION_HINT_RE = /\b(venmo|donat(?:e|ion|ions|ing)|fundraiser|wheel fund|chip in|contribute|sponsor|qr code)\b/i;
+
+function inferDonationFromText(text) {
+    if (!DONATION_HINT_RE.test(String(text || ''))) return null;
+    return {
+        show: true,
+        reason: 'text_fallback',
+        venmoHandle: 'tubs-wheel-fund',
+    };
+}
+
+export function enqueueSpeech(text, donation = null) {
+    const donationPayload = donation?.show ? donation : inferDonationFromText(text);
+    if (donationPayload?.show) {
+        showDonationQr(donationPayload);
+    }
     STATE.ttsQueue.push(text);
     $('#stat-queue').textContent = STATE.ttsQueue.length;
     if (!STATE.speaking) processQueue();

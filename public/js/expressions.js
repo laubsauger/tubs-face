@@ -1,38 +1,35 @@
 import { STATE } from './state.js';
-import { $, mouth, eyes, loadingBar } from './dom.js';
+import { $, face, eyes, loadingBar } from './dom.js';
+
+let idleVariant = 'soft';
+
+function applyFaceClass(expr) {
+    if (expr === 'idle') {
+        face.className = idleVariant === 'flat' ? 'idle-flat' : '';
+        return;
+    }
+    face.className = expr;
+}
+
+function setIdleVariant(nextVariant) {
+    idleVariant = nextVariant === 'flat' ? 'flat' : 'soft';
+    if (STATE.expression === 'idle') {
+        applyFaceClass('idle');
+    }
+}
 
 export function setExpression(expr) {
     STATE.expression = expr;
     $('#stat-expression').textContent = expr.toUpperCase();
 
-    mouth.className = '';
-    loadingBar.classList.remove('active');
-
-    switch (expr) {
-        case 'idle':
-            break;
-        case 'listening':
-            mouth.className = '';
-            break;
-        case 'speaking':
-            mouth.className = 'speaking';
-            break;
-        case 'thinking':
-            mouth.className = 'thinking';
-            loadingBar.classList.add('active');
-            break;
-        case 'smile':
-            mouth.className = 'smile';
-            break;
-        case 'happy':
-            mouth.className = 'smile';
-            break;
-    }
+    // Remove all expression classes, set new one
+    applyFaceClass(expr);
+    loadingBar.classList.toggle('active', expr === 'thinking');
 }
 
 export function triggerBlink() {
     eyes.forEach(e => e.classList.add('blink'));
-    setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 200);
+    setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 150);
 }
 
 export function blink() {
@@ -43,6 +40,8 @@ export function blink() {
 }
 
 export function startIdleLoop() {
+    setIdleVariant('soft');
+
     setInterval(() => {
         if (STATE.sleeping) return;
         blink();
@@ -52,11 +51,15 @@ export function startIdleLoop() {
         if (STATE.sleeping || STATE.speaking || STATE.expression !== 'idle') return;
 
         const r = Math.random();
-        if (r < 0.2) {
+        if (r < 0.45) {
             setExpression('smile');
             setTimeout(() => {
                 if (STATE.expression === 'smile') setExpression('idle');
-            }, 2000);
+            }, 1300 + Math.random() * 900);
+            return;
         }
+
+        // Keep idle approachable on average, but preserve occasional straight-neutral look.
+        setIdleVariant(r < 0.85 ? 'soft' : 'flat');
     }, 5000);
 }

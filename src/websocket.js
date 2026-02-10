@@ -1,6 +1,6 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
-const { generateDemoResponse } = require('./demo-response');
+const { generateAssistantReply } = require('./assistant-service');
 
 let clients = new Set();
 
@@ -27,27 +27,44 @@ function initWebSocket(server) {
           sessionStats.messagesIn++;
           sessionStats.lastActivity = Date.now();
 
-          const startTime = Date.now();
-          const responseText = generateDemoResponse(msg.text);
-          const latency = Date.now() - startTime;
-
           broadcast({ type: 'thinking' });
 
-          setTimeout(() => {
-            broadcast({
-              type: 'speak',
-              text: responseText,
-              ts: Date.now(),
-            });
-            broadcast({
-              type: 'stats',
-              tokens: { in: msg.text.split(' ').length, out: responseText.split(' ').length },
-              latency: latency + 500,
-              model: runtimeConfig.model,
-              cost: 0.00,
-            });
-            sessionStats.messagesOut++;
-          }, 500);
+          void (async () => {
+            try {
+              const reply = await generateAssistantReply(msg.text);
+
+              sessionStats.tokensIn += reply.tokens.in || 0;
+              sessionStats.tokensOut += reply.tokens.out || 0;
+              sessionStats.costUsd += reply.costUsd || 0;
+              sessionStats.messagesOut++;
+              sessionStats.lastActivity = Date.now();
+              if (reply.model) {
+                sessionStats.model = reply.model;
+              }
+
+              broadcast({
+                type: 'speak',
+                text: reply.text,
+                donation: reply.donation,
+                ts: Date.now(),
+              });
+              broadcast({
+                type: 'stats',
+                tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
+                totals: {
+                  in: sessionStats.tokensIn,
+                  out: sessionStats.tokensOut,
+                  cost: sessionStats.costUsd,
+                },
+                latency: reply.latencyMs,
+                model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
+                cost: reply.costUsd || 0,
+              });
+            } catch (err) {
+              console.error('[WS] Assistant generation failed:', err);
+              broadcast({ type: 'error', text: 'Response generation failed' });
+            }
+          })();
         }
       } catch (e) {
         console.error('[WS] Bad message:', e.message);

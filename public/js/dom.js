@@ -8,4 +8,3 @@ export const speechBubble = $('#speech-bubble');
 export const pttIndicator = $('#ptt-indicator');
 export const waveformContainer = $('#waveform-container');
 export const chatLog = $('#chat-log');
-export const pupils = document.querySelectorAll('.pupil');

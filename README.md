@@ -6,6 +6,7 @@ Animated chatbot face with voice interaction, camera-based face detection/recogn
 
 ```bash
 npm install
+cp .env.example .env
 npm start          # Starts bridge server (port 3000) + Python STT/TTS (port 3001)
 ```
 
@@ -14,6 +15,8 @@ Open `http://localhost:3000` in your browser.
 ## Default Behavior
 
 The bot starts **asleep** and the camera auto-enables. When a face is detected, the bot wakes up, greets you with TTS, and its eyes begin tracking your face. If no one is visible for a while, it goes back to sleep.
+
+When Tubs asks for donations, a Venmo QR card appears in the UI.
 
 ## Keyboard Shortcuts
 
@@ -37,6 +40,8 @@ All four corner panels are **collapsible** — click the panel header to toggle.
 - **Input Status** (top-right) — Mic, volume, STT confidence, always-on VAD toggle, camera toggle, detection delay slider
 - **Chat Log** (bottom-left) — All messages. Width is **resizable** by dragging the right edge.
 - **Bot Stats** (bottom-right) — Response time, token counts, expression, session cost
+
+Session cost is estimated from token counts using optional `.env` pricing values (`GEMINI_INPUT_COST_PER_MTOKENS`, `GEMINI_OUTPUT_COST_PER_MTOKENS`).
 
 ## Camera & Face Detection
 
@@ -91,6 +96,11 @@ Node.js Bridge Server (src/bridge-server.js)
 Python Service (src/transcription-service.py)
   ├── STT via faster-whisper
   └── TTS via macOS `say` command
+
+LLM Assistant (Gemini API)
+  ├── src/assistant-service.js — conversation flow + short context memory
+  ├── src/gemini-client.js     — generateContent API call
+  └── src/persona/*            — editable persona prompt + greeting presets
 ```
 
 ## API Endpoints
@@ -107,7 +117,7 @@ Python Service (src/transcription-service.py)
 | `/sleep` | POST | Put bot to sleep |
 | `/wake` | POST | Wake bot up |
 | `/config` | GET | Get current config |
-| `/config` | POST | Update runtime config (supports `sttModel`, restarts STT service if changed) |
+| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`) |
 
 ### Whisper Model Selection
 
@@ -120,6 +130,32 @@ curl -X POST http://localhost:3000/config \
 ```
 
 The bridge will restart the Python transcription service with `WHISPER_MODEL=tiny`.
+
+### LLM Model Selection
+
+Configure Gemini in `.env`:
+
+```bash
+GEMINI_API_KEY=your_key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MAX_OUTPUT_TOKENS=120
+```
+
+You can also change model/token cap at runtime:
+
+```bash
+curl -X POST http://localhost:3000/config \
+  -H "Content-Type: application/json" \
+  -d '{"llmModel":"gemini-2.5-flash-lite","llmMaxOutputTokens":96}'
+```
+
+### Persona Editing
+
+- `src/persona/system-prompt.txt` — assistant soul/personality.
+- `src/persona/greetings.json` — hardcoded fast greetings and trigger words.
+- `.env` donation settings:
+  - `DONATION_VENMO`
+  - `DONATION_QR_DATA`
 
 ## Models
 
