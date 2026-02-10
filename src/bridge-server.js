@@ -39,13 +39,32 @@ let runtimeConfig = {
   prompt: 'Default personality',
 };
 
+// ── Face Library helpers ──
+const faceLibPath = path.join(__dirname, '../data/face-library.json');
+
+function readFaceLib() {
+  try {
+    if (fs.existsSync(faceLibPath)) {
+      return JSON.parse(fs.readFileSync(faceLibPath, 'utf-8'));
+    }
+  } catch (e) {
+    console.error('[Faces] Error reading face library:', e.message);
+  }
+  return { faces: [] };
+}
+
+function writeFaceLib(data) {
+  fs.mkdirSync(path.dirname(faceLibPath), { recursive: true });
+  fs.writeFileSync(faceLibPath, JSON.stringify(data, null, 2));
+}
+
 // HTTP Server
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') {
@@ -111,31 +130,29 @@ const server = http.createServer((req, res) => {
 
         // Wake word check
         if (wakeWord) {
-          const trigger = text.toLowerCase();
-          if (!trigger.includes("hey tubs") &&
-            !trigger.includes("hey tabs") &&
-            !trigger.includes("hey tub") &&
+          const trigger = text.toLowerCase().replace(',', '').replace('.', '').replace('!', '').replace('?', '').replace(';', '').replace(':', '').replace('-', '').replace('_').replace(' ', '');
+          console.log(`[Trigger] "${trigger}"`);
+          if (!trigger.includes("hey tub") &&
+            !trigger.includes("hey tab") &&
             !trigger.includes("okay dub") &&
-            !trigger.includes("okay das") &&
-            !trigger.includes("okay dabs") &&
-            !trigger.includes("hi tubs") &&
-            !trigger.includes("yo tubs") &&
-            !trigger.includes("yo tobs") &&
-            !trigger.includes("okay tops") &&
+            !trigger.includes("okay dab") &&
+            !trigger.includes("hi tub") &&
+            !trigger.includes("yo tub") &&
+            !trigger.includes("yo tob") &&
             !trigger.includes("okay top") &&
             !trigger.includes("hey top") &&
             !trigger.includes("yo top") &&
             !trigger.includes("yo tab") &&
             !trigger.includes("yo tub") &&
-            !trigger.includes("okay tubs") &&
-            !trigger.includes("tubs") &&
-            !trigger.includes("tabs") &&
-            !trigger.includes("toobs") &&
+            !trigger.includes("okay tub") &&
+            !trigger.includes("tub") &&
+            !trigger.includes("tab") &&
+            !trigger.includes("toob") &&
             !trigger.includes("tap") &&
             !trigger.includes("tup") &&
             !trigger.includes("ey tab") &&
             !trigger.includes("ey tub") &&
-            !trigger.includes("ey toobs")) {
+            !trigger.includes("ey toob")) {
             console.log('[Voice] Wake word not detected, ignoring.');
             broadcast({ type: 'expression', expression: 'idle' });
             // Maybe send a "ignored" signal or just nothing
@@ -232,6 +249,55 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── Face Library CRUD ──
+  if (req.method === 'GET' && url.pathname === '/faces') {
+    const lib = readFaceLib();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(lib));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/faces') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { name, embedding } = JSON.parse(body);
+        if (!name || !embedding || !Array.isArray(embedding)) {
+          throw new Error('Missing name or embedding array');
+        }
+        const lib = readFaceLib();
+        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        lib.faces.push({ id, name, embedding, createdAt: Date.now() });
+        writeFaceLib(lib);
+        console.log(`[Faces] Added "${name}" (id=${id})`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, id }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/faces') {
+    const id = url.searchParams.get('id');
+    if (!id) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Missing id parameter' }));
+      return;
+    }
+    const lib = readFaceLib();
+    const before = lib.faces.length;
+    lib.faces = lib.faces.filter(f => f.id !== id);
+    writeFaceLib(lib);
+    console.log(`[Faces] Deleted id=${id} (${before - lib.faces.length} removed)`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/config') {
     let body = '';
     req.on('data', chunk => body += chunk);
@@ -280,7 +346,9 @@ const server = http.createServer((req, res) => {
       '.ttf': 'application/font-ttf',
       '.eot': 'application/vnd.ms-fontobject',
       '.otf': 'application/font-otf',
-      '.wasm': 'application/wasm'
+      '.wasm': 'application/wasm',
+      '.mjs': 'text/javascript',
+      '.onnx': 'application/octet-stream'
     };
 
     const contentType = mimeTypes[ext] || 'application/octet-stream';

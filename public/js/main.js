@@ -18,6 +18,12 @@ const STATE = {
     sleepTimeout: 300000,
     lastActivity: Date.now(),
     model: 'Tubs Bot v1',
+    // Face detection
+    cameraActive: false,
+    faceWorkerReady: false,
+    facesDetected: 0,
+    personsPresent: [],
+    presenceDetected: false,
 };
 
 // ── DOM References ──
@@ -34,6 +40,8 @@ const chatLog = $('#chat-log');
 
 // ── WebSocket ──
 let ws = null;
+// Expose ws globally for face-manager
+Object.defineProperty(window, 'ws', { get() { return ws; } });
 let pingInterval = null;
 let lastPingTs = null;
 
@@ -674,7 +682,13 @@ function speakFallback(text) {
 // ── Keyboard Input ──
 let keyInputBuffer = '';
 
+// Single-char shortcut keys (must not enter the text buffer)
+const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D']);
+
 document.addEventListener('keydown', (e) => {
+    // Ignore if typing in an input element
+    const inInput = document.activeElement && document.activeElement.tagName === 'INPUT';
+
     // Spacebar push-to-talk
     if (e.code === 'Space' && !e.repeat && document.activeElement === document.body) {
         e.preventDefault();
@@ -715,6 +729,31 @@ document.addEventListener('keydown', (e) => {
             STATE.lastActivity = Date.now();
         }
         return;
+    }
+
+    // Single-key shortcuts (only when not in an input field)
+    if (!inInput && SHORTCUT_KEYS.has(e.key)) {
+        if (e.key === 'z' || e.key === 'Z') {
+            document.getElementById('grid').classList.toggle('hidden-ui');
+        }
+        if (e.key === 's' || e.key === 'S') {
+            if (STATE.sleeping) exitSleep();
+            else enterSleep();
+        }
+        if (e.key === 'c' || e.key === 'C') {
+            const toggle = document.getElementById('camera-toggle');
+            if (toggle) {
+                toggle.checked = !toggle.checked;
+                toggle.dispatchEvent(new Event('change'));
+            }
+        }
+        if (e.key === 'f' || e.key === 'F') {
+            if (window.faceManager) window.faceManager.enrollFace();
+        }
+        if (e.key === 'd' || e.key === 'D') {
+            if (window.faceManager) window.faceManager.toggleDebug();
+        }
+        return; // Don't buffer shortcut keys
     }
 
     // Buffer printable keys
@@ -763,16 +802,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// ── Interaction: Zen Mode & Sleep Toggle ──
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'z' || e.key === 'Z') {
-        document.getElementById('grid').classList.toggle('hidden-ui');
-    }
-    if (e.key === 's' || e.key === 'S') {
-        if (STATE.sleeping) exitSleep();
-        else enterSleep();
-    }
-});
+// Keyboard shortcuts are consolidated in the single keydown handler above.
 
 // ── Init ──
 function init() {
@@ -823,5 +853,41 @@ function blink() {
     }, 150);
 }
 
+
+// ── Chat Log Panel Resize ──
+(function () {
+    const panel = document.getElementById('panel-bl');
+    const handle = document.getElementById('panel-bl-resize');
+    if (!panel || !handle) return;
+
+    let startX, startW;
+
+    handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startW = panel.offsetWidth;
+        panel.classList.add('resizing');
+        document.addEventListener('mousemove', onDrag);
+        document.addEventListener('mouseup', onUp);
+    });
+
+    function onDrag(e) {
+        const delta = e.clientX - startX;
+        const newW = Math.max(200, Math.min(800, startW + delta));
+        panel.style.width = newW + 'px';
+        panel.style.maxWidth = newW + 'px';
+    }
+
+    function onUp() {
+        panel.classList.remove('resizing');
+        document.removeEventListener('mousemove', onDrag);
+        document.removeEventListener('mouseup', onUp);
+    }
+})();
+
+// ── Expose for face-manager.js ──
+window.STATE = STATE;
+window.exitSleep = exitSleep;
+window.logChat = logChat;
 
 init();

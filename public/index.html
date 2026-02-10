@@ -98,6 +98,17 @@
           <span class="slider"></span>
         </label>
       </div>
+      <div class="stat-row">
+        <span class="stat-label">Camera</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="camera-toggle">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="stat-row" id="detect-delay-row" style="display:none;">
+        <span class="stat-label">Detect <span id="detect-delay-val">auto</span></span>
+        <input type="range" id="detect-delay" min="0" max="5000" step="100" value="0" class="mini-range">
+      </div>
     </div>
 
     <!-- BOTTOM-LEFT: Chat Log -->
@@ -105,6 +116,7 @@
       <div class="panel-title">Chat Log <span style="margin-left:auto;font-weight:400;color:var(--text-dim)"
           id="turn-counter">0 turns</span></div>
       <div id="chat-log"></div>
+      <div id="panel-bl-resize"></div>
     </div>
 
     <!-- BOTTOM-RIGHT: Bot Stats -->
@@ -136,6 +148,32 @@
       </div>
     </div>
 
+    <!-- Camera PIP -->
+    <div id="camera-pip" class="hidden">
+      <div id="camera-pip-header">Camera</div>
+      <video id="camera-feed" autoplay playsinline muted></video>
+      <canvas id="camera-overlay"></canvas>
+      <div id="camera-status"></div>
+      <div id="presence-badge"></div>
+    </div>
+
+    <!-- Face Detection Debug Panel -->
+    <div id="face-debug" class="hidden">
+      <div id="face-debug-header">Face Debug <span id="face-debug-close">✕</span></div>
+      <div id="face-debug-body">
+        <div id="face-debug-frame">
+          <canvas id="face-debug-canvas"></canvas>
+        </div>
+        <div id="face-debug-info">
+          <div class="debug-row"><span class="debug-label">Interval</span><span id="dbg-interval">—</span></div>
+          <div class="debug-row"><span class="debug-label">Inference</span><span id="dbg-inference">—</span></div>
+          <div class="debug-row"><span class="debug-label">Faces</span><span id="dbg-faces">0</span></div>
+          <div class="debug-row"><span class="debug-label">Library</span><span id="dbg-library">0</span></div>
+        </div>
+        <div id="face-debug-detections"></div>
+      </div>
+    </div>
+
   </div>
 
   <!-- Scripts -->
@@ -144,6 +182,7 @@
   <!-- Bundle containing @ricky0123/vad-web -->
   <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
   <script src="js/main.js"></script>
+  <script src="js/face-manager.js"></script>
 </body>
 
 </html>
