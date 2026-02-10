@@ -182,13 +182,12 @@
 
   </div>
 
-  <!-- Scripts -->
-  <!-- ONNX Runtime Web -->
+  <!-- CDN deps (regular scripts, set globals) -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
-  <!-- Bundle containing @ricky0123/vad-web -->
   <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
-  <script src="js/main.js"></script>
-  <script src="js/face-manager.js"></script>
+
+  <!-- Single module entry point -->
+  <script type="module" src="js/main.js"></script>
 </body>
 
 </html>

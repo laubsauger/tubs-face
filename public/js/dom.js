@@ -1,0 +1,11 @@
+export const $ = (sel) => document.querySelector(sel);
+export const body = document.body;
+export const face = $('#face');
+export const mouth = $('#mouth');
+export const eyes = document.querySelectorAll('.eye');
+export const loadingBar = $('#loading-bar');
+export const speechBubble = $('#speech-bubble');
+export const pttIndicator = $('#ptt-indicator');
+export const waveformContainer = $('#waveform-container');
+export const chatLog = $('#chat-log');
+export const pupils = document.querySelectorAll('.pupil');

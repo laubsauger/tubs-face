@@ -1,0 +1,121 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Outfit:wght@300;400;600;700;800&display=swap');
+
+:root {
+  --bg: #0a0a0f;
+  --panel-bg: rgba(15, 18, 30, 0.85);
+  --panel-border: rgba(60, 70, 110, 0.3);
+  --text: #c8cce0;
+  --text-dim: #5a5f7a;
+  --text-bright: #e8ebf5;
+  --accent: #00e5a0;
+  --accent-glow: rgba(0, 229, 160, 0.15);
+  --warn: #ffa726;
+  --error: #ff5252;
+  --blue: #42a5f5;
+  --purple: #b388ff;
+  --eye-white: #e8ebf5;
+  --pupil: #0d0d15;
+  --mouth: #e8ebf5;
+  --face-shadow: rgba(0, 229, 160, 0.05);
+  --msg-in: #00e5a0;
+  --msg-out: #42a5f5;
+  --msg-sys: #ffa726;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+}
+
+/* Chunky Scanlines */
+body::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg,
+      rgba(0, 0, 0, 0.15),
+      rgba(0, 0, 0, 0.15) 2px,
+      transparent 2px,
+      transparent 4px);
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.6;
+}
+
+/* Utility */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.stagger-1 {
+  animation: panelFadeIn 0.5s ease 0.1s both;
+}
+
+.stagger-2 {
+  animation: panelFadeIn 0.5s ease 0.3s both;
+}
+
+.stagger-3 {
+  animation: panelFadeIn 0.5s ease 0.5s both;
+}
+
+.stagger-4 {
+  animation: panelFadeIn 0.5s ease 0.7s both;
+}
+
+@keyframes panelFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .panel {
+    transform: scale(0.9);
+    transform-origin: center;
+  }
+}
+
+@media (max-width: 600px) {
+
+  #panel-tl,
+  #panel-tr,
+  #panel-br {
+    display: none;
+  }
+
+  #panel-bl {
+    bottom: 0;
+    left: 0;
+    width: 100vw;
+    max-width: none;
+    border-radius: 0;
+    border: none;
+    background: linear-gradient(to top, #0a0a0f, transparent);
+  }
+}

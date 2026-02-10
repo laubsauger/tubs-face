@@ -1,0 +1,23 @@
+export const STATE = {
+    connected: false,
+    sleeping: false,
+    speaking: false,
+    recording: false,
+    expression: 'idle',
+    turns: 0,
+    totalMessages: 0,
+    tokensIn: 0,
+    tokensOut: 0,
+    totalCost: 0,
+    ttsQueue: [],
+    wakeTime: Date.now(),
+    sleepTimeout: 10000,
+    lastActivity: Date.now(),
+    model: 'Tubs Bot v1',
+    // Face detection
+    cameraActive: false,
+    faceWorkerReady: false,
+    facesDetected: 0,
+    personsPresent: [],
+    presenceDetected: false,
+};

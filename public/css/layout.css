@@ -1,0 +1,58 @@
+/* Layout */
+#grid {
+  position: relative;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: radial-gradient(circle at center, #1a1a24 0%, #0a0a0f 80%);
+}
+
+/* Zen Mode */
+.hidden-ui .panel,
+.hidden-ui #waveform-container,
+.hidden-ui #ptt-indicator,
+.hidden-ui .speech-bubble,
+.hidden-ui #camera-pip {
+  opacity: 0 !important;
+  pointer-events: none;
+}
+
+/* Center Stage */
+#center {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+  overflow: hidden;
+  transition: filter 0.8s ease;
+}
+
+/* Background Glow */
+#center::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80vh;
+  height: 80vh;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 229, 160, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+body.sleeping #center {
+  filter: brightness(0.12);
+}
+
+body.sleeping .panel {
+  filter: brightness(0.15);
+}

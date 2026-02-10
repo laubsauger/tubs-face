@@ -1,0 +1,114 @@
+/* Camera PIP */
+#camera-pip {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 320px;
+  height: 240px;
+  resize: both;
+  z-index: 100;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+#camera-pip.hidden {
+  display: none;
+}
+
+#camera-pip.collapsed #camera-feed,
+#camera-pip.collapsed #camera-overlay,
+#camera-pip.collapsed #camera-status,
+#camera-pip.collapsed #presence-badge {
+  display: none;
+}
+
+#camera-pip.collapsed {
+  height: auto;
+  width: 320px;
+  resize: none;
+}
+
+#camera-pip-header {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--text-dim);
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#camera-pip-header::after {
+  content: '▼';
+  font-size: 8px;
+  transition: transform 0.3s ease;
+  opacity: 0.7;
+}
+
+#camera-pip.collapsed #camera-pip-header::after {
+  transform: rotate(-90deg);
+}
+
+#camera-feed {
+  width: 100%;
+  height: calc(100% - 30px);
+  object-fit: cover;
+  transform: scaleX(-1);
+  display: block;
+}
+
+#camera-overlay {
+  position: absolute;
+  top: 30px;
+  left: 0;
+  width: 100%;
+  height: calc(100% - 30px);
+  pointer-events: none;
+}
+
+#camera-status {
+  position: absolute;
+  bottom: 4px;
+  left: 8px;
+  font-size: 9px;
+  color: var(--text-bright);
+  font-family: 'JetBrains Mono', monospace;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+#presence-badge {
+  position: absolute;
+  top: 32px;
+  right: 6px;
+  font-size: 9px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(0, 229, 160, 0.12);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: none;
+}
+
+#presence-badge.visible {
+  display: block;
+}
+
+body.sleeping #camera-pip {
+  opacity: 0.7;
+}
+
+body.sleeping #face-debug {
+  opacity: 0.9;
+}
