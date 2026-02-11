@@ -5,7 +5,7 @@
 import { STATE } from './state.js';
 import { $ } from './dom.js';
 import { logChat, initVerbosityToggle } from './chat-log.js';
-import { setExpression, triggerBlink, startIdleLoop } from './expressions.js';
+import { startIdleLoop } from './expressions.js';
 import { connectWS } from './websocket.js';
 import { initMicrophone, initVAD, initVadToggle, initWaveformBars } from './audio-input.js';
 import { resetSleepTimer, enterSleep, initSleepSlider } from './sleep.js';
@@ -13,13 +13,6 @@ import { initKeyboard } from './keyboard.js';
 import { initPanelCollapse, initPanelResize, startUptimeTimer } from './panel-ui.js';
 import { faceManager } from './face/index.js';
 import { initEmotionEngine } from './emotion-engine.js';
-
-// Random blinking
-setInterval(() => {
-    if (!STATE.sleeping && Math.random() < 0.3) {
-        triggerBlink();
-    }
-}, 3000);
 
 function init() {
     STATE.wakeTime = Date.now();

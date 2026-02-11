@@ -95,8 +95,10 @@ function captureFrame() {
     const w = Math.round(vw * scale);
     const h = Math.round(vh * scale);
 
-    captureCanvas.width = w;
-    captureCanvas.height = h;
+    if (captureCanvas.width !== w || captureCanvas.height !== h) {
+        captureCanvas.width = w;
+        captureCanvas.height = h;
+    }
     captureCtx.drawImage(video, 0, 0, w, h);
 
     const imageData = captureCtx.getImageData(0, 0, w, h);

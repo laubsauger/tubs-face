@@ -1,6 +1,16 @@
 import { STATE } from './state.js';
 import { $, chatLog } from './dom.js';
 
+let scrollRafPending = false;
+function scheduleScroll() {
+    if (scrollRafPending) return;
+    scrollRafPending = true;
+    requestAnimationFrame(() => {
+        scrollRafPending = false;
+        chatLog.scrollTop = chatLog.scrollHeight;
+    });
+}
+
 export function escapeHTML(str) {
     const d = document.createElement('div');
     d.textContent = str;
@@ -26,7 +36,7 @@ export function logChat(type, text) {
     const prefix = type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
     msg.innerHTML = `<span class="ts">${ts}</span><span class="content">${prefix} ${escapeHTML(text)}</span>`;
     chatLog.appendChild(msg);
-    chatLog.scrollTop = chatLog.scrollHeight;
+    scheduleScroll();
 
     while (chatLog.children.length > 100) {
         chatLog.removeChild(chatLog.firstChild);

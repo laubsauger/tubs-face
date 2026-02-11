@@ -39,20 +39,7 @@ body {
   width: 100vw;
 }
 
-/* Chunky Scanlines */
-body::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(0deg,
-      rgba(0, 0, 0, 0.15),
-      rgba(0, 0, 0, 0.15) 2px,
-      transparent 2px,
-      transparent 4px);
-  pointer-events: none;
-  z-index: 5;
-  opacity: 0.6;
-}
+/* Scanlines are intentionally kept on face features, not global page background. */
 
 /* Utility */
 @keyframes fadeIn {

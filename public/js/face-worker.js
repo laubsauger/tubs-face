@@ -152,6 +152,20 @@ function generateAnchors() {
 
 const ANCHORS = generateAnchors();
 
+// Pre-allocated buffers for detectFaces (avoid per-frame GC)
+const inputFloat32 = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+let detSrcCanvas = null;
+let detSrcCtx = null;
+let detPadCanvas = null;
+let detPadCtx = null;
+
+// Pre-allocated buffers for extractEmbedding
+let embSrcCanvas = null;
+let embSrcCtx = null;
+let embAlignedCanvas = null;
+let embAlignedCtx = null;
+const embFloat32 = new Float32Array(3 * 112 * 112);
+
 function nms(boxes, scores, threshold) {
   const indices = [];
   for (let i = 0; i < scores.length; i++) {
@@ -187,9 +201,11 @@ function iou(a, b) {
 }
 
 async function detectFaces(imageData, width, height) {
-  // Resize to 640x640 with letterboxing
-  const canvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
-  const ctx = canvas.getContext('2d');
+  // Resize to 640x640 with letterboxing (reuse pre-allocated canvases)
+  if (!detPadCanvas) {
+    detPadCanvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
+    detPadCtx = detPadCanvas.getContext('2d');
+  }
 
   const scale = Math.min(INPUT_SIZE / width, INPUT_SIZE / height);
   const scaledW = Math.round(width * scale);
@@ -197,19 +213,21 @@ async function detectFaces(imageData, width, height) {
   const padX = Math.round((INPUT_SIZE - scaledW) / 2);
   const padY = Math.round((INPUT_SIZE - scaledH) / 2);
 
-  const srcCanvas = new OffscreenCanvas(width, height);
-  const srcCtx = srcCanvas.getContext('2d');
-  srcCtx.putImageData(imageData, 0, 0);
+  if (!detSrcCanvas || detSrcCanvas.width !== width || detSrcCanvas.height !== height) {
+    detSrcCanvas = new OffscreenCanvas(width, height);
+    detSrcCtx = detSrcCanvas.getContext('2d');
+  }
+  detSrcCtx.putImageData(imageData, 0, 0);
 
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
-  ctx.drawImage(srcCanvas, padX, padY, scaledW, scaledH);
+  detPadCtx.fillStyle = '#000';
+  detPadCtx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+  detPadCtx.drawImage(detSrcCanvas, padX, padY, scaledW, scaledH);
 
-  const imgData = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
+  const imgData = detPadCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE);
   const pixels = imgData.data;
 
   // Preprocess: CHW float32, BGR order (OpenCV convention), (pixel - 127.5) / 128.0
-  const float32 = new Float32Array(3 * INPUT_SIZE * INPUT_SIZE);
+  const float32 = inputFloat32;
   const pixelCount = INPUT_SIZE * INPUT_SIZE;
   for (let i = 0; i < pixelCount; i++) {
     float32[i]                  = (pixels[i * 4 + 2] - 127.5) / 128.0; // B
@@ -430,22 +448,27 @@ function svd2x2(m) {
 async function extractEmbedding(imageData, width, height, landmarks) {
   const transform = estimateUmeyama(landmarks, ARCFACE_TEMPLATE);
 
-  const srcCanvas = new OffscreenCanvas(width, height);
-  const srcCtx = srcCanvas.getContext('2d');
-  srcCtx.putImageData(imageData, 0, 0);
+  if (!embSrcCanvas || embSrcCanvas.width !== width || embSrcCanvas.height !== height) {
+    embSrcCanvas = new OffscreenCanvas(width, height);
+    embSrcCtx = embSrcCanvas.getContext('2d');
+  }
+  embSrcCtx.putImageData(imageData, 0, 0);
 
-  const alignedCanvas = new OffscreenCanvas(112, 112);
-  const alignedCtx = alignedCanvas.getContext('2d');
+  if (!embAlignedCanvas) {
+    embAlignedCanvas = new OffscreenCanvas(112, 112);
+    embAlignedCtx = embAlignedCanvas.getContext('2d');
+  }
 
-  alignedCtx.setTransform(transform.a, transform.c, transform.b, transform.d, transform.tx, transform.ty);
-  alignedCtx.drawImage(srcCanvas, 0, 0);
-  alignedCtx.resetTransform();
+  embAlignedCtx.clearRect(0, 0, 112, 112);
+  embAlignedCtx.setTransform(transform.a, transform.c, transform.b, transform.d, transform.tx, transform.ty);
+  embAlignedCtx.drawImage(embSrcCanvas, 0, 0);
+  embAlignedCtx.resetTransform();
 
-  const alignedData = alignedCtx.getImageData(0, 0, 112, 112);
+  const alignedData = embAlignedCtx.getImageData(0, 0, 112, 112);
   const pixels = alignedData.data;
 
   // ArcFace: BGR order (OpenCV convention), normalize to [-1, 1]
-  const float32 = new Float32Array(3 * 112 * 112);
+  const float32 = embFloat32;
   for (let i = 0; i < 112 * 112; i++) {
     float32[i]              = (pixels[i * 4 + 2] / 127.5) - 1.0; // B
     float32[112 * 112 + i]  = (pixels[i * 4 + 1] / 127.5) - 1.0; // G

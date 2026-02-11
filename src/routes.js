@@ -492,23 +492,34 @@ function handleRequest(req, res) {
 
   const fullPath = path.join(staticPath, filePath);
 
-  if (fs.existsSync(fullPath) && fs.lstatSync(fullPath).isFile()) {
+  fs.stat(fullPath, (statErr, stats) => {
+    if (statErr || !stats.isFile()) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
     const contentType = mimeTypes[ext] || 'application/octet-stream';
+    const isImmutable = ext === '.onnx' || ext === '.wasm';
+    const cacheControl = filePath === 'index.html'
+      ? 'no-cache'
+      : isImmutable
+        ? 'public, max-age=604800, immutable'
+        : 'public, max-age=3600';
 
     fs.readFile(fullPath, (err, data) => {
       if (err) {
         res.writeHead(500);
         res.end(`Error loading ${safePath}`);
       } else {
-        res.writeHead(200, { 'Content-Type': contentType });
+        res.writeHead(200, {
+          'Content-Type': contentType,
+          'Cache-Control': cacheControl,
+        });
         res.end(data);
       }
     });
-    return;
-  }
-
-  res.writeHead(404);
-  res.end('Not found');
+  });
 }
 
 function normalizeCurrencyCode(value) {

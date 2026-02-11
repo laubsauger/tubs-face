@@ -233,7 +233,7 @@ export function handleFaceResults(faces, inferenceMs) {
         avgY /= faces.length;
         const normX = -((avgX / frameW) * 2 - 1);
         const normY = (avgY / frameH) * 2 - 1;
-        lookAt(normX, normY * 0.6);
+        lookAt(normX * 1.1, normY * 0.75);
 
         setLastFaceSeen(now);
         setLastNoFaceTime(0);

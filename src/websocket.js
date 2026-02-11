@@ -90,6 +90,8 @@ function broadcast(msg) {
   for (const client of clients) {
     if (client.readyState === 1) {
       client.send(data);
+    } else if (client.readyState > 1) {
+      clients.delete(client);
     }
   }
 }

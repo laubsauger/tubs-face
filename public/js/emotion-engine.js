@@ -47,7 +47,20 @@ function lerp(a, b, t) {
     return a + (b - a) * t;
 }
 
+let prevMoodPos = -1;
+let prevMoodNeg = -1;
+let prevMoodArousal = -1;
+const MOOD_EPSILON = 0.002;
+
 function applyMoodVars() {
+    if (
+        Math.abs(currentMood.pos - prevMoodPos) < MOOD_EPSILON &&
+        Math.abs(currentMood.neg - prevMoodNeg) < MOOD_EPSILON &&
+        Math.abs(currentMood.arousal - prevMoodArousal) < MOOD_EPSILON
+    ) return;
+    prevMoodPos = currentMood.pos;
+    prevMoodNeg = currentMood.neg;
+    prevMoodArousal = currentMood.arousal;
     face.style.setProperty('--mood-pos', currentMood.pos.toFixed(3));
     face.style.setProperty('--mood-neg', currentMood.neg.toFixed(3));
     face.style.setProperty('--mood-arousal', currentMood.arousal.toFixed(3));

@@ -21,6 +21,7 @@ let audioContext = null;
 let analyser = null;
 let micStream = null;
 let micReady = false;
+let visualizeRafId = null;
 
 export function isVadActive() {
     return vadActive;
@@ -116,7 +117,7 @@ export function initVadToggle() {
             pttIndicator.textContent = 'Listening (Always On)';
             pttIndicator.classList.add('mic-ready');
             waveformContainer.classList.add('active');
-            visualizeAudio();
+            startVisualize();
         } else {
             logChat('sys', 'Always On: DISABLED');
             pttIndicator.textContent = 'Hold Space to Talk';
@@ -264,7 +265,7 @@ export function startRecording() {
     $('#stat-mic').style.color = 'var(--accent)';
     $('#stat-input-src').textContent = 'Voice';
     $('#stat-listen-state').textContent = 'Recording';
-    visualizeAudio();
+    startVisualize();
 }
 
 export function stopRecording() {
@@ -283,6 +284,7 @@ export function stopRecording() {
 }
 
 function visualizeAudio() {
+    visualizeRafId = null;
     if ((!STATE.recording && !vadActive) || !analyser) return;
     const data = new Uint8Array(analyser.frequencyBinCount);
     analyser.getByteFrequencyData(data);
@@ -297,7 +299,12 @@ function visualizeAudio() {
     const volPct = Math.min(100, (avg / 128) * 100);
     $('#stat-vol').style.width = `${volPct}%`;
 
-    requestAnimationFrame(visualizeAudio);
+    visualizeRafId = requestAnimationFrame(visualizeAudio);
+}
+
+function startVisualize() {
+    if (visualizeRafId !== null) return;
+    visualizeRafId = requestAnimationFrame(visualizeAudio);
 }
 
 async function sendVoice(blob, isVad = false) {

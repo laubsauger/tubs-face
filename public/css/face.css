@@ -6,7 +6,7 @@
   max-width: calc(100vw - 120px);
   max-height: calc(100vh - 120px);
   aspect-ratio: 300 / 240;
-  transform: translate(var(--face-look-x, 0px), var(--face-look-y, 0px));
+  transform: translate3d(var(--face-look-x, 0px), var(--face-look-y, 0px), 0);
   left: auto;
   top: auto;
   filter: drop-shadow(0 0 40px rgba(var(--face-glow-rgb), 0.15));
@@ -22,6 +22,17 @@
   --mood-pos: 0.24;
   --mood-neg: 0.06;
   --mood-arousal: 0.2;
+}
+
+#face::before {
+  content: '';
+  position: absolute;
+  inset: -80px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(19, 30, 44, 0.48) 0%, rgba(8, 12, 19, 0.92) 58%, rgba(6, 10, 16, 0.98) 100%),
+    linear-gradient(180deg, rgba(7, 10, 16, 0.98) 0%, rgba(6, 9, 14, 1) 100%);
 }
 
 #face::after {
@@ -94,7 +105,8 @@ body.sleeping #face {
               box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
               filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
               opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  transform: translate(var(--look-x, 0px), var(--look-y, 0px));
+  transform: translate3d(var(--look-x, 0px), var(--look-y, 0px), 0);
+  will-change: transform;
   animation: eyeScanDrift 2.2s linear infinite;
   filter: brightness(calc(0.98 + var(--mood-pos) * 0.16 - var(--mood-neg) * 0.08));
 }

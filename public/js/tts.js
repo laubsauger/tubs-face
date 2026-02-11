@@ -165,11 +165,16 @@ async function playTTS(text) {
         const audio = new Audio();
         audio.src = audioURL;
 
+        function cleanup() {
+            URL.revokeObjectURL(audioURL);
+        }
+
         audio.oncanplaythrough = () => {
             const dur = isFinite(audio.duration) ? audio.duration : wordCount * 0.15;
             startSubtitles(text, dur);
             audio.play().catch(e => {
                 console.error("Audio play failed:", e);
+                cleanup();
                 stopSubtitles();
                 processQueue();
             });
@@ -177,14 +182,15 @@ async function playTTS(text) {
 
         audio.onerror = (e) => {
             console.error("Audio load failed", e);
+            cleanup();
             stopSubtitles();
             speakFallback(text);
         };
 
         audio.onended = () => {
+            cleanup();
             stopSubtitles();
             processQueue();
-            URL.revokeObjectURL(audioURL);
         };
 
     } catch (e) {

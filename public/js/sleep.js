@@ -8,14 +8,19 @@ import { hideDonationQr } from './donation-ui.js';
 let sleepTimer = null;
 
 export function resetSleepTimer() {
-    clearInterval(sleepTimer);
+    clearTimeout(sleepTimer);
     sleepTimer = null;
     if (STATE.sleepTimeout > 0 && !STATE.sleeping) {
-        sleepTimer = setInterval(() => {
-            if (Date.now() - STATE.lastActivity > STATE.sleepTimeout) {
+        const elapsed = Date.now() - STATE.lastActivity;
+        const remaining = Math.max(500, STATE.sleepTimeout - elapsed);
+        sleepTimer = setTimeout(() => {
+            sleepTimer = null;
+            if (Date.now() - STATE.lastActivity >= STATE.sleepTimeout) {
                 enterSleep();
+            } else {
+                resetSleepTimer();
             }
-        }, 2000);
+        }, remaining);
     }
 }
 
@@ -31,7 +36,7 @@ export function enterSleep() {
     console.log('[Sleep] >>> ENTERING SLEEP');
     STATE.sleeping = true;
     body.classList.add('sleeping');
-    clearInterval(sleepTimer);
+    clearTimeout(sleepTimer);
     sleepTimer = null;
     speechSynthesis?.cancel();
     STATE.ttsQueue = [];

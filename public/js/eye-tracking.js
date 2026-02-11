@@ -1,70 +1,105 @@
 import { eyes, face } from './dom.js';
 
-// ── Displacement ranges ──
-const EYE_MAX_X = 90;   // px – horizontal eye displacement
-const EYE_MAX_Y = 50;   // px – vertical eye displacement
-const FACE_MAX_X = 30;  // px – horizontal face displacement
-const FACE_MAX_Y = 16;  // px – vertical face displacement
+const EYE_MAX_X = 118;
+const EYE_MAX_Y = 64;
+const FACE_MAX_X = 16;
+const FACE_MAX_Y = 10;
 
-// ── Smoothing (exponential moving average) ──
-const LERP = 0.18;      // 0 = frozen, 1 = instant (0.15-0.25 feels organic)
+const INPUT_DEADZONE = 0.035;
+const INPUT_SHAPE_EXPONENT = 0.82;
+
+const SPRING_STIFFNESS = 185;
+const SPRING_DAMPING = 22;
+const STOP_POS_EPS = 0.0012;
+const STOP_VEL_EPS = 0.0012;
+
 let curX = 0;
 let curY = 0;
+let velX = 0;
+let velY = 0;
 let targetX = 0;
 let targetY = 0;
 let animating = false;
+let lastTickMs = 0;
 
-function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
+}
 
-function tick() {
-    const dx = targetX - curX;
-    const dy = targetY - curY;
+function easeInput(v) {
+    const c = clamp(v, -1, 1);
+    const sign = Math.sign(c);
+    const mag = Math.abs(c);
 
-    // Stop animating once close enough
-    if (Math.abs(dx) < 0.15 && Math.abs(dy) < 0.15) {
-        curX = targetX;
-        curY = targetY;
-        applyGaze(curX, curY);
-        animating = false;
-        return;
-    }
+    if (mag <= INPUT_DEADZONE) return 0;
 
-    curX += dx * LERP;
-    curY += dy * LERP;
-    applyGaze(curX, curY);
-    requestAnimationFrame(tick);
+    const normalized = (mag - INPUT_DEADZONE) / (1 - INPUT_DEADZONE);
+    const shaped = Math.pow(normalized, INPUT_SHAPE_EXPONENT);
+    return sign * clamp(shaped, 0, 1);
+}
+
+function stepAxis(cur, vel, target, dt) {
+    const accel = (target - cur) * SPRING_STIFFNESS;
+    vel += accel * dt;
+    vel *= Math.exp(-SPRING_DAMPING * dt);
+    cur += vel * dt;
+    return [cur, vel];
 }
 
 function applyGaze(x, y) {
-    // Eyes move more for a natural parallax effect
     const ex = clamp(x * EYE_MAX_X, -EYE_MAX_X, EYE_MAX_X);
     const ey = clamp(y * EYE_MAX_Y, -EYE_MAX_Y, EYE_MAX_Y);
-    eyes.forEach(e => {
-        e.style.setProperty('--look-x', `${ex}px`);
-        e.style.setProperty('--look-y', `${ey}px`);
+
+    eyes.forEach((eye) => {
+        eye.style.setProperty('--look-x', `${ex.toFixed(2)}px`);
+        eye.style.setProperty('--look-y', `${ey.toFixed(2)}px`);
     });
 
-    // Face shifts subtly in the same direction
     const fx = clamp(x * FACE_MAX_X, -FACE_MAX_X, FACE_MAX_X);
     const fy = clamp(y * FACE_MAX_Y, -FACE_MAX_Y, FACE_MAX_Y);
-    face.style.setProperty('--face-look-x', `${fx}px`);
-    face.style.setProperty('--face-look-y', `${fy}px`);
+    face.style.setProperty('--face-look-x', `${fx.toFixed(2)}px`);
+    face.style.setProperty('--face-look-y', `${fy.toFixed(2)}px`);
+}
+
+function tick(nowMs) {
+    if (!lastTickMs) lastTickMs = nowMs;
+    const dt = clamp((nowMs - lastTickMs) / 1000, 0.008, 0.04);
+    lastTickMs = nowMs;
+
+    [curX, velX] = stepAxis(curX, velX, targetX, dt);
+    [curY, velY] = stepAxis(curY, velY, targetY, dt);
+    applyGaze(curX, curY);
+
+    const doneX = Math.abs(targetX - curX) < STOP_POS_EPS && Math.abs(velX) < STOP_VEL_EPS;
+    const doneY = Math.abs(targetY - curY) < STOP_POS_EPS && Math.abs(velY) < STOP_VEL_EPS;
+    if (doneX && doneY) {
+        curX = targetX;
+        curY = targetY;
+        velX = 0;
+        velY = 0;
+        applyGaze(curX, curY);
+        animating = false;
+        lastTickMs = 0;
+        return;
+    }
+
+    requestAnimationFrame(tick);
+}
+
+function ensureAnimationLoop() {
+    if (animating) return;
+    animating = true;
+    requestAnimationFrame(tick);
 }
 
 export function lookAt(x, y) {
-    targetX = x;
-    targetY = y;
-    if (!animating) {
-        animating = true;
-        requestAnimationFrame(tick);
-    }
+    targetX = easeInput(x);
+    targetY = easeInput(y);
+    ensureAnimationLoop();
 }
 
 export function resetGaze() {
     targetX = 0;
     targetY = 0;
-    if (!animating) {
-        animating = true;
-        requestAnimationFrame(tick);
-    }
+    ensureAnimationLoop();
 }
