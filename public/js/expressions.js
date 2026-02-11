@@ -1,6 +1,6 @@
 import { STATE } from './state.js';
 import { $, face, eyes, loadingBar } from './dom.js';
-import { setFaceRendererExpression, setFaceRendererSpeaking } from './face-renderer.js';
+import { setFaceRendererExpression, setFaceRendererSpeaking, blinkSvgEyes } from './face-renderer.js';
 
 let idleVariant = 'soft';
 const EXPRESSION_MIN_HOLD_MS = Object.freeze({
@@ -105,6 +105,7 @@ export function setExpression(expr, options = {}) {
 export function triggerBlink() {
     eyes.forEach(e => e.classList.add('blink'));
     setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 150);
+    blinkSvgEyes();
 }
 
 export function blink() {
@@ -112,6 +113,7 @@ export function blink() {
     setTimeout(() => {
         eyes.forEach(eye => eye.classList.remove('blink'));
     }, 150);
+    blinkSvgEyes();
 }
 
 export function startSpeaking() {

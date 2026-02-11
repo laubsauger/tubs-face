@@ -107,6 +107,8 @@ export async function enrollFace() {
             let capturedFace = null;
             let attempts = 0;
             const MAX_ATTEMPTS = 5;
+            let w = 0;
+            let h = 0;
 
             while (!capturedFace && attempts < MAX_ATTEMPTS) {
                 const vw = video.videoWidth;
@@ -114,8 +116,8 @@ export async function enrollFace() {
                 if (!vw || !vh) { await new Promise(r => setTimeout(r, 200)); continue; }
 
                 const scale = Math.min(1, CAPTURE_MAX_WIDTH / vw);
-                const w = Math.round(vw * scale);
-                const h = Math.round(vh * scale);
+                w = Math.round(vw * scale);
+                h = Math.round(vh * scale);
 
                 captureCanvas.width = w;
                 captureCanvas.height = h;
