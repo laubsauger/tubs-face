@@ -3,8 +3,11 @@
   <g>
     <rect fill="#fff" x="0" y="4" width="14.59" height="14.8" rx="4.9" ry="4.9"/>
     <rect fill="#fff" x="40.85" y="4" width="14.59" height="14.8" rx="4.9" ry="4.9"/>
-    <path d="M22.7 29 Q27.72 23.6 32.74 29" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <!-- Crying mouth: filled frown arc -->
+    <path d="M22.7 29 Q27.72 23.6 32.74 29 L32.74 31.5 Q27.72 26.1 22.7 31.5 Z" fill="#fff"/>
+    <!-- Left tear -->
     <path d="M7.2 19.7 C6.1 21.5 5.8 23.6 6.6 25.8 C7.4 27.4 7.2 28.8 7.2 30.2" fill="none" stroke="#57bfff" stroke-width="3" stroke-linecap="round"/>
+    <!-- Right tear -->
     <path d="M48.24 19.7 C47.14 21.5 46.84 23.6 47.64 25.8 C48.44 27.4 48.24 28.8 48.24 30.2" fill="none" stroke="#57bfff" stroke-width="3" stroke-linecap="round"/>
   </g>
 </svg>

@@ -893,3 +893,20 @@ body.sleeping .zzz {
 #subtitle .word.spoken {
   color: rgba(200, 204, 224, 0.55);
 }
+
+/* ── Speaking Mouth Overlay ──
+   Overrides any emotion's mouth style when speaking class is present.
+   Must appear after all expression mouth rules to win cascade. */
+#face.speaking #mouth {
+  padding-bottom: 0;
+  border: none !important;
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: 100% 100%, 100% 100%;
+  border-radius: 10px;
+  box-shadow: 0 0 12px rgba(var(--face-glow-rgb), 0.15);
+  animation: talk 0.18s ease infinite alternate, mouthScanDrift 2.2s linear infinite;
+  opacity: 1;
+  clip-path: none;
+  width: 15%;
+  height: 2.6%;
+}

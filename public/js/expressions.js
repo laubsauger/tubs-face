@@ -1,6 +1,6 @@
 import { STATE } from './state.js';
 import { $, face, eyes, loadingBar } from './dom.js';
-import { setFaceRendererExpression } from './face-renderer.js';
+import { setFaceRendererExpression, setFaceRendererSpeaking } from './face-renderer.js';
 
 let idleVariant = 'soft';
 const EXPRESSION_MIN_HOLD_MS = Object.freeze({
@@ -17,11 +17,15 @@ let holdTimer = null;
 let pendingExpression = null;
 
 function applyFaceClass(expr) {
+    const wasSpeaking = face.classList.contains('speaking');
+    const hadSvg = face.classList.contains('use-svg-renderer');
     if (expr === 'idle') {
         face.className = idleVariant === 'flat' ? 'idle-flat' : '';
-        return;
+    } else {
+        face.className = expr;
     }
-    face.className = expr;
+    if (hadSvg) face.classList.add('use-svg-renderer');
+    if (wasSpeaking) face.classList.add('speaking');
 }
 
 function setIdleVariant(nextVariant) {
@@ -108,6 +112,16 @@ export function blink() {
     setTimeout(() => {
         eyes.forEach(eye => eye.classList.remove('blink'));
     }, 150);
+}
+
+export function startSpeaking() {
+    face.classList.add('speaking');
+    setFaceRendererSpeaking(true);
+}
+
+export function stopSpeaking() {
+    face.classList.remove('speaking');
+    setFaceRendererSpeaking(false);
 }
 
 export function startIdleLoop() {

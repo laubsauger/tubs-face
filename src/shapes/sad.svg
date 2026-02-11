@@ -3,6 +3,7 @@
   <g>
     <rect fill="#fff" x="0" y="2.5" width="14.59" height="17.8" rx="5.2" ry="5.2"/>
     <rect fill="#fff" x="40.85" y="2.5" width="14.59" height="17.8" rx="5.2" ry="5.2"/>
-    <path d="M22.5 29 Q27.72 23.5 32.94 29" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <!-- Sad mouth: filled upward arc (frown) -->
+    <path d="M22.5 29 Q27.72 23.5 32.94 29 L32.94 31.5 Q27.72 26 22.5 31.5 Z" fill="#fff"/>
   </g>
 </svg>

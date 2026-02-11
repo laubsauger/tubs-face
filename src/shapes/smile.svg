@@ -3,6 +3,7 @@
   <g>
     <rect fill="#fff" x="0" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
     <rect fill="#fff" x="40.85" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
-    <path d="M22.8 25.3 Q27.72 30.2 32.64 25.3" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+    <!-- Smile mouth: filled arc path -->
+    <path d="M22.8 25.3 Q27.72 30.2 32.64 25.3 L32.64 27.8 Q27.72 32.7 22.8 27.8 Z" fill="#fff"/>
   </g>
 </svg>

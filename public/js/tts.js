@@ -1,6 +1,6 @@
 import { STATE } from './state.js';
 import { $, loadingBar, speechBubble, subtitleEl } from './dom.js';
-import { setExpression } from './expressions.js';
+import { setExpression, startSpeaking, stopSpeaking } from './expressions.js';
 import { showDonationQr } from './donation-ui.js';
 import { clearInterruptionTimer } from './audio-input.js';
 import { suggestEmotionExpression } from './emotion-engine.js';
@@ -128,6 +128,7 @@ export function processQueue() {
         STATE.speakingEndedAt = Date.now();
         speechBubble.classList.remove('visible');
         stopSubtitles();
+        stopSpeaking();
         $('#stat-listen-state').textContent = 'Idle';
 
         // Post-speech: pulse emotion expression if available, then idle
@@ -197,8 +198,8 @@ async function playTTS(text) {
             const dur = isFinite(audio.duration) ? audio.duration : wordCount * 0.15;
             startSubtitles(text, dur);
 
-            // NOW set speaking expression — synced with actual audio
-            setExpression('speaking');
+            // Start speaking mouth overlay — keeps current expression's eyes
+            startSpeaking();
             loadingBar.classList.remove('active');
 
             audio.play().catch(e => {
@@ -235,8 +236,8 @@ function speakFallback(text) {
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     const estimatedDuration = wordCount * 0.15;
 
-    // Set speaking expression for fallback too
-    setExpression('speaking');
+    // Start speaking mouth overlay for fallback too
+    startSpeaking();
     loadingBar.classList.remove('active');
     startSubtitles(text, estimatedDuration);
 

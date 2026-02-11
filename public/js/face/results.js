@@ -5,6 +5,7 @@ import { enterSleep, exitSleep } from '../sleep.js';
 import { enqueueSpeech } from '../tts.js';
 import { setExpression } from '../expressions.js';
 import { getWs } from '../websocket.js';
+import { resetProactiveTimer, onPresenceChanged } from '../proactive.js';
 import { cosineSimilarity } from './math.js';
 import { getFaceLibrary } from './library.js';
 import { getRandomWakeGreeting, getRandomJoinGreeting, getRandomDepartureGreeting } from './greetings.js';
@@ -326,6 +327,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
 
         if (!STATE.presenceDetected) {
             STATE.presenceDetected = true;
+            onPresenceChanged(true);
         }
 
         // ── Wake from sleep ──
@@ -343,6 +345,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
                     lastGreetedByName.set(greetName, Date.now());
                 }
                 enqueueSpeech(greeting);
+                resetProactiveTimer();
             }, 400);
 
         } else {
@@ -363,6 +366,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
                     enqueueSpeech(greeting);
                     lastGreetedByName.set(n, Date.now());
                     logChat('sys', `New face recognized: ${n}`);
+                    resetProactiveTimer();
                 }
             } else {
                 // Clear wake suppression once we've had one non-wake frame with no new names
@@ -430,6 +434,7 @@ function checkPresenceTimeout() {
         departureEligibleNames.clear();
         badge.classList.remove('visible');
         sendPresence(false, [], 0);
+        onPresenceChanged(false);
     }
 }
 

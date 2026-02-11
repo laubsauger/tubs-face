@@ -1,25 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 55.44 27.82">
-  <defs>
-    <style>
-      .cls-1 {
-        fill: #fff;
-      }
-
-      .cls-2 {
-        fill: none;
-        stroke: #fff;
-        stroke-linecap: round;
-        stroke-miterlimit: 10;
-        stroke-width: 4px;
-      }
-    </style>
-  </defs>
-  <g id="Layer_1-2" data-name="Layer 1">
-    <g>
-      <rect class="cls-1" x="0" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
-      <rect class="cls-1" x="40.85" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
-    </g>
-    <line class="cls-2" x1="22.41" y1="25.82" x2="32.85" y2="25.82"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 55.44 27.82">
+  <g>
+    <rect fill="#fff" x="0" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
+    <rect fill="#fff" x="40.85" y="0" width="14.59" height="22.47" rx="5.94" ry="5.94"/>
+    <!-- Mouth: filled rect instead of line -->
+    <rect fill="#fff" x="22.41" y="24.32" width="10.44" height="3" rx="1.5" ry="1.5"/>
   </g>
 </svg>

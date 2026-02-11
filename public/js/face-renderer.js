@@ -356,7 +356,7 @@ function startSpeakingCycle() {
 
     const motion = MOTION_PROFILE.speaking;
     speakingIndex = 0;
-    applyShapeProfile('neutral', { duration: motion.enterDuration, ease: motion.ease });
+    // Only animate mouth — preserve current expression's eyes/decor
     applyShapeProfile(TALK_SEQUENCE[speakingIndex], { mouthOnly: true, duration: motion.enterDuration, ease: motion.ease });
 
     speakingTimer = setInterval(() => {
@@ -378,6 +378,23 @@ function stopSpeakingCycle() {
 function applyExpressionProfile(expressionKey, options = {}) {
     if (expressionKey === 'speaking') {
         startSpeakingCycle();
+        return;
+    }
+
+    // If currently speaking, update eyes/decor but keep mouth cycling
+    if (speakingTimer) {
+        const shapeKey = expressionToShapeKey(expressionKey);
+        const profile = getProfileByShapeKey(shapeKey);
+        if (profile) {
+            const duration = options.instant ? 0 : (Number.isFinite(options.duration) ? options.duration : MOTION_PROFILE.expression.duration);
+            const ease = options.ease || MOTION_PROFILE.expression.ease;
+            morphFeature('leftEye', profile.leftEye, duration, ease);
+            morphFeature('rightEye', profile.rightEye, duration, ease);
+            applyDecor(profile.decor || [], duration, ease);
+            if (svgLayerEl) {
+                svgLayerEl.dataset.svgTint = profile.tint || 'neutral';
+            }
+        }
         return;
     }
 
@@ -608,6 +625,22 @@ export function setFaceRenderMode(mode, options = {}) {
 export function setFaceRendererExpression(expression) {
     currentExpression = String(expression || 'idle').toLowerCase();
     syncRenderer();
+}
+
+export function setFaceRendererSpeaking(active) {
+    if (activeRenderer !== 'svg') return;
+    if (active) {
+        startSpeakingCycle();
+    } else {
+        stopSpeakingCycle();
+        // Restore current expression's mouth shape
+        const shapeKey = expressionToShapeKey(resolveExpressionKey());
+        const profile = getProfileByShapeKey(shapeKey);
+        if (profile) {
+            morphFeature('mouth', profile.mouth, MOTION_PROFILE.expression.duration, MOTION_PROFILE.expression.ease);
+            setMouthWaveActive(Boolean(profile.wave));
+        }
+    }
 }
 
 export function setFaceRendererGaze({ eyeX = 0, eyeY = 0, mouthX = 0, mouthY = 0 } = {}) {

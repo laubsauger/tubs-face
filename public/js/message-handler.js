@@ -7,6 +7,7 @@ import { hideDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
 import { setFaceRenderMode } from './face-renderer.js';
+import { resetProactiveTimer } from './proactive.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
@@ -186,6 +187,7 @@ export function handleMessage(msg) {
             enqueueSpeech(msg.text, msg.donation, msg.emotion || null);
             logChat('out', msg.text);
             STATE.totalMessages++;
+            resetProactiveTimer();
             break;
         case 'incoming':
             {
@@ -200,6 +202,7 @@ export function handleMessage(msg) {
             }
             logChat('in', msg.text);
             setExpressionIfAllowed('listening');
+            resetProactiveTimer();
             break;
         case 'donation_signal':
             applyDonationSignal({

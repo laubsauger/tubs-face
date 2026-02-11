@@ -489,6 +489,81 @@ async function generateAssistantReply(userText) {
   };
 }
 
+async function generateProactiveReply(context) {
+  const startedAt = Date.now();
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+
+  const proactiveInstruction = buildSystemInstruction() + '\n\n' +
+    'PROACTIVE CONTEXT: You are initiating conversation. ' + context + '\n' +
+    'Say something engaging, curious, or playful to start or continue conversation. ' +
+    'Keep it short (1 sentence). Sound natural, not forced.';
+
+  const contents = [];
+  pruneConversationHistory();
+  const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
+  for (const entry of recent) {
+    contents.push({ role: entry.role, parts: [{ text: entry.text }] });
+  }
+  // Add a minimal context prompt
+  contents.push({ role: 'user', parts: [{ text: '[silence]' }] });
+
+  let responseText = '';
+  let model = runtimeConfig.llmModel;
+  let usageIn = 0;
+  let usageOut = 0;
+
+  try {
+    const llmResult = await generateGeminiContent({
+      apiKey,
+      model: runtimeConfig.llmModel,
+      systemInstruction: proactiveInstruction,
+      contents,
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      temperature: 0.65,
+    });
+    responseText = clampOutput(llmResult.text);
+    model = llmResult.model || model;
+    usageIn = Number(llmResult.usage.promptTokenCount || 0);
+    usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
+  } catch (err) {
+    console.error('[LLM] Proactive generation failed:', err.message);
+    return null;
+  }
+
+  if (!responseText) return null;
+
+  const parsedEmoji = splitTrailingEmotionEmoji(responseText);
+  responseText = parsedEmoji.text;
+  const emotion = parsedEmoji.emotion;
+
+  const donationSignal = extractDonationSignal(responseText);
+  responseText = clampOutput(donationSignal.text);
+  if (!responseText) return null;
+
+  // Only push the model response to history (not the fake user prompt)
+  pushHistory('model', responseText);
+  assistantReplyCount += 1;
+
+  const tokensIn = usageIn || estimateTokens(context);
+  const tokensOut = usageOut || estimateTokens(responseText);
+  const costUsd = estimateCostUsd(tokensIn, tokensOut);
+
+  return {
+    text: responseText,
+    source: 'proactive',
+    model,
+    tokens: { in: tokensIn, out: tokensOut },
+    costUsd,
+    donation: donationSignal.donation,
+    emotion,
+    latencyMs: Date.now() - startedAt,
+  };
+}
+
 function clearAssistantContext(reason = 'manual') {
   conversationHistory.length = 0;
   memoryFacts.clear();
@@ -498,4 +573,4 @@ function clearAssistantContext(reason = 'manual') {
   }
 }
 
-module.exports = { generateAssistantReply, clearAssistantContext };
+module.exports = { generateAssistantReply, generateProactiveReply, clearAssistantContext };

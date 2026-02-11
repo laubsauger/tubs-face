@@ -21,7 +21,7 @@ Default runtime config:
   "prompt": "Default personality",
   "sttModel": "small",
   "llmModel": "gemini-2.5-flash",
-  "llmMaxOutputTokens": 120,
+  "llmMaxOutputTokens": 256,
   "donationSignalMode": "both",
   "faceRenderMode": "svg"
 }

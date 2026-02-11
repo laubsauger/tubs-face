@@ -1,6 +1,6 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
-const { generateAssistantReply, clearAssistantContext } = require('./assistant-service');
+const { generateAssistantReply, generateProactiveReply, clearAssistantContext } = require('./assistant-service');
 const { logConversation } = require('./logger');
 
 let clients = new Set();
@@ -63,6 +63,46 @@ function initWebSocket(server) {
           if (msg.present === false) {
             schedulePresenceContextClear();
           }
+          return;
+        }
+
+        if (msg.type === 'proactive') {
+          void (async () => {
+            try {
+              const reply = await generateProactiveReply(msg.context || 'Someone is nearby');
+              if (!reply) return;
+
+              sessionStats.tokensIn += reply.tokens.in || 0;
+              sessionStats.tokensOut += reply.tokens.out || 0;
+              sessionStats.costUsd += reply.costUsd || 0;
+              sessionStats.messagesOut++;
+              sessionStats.lastActivity = Date.now();
+              if (reply.model) sessionStats.model = reply.model;
+
+              broadcast({
+                type: 'speak',
+                text: reply.text,
+                donation: reply.donation,
+                emotion: reply.emotion || null,
+                ts: Date.now(),
+              });
+              logConversation('TUBS (proactive)', reply.text);
+              broadcast({
+                type: 'stats',
+                tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
+                totals: {
+                  in: sessionStats.tokensIn,
+                  out: sessionStats.tokensOut,
+                  cost: sessionStats.costUsd,
+                },
+                latency: reply.latencyMs,
+                model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
+                cost: reply.costUsd || 0,
+              });
+            } catch (err) {
+              console.error('[WS] Proactive generation failed:', err);
+            }
+          })();
           return;
         }
 

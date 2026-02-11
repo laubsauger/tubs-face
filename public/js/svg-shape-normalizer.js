@@ -598,6 +598,15 @@ function createFallbackProfiles() {
         mouth: createRoundedRectFeature({ x: 20.53, y: 23.86, width: 14.38, height: 9.47, rx: 1.95 }, MOUTH_POINTS),
     };
 
+    const sleep = {
+        leftEye: createRoundedRectFeature({ x: 1.3, y: 9.5, width: 12, height: 4, rx: 2, fill: '#fff' }, EYE_POINTS),
+        rightEye: createRoundedRectFeature({ x: 42.15, y: 9.5, width: 12, height: 4, rx: 2, fill: '#fff' }, EYE_POINTS),
+        mouth: createRoundedRectFeature({ x: 24.5, y: 25, width: 6.5, height: 3, rx: 1.5, fill: '#fff' }, MOUTH_POINTS),
+        decor: [],
+        wave: false,
+        tint: 'neutral',
+    };
+
     return {
         neutral,
         talk1,
@@ -607,7 +616,7 @@ function createFallbackProfiles() {
         happy: neutral,
         sad: neutral,
         thinking: neutral,
-        sleep: neutral,
+        sleep,
         love: neutral,
         crying: neutral,
         angry: neutral,
