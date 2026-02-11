@@ -17,6 +17,7 @@ Open `http://localhost:3000` in your browser.
 The bot starts **asleep** and the camera auto-enables. When a face is detected, the bot wakes up, greets you with TTS, and its eyes begin tracking your face. If no one is visible for a while, it goes back to sleep.
 
 When Tubs asks for donations, a Venmo QR card appears in the UI.
+When donation intent is detected from user speech/text, Tubs briefly switches to a heart-eyes `love` expression.
 
 ## Keyboard Shortcuts
 
@@ -42,6 +43,29 @@ All four corner panels are **collapsible** — click the panel header to toggle.
 - **Bot Stats** (bottom-right) — Response time, token counts, expression, session cost
 
 Session cost is estimated from token counts using optional `.env` pricing values (`GEMINI_INPUT_COST_PER_MTOKENS`, `GEMINI_OUTPUT_COST_PER_MTOKENS`).
+
+## Expression Reactions
+
+- `love` may trigger when users indicate they donated or will donate.
+- `crying` may trigger occasionally when a recognized person leaves without a donation signal.
+- Subtle animated scanlines run across face features so the face keeps visual motion even when idle.
+
+Donation-triggered `love` supports two signal strengths:
+- **Implied**: user says they donated / will donate.
+- **Confident**: server-side confirmation (manual endpoint or webhook ingestion).
+
+You can choose mode in config: `both`, `implied`, `confident`, or `off`.
+
+LLM replies can optionally include one trailing supported emoji token (as the last character) to drive face mood/expression cues without runtime sentiment analysis.
+Supported trailing emoji mappings:
+- `🙂` warm/friendly
+- `😄` excited joy
+- `😏` sassy/playful
+- `🥺` pleading/soft
+- `😢` sad/hurt
+- `😤` fired up/intense
+- `🤖` deadpan robot
+- `🫶` grateful/love
 
 ## Camera & Face Detection
 
@@ -69,23 +93,25 @@ Press `D` to open the face debug overlay. Shows:
 
 ## Eye Tracking
 
-When a face is detected, the bot's pupils follow the primary face position in the camera frame. This creates the effect of the bot "looking at" whoever is in front of the camera.
+When a face is detected, the bot adjusts eye position toward the average detected face position in the camera frame. This creates the effect of the bot "looking at" people in front of it.
 
 ## Sleep / Wake
 
-- **Auto-sleep** after configurable idle timeout (default 5 min). Adjust with the **Sleep** slider in the Input Status panel (10s–10m).
+- **Auto-sleep** after configurable idle timeout (default 10s). Adjust with the **Sleep** slider in the Input Status panel (5s–10m).
 - **Auto-wake** when the camera detects a face
 - **Wake triggers**: face detection, spacebar, click, Escape, typing
 - **Greeting**: on face-triggered wake, the bot greets by name if enrolled ("Hey Flo!") or generically ("Hey there!") via TTS
-- **Sleepy eyes**: eyelids half-close when sleeping, open on wake
+- **Sleepy face**: eyes narrow and UI dims while sleeping
 
 ## Architecture
 
 ```
 Browser (vanilla JS)
-  ├── main.js          — UI controller, expressions, TTS, keyboard, sleep/wake
-  ├── face-manager.js  — Camera, worker orchestration, face matching, eye tracking
-  └── face-worker.js   — Web Worker: SCRFD detection + ArcFace recognition (ONNX)
+  ├── public/js/main.js         — app bootstrap + startup wiring
+  ├── public/js/message-handler.js
+  ├── public/js/audio-input.js
+  ├── public/js/face/*          — camera, worker orchestration, matching, debug
+  └── public/js/face-worker.js  — Web Worker: SCRFD detection + ArcFace recognition (ONNX)
 
 Node.js Bridge Server (src/bridge-server.js)
   ├── Static file server (public/)
@@ -117,7 +143,11 @@ LLM Assistant (Gemini API)
 | `/sleep` | POST | Put bot to sleep |
 | `/wake` | POST | Wake bot up |
 | `/config` | GET | Get current config |
-| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`) |
+| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`) |
+| `/checkout/paypal/order` | POST | Create PayPal order (optional checkout flow) |
+| `/checkout/paypal/capture` | POST | Capture PayPal order; emits confident donation signal on completion |
+| `/donations/confirm` | POST | Manual donation signal injection (`implied`/`confident`) |
+| `/webhooks/paypal` | POST | PayPal webhook ingestion (maps supported event types to donation signals) |
 
 ### Whisper Model Selection
 
@@ -156,6 +186,51 @@ curl -X POST http://localhost:3000/config \
 - `.env` donation settings:
   - `DONATION_VENMO`
   - `DONATION_QR_DATA`
+  - `DONATION_SIGNAL_MODE` (`both`/`implied`/`confident`/`off`)
+  - `DONATION_WEBHOOK_TOKEN` (optional shared token for donation/webhook endpoints)
+
+### Donation Signals
+
+Manual confident/implied signal:
+
+```bash
+curl -X POST http://localhost:3000/donations/confirm \
+  -H "Content-Type: application/json" \
+  -H "X-Donation-Token: $DONATION_WEBHOOK_TOKEN" \
+  -d '{"certainty":"confident","source":"manual","amount":5.00,"currency":"USD","note":"test ping"}'
+```
+
+Runtime mode switching:
+
+```bash
+curl -X POST http://localhost:3000/config \
+  -H "Content-Type: application/json" \
+  -d '{"donationSignalMode":"both"}'
+```
+
+PayPal webhook mapping currently handled:
+- `PAYMENT.CAPTURE.COMPLETED` -> `confident`
+- `CHECKOUT.ORDER.APPROVED` -> `implied`
+
+Optional PayPal checkout flow (server-side order + capture):
+
+```bash
+curl -X POST http://localhost:3000/checkout/paypal/order \
+  -H "Content-Type: application/json" \
+  -d '{"amount":"5.00","currency":"USD","description":"Wheels for Tubs"}'
+```
+
+```bash
+curl -X POST http://localhost:3000/checkout/paypal/capture \
+  -H "Content-Type: application/json" \
+  -d '{"orderId":"REPLACE_WITH_ORDER_ID"}'
+```
+
+`.env` for checkout:
+- `PAYPAL_ENV` (`sandbox` or `live`)
+- `PAYPAL_CLIENT_ID`
+- `PAYPAL_CLIENT_SECRET`
+- `PAYPAL_DEFAULT_DONATION_AMOUNT` (fallback when amount not provided)
 
 ## Models
 

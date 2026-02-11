@@ -11,9 +11,13 @@
  *   POST /speak     — Send speech to face: { text }
  *   POST /sleep     — Trigger sleep mode
  *   POST /wake      — Trigger wake mode
+ *   POST /checkout/paypal/order   — Create PayPal order
+ *   POST /checkout/paypal/capture — Capture PayPal order
+ *   POST /donations/confirm       — Manual donation signal
+ *   POST /webhooks/paypal         — PayPal webhook donation event intake
  *   GET  /stats     — Return current session stats
  *   GET  /config    — Get runtime config
- *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel, llmModel, llmMaxOutputTokens }
+ *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel, llmModel, llmMaxOutputTokens, donationSignalMode }
  */
 
 const http = require('http');

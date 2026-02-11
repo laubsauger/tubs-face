@@ -21,4 +21,6 @@ export const STATE = {
     personsPresent: [],
     presenceDetected: false,
     lastDonationSignalAt: 0,
+    donationSignalMode: 'both',
+    chatVerbosity: 'all',
 };

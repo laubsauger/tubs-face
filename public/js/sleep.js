@@ -1,5 +1,5 @@
 import { STATE } from './state.js';
-import { $, body } from './dom.js';
+import { $, body, subtitleEl } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression, triggerBlink } from './expressions.js';
 import { resetGaze } from './eye-tracking.js';
@@ -38,6 +38,7 @@ export function enterSleep() {
     STATE.speaking = false;
     STATE.presenceDetected = false;
     hideDonationQr();
+    subtitleEl.classList.remove('visible');
     setExpression('idle');
     resetGaze();
     logChat('sys', '💤 Sleep mode');

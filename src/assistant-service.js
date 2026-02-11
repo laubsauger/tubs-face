@@ -17,6 +17,60 @@ const DEFAULT_VENMO_HANDLE = process.env.DONATION_VENMO || 'tubs-wheel-fund';
 const DEFAULT_DONATION_QR_DATA = process.env.DONATION_QR_DATA || `https://venmo.com/${DEFAULT_VENMO_HANDLE}`;
 const LLM_INPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_INPUT_COST_PER_MTOKENS || '0');
 const LLM_OUTPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_OUTPUT_COST_PER_MTOKENS || '0');
+const EMOJI_EMOTION_MAP = Object.freeze({
+  '🙂': {
+    label: 'warm_friendly',
+    expression: 'smile',
+    impulse: { pos: 0.58, neg: 0.06, arousal: 0.34 },
+  },
+  '😄': {
+    label: 'joy_excited',
+    expression: 'happy',
+    impulse: { pos: 0.9, neg: 0.02, arousal: 0.78 },
+  },
+  '😏': {
+    label: 'sassy_playful',
+    expression: 'smile',
+    impulse: { pos: 0.5, neg: 0.16, arousal: 0.48 },
+  },
+  '🥺': {
+    label: 'pleading_soft',
+    expression: 'sad',
+    impulse: { pos: 0.36, neg: 0.26, arousal: 0.36 },
+  },
+  '😢': {
+    label: 'sad_hurt',
+    expression: 'sad',
+    impulse: { pos: 0.12, neg: 0.82, arousal: 0.42 },
+  },
+  '😤': {
+    label: 'fired_up',
+    expression: 'sad',
+    impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 },
+  },
+  '🤖': {
+    label: 'robot_deadpan',
+    expression: 'thinking',
+    impulse: { pos: 0.32, neg: 0.1, arousal: 0.2 },
+  },
+  '🫶': {
+    label: 'grateful_love',
+    expression: 'love',
+    impulse: { pos: 0.82, neg: 0.02, arousal: 0.46 },
+  },
+});
+const EMOJI_GUIDE_LINES = [
+  '🙂 = warm/friendly',
+  '😄 = excited joy',
+  '😏 = sassy/playful',
+  '🥺 = pleading/soft',
+  '😢 = sad/hurt',
+  '😤 = fired up/intense',
+  '🤖 = deadpan robot',
+  '🫶 = grateful/love',
+];
+const TRAILING_PUNCT_RE = /[.!?]+\s*$/;
+const TRAILING_EMOJI_CLUSTER_RE = /(?:\s*)(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*$/u;
 
 const conversationHistory = [];
 const memoryFacts = new Map();
@@ -222,9 +276,73 @@ function buildSystemInstruction() {
     promptSections.push(`Known user facts:\n${memoryContext}`);
   }
 
+  promptSections.push(
+    [
+      'Optional emotion emoji protocol (for face animation):',
+      '- You may append an emoji only at the very end of the reply as the last character.',
+      '- If you use an emoji, it MUST be exactly one from this supported set; otherwise use no emoji.',
+      ...EMOJI_GUIDE_LINES.map((line) => `  - ${line}`),
+      '- Do not place emoji mid-sentence. Do not add multiple emojis.',
+    ].join('\n')
+  );
   promptSections.push('Token budget policy: stay concise by default and avoid long preambles.');
   promptSections.push('Style guardrail: sound like natural casual speech, not an AI assistant.');
   return promptSections.join('\n\n');
+}
+
+function splitTrailingEmotionEmoji(text) {
+  const normalized = normalizeInput(text);
+  if (!normalized) {
+    return {
+      text: '',
+      emoji: null,
+      emotion: null,
+    };
+  }
+
+  const punctMatch = normalized.match(TRAILING_PUNCT_RE);
+  const punctuation = punctMatch ? punctMatch[0].trim() : '';
+  let core = punctMatch ? normalized.slice(0, punctMatch.index).trimEnd() : normalized;
+  const trailingEmojis = [];
+
+  while (true) {
+    const clusterMatch = core.match(TRAILING_EMOJI_CLUSTER_RE);
+    if (!clusterMatch) break;
+    trailingEmojis.unshift(clusterMatch[1]);
+    core = core.slice(0, clusterMatch.index).trimEnd();
+  }
+
+  if (!trailingEmojis.length) {
+    return {
+      text: normalized,
+      emoji: null,
+      emotion: null,
+    };
+  }
+
+  // Tolerant protocol:
+  // - if multiple trailing emojis appear, use the last one
+  // - emoji must still be from the supported set
+  const emoji = trailingEmojis[trailingEmojis.length - 1];
+  const mapped = EMOJI_EMOTION_MAP[emoji];
+  if (!mapped) {
+    return {
+      text: `${core}${punctuation}`.trim(),
+      emoji: null,
+      emotion: null,
+    };
+  }
+
+  return {
+    text: `${core}${punctuation}`.trim(),
+    emoji,
+    emotion: {
+      emoji,
+      label: mapped.label,
+      expression: mapped.expression,
+      impulse: { ...mapped.impulse },
+    },
+  };
 }
 
 async function generateAssistantReply(userText) {
@@ -244,17 +362,20 @@ async function generateAssistantReply(userText) {
   extractMemory(normalizedInput);
 
   if (greeting) {
+    const parsed = splitTrailingEmotionEmoji(greeting);
+    const greetingText = parsed.text || 'Hey.';
     pushHistory('user', normalizedInput);
-    pushHistory('model', greeting);
+    pushHistory('model', greetingText);
     assistantReplyCount += 1;
     return {
-      text: greeting,
+      text: greetingText,
       source: 'greeting',
       model: 'fast-greeting',
-      tokens: { in: estimateTokens(normalizedInput), out: estimateTokens(greeting) },
+      tokens: { in: estimateTokens(normalizedInput), out: estimateTokens(greetingText) },
       latencyMs: Date.now() - startedAt,
       costUsd: 0,
       donation: buildDonationPayload(false),
+      emotion: parsed.emotion,
     };
   }
 
@@ -298,6 +419,10 @@ async function generateAssistantReply(userText) {
     responseText = clampOutput(generateDemoResponse(normalizedInput));
   }
 
+  const parsedEmoji = splitTrailingEmotionEmoji(responseText);
+  responseText = parsedEmoji.text;
+  const emotion = parsedEmoji.emotion;
+
   const donationSignal = extractDonationSignal(responseText);
   const nudged = maybeInjectDonationNudge(donationSignal.text, donationSignal.donation.show);
   responseText = clampOutput(nudged.text);
@@ -327,6 +452,7 @@ async function generateAssistantReply(userText) {
     },
     costUsd,
     donation: finalDonation,
+    emotion,
     latencyMs: Date.now() - startedAt,
   };
 }

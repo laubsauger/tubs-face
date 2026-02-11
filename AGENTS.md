@@ -21,7 +21,8 @@ Default runtime config:
   "prompt": "Default personality",
   "sttModel": "small",
   "llmModel": "gemini-2.5-flash",
-  "llmMaxOutputTokens": 120
+  "llmMaxOutputTokens": 120,
+  "donationSignalMode": "both"
 }
 ```
 
@@ -31,6 +32,12 @@ Default runtime config:
   - Primary path: `POST /tts` on the bridge, proxied to Python service on port `3001`.
   - Frontend playback: returned WAV audio.
   - Fallback: browser `SpeechSynthesis` if TTS service fails.
+- Conversational replies:
+  - Primary path: Gemini `generateContent` via `src/assistant-service.js`.
+  - Fast-path greetings come from `src/persona/greetings.json` without an LLM roundtrip.
+  - Short rolling memory and token/cost accounting are included in session stats.
+  - Replies may append one supported trailing emoji token, which maps to face emotion cues.
+  - Supported emoji cues: `🙂`, `😄`, `😏`, `🥺`, `😢`, `😤`, `🤖`, `🫶`.
 - Listening / voice input:
   - Browser captures audio (`MediaRecorder` + Web Audio visualization).
   - Audio is sent to `POST /voice` on the bridge.
@@ -38,11 +45,18 @@ Default runtime config:
   - Optional wake-word gate is supported via `/voice?wakeWord=true`.
 - Expressions:
   - `idle`: Neutral state.
+  - `idle-flat`: Occasional flatter neutral variant.
   - `listening`: Alert, awaiting or receiving input.
   - `thinking`: Processing state, loading bar active.
   - `speaking`: Mouth animation during playback.
+  - `love`: Donation joy (heart-eyes, happy/laughing mouth).
+  - `crying`: Sad/teary reaction when someone leaves without donating (occasional).
   - `sleep`: Sleep visuals (dimmed UI, eyes closed).
   - Also supported by UI state machine: `smile`, `happy`.
+- Donation visuals:
+  - When a response requests donations, the frontend shows a Venmo QR card.
+  - User donation confirmations/pledges can trigger a short `love` expression.
+  - Signal mode is configurable (`both`, `implied`, `confident`, `off`).
 
 ## Bridge API Surface
 
@@ -58,6 +72,10 @@ Implemented in `src/bridge-server.js`:
 - `POST /wake` wake mode
 - `GET /config` read runtime config
 - `POST /config` update runtime config
+- `POST /checkout/paypal/order` create a PayPal order (optional checkout path)
+- `POST /checkout/paypal/capture` capture a PayPal order and emit confident donation signal on completion
+- `POST /donations/confirm` push manual donation signal to UI (`implied` or `confident`)
+- `POST /webhooks/paypal` receive PayPal webhook events and map supported events to donation signals
 
 ## Adding / Changing Agents
 

@@ -1,6 +1,7 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
 const { generateAssistantReply } = require('./assistant-service');
+const { logConversation } = require('./logger');
 
 let clients = new Set();
 
@@ -27,6 +28,8 @@ function initWebSocket(server) {
           sessionStats.messagesIn++;
           sessionStats.lastActivity = Date.now();
 
+          broadcast({ type: 'incoming', text: msg.text });
+          logConversation('USER', msg.text);
           broadcast({ type: 'thinking' });
 
           void (async () => {
@@ -46,8 +49,10 @@ function initWebSocket(server) {
                 type: 'speak',
                 text: reply.text,
                 donation: reply.donation,
+                emotion: reply.emotion || null,
                 ts: Date.now(),
               });
+              logConversation('TUBS', reply.text);
               broadcast({
                 type: 'stats',
                 tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },

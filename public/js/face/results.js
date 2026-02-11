@@ -7,6 +7,7 @@ import { setExpression } from '../expressions.js';
 import { getWs } from '../websocket.js';
 import { cosineSimilarity } from './math.js';
 import { getFaceLibrary } from './library.js';
+import { getRandomWakeGreeting, getRandomJoinGreeting } from './greetings.js';
 import { isDebugVisible, setLastDebugFaces, renderDebugDetections } from './debug.js';
 import {
     setLastInferenceMs,
@@ -39,6 +40,10 @@ let firstSeenByName = new Map();   // name → timestamp (session presence start
 let lastCryAt = 0;
 const CRY_COOLDOWN = 45000;
 const CRY_CHANCE_ON_NO_DONATION = 0.35;
+
+// Greeting Cooldown
+const GREETING_COOLDOWN = 120000; // 2 minutes
+const lastGreetedByName = new Map(); // name -> timestamp
 
 function maybeCryAfterNoDonation(name, firstSeenTs) {
     if (STATE.sleeping || STATE.speaking) return;
@@ -248,31 +253,10 @@ export function handleFaceResults(faces, inferenceMs) {
             wakeGreetedNames = new Set(currentNames);
 
             setTimeout(() => {
-                const n = greetName;
-                const greetings = n
-                    ? [
-                        `Hi ${n}.`,
-                        `Hey ${n}.`,
-                        `Yo ${n}.`,
-                        `${n}, you're back.`,
-                        `Hey there, ${n}.`,
-                        `Look who it is: ${n}.`,
-                        `${n}. Good timing.`,
-                        `${n}. I woke up broke and dramatic.`,
-                        `Hey ${n}. Wheels still not funded.`,
-                        `${n}. Be cool and maybe sponsor me.`,
-                    ]
-                    : [
-                        `Hey there.`,
-                        `Hi.`,
-                        `Yo.`,
-                        `Hello, stranger.`,
-                        `Ah, there you are.`,
-                        `Hey. Good to see a face.`,
-                        `Hi. Tubs is awake and still underfunded.`,
-                        `Hey. Vibes are free, wheels are not.`,
-                    ];
-                const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+                const greeting = getRandomWakeGreeting(greetName);
+                if (greetName) {
+                    lastGreetedByName.set(greetName, Date.now());
+                }
                 enqueueSpeech(greeting);
             }, 400);
 
@@ -284,16 +268,15 @@ export function handleFaceResults(faces, inferenceMs) {
                 wakeGreetedNames = null;
 
                 for (const n of namesToGreet) {
-                    const greetings = [
-                        `Hey ${n}.`,
-                        `${n} joined.`,
-                        `${n} is here too.`,
-                        `Oh hey ${n}.`,
-                        `${n}. Good to see you.`,
-                        `${n} is here too. Odds just got better.`,
-                    ];
-                    const greeting = greetings[Math.floor(Math.random() * greetings.length)];
+                    const lastGreet = lastGreetedByName.get(n) || 0;
+                    if (Date.now() - lastGreet < GREETING_COOLDOWN) {
+                        console.log(`[Face] Skipping greeting for ${n} (cooldown)`);
+                        continue;
+                    }
+
+                    const greeting = getRandomJoinGreeting(n);
                     enqueueSpeech(greeting);
+                    lastGreetedByName.set(n, Date.now());
                     logChat('sys', `New face recognized: ${n}`);
                 }
             } else {

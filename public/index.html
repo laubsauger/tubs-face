@@ -42,6 +42,8 @@
         <div class="eye left"></div>
         <div class="eye right"></div>
         <div id="mouth"></div>
+      </div>
+      <div id="zzz-anchor">
         <span class="zzz">z</span>
         <span class="zzz">z</span>
         <span class="zzz">z</span>
@@ -52,6 +54,7 @@
       <div id="waveform-container"></div>
       <div id="ptt-indicator">Hold Space to Talk</div>
       <div id="speech-bubble"></div>
+      <div id="subtitle"></div>
       <div id="donation-card" class="hidden">
         <div class="donation-title">Wheels for Tubs + Rapha Thailand Fund</div>
         <img id="donation-qr" alt="Venmo donation QR code" />
@@ -116,7 +119,7 @@
 
     <!-- BOTTOM-LEFT: Chat Log -->
     <div class="panel stagger-3 collapsed" id="panel-bl">
-      <div class="panel-title">Chat Log <span style="margin-left:auto;font-weight:400;color:var(--text-dim)"
+      <div class="panel-title">Chat Log <span id="verbosity-toggle" style="margin-left:8px;font-size:10px;font-weight:600;cursor:pointer;color:var(--accent);letter-spacing:0.05em">ALL</span><span style="margin-left:auto;font-weight:400;color:var(--text-dim)"
           id="turn-counter">0 turns</span></div>
       <div id="chat-log"></div>
       <div id="panel-bl-resize"></div>

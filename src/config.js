@@ -4,6 +4,7 @@ loadEnvFile();
 const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = normalizeLlmMaxOutputTokens(process.env.GEMINI_MAX_OUTPUT_TOKENS || 120);
+const DEFAULT_DONATION_SIGNAL_MODE = normalizeDonationSignalMode(process.env.DONATION_SIGNAL_MODE || 'both');
 
 const sessionStats = {
   messagesIn: 0,
@@ -23,6 +24,7 @@ const runtimeConfig = {
   sttModel: DEFAULT_STT_MODEL,
   llmModel: DEFAULT_LLM_MODEL,
   llmMaxOutputTokens: DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+  donationSignalMode: DEFAULT_DONATION_SIGNAL_MODE,
 };
 
 function normalizeSttModel(model) {
@@ -65,13 +67,26 @@ function normalizeLlmMaxOutputTokens(value) {
   return parsed;
 }
 
+function normalizeDonationSignalMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const allowed = new Set(['both', 'implied', 'confident', 'off']);
+  if (!allowed.has(normalized)) {
+    const err = new Error('donationSignalMode must be one of: both, implied, confident, off');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
 module.exports = {
   sessionStats,
   runtimeConfig,
   normalizeSttModel,
   normalizeLlmModel,
   normalizeLlmMaxOutputTokens,
+  normalizeDonationSignalMode,
   DEFAULT_STT_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+  DEFAULT_DONATION_SIGNAL_MODE,
 };

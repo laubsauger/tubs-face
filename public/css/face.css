@@ -6,11 +6,22 @@
   max-width: calc(100vw - 120px);
   max-height: calc(100vh - 120px);
   aspect-ratio: 300 / 240;
-  transform: none;
+  transform: translate(var(--face-look-x, 0px), var(--face-look-y, 0px));
   left: auto;
   top: auto;
   filter: drop-shadow(0 0 40px rgba(var(--face-glow-rgb), 0.15));
   isolation: isolate;
+  --lcd-fill-white: linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 249, 255, 0.9) 100%);
+  --lcd-lines-white: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.85) 0 1px,
+    rgba(255, 255, 255, 0) 1px 4px
+  );
+  --lcd-bg-size-eye: 100% 100%, 100% 6px;
+  --lcd-bg-size-mouth: 100% 100%, 100% 5px;
+  --mood-pos: 0.24;
+  --mood-neg: 0.06;
+  --mood-arousal: 0.2;
 }
 
 #face::after {
@@ -65,26 +76,27 @@ body.sleeping #face {
 /* ── Eyes ── */
 .eye {
   position: absolute;
-  top: 18%;
-  width: 15%;
-  height: 32%;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(242, 248, 255, 0.92) 100%),
-    repeating-linear-gradient(
-      180deg,
-      rgba(185, 215, 242, 0.58) 0 1px,
-      rgba(255, 255, 255, 0) 1px 4px
-    );
-  background-size: 100% 100%, 100% 6px;
+  top: calc(18% - var(--mood-pos) * 1.1% + var(--mood-neg) * 1.5%);
+  width: calc(15% + var(--mood-arousal) * 0.8% - var(--mood-neg) * 0.3%);
+  height: calc(32% + var(--mood-arousal) * 3.6% - var(--mood-neg) * 3.3%);
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: var(--lcd-bg-size-eye);
   background-position: 0 0, 0 0;
-  border-radius: 22%;
+  border-radius: calc(22% + var(--mood-pos) * 2% - var(--mood-neg) * 4%);
   box-shadow:
     0 0 30px rgba(var(--face-glow-rgb), 0.4),
     0 0 60px rgba(var(--face-glow-rgb), 0.15),
     inset 0 0 15px rgba(255, 255, 255, 0.2);
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: top 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              border-radius 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              filter 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   transform: translate(var(--look-x, 0px), var(--look-y, 0px));
   animation: eyeScanDrift 2.2s linear infinite;
+  filter: brightness(calc(0.98 + var(--mood-pos) * 0.16 - var(--mood-neg) * 0.08));
 }
 
 .eye.left {
@@ -158,6 +170,46 @@ body.sleeping .eye {
   border-radius: 24%;
 }
 
+/* ── Expression: Love (Donation Joy) ── */
+#face.love .eye {
+  top: 16%;
+  width: 14%;
+  height: 26%;
+  border-radius: 0;
+  clip-path: polygon(50% 94%, 8% 54%, 8% 30%, 26% 10%, 50% 24%, 74% 10%, 92% 30%, 92% 54%);
+  background:
+    linear-gradient(180deg, #ffd9ed 0%, #ff8ec4 42%, #ff4da1 100%),
+    repeating-linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.5) 0 1px,
+      rgba(255, 255, 255, 0) 1px 4px
+    );
+  background-size: 100% 100%, 100% 6px;
+  background-position: 0 0, 0 0;
+  box-shadow:
+    0 0 20px rgba(255, 92, 168, 0.55),
+    0 0 44px rgba(255, 92, 168, 0.25),
+    inset 0 0 10px rgba(255, 255, 255, 0.2);
+  animation: eyeScanDrift 1.9s linear infinite, loveEyeBeat 0.95s ease-in-out infinite;
+}
+
+#face.love .eye.left {
+  animation-delay: 0s, 0s;
+}
+
+#face.love .eye.right {
+  animation-delay: -0.95s, -0.45s;
+}
+
+@keyframes loveEyeBeat {
+  0%, 100% {
+    filter: brightness(1);
+  }
+  50% {
+    filter: brightness(1.16);
+  }
+}
+
 /* ── Expression: Sad / Crying ── */
 #face.sad .eye,
 #face.crying .eye {
@@ -229,30 +281,42 @@ body.sleeping .eye {
   position: absolute;
   bottom: 18%;
   left: 50%;
-  transform: translateX(-50%);
-  width: 10.5%;
-  height: 7.5%;
+  transform: translateX(-50%) translateY(calc(var(--mood-neg) * 0.9% - var(--mood-pos) * 0.2%));
+  width: calc(10.5% + var(--mood-pos) * 1.6% - var(--mood-neg) * 1.3%);
+  height: calc(7.5% + var(--mood-pos) * 1.1% - var(--mood-neg) * 2.1%);
   background: transparent;
   border: 5px solid var(--face-glow);
   border-top: 0;
   border-radius: 0 0 999px 999px;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 0 14px rgba(var(--face-glow-rgb), 0.14);
-  opacity: 0.86;
+  opacity: calc(0.84 + var(--mood-pos) * 0.14 - var(--mood-neg) * 0.05);
+}
+
+/* Negative-valence overlay arc for smoother sad transitions */
+#mouth::before {
+  content: '';
+  position: absolute;
+  left: -6%;
+  right: -6%;
+  top: -8%;
+  height: 76%;
+  border: 4px solid var(--face-glow);
+  border-bottom: 0;
+  border-radius: 999px 999px 0 0;
+  opacity: calc(var(--mood-neg) * 0.92);
+  transform: translateY(calc(-8% - var(--mood-neg) * 24%)) scaleX(calc(0.8 + var(--mood-neg) * 0.2));
+  box-shadow: 0 0 10px rgba(var(--face-glow-rgb), 0.08);
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.3s ease;
 }
 
 /* Occasional flatter neutral for variation */
 #face.idle-flat #mouth {
   width: 15%;
   height: 2.6%;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 249, 255, 0.9) 100%),
-    repeating-linear-gradient(
-      180deg,
-      rgba(185, 215, 242, 0.6) 0 1px,
-      rgba(255, 255, 255, 0) 1px 4px
-    );
-  background-size: 100% 100%, 100% 5px;
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: var(--lcd-bg-size-mouth);
   background-position: 0 0, 0 0;
   border: none;
   border-radius: 10px;
@@ -261,21 +325,23 @@ body.sleeping .eye {
   animation: mouthScanDrift 2s linear infinite;
 }
 
+#face.idle-flat #mouth::before {
+  opacity: 0;
+}
+
 /* Speaking mouth */
 #face.speaking #mouth {
   border: none;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 249, 255, 0.9) 100%),
-    repeating-linear-gradient(
-      180deg,
-      rgba(185, 215, 242, 0.6) 0 1px,
-      rgba(255, 255, 255, 0) 1px 4px
-    );
-  background-size: 100% 100%, 100% 5px;
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: var(--lcd-bg-size-mouth);
   background-position: 0 0, 0 0;
   border-radius: 10px;
   box-shadow: 0 0 12px rgba(var(--face-glow-rgb), 0.15);
   animation: talk 0.18s ease infinite alternate, mouthScanDrift 1.7s linear infinite;
+}
+
+#face.speaking #mouth::before {
+  opacity: 0;
 }
 
 @keyframes mouthScanDrift {
@@ -310,12 +376,45 @@ body.sleeping .eye {
 #face.happy #mouth {
   height: 8.5%;
   width: 12%;
+  border-radius: 999px;
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: var(--lcd-bg-size-mouth);
+  background-position: 0 0, 0 0;
+  border: none;
+  box-shadow: 0 0 16px rgba(var(--face-glow-rgb), 0.16);
+  opacity: 0.9;
+}
+
+#face.smile #mouth::before,
+#face.happy #mouth::before {
+  opacity: 0;
+}
+
+#face.love #mouth {
+  width: 13%;
+  height: 9%;
   border-radius: 0 0 999px 999px;
   background: transparent;
   border: 5px solid var(--face-glow);
   border-top: 0;
-  box-shadow: 0 0 16px rgba(var(--face-glow-rgb), 0.16);
-  opacity: 0.9;
+  box-shadow: 0 0 18px rgba(var(--face-glow-rgb), 0.22);
+  opacity: 0.96;
+  animation: loveMouthBounce 0.9s ease-in-out infinite;
+}
+
+#face.love #mouth::before {
+  opacity: 0;
+}
+
+@keyframes loveMouthBounce {
+  0%, 100% {
+    height: 8%;
+    width: 12.5%;
+  }
+  50% {
+    height: 10.8%;
+    width: 13.8%;
+  }
 }
 
 #face.sad #mouth,
@@ -330,6 +429,11 @@ body.sleeping .eye {
   opacity: 0.86;
 }
 
+#face.sad #mouth::before,
+#face.crying #mouth::before {
+  opacity: 0;
+}
+
 /* Thinking mouth */
 #face.thinking #mouth {
   width: 8%;
@@ -342,23 +446,25 @@ body.sleeping .eye {
   opacity: 0.6;
 }
 
+#face.thinking #mouth::before {
+  opacity: 0;
+}
+
 /* Sleep mouth */
 body.sleeping #mouth {
   opacity: 0.3;
   width: 12%;
   height: 2%;
   border: none;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(244, 249, 255, 0.9) 100%),
-    repeating-linear-gradient(
-      180deg,
-      rgba(185, 215, 242, 0.55) 0 1px,
-      rgba(255, 255, 255, 0) 1px 4px
-    );
-  background-size: 100% 100%, 100% 5px;
+  background: var(--lcd-fill-white), var(--lcd-lines-white);
+  background-size: var(--lcd-bg-size-mouth);
   background-position: 0 0, 0 0;
   border-radius: 10px;
   animation: mouthScanDrift 2.8s linear infinite;
+}
+
+body.sleeping #mouth::before {
+  opacity: 0;
 }
 
 /* ── Loading Bar ── */
@@ -471,20 +577,35 @@ body.sleeping #mouth {
 }
 
 /* ── ZZZ Animation ── */
+#zzz-anchor {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  max-width: calc(100vw - 120px);
+  max-height: calc(100vh - 120px);
+  aspect-ratio: 300 / 240;
+  pointer-events: none;
+  z-index: 30;
+}
+
 .zzz {
   position: absolute;
   font-family: 'Outfit', sans-serif;
   font-weight: 800;
-  color: var(--text-dim);
+  color: rgba(234, 245, 255, 0.96);
   opacity: 0;
   pointer-events: none;
   font-size: 24px;
-  z-index: 200;
-  text-shadow: 0 0 10px var(--bg);
+  letter-spacing: 0.02em;
+  transform: translateY(0) translateX(0) scale(0.9);
+  text-shadow:
+    0 0 10px rgba(218, 236, 255, 0.95),
+    0 0 24px rgba(132, 182, 255, 0.55);
+  will-change: transform, opacity;
 }
 
 body.sleeping .zzz {
-  animation: zzzFloat 3s ease-in-out infinite;
+  animation: zzzFloat 2.8s ease-in-out infinite;
 }
 
 .zzz:nth-of-type(1) {
@@ -510,13 +631,46 @@ body.sleeping .zzz {
 @keyframes zzzFloat {
   0% {
     opacity: 0;
-    transform: translateY(0) translateX(0);
+    transform: translateY(0) translateX(0) scale(0.82);
   }
-  30% {
-    opacity: 0.5;
+  18% {
+    opacity: 0.92;
+  }
+  58% {
+    opacity: 0.8;
   }
   100% {
     opacity: 0;
-    transform: translateY(-40px) translateX(15px);
+    transform: translateY(-46px) translateX(18px) scale(1.06);
   }
 }
+
+/* ── Subtitle Overlay ── */
+#subtitle {
+  position: absolute;
+  top: 4%;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 85%;
+  padding: 10px 20px;
+  background: rgba(10, 10, 15, 0.7);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+  font-family: 'Outfit', sans-serif;
+  font-size: clamp(20px, 3.5vw, 44px);
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+#subtitle.visible { opacity: 1; }
+#subtitle .word {
+  display: inline;
+  color: rgba(200, 204, 224, 0.3);
+  transition: color 0.15s ease;
+}
+#subtitle .word.active { color: var(--text-bright); }
+#subtitle .word.spoken { color: rgba(200, 204, 224, 0.55); }

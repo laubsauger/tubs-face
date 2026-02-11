@@ -7,12 +7,15 @@ const {
   normalizeSttModel,
   normalizeLlmModel,
   normalizeLlmMaxOutputTokens,
+  normalizeDonationSignalMode,
 } = require('./config');
 const { broadcast, getClients } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
 const { transcribeAudio, restartTranscriptionService } = require('./python-service');
 const { readFaceLib, writeFaceLib } = require('./face-library');
 const { generateAssistantReply } = require('./assistant-service');
+const { createOrder: createPayPalOrder, captureOrder: capturePayPalOrder } = require('./paypal-client');
+const { logConversation } = require('./logger');
 
 const staticPath = path.join(__dirname, '../public');
 
@@ -42,7 +45,7 @@ function handleRequest(req, res) {
   // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Donation-Token');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -74,6 +77,7 @@ function handleRequest(req, res) {
         const { text } = JSON.parse(body);
         if (!text) throw new Error('Missing text');
         broadcast({ type: 'speak', text, ts: Date.now() });
+        logConversation('TUBS', text);
         sessionStats.messagesOut++;
         sessionStats.lastActivity = Date.now();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -126,6 +130,7 @@ function handleRequest(req, res) {
         }
 
         broadcast({ type: 'incoming', text: text });
+        logConversation('USER', text);
         sessionStats.messagesIn++;
 
         const reply = await generateAssistantReply(text);
@@ -133,8 +138,10 @@ function handleRequest(req, res) {
           type: 'speak',
           text: reply.text,
           donation: reply.donation,
+          emotion: reply.emotion || null,
           ts: Date.now(),
         });
+        logConversation('TUBS', reply.text);
 
         sessionStats.messagesOut++;
         sessionStats.lastActivity = Date.now();
@@ -229,6 +236,147 @@ function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/checkout/paypal/order') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const order = await createPayPalOrder({
+          amount: payload.amount ?? process.env.PAYPAL_DEFAULT_DONATION_AMOUNT ?? '5.00',
+          currency: payload.currency ?? 'USD',
+          description: payload.description ?? 'Wheels for Tubs',
+          referenceId: payload.referenceId,
+        });
+        const approveUrl = Array.isArray(order.links)
+          ? (order.links.find(link => link.rel === 'approve') || {}).href
+          : undefined;
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          orderId: order.id,
+          status: order.status,
+          approveUrl,
+          order,
+        }));
+      } catch (e) {
+        const status = (
+          e.code === 'BAD_PAYPAL_AMOUNT'
+          || e.code === 'BAD_PAYPAL_CURRENCY'
+          || e instanceof SyntaxError
+        )
+          ? 400
+          : e.code === 'MISSING_PAYPAL_CREDENTIALS'
+            ? 503
+            : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message, details: e.details }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/checkout/paypal/capture') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const capture = await capturePayPalOrder(payload.orderId);
+        const signal = toDonationSignalFromPayPalCapture(capture);
+        if (signal) emitDonationSignal(signal);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          capture,
+          donationSignal: signal || null,
+        }));
+      } catch (e) {
+        const status = (
+          e.code === 'BAD_PAYPAL_ORDER_ID'
+          || e instanceof SyntaxError
+        )
+          ? 400
+          : e.code === 'MISSING_PAYPAL_CREDENTIALS'
+            ? 503
+            : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message, details: e.details }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/donations/confirm') {
+    if (!isDonationWebhookAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized donation confirmation' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const payload = JSON.parse(body || '{}');
+        const certainty = normalizeDonationSignalCertainty(payload.certainty || 'confident');
+        const signal = {
+          certainty,
+          source: String(payload.source || 'manual-confirm'),
+          amount: toSafeAmount(payload.amount),
+          currency: normalizeCurrencyCode(payload.currency),
+          note: payload.note ? String(payload.note).slice(0, 180) : undefined,
+          donor: payload.donor ? String(payload.donor).slice(0, 64) : undefined,
+          reference: payload.reference ? String(payload.reference).slice(0, 120) : undefined,
+        };
+
+        emitDonationSignal(signal);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, signal }));
+      } catch (e) {
+        const status = e.code === 'BAD_CONFIG' || e instanceof SyntaxError ? 400 : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/webhooks/paypal') {
+    if (!isDonationWebhookAuthorized(req)) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized webhook' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const event = JSON.parse(body || '{}');
+        const eventType = String(event.event_type || '').trim();
+        const signal = toDonationSignalFromPaypalEvent(eventType, event);
+
+        if (signal) {
+          emitDonationSignal(signal);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, processed: true, eventType, signal }));
+          return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, processed: false, eventType }));
+      } catch (e) {
+        const status = e instanceof SyntaxError ? 400 : 500;
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // Face Library CRUD
   if (req.method === 'GET' && url.pathname === '/faces') {
     const lib = readFaceLib();
@@ -305,6 +453,9 @@ function handleRequest(req, res) {
         if (Object.hasOwn(config, 'llmMaxOutputTokens')) {
           config.llmMaxOutputTokens = normalizeLlmMaxOutputTokens(config.llmMaxOutputTokens);
         }
+        if (Object.hasOwn(config, 'donationSignalMode')) {
+          config.donationSignalMode = normalizeDonationSignalMode(config.donationSignalMode);
+        }
 
         const nextConfig = { ...runtimeConfig, ...config };
         const shouldRestartStt = nextConfig.sttModel !== runtimeConfig.sttModel;
@@ -358,6 +509,143 @@ function handleRequest(req, res) {
 
   res.writeHead(404);
   res.end('Not found');
+}
+
+function normalizeCurrencyCode(value) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return undefined;
+  if (!/^[A-Z]{3}$/.test(normalized)) return undefined;
+  return normalized;
+}
+
+function toSafeAmount(value) {
+  if (value == null || value === '') return undefined;
+  const parsed = Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return Number(parsed.toFixed(2));
+}
+
+function normalizeDonationSignalCertainty(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'confident' || normalized === 'implied') return normalized;
+  const err = new Error('Donation certainty must be "confident" or "implied"');
+  err.code = 'BAD_CONFIG';
+  throw err;
+}
+
+function extractBearerToken(req) {
+  const auth = String(req.headers.authorization || '').trim();
+  if (!auth.toLowerCase().startsWith('bearer ')) return null;
+  return auth.slice(7).trim();
+}
+
+function isDonationWebhookAuthorized(req) {
+  const expectedToken = String(process.env.DONATION_WEBHOOK_TOKEN || '').trim();
+  if (!expectedToken) return true;
+
+  const headerToken = String(req.headers['x-donation-token'] || '').trim();
+  const bearerToken = extractBearerToken(req);
+  return headerToken === expectedToken || bearerToken === expectedToken;
+}
+
+function emitDonationSignal(signal) {
+  broadcast({
+    type: 'donation_signal',
+    certainty: signal.certainty,
+    source: signal.source,
+    amount: signal.amount,
+    currency: signal.currency,
+    donor: signal.donor,
+    note: signal.note,
+    reference: signal.reference,
+    ts: Date.now(),
+  });
+}
+
+function extractPaypalAmount(resource) {
+  if (!resource || typeof resource !== 'object') return { amount: undefined, currency: undefined };
+  const directAmount = resource.amount || resource.gross_amount;
+  if (directAmount) {
+    return {
+      amount: toSafeAmount(directAmount.value),
+      currency: normalizeCurrencyCode(directAmount.currency_code),
+    };
+  }
+
+  const gross = resource.seller_receivable_breakdown?.gross_amount;
+  if (gross) {
+    return {
+      amount: toSafeAmount(gross.value),
+      currency: normalizeCurrencyCode(gross.currency_code),
+    };
+  }
+
+  return { amount: undefined, currency: undefined };
+}
+
+function extractPaypalDonor(resource) {
+  const payer = resource?.payer;
+  if (!payer || typeof payer !== 'object') return undefined;
+  const given = String(payer.name?.given_name || '').trim();
+  const surname = String(payer.name?.surname || '').trim();
+  const fullName = [given, surname].filter(Boolean).join(' ').trim();
+  if (fullName) return fullName.slice(0, 64);
+  const email = String(payer.email_address || '').trim();
+  return email ? email.slice(0, 64) : undefined;
+}
+
+function toDonationSignalFromPayPalCapture(orderCapture) {
+  if (!orderCapture || typeof orderCapture !== 'object') return null;
+  const purchaseUnit = Array.isArray(orderCapture.purchase_units) ? orderCapture.purchase_units[0] : null;
+  const capture = Array.isArray(purchaseUnit?.payments?.captures)
+    ? purchaseUnit.payments.captures.find(item => item.status === 'COMPLETED') || purchaseUnit.payments.captures[0]
+    : null;
+  if (!capture) return null;
+
+  const amount = toSafeAmount(capture.amount?.value);
+  const currency = normalizeCurrencyCode(capture.amount?.currency_code);
+  const donor = extractPaypalDonor(orderCapture);
+  const reference = String(capture.id || orderCapture.id || '').trim() || undefined;
+
+  return {
+    certainty: 'confident',
+    source: 'paypal-capture-api',
+    amount,
+    currency,
+    donor,
+    reference,
+  };
+}
+
+function toDonationSignalFromPaypalEvent(eventType, event) {
+  const resource = event?.resource || {};
+  const { amount, currency } = extractPaypalAmount(resource);
+  const donor = extractPaypalDonor(resource);
+  const reference = String(resource?.id || event?.id || '').trim() || undefined;
+
+  if (eventType === 'PAYMENT.CAPTURE.COMPLETED') {
+    return {
+      certainty: 'confident',
+      source: 'paypal-webhook-capture',
+      amount,
+      currency,
+      donor,
+      reference,
+    };
+  }
+
+  if (eventType === 'CHECKOUT.ORDER.APPROVED') {
+    return {
+      certainty: 'implied',
+      source: 'paypal-webhook-approved',
+      amount,
+      currency,
+      donor,
+      reference,
+    };
+  }
+
+  return null;
 }
 
 module.exports = { handleRequest };
