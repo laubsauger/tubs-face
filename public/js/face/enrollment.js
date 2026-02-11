@@ -7,18 +7,18 @@ import { getWorker, isWorkerReady, setWorkerBusy, scheduleNextCapture, getVideo,
 const CAPTURE_MAX_WIDTH = 960;
 const THUMB_SIZE = 200;
 const DUPE_SIMILARITY_THRESH = 0.98;
+const MAX_DUPE_RETRIES = 1;
 const AUTO_SAVE_SECONDS = 10;
 const SAMPLE_DELAY = 1400;
 
 const INSTRUCTIONS = [
-    { text: 'Look at Camera', icon: '😐' },
-    { text: 'Still looking at Camera', icon: '😐' },
-    { text: 'Turn Slightly Left', icon: '⬅️' },
-    { text: 'Turn Slightly Right', icon: '➡️' },
-    { text: 'Tilt Head Up', icon: '⬆️' },
-    { text: 'Tilt Head Down', icon: '⬇️' },
-    { text: 'Expression: Smile', icon: '🙂' },
-    { text: 'Back to Neutral', icon: '😐' }
+    { text: 'Look straight at the camera', icon: '😐', hint: 'Face forward, eyes on the lens' },
+    { text: 'Now turn your head LEFT', icon: '⬅️', hint: 'Just slightly — like checking your shoulder' },
+    { text: 'Turn your head RIGHT', icon: '➡️', hint: 'Mirror what you just did, other side' },
+    { text: 'Tilt your head UP a bit', icon: '⬆️', hint: 'Like you\'re looking at a tall shelf' },
+    { text: 'Tilt your head DOWN', icon: '⬇️', hint: 'Like reading your phone' },
+    { text: 'Give me a SMILE', icon: '🙂', hint: 'Doesn\'t have to be your best — just natural' },
+    { text: 'Look at camera again', icon: '😐', hint: 'Almost done! Neutral face, eyes forward' },
 ];
 
 // UI Refs
@@ -33,20 +33,27 @@ const pip = document.getElementById('camera-pip');
 
 // Sound Generator
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playShutter() {
+
+function playTone(freq, endFreq, duration, type = 'square', vol = 0.1) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     osc.connect(gain);
     gain.connect(audioCtx.destination);
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.05);
-    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.05);
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, audioCtx.currentTime + duration);
+    gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
     osc.start();
-    osc.stop(audioCtx.currentTime + 0.1);
+    osc.stop(audioCtx.currentTime + duration + 0.02);
 }
+
+function playShutter() { playTone(800, 1200, 0.05); }
+function playCountdownTick() { playTone(440, 440, 0.04, 'sine', 0.06); }
+function playNewPose() { playTone(600, 900, 0.12, 'sine', 0.12); }
+function playSuccess() { playTone(800, 1600, 0.15, 'sine', 0.1); }
+function playFail() { playTone(300, 200, 0.2, 'sawtooth', 0.08); }
 
 export async function enrollFace() {
     if (!STATE.cameraActive || !isWorkerReady()) {
@@ -60,8 +67,8 @@ export async function enrollFace() {
     const trimmedName = name.trim();
 
     // Mode Selection
-    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (8 samples)\nCancel = Single Capture (1 sample)`);
-    const targetSamples = isFullEnrollment ? 8 : 1;
+    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (7 poses)\nCancel = Single Capture (1 sample)`);
+    const targetSamples = isFullEnrollment ? INSTRUCTIONS.length : 1;
     const instructions = isFullEnrollment ? INSTRUCTIONS : [{ text: 'Look at Camera', icon: '📸' }];
 
     try {
@@ -86,20 +93,36 @@ export async function enrollFace() {
         const thumbCtx = thumbCanvas.getContext('2d');
 
         // Capture Loop
+        let dupeRetries = 0;
         for (let i = 0; i < targetSamples; i++) {
-            const instr = instructions[i] || { text: 'Look at Camera', icon: '📸' };
+            const instr = instructions[i] || { text: 'Look at Camera', icon: '📸', hint: '' };
+
+            // New pose announcement — make it very obvious
+            playNewPose();
+            if (instructionEl) {
+                instructionEl.setAttribute('data-icon', instr.icon);
+                instructionEl.classList.add('new-pose');
+                instructionEl.innerHTML = `<span class="enroll-main">${instr.text}</span>` +
+                    (instr.hint ? `<span class="enroll-hint">${instr.hint}</span>` : '');
+            }
+            statusEl.innerHTML = `<span class="enroll-progress">POSE ${i + 1} of ${targetSamples}</span>`;
+
+            // Hold for a moment to let user read the instruction
+            await new Promise(r => setTimeout(r, 1200));
+            if (instructionEl) instructionEl.classList.remove('new-pose');
 
             // Countdown 3..2..1..
             for (let c = 3; c > 0; c--) {
+                playCountdownTick();
                 if (instructionEl) {
-                    instructionEl.innerHTML = `${instr.text}<br><span style="font-size:48px;color:#fff">${c}</span>`;
+                    instructionEl.innerHTML = `<span class="enroll-main">${instr.text}</span>` +
+                        `<span class="enroll-countdown">${c}</span>`;
                     instructionEl.setAttribute('data-icon', instr.icon);
                 }
-                statusEl.textContent = `Sample ${i + 1}/${targetSamples}`;
                 await new Promise(r => setTimeout(r, 800));
             }
             if (instructionEl) {
-                instructionEl.innerHTML = `${instr.text}<br><span style="font-size:48px;color:#00e5a0">SNAP!</span>`;
+                instructionEl.innerHTML = `<span class="enroll-snap">SNAP!</span>`;
             }
             playShutter();
 
@@ -167,10 +190,24 @@ export async function enrollFace() {
                 }
 
                 if (isDuplicate) {
-                    if (instructionEl) {
-                        instructionEl.innerHTML = `${instr.text}<br><span style="font-size:28px;color:#ffaa00">Duplicate - Discarded</span>`;
+                    dupeRetries = (dupeRetries || 0) + 1;
+                    playFail();
+                    if (dupeRetries <= MAX_DUPE_RETRIES) {
+                        if (instructionEl) {
+                            instructionEl.innerHTML = `<span class="enroll-warn">Too similar!</span><span class="enroll-hint">Move your head more — retrying this pose</span>`;
+                        }
+                        await new Promise(r => setTimeout(r, 1500));
+                        i--; // retry same pose
+                        continue;
                     }
-                    // No retry, just proceed and mark discarded
+                    // Exceeded retries — accept it but mark as discarded
+                    if (instructionEl) {
+                        instructionEl.innerHTML = `<span class="enroll-warn">Still similar — skipping</span><span class="enroll-hint">Moving on to next pose</span>`;
+                    }
+                    await new Promise(r => setTimeout(r, 800));
+                } else {
+                    dupeRetries = 0;
+                    playSuccess();
                 }
 
                 // Create Thumbnail
@@ -219,10 +256,11 @@ export async function enrollFace() {
 
             } else {
                 // Failed capture (no face) -> Retry
+                playFail();
                 if (instructionEl) {
-                    instructionEl.innerHTML = `${instr.text}<br><span style="font-size:32px;color:#ff4d4d">Face Missed! Retrying...</span>`;
+                    instructionEl.innerHTML = `<span class="enroll-error">No face detected!</span><span class="enroll-hint">Make sure your face is visible and try again</span>`;
                 }
-                await new Promise(r => setTimeout(r, 1000));
+                await new Promise(r => setTimeout(r, 1500));
                 i--;
             }
         }

@@ -88,6 +88,21 @@ function normalizeInput(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
+function stripFormatting(text) {
+  return String(text || '')
+    .replace(/\*{1,3}(.+?)\*{1,3}/g, '$1')   // *bold*, **bold**, ***both***
+    .replace(/_{1,3}(.+?)_{1,3}/g, '$1')       // _italic_, __underline__
+    .replace(/~~(.+?)~~/g, '$1')               // ~~strikethrough~~
+    .replace(/`{1,3}[^`]*`{1,3}/g, '')         // `code`, ```blocks```
+    .replace(/^#{1,6}\s+/gm, '')               // # headings
+    .replace(/^[-*+]\s+/gm, '')                // - bullet points
+    .replace(/^\d+\.\s+/gm, '')                // 1. numbered lists
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')   // [links](url)
+    .replace(/[*_~`#>|]/g, '')                 // any remaining stray formatting chars
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function clampOutput(text) {
   const normalized = normalizeInput(text);
   if (!normalized) return '';
@@ -427,8 +442,10 @@ async function generateAssistantReply(userText) {
         temperature: 1,
       });
       console.log(`[LLM] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
+      // Strip markdown/formatting that TTS would read aloud
+      const cleanedText = stripFormatting(llmResult.text);
       // Extract emoji BEFORE clamping — clamp cuts trailing sentences where emoji lives
-      const rawEmoji = splitTrailingEmotionEmoji(llmResult.text);
+      const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
       rawEmotion = rawEmoji.emotion;
       responseText = clampOutput(rawEmoji.text);
       console.log(`[LLM] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
@@ -526,7 +543,8 @@ async function generateProactiveReply(context) {
       temperature: 1,
     });
     console.log(`[LLM:proactive] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
-    const rawEmoji = splitTrailingEmotionEmoji(llmResult.text);
+    const cleanedText = stripFormatting(llmResult.text);
+    const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
     rawEmotion = rawEmoji.emotion;
     responseText = clampOutput(rawEmoji.text);
     console.log(`[LLM:proactive] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);

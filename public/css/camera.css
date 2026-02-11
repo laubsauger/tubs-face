@@ -191,16 +191,17 @@ body.sleeping #face-debug {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 90vw;
-  max-width: 800px;
-  height: 80vh;
-  max-height: 600px;
+  width: 95vw;
+  max-width: 1000px;
+  height: 90vh;
+  max-height: 800px;
   border-radius: 20px;
   box-shadow: 0 0 0 100vw rgba(0, 0, 0, 0.85);
-  /* backdrop */
   z-index: 5000;
-  /* above everything */
   transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+  display: flex;
+  flex-direction: column;
+  background: #0a0c14;
 }
 
 #camera-pip:not(.enroll-mode) #enroll-overlay {
@@ -210,39 +211,59 @@ body.sleeping #face-debug {
 #camera-pip.enroll-mode #camera-feed {
   object-fit: cover;
   transform: scaleX(-1);
+  flex: 1;
+  min-height: 0;
+  border-radius: 0 0 20px 20px;
 }
 
 #camera-pip.enroll-mode #camera-pip-header,
 #camera-pip.enroll-mode #presence-badge,
 #camera-pip.enroll-mode #camera-status {
   display: none;
-  /* Hide clutter */
 }
 
 #camera-pip.enroll-mode #enroll-overlay {
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0) 25%, rgba(0, 0, 0, 0) 75%, rgba(0, 0, 0, 0.8) 100%);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: none;
   backdrop-filter: none;
-  justify-content: flex-end;
-  /* Push controls to bottom */
-  padding-bottom: 40px;
+  padding: 0;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
 }
 
 #camera-pip.enroll-mode #enroll-instruction {
-  position: absolute;
-  top: 10%;
-  left: 0;
+  position: relative;
   width: 100%;
-  font-size: 32px;
-  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9);
-  pointer-events: none;
+  padding: 16px 24px;
+  border-radius: 20px 20px 0 0;
 }
 
 #camera-pip.enroll-mode #enroll-status {
-  position: absolute;
-  top: 20px;
-  left: 0;
+  position: relative;
   width: 100%;
   text-align: center;
-  font-size: 14px;
-  opacity: 0.8;
+  padding: 8px 0 4px;
+  border-radius: 0;
+  background: none;
+}
+
+#camera-pip.enroll-mode #enroll-strip {
+  position: absolute;
+  bottom: 16px;
+  left: 0;
+  width: 100%;
+  z-index: 10;
+  justify-content: center;
+}
+
+#camera-pip.enroll-mode #enroll-actions {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
 }

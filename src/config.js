@@ -128,7 +128,7 @@ function normalizeSttBackend(value) {
 
 
 /* --- 3. Resolved Configuration --- */
-const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'large-v3-turbo';
+const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = normalizeLlmMaxOutputTokens(process.env.GEMINI_MAX_OUTPUT_TOKENS || 256);
 const DEFAULT_DONATION_SIGNAL_MODE = normalizeDonationSignalMode(process.env.DONATION_SIGNAL_MODE || 'both');

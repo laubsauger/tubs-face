@@ -1,3 +1,5 @@
+import huggingface_hub.inference._generated.types.document_question_answering
+import asyncio.queues
 import os
 import io
 import struct
