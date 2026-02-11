@@ -2,6 +2,18 @@ import { STATE } from './state.js';
 import { $, face, eyes, loadingBar } from './dom.js';
 
 let idleVariant = 'soft';
+const EXPRESSION_MIN_HOLD_MS = Object.freeze({
+    smile: 1000,
+    happy: 1400,
+    sad: 1800,
+    crying: 2600,
+    love: 1600,
+});
+
+let holdUntilTs = 0;
+let heldExpression = '';
+let holdTimer = null;
+let pendingExpression = null;
 
 function applyFaceClass(expr) {
     if (expr === 'idle') {
@@ -18,13 +30,69 @@ function setIdleVariant(nextVariant) {
     }
 }
 
-export function setExpression(expr) {
+function clearHoldTimer() {
+    if (!holdTimer) return;
+    clearTimeout(holdTimer);
+    holdTimer = null;
+}
+
+function schedulePendingExpressionApply() {
+    clearHoldTimer();
+    if (!pendingExpression) return;
+    const wait = Math.max(0, holdUntilTs - Date.now());
+    holdTimer = setTimeout(() => {
+        holdTimer = null;
+        const next = pendingExpression;
+        pendingExpression = null;
+        if (!next) return;
+        setExpression(next.expr, next.options);
+    }, wait + 8);
+}
+
+function isHoldLocked(nextExpression, force) {
+    if (force) return false;
+    if (Date.now() >= holdUntilTs) return false;
+    if (!heldExpression) return false;
+    if (nextExpression === heldExpression) return false;
+    return true;
+}
+
+function applyExpressionHold(expr, options = {}) {
+    const explicitHoldMs = Number(options.holdMs);
+    const holdMs = Number.isFinite(explicitHoldMs)
+        ? Math.max(0, explicitHoldMs)
+        : (EXPRESSION_MIN_HOLD_MS[expr] || 0);
+
+    if (options.skipHold || holdMs <= 0) {
+        holdUntilTs = 0;
+        heldExpression = '';
+        clearHoldTimer();
+        return;
+    }
+
+    heldExpression = expr;
+    holdUntilTs = Date.now() + holdMs;
+}
+
+export function setExpression(expr, options = {}) {
+    const force = Boolean(options.force);
+    if (isHoldLocked(expr, force)) {
+        pendingExpression = { expr, options };
+        schedulePendingExpressionApply();
+        return false;
+    }
+
+    pendingExpression = null;
+    clearHoldTimer();
+
     STATE.expression = expr;
     $('#stat-expression').textContent = expr.toUpperCase();
 
     // Remove all expression classes, set new one
     applyFaceClass(expr);
     loadingBar.classList.toggle('active', expr === 'thinking');
+    applyExpressionHold(expr, options);
+    return true;
 }
 
 export function triggerBlink() {

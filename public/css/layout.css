@@ -5,6 +5,19 @@
   width: 100vw;
   overflow: hidden;
   background: radial-gradient(circle at center, #1a1a24 0%, #0a0a0f 80%);
+  isolation: isolate;
+}
+
+/* Noise dither to break up gradient banding on #grid */
+#grid::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNTAiIGhlaWdodD0iMjUwIj48ZmlsdGVyIGlkPSJuIj48ZmVUdXJidWxlbmNlIHR5cGU9ImZyYWN0YWxOb2lzZSIgYmFzZUZyZXF1ZW5jeT0iMC43NSIgbnVtT2N0YXZlcz0iNCIgc3RpdGNoVGlsZXM9InN0aXRjaCIvPjwvZmlsdGVyPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbHRlcj0idXJsKCNuKSIgb3BhY2l0eT0iMSIvPjwvc3ZnPg==');
+  opacity: 0.03;
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: overlay;
 }
 
 /* Zen Mode */

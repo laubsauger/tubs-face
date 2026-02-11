@@ -24,11 +24,11 @@ const EXPRESSION_HARD_LOCK = new Set(['love', 'crying', 'thinking', 'speaking'])
 const MOOD_HOLD_MS = 1700;
 const PULSE_DURATION_MS = 920;
 const EXPRESSION_PULSE_DURATIONS_MS = Object.freeze({
-    smile: 780,
-    happy: 780,
-    sad: 980,
-    thinking: 860,
-    love: 920,
+    smile: 980,
+    happy: 1300,
+    sad: 1700,
+    thinking: 1100,
+    love: 1600,
 });
 const EXPRESSIVE_PULSES = new Set(Object.keys(EXPRESSION_PULSE_DURATIONS_MS));
 

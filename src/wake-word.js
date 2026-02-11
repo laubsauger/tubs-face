@@ -1,11 +1,28 @@
 const WAKE_PREFIXES = new Set(['hey', 'hi', 'yo', 'okay', 'ok', 'oi', 'ey', 'ay']);
 const WAKE_NOISE_PREFIXES = new Set(['a', 'at', 'ah', 'uh', 'oh', 'um', 'hm', 'hmm']);
-const WAKE_MATCHER_VERSION = '2026-02-10.3';
+const WAKE_MATCHER_VERSION = '2026-02-11.3';
 const WAKE_ALIASES = new Set([
   'tubs', 'tub', 'tubbs', 'top', 'tops', 'tab', 'tap', 'tup',
   'tob', 'toob', 'dub', 'dubs', 'tobbs', 'etab', 'hotops',
+  'terps', 'turps',
 ]);
 const WAKE_GLUE_PREFIXES = ['h', 'ho', 'hey', 'e', 'eh', 'a', 'at', 'yo', 'ok', 'okay'];
+const WAKE_POLITE_LEAD_TOKENS = new Set(['thank', 'thanks', 'you', 'please', 'sorry', 'excuse', 'me']);
+const WAKE_DIRECT_CUE_TOKENS = new Set([
+  'you', 'your', 'can', 'could', 'will', 'would', 'do', 'did', 'are', 'is',
+  'help', 'tell', 'show', 'give', 'send', 'donate', 'pay', 'money', 'venmo',
+]);
+const WAKE_QUERY_CUE_TOKENS = new Set(['what', 'who', 'why', 'how', 'where', 'when']);
+const WAKE_TAIL_LEADING_CUE_TOKENS = new Set([
+  ...WAKE_PREFIXES,
+  ...WAKE_DIRECT_CUE_TOKENS,
+  ...WAKE_QUERY_CUE_TOKENS,
+  'whats', 'up', 'sup', 'good', 'mission', 'need', 'want', 'wanna',
+]);
+const WAKE_TAIL_BLOCKER_TOKENS = new Set([
+  'friend', 'friends', 'yesterday', 'today', 'tomorrow', 'said', 'told',
+  'about', 'saw', 'met', 'heard', 'called', 'name',
+]);
 
 function normalizeWakeText(text) {
   return (text || '')
@@ -121,8 +138,48 @@ function detectWakeWord(text) {
       WAKE_NOISE_PREFIXES.has(tokens[0])
     ))
   );
+  const beforeWake = hasWakeToken ? tokens.slice(0, wakeIndex) : [];
+  const afterWake = hasWakeToken ? tokens.slice(wakeIndex + 1) : [];
+  const wakeAfterPoliteLead = hasWakeToken &&
+    wakeIndex <= 3 &&
+    beforeWake.length > 0 &&
+    beforeWake.every(token => WAKE_POLITE_LEAD_TOKENS.has(token) || WAKE_NOISE_PREFIXES.has(token));
+  const wakeWithDirectCue = hasWakeToken &&
+    wakeIndex <= 4 &&
+    afterWake.length > 0 &&
+    afterWake.some(token => WAKE_DIRECT_CUE_TOKENS.has(token));
+  const wakeNearTail = hasWakeToken && wakeIndex >= Math.max(0, tokens.length - 5);
+  const nearbyGreetingBeforeWake = hasWakeToken &&
+    tokens.slice(Math.max(0, wakeIndex - 2), wakeIndex).some(token => WAKE_PREFIXES.has(token));
+  const tailWakeHasCue = afterWake.length > 0 &&
+    afterWake.slice(0, 4).some(token => WAKE_DIRECT_CUE_TOKENS.has(token) || WAKE_QUERY_CUE_TOKENS.has(token));
+  const tailWakeIsShortCall = afterWake.length <= 1;
+  const wakeCalledInTail = hasWakeToken &&
+    wakeNearTail &&
+    nearbyGreetingBeforeWake &&
+    (tailWakeHasCue || tailWakeIsShortCall);
+  const wakeAtTail = hasWakeToken && wakeIndex >= Math.max(0, tokens.length - 2);
+  const leadingTailWindow = hasWakeToken ? tokens.slice(Math.max(0, wakeIndex - 5), wakeIndex) : [];
+  const leadingTailHasCue = wakeAtTail &&
+    leadingTailWindow.some(token => WAKE_TAIL_LEADING_CUE_TOKENS.has(token));
+  const leadingTailHasNarrationBlocker = wakeAtTail &&
+    leadingTailWindow.some(token => WAKE_TAIL_BLOCKER_TOKENS.has(token));
+  const wakeTailAddressedByLeadingCue = hasWakeToken &&
+    wakeAtTail &&
+    leadingTailWindow.length > 0 &&
+    leadingTailHasCue &&
+    !leadingTailHasNarrationBlocker;
 
-  const detected = hasWakeToken && (greetingNearWake || greetingWithTrailingWake || wakeFirst || standaloneWake);
+  const detected = hasWakeToken && (
+    greetingNearWake ||
+    greetingWithTrailingWake ||
+    wakeFirst ||
+    standaloneWake ||
+    wakeAfterPoliteLead ||
+    wakeWithDirectCue ||
+    wakeCalledInTail ||
+    wakeTailAddressedByLeadingCue
+  );
   const reason = !hasWakeToken
     ? 'no_wake_token'
     : greetingNearWake
@@ -131,8 +188,16 @@ function detectWakeWord(text) {
         ? 'greeting_with_trailing_wake'
       : wakeFirst
         ? 'wake_first'
-        : standaloneWake
-          ? 'standalone_wake'
+      : standaloneWake
+        ? 'standalone_wake'
+      : wakeAfterPoliteLead
+        ? 'polite_lead_then_wake'
+      : wakeWithDirectCue
+        ? 'wake_with_direct_cue'
+      : wakeCalledInTail
+        ? 'wake_called_in_tail'
+      : wakeTailAddressedByLeadingCue
+        ? 'leading_cue_before_wake_tail'
           : 'wake_token_not_addressed';
 
   return {

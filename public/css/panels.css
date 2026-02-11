@@ -70,15 +70,29 @@
 }
 
 /* Panel Positioning */
-#panel-tl {
+#stack-tl {
+  position: absolute;
   top: 20px;
   left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 100;
+  width: 280px;
+  align-items: stretch;
 }
 
-#panel-tr {
-  top: 20px;
-  right: 20px;
+#stack-tl .panel {
+  position: relative;
+  top: auto;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  max-width: none;
 }
+
+/* Original TR is gone, but we keep BL/BR */
 
 #panel-bl {
   bottom: 20px;

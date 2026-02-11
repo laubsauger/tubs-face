@@ -1,9 +1,11 @@
-import { eyes, face } from './dom.js';
+import { eyes, face, mouth } from './dom.js';
 
-const EYE_MAX_X = 118;
-const EYE_MAX_Y = 64;
-const FACE_MAX_X = 16;
-const FACE_MAX_Y = 10;
+const EYE_MAX_X = 236;
+const EYE_MAX_Y = 128;
+const MOUTH_MAX_X = 208;
+const MOUTH_MAX_Y = 104;
+const FACE_MAX_X = 32;
+const FACE_MAX_Y = 20;
 
 const INPUT_DEADZONE = 0.035;
 const INPUT_SHAPE_EXPONENT = 0.82;
@@ -54,6 +56,11 @@ function applyGaze(x, y) {
         eye.style.setProperty('--look-x', `${ex.toFixed(2)}px`);
         eye.style.setProperty('--look-y', `${ey.toFixed(2)}px`);
     });
+
+    const mx = clamp(x * MOUTH_MAX_X, -MOUTH_MAX_X, MOUTH_MAX_X);
+    const my = clamp(y * MOUTH_MAX_Y, -MOUTH_MAX_Y, MOUTH_MAX_Y);
+    mouth.style.setProperty('--mouth-look-x', `${mx.toFixed(2)}px`);
+    mouth.style.setProperty('--mouth-look-y', `${my.toFixed(2)}px`);
 
     const fx = clamp(x * FACE_MAX_X, -FACE_MAX_X, FACE_MAX_X);
     const fy = clamp(y * FACE_MAX_Y, -FACE_MAX_Y, FACE_MAX_Y);

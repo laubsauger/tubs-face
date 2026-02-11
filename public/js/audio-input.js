@@ -47,16 +47,26 @@ export async function initMicrophone() {
         source.connect(analyser);
         micReady = true;
         logChat('sys', '🎙️ Microphone ready — hold Space to talk');
-        $('#stat-mic').textContent = 'Ready';
-        $('#stat-mic').style.color = 'var(--accent)';
-        pttIndicator.textContent = 'Hold Space to Talk';
-        pttIndicator.classList.add('mic-ready');
+        const statMic = $('#stat-mic');
+        if (statMic) {
+            statMic.textContent = 'Ready';
+            statMic.style.color = 'var(--accent)';
+        }
+        if (pttIndicator) {
+            pttIndicator.textContent = 'Hold Space to Talk';
+            pttIndicator.classList.add('mic-ready');
+        }
     } catch (err) {
         logChat('sys', `⚠️ Mic denied: ${err.message}`);
-        $('#stat-mic').textContent = 'Denied';
-        $('#stat-mic').style.color = 'var(--error)';
-        pttIndicator.textContent = '⚠ Mic Access Denied';
-        pttIndicator.classList.add('mic-denied');
+        const statMic = $('#stat-mic');
+        if (statMic) {
+            statMic.textContent = 'Denied';
+            statMic.style.color = 'var(--error)';
+        }
+        if (pttIndicator) {
+            pttIndicator.textContent = '⚠ Mic Access Denied';
+            pttIndicator.classList.add('mic-denied');
+        }
     }
 }
 
@@ -72,7 +82,8 @@ export async function initVAD() {
             onSpeechStart: () => {
                 if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
                 console.log('Speech start detected');
-                $('#stat-listen-state').textContent = 'Listening...';
+                const statState = $('#stat-listen-state');
+                if (statState) statState.textContent = 'Listening...';
                 setExpression('listening');
                 startInterruptionTimer();
             },
@@ -90,7 +101,8 @@ export async function initVAD() {
             onVADMisfire: () => {
                 clearInterruptionTimer();
                 console.log('VAD Misfire');
-                $('#stat-listen-state').textContent = 'Idle';
+                const statState = $('#stat-listen-state');
+                if (statState) statState.textContent = 'Idle';
                 setExpression('idle');
             },
             positiveSpeechThreshold: 0.6,
@@ -202,7 +214,11 @@ function startInterruptionTimer() {
     }
 
     interruptionTimer = setTimeout(() => {
-        if (!vadActive) return;
+        if (!vadActive || STATE.speaking) {
+            // Tubs is talking — don't interrupt ourselves
+            clearInterruptionTimer();
+            return;
+        }
         console.log('[VAD] Interruption timer fired!');
         interrupted = true;
 
@@ -214,7 +230,7 @@ function startInterruptionTimer() {
     }, limit);
 }
 
-function clearInterruptionTimer() {
+export function clearInterruptionTimer() {
     if (interruptionTimer) {
         clearTimeout(interruptionTimer);
         interruptionTimer = null;
@@ -297,7 +313,8 @@ function visualizeAudio() {
 
     const avg = data.reduce((a, b) => a + b, 0) / data.length;
     const volPct = Math.min(100, (avg / 128) * 100);
-    $('#stat-vol').style.width = `${volPct}%`;
+    const volBar = $('#stat-vol');
+    if (volBar) volBar.style.width = `${volPct}%`;
 
     visualizeRafId = requestAnimationFrame(visualizeAudio);
 }

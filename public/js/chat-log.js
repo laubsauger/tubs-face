@@ -23,9 +23,11 @@ export function logChat(type, text) {
     // Always update stats regardless of verbosity
     if (type === 'in' || type === 'out') {
         STATE.turns = Math.floor(STATE.totalMessages / 2);
-        $('#turn-counter').textContent = `${STATE.turns} turns`;
+        const tc = $('#turn-counter');
+        if (tc) tc.textContent = `${STATE.turns} turns`;
     }
-    $('#stat-last-heard').textContent = ts;
+    const lh = $('#stat-last-heard');
+    if (lh) lh.textContent = ts;
 
     // Filter based on verbosity
     if (STATE.chatVerbosity === 'chat' && type === 'sys') return;

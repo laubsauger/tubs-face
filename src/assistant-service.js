@@ -5,13 +5,15 @@ const { generateGeminiContent } = require('./gemini-client');
 
 const HISTORY_CONTEXT_SIZE = 6;
 const HISTORY_STORE_LIMIT = 24;
+const HISTORY_TTL_MS = Number.parseInt(process.env.ASSISTANT_HISTORY_TTL_MS || '240000', 10);
 const MEMORY_LIMIT = 8;
 const MEMORY_CONTEXT_SIZE = 4;
+const MEMORY_TTL_MS = Number.parseInt(process.env.ASSISTANT_MEMORY_TTL_MS || '360000', 10);
 const INPUT_CHAR_LIMIT = 800;
 const OUTPUT_CHAR_LIMIT = 220;
 const MAX_OUTPUT_SENTENCES = 2;
 const DONATION_MARKER = '[[SHOW_QR]]';
-const DONATION_KEYWORDS = /\b(venmo|donat(?:e|ion|ions|ing)|fundraiser|wheel fund|qr code|chip in|contribute|spare change)\b/i;
+const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_NUDGE_INTERVAL = 6;
 const DEFAULT_VENMO_HANDLE = process.env.DONATION_VENMO || 'tubs-wheel-fund';
 const DEFAULT_DONATION_QR_DATA = process.env.DONATION_QR_DATA || `https://venmo.com/${DEFAULT_VENMO_HANDLE}`;
@@ -117,6 +119,12 @@ function sanitizeRate(value) {
   return value;
 }
 
+function sanitizeTtlMs(value, fallbackMs) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < 15_000) return fallbackMs;
+  return parsed;
+}
+
 function estimateCostUsd(tokensIn, tokensOut) {
   const inputRate = sanitizeRate(LLM_INPUT_COST_PER_MTOKENS);
   const outputRate = sanitizeRate(LLM_OUTPUT_COST_PER_MTOKENS);
@@ -190,6 +198,15 @@ function rememberFact(key, label, value) {
   }
 }
 
+function pruneMemoryFacts(now = Date.now()) {
+  const maxAgeMs = sanitizeTtlMs(MEMORY_TTL_MS, 360_000);
+  for (const [key, entry] of memoryFacts.entries()) {
+    if (now - entry.updatedAt > maxAgeMs) {
+      memoryFacts.delete(key);
+    }
+  }
+}
+
 function safeMemoryValue(value, maxLen = 60) {
   return normalizeInput(value).replace(/[.?!]+$/g, '').slice(0, maxLen);
 }
@@ -233,6 +250,7 @@ function extractMemory(text) {
 }
 
 function getMemoryContextText() {
+  pruneMemoryFacts();
   const entries = Array.from(memoryFacts.values())
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, MEMORY_CONTEXT_SIZE);
@@ -245,13 +263,26 @@ function getMemoryContextText() {
 function pushHistory(role, text) {
   const compact = compactForHistory(text);
   if (!compact) return;
-  conversationHistory.push({ role, text: compact });
+  conversationHistory.push({ role, text: compact, ts: Date.now() });
   while (conversationHistory.length > HISTORY_STORE_LIMIT) {
     conversationHistory.shift();
   }
 }
 
+function pruneConversationHistory(now = Date.now()) {
+  const maxAgeMs = sanitizeTtlMs(HISTORY_TTL_MS, 240_000);
+  while (conversationHistory.length > 0) {
+    const entry = conversationHistory[0];
+    if (!entry || !entry.ts || now - entry.ts > maxAgeMs) {
+      conversationHistory.shift();
+      continue;
+    }
+    break;
+  }
+}
+
 function buildContents(nextUserText) {
+  pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
   const contents = recent.map((entry) => ({
     role: entry.role,
@@ -287,6 +318,7 @@ function buildSystemInstruction() {
   );
   promptSections.push('Token budget policy: stay concise by default and avoid long preambles.');
   promptSections.push('Style guardrail: sound like natural casual speech, not an AI assistant.');
+  promptSections.push('Conversation guardrail: often end with a short follow-up question that keeps momentum.');
   return promptSections.join('\n\n');
 }
 
@@ -457,4 +489,13 @@ async function generateAssistantReply(userText) {
   };
 }
 
-module.exports = { generateAssistantReply };
+function clearAssistantContext(reason = 'manual') {
+  conversationHistory.length = 0;
+  memoryFacts.clear();
+  assistantReplyCount = 0;
+  if (reason) {
+    console.log(`[Assistant] Context cleared (${reason})`);
+  }
+}
+
+module.exports = { generateAssistantReply, clearAssistantContext };

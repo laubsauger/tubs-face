@@ -13,6 +13,7 @@ import { initKeyboard } from './keyboard.js';
 import { initPanelCollapse, initPanelResize, startUptimeTimer } from './panel-ui.js';
 import { faceManager } from './face/index.js';
 import { initEmotionEngine } from './emotion-engine.js';
+import { initFullscreenToggle } from './fullscreen.js';
 
 function init() {
     STATE.wakeTime = Date.now();
@@ -27,6 +28,7 @@ function init() {
     initPanelResize();
     initSleepSlider();
     initVadToggle();
+    initFullscreenToggle();
     initVerbosityToggle();
     initKeyboard();
     faceManager.init();

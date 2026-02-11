@@ -189,7 +189,7 @@ export function handleMessage(msg) {
         case 'error':
             logChat('sys', `ERROR: ${msg.text}`);
             loadingBar.classList.remove('active');
-            setExpression('idle');
+            setExpression('idle', { force: true, skipHold: true });
             break;
         case 'sleep':
             hideDonationQr();

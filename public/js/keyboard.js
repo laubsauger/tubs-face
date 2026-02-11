@@ -5,10 +5,11 @@ import { enterSleep, exitSleep } from './sleep.js';
 import { startRecording, stopRecording } from './audio-input.js';
 import { getWs } from './websocket.js';
 import { faceManager } from './face/index.js';
+import { setFullscreenEnabled } from './fullscreen.js';
 
 let keyInputBuffer = '';
 
-const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D']);
+const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D', 'x', 'X']);
 
 export function initKeyboard() {
     document.addEventListener('keydown', (e) => {
@@ -73,6 +74,9 @@ export function initKeyboard() {
             }
             if (e.key === 'd' || e.key === 'D') {
                 faceManager.toggleDebug();
+            }
+            if (e.key === 'x' || e.key === 'X') {
+                setFullscreenEnabled(!(document.fullscreenElement || document.webkitFullscreenElement)).catch(() => { });
             }
             return;
         }

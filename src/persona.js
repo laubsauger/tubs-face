@@ -9,7 +9,7 @@ const DEFAULT_SYSTEM_PROMPT = 'You are Tubs Bot, a helpful and concise assistant
 const DEFAULT_GREETINGS = {
   maxWords: 5,
   triggers: ['hi', 'hello', 'hey'],
-  responses: ['Hey. Tubs online.'],
+  responses: ['Hey. Tubs online. What are we doing?'],
 };
 const WAKE_NAME_SUFFIXES = new Set(['tubs', 'tub', 'tubbs', 'tops', 'top']);
 
@@ -65,6 +65,23 @@ function loadGreetingConfig() {
   };
 }
 
+function randomItem(list) {
+  if (!Array.isArray(list) || list.length === 0) return null;
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function pickGreetingLine(responses) {
+  const list = Array.isArray(responses) ? responses : [];
+  if (!list.length) return null;
+
+  // Keep greetings conversational: bias toward lines ending in a question.
+  const questionLines = list.filter((line) => /[?]\s*$/.test(line));
+  if (questionLines.length && Math.random() < 0.78) {
+    return randomItem(questionLines);
+  }
+  return randomItem(list);
+}
+
 function pickGreetingResponse(text) {
   const normalized = normalizeText(text);
   if (!normalized) return null;
@@ -75,12 +92,12 @@ function pickGreetingResponse(text) {
 
   for (const trigger of greetingConfig.triggers) {
     if (normalized === trigger) {
-      return greetingConfig.responses[Math.floor(Math.random() * greetingConfig.responses.length)];
+      return pickGreetingLine(greetingConfig.responses);
     }
     if (normalized.startsWith(`${trigger} `)) {
       const suffix = normalized.slice(trigger.length).trim();
       if (WAKE_NAME_SUFFIXES.has(suffix)) {
-        return greetingConfig.responses[Math.floor(Math.random() * greetingConfig.responses.length)];
+        return pickGreetingLine(greetingConfig.responses);
       }
     }
   }

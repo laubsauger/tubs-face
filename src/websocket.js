@@ -1,9 +1,39 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
-const { generateAssistantReply } = require('./assistant-service');
+const { generateAssistantReply, clearAssistantContext } = require('./assistant-service');
 const { logConversation } = require('./logger');
 
 let clients = new Set();
+let lastPresenceContextClearAt = 0;
+let pendingPresenceContextClear = null;
+const PRESENCE_CONTEXT_CLEAR_DELAY_MS = Math.max(
+  0,
+  Number.parseInt(process.env.PRESENCE_CONTEXT_CLEAR_DELAY_MS || '90000', 10) || 90000
+);
+const PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS = Math.max(
+  0,
+  Number.parseInt(process.env.PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS || '15000', 10) || 15000
+);
+
+function cancelPresenceContextClear() {
+  if (pendingPresenceContextClear) {
+    clearTimeout(pendingPresenceContextClear);
+    pendingPresenceContextClear = null;
+  }
+}
+
+function schedulePresenceContextClear() {
+  if (pendingPresenceContextClear) return;
+
+  pendingPresenceContextClear = setTimeout(() => {
+    pendingPresenceContextClear = null;
+    const now = Date.now();
+    if (now - lastPresenceContextClearAt >= PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS) {
+      lastPresenceContextClearAt = now;
+      clearAssistantContext('presence_lost_delayed');
+    }
+  }, PRESENCE_CONTEXT_CLEAR_DELAY_MS);
+}
 
 function initWebSocket(server) {
   const wss = new WebSocketServer({ server });
@@ -21,6 +51,18 @@ function initWebSocket(server) {
 
         if (msg.type === 'ping') {
           ws.send(JSON.stringify({ type: 'ping', ts: msg.ts, serverTs: Date.now() }));
+          return;
+        }
+
+        if (msg.type === 'presence') {
+          if (msg.present === true) {
+            cancelPresenceContextClear();
+            return;
+          }
+
+          if (msg.present === false) {
+            schedulePresenceContextClear();
+          }
           return;
         }
 

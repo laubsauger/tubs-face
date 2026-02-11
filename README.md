@@ -29,6 +29,7 @@ When donation intent is detected from user speech/text, Tubs briefly switches to
 | `S` | Toggle sleep/wake |
 | `Z` | Zen mode — hide all panels |
 | `C` | Toggle camera on/off |
+| `X` | Toggle fullscreen |
 | `D` | Toggle face detection debug panel |
 | `F` | Enroll face — captures 5 samples and saves to library |
 | `Enter` | Send typed text (type any characters, then Enter) |
@@ -38,7 +39,7 @@ When donation intent is detected from user speech/text, Tubs briefly switches to
 All four corner panels are **collapsible** — click the panel header to toggle.
 
 - **System Vitals** (top-left) — Connection status, uptime, awake time, model
-- **Input Status** (top-right) — Mic, volume, STT confidence, always-on VAD toggle, camera toggle, detection delay slider
+- **Input Status** (top-left stack) — Mic, volume, STT confidence, always-on VAD toggle, camera toggle, fullscreen toggle, detection delay slider
 - **Chat Log** (bottom-left) — All messages. Width is **resizable** by dragging the right edge.
 - **Bot Stats** (bottom-right) — Response time, token counts, expression, session cost
 
@@ -169,6 +170,10 @@ Configure Gemini in `.env`:
 GEMINI_API_KEY=your_key
 GEMINI_MODEL=gemini-2.5-flash
 GEMINI_MAX_OUTPUT_TOKENS=120
+ASSISTANT_HISTORY_TTL_MS=240000
+ASSISTANT_MEMORY_TTL_MS=360000
+PRESENCE_CONTEXT_CLEAR_DELAY_MS=90000
+PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS=15000
 ```
 
 You can also change model/token cap at runtime:

@@ -44,6 +44,27 @@ const CRY_CHANCE_ON_NO_DONATION = 0.35;
 // Greeting Cooldown
 const GREETING_COOLDOWN = 120000; // 2 minutes
 const lastGreetedByName = new Map(); // name -> timestamp
+const TRACKED_NAME_TTL_MS = 6 * 60 * 1000;
+
+function pruneTrackedNames(nowTs) {
+    for (const [name, ts] of lastSeenByName.entries()) {
+        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
+            lastSeenByName.delete(name);
+        }
+    }
+
+    for (const [name, ts] of firstSeenByName.entries()) {
+        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
+            firstSeenByName.delete(name);
+        }
+    }
+
+    for (const [name, ts] of lastGreetedByName.entries()) {
+        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
+            lastGreetedByName.delete(name);
+        }
+    }
+}
 
 function maybeCryAfterNoDonation(name, firstSeenTs) {
     if (STATE.sleeping || STATE.speaking) return;
@@ -62,18 +83,18 @@ function maybeCryAfterNoDonation(name, firstSeenTs) {
     ];
     const line = lines[Math.floor(Math.random() * lines.length)];
 
-    setExpression('crying');
+    setExpression('crying', { force: true, holdMs: 2600 });
     setTimeout(() => {
         if (STATE.expression === 'crying' && !STATE.speaking) {
             enqueueSpeech(line);
         }
-    }, 220);
+    }, 850);
 
     setTimeout(() => {
         if (STATE.expression === 'crying' && !STATE.speaking) {
             setExpression('idle');
         }
-    }, 1800);
+    }, 3200);
 }
 
 export function handleFaceResults(faces, inferenceMs) {
@@ -218,6 +239,7 @@ export function handleFaceResults(faces, inferenceMs) {
     STATE.facesDetected = faces.length;
     STATE.personsPresent = [...currentNames];
     const now = Date.now();
+    pruneTrackedNames(now);
 
     if (faces.length > 0) {
         // Eye tracking — average centroid of all detected faces

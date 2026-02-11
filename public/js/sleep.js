@@ -44,7 +44,7 @@ export function enterSleep() {
     STATE.presenceDetected = false;
     hideDonationQr();
     subtitleEl.classList.remove('visible');
-    setExpression('idle');
+    setExpression('idle', { force: true, skipHold: true });
     resetGaze();
     logChat('sys', '💤 Sleep mode');
 }

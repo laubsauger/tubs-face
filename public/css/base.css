@@ -39,8 +39,6 @@ body {
   width: 100vw;
 }
 
-/* Scanlines are intentionally kept on face features, not global page background. */
-
 /* Utility */
 @keyframes fadeIn {
   from {
@@ -92,8 +90,7 @@ body {
 
 @media (max-width: 600px) {
 
-  #panel-tl,
-  #panel-tr,
+  #stack-tl,
   #panel-br {
     display: none;
   }

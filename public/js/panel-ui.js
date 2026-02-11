@@ -1,7 +1,32 @@
 import { STATE } from './state.js';
 import { $ } from './dom.js';
 
+function clearTopLeftInlinePanelLayout() {
+    const stack = document.getElementById('stack-tl');
+    const systemPanel = document.getElementById('panel-tl');
+    const inputPanel = document.getElementById('panel-input') || document.getElementById('panel-tr');
+
+    if (stack) {
+        stack.style.position = '';
+        stack.style.top = '';
+        stack.style.left = '';
+        stack.style.width = '';
+        stack.style.height = '';
+    }
+
+    [systemPanel, inputPanel].forEach((panel) => {
+        if (!panel) return;
+        panel.style.position = '';
+        panel.style.top = '';
+        panel.style.left = '';
+        panel.style.right = '';
+        panel.style.width = '';
+    });
+}
+
 export function initPanelCollapse() {
+    clearTopLeftInlinePanelLayout();
+
     document.querySelectorAll('.panel-title').forEach(title => {
         title.addEventListener('click', () => {
             const panel = title.parentElement;
