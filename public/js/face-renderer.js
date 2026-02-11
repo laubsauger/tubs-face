@@ -437,8 +437,73 @@ function buildSvgLayer() {
         style: 'overflow: visible;', // Ensure features aren't clipped
     });
 
-    eyeGazeGroup = createSvgEl('g', { class: 'svg-eye-gaze' });
-    mouthGazeGroup = createSvgEl('g', { class: 'svg-mouth-gaze' });
+    const defs = createSvgEl('defs');
+
+    // Scanline Pattern (approx 1% height of viewport ~0.33 units)
+    // We strive for ~2-3px visual density. If VB height is 33, and screen height is ~300px, 1 unit = 9px.
+    // 0.3 units ~ 2.7px.
+    const scanHeight = 0.25;
+    const scanPattern = createSvgEl('pattern', {
+        id: 'scanline-pattern',
+        width: '100', // Wider than viewport
+        height: scanHeight,
+        patternUnits: 'userSpaceOnUse',
+        patternTransform: 'translate(0,0)',
+    });
+
+    const scanAnim = createSvgEl('animateTransform', {
+        attributeName: 'patternTransform',
+        type: 'translate',
+        from: '0 0',
+        to: `0 ${scanHeight}`,
+        dur: '3s',
+        repeatCount: 'indefinite',
+    });
+    scanPattern.appendChild(scanAnim);
+
+    // Base White (Full Opacity - Visible Content)
+    const baseRect = createSvgEl('rect', {
+        width: '100',
+        height: scanHeight,
+        fill: '#ffffff',
+    });
+    scanPattern.appendChild(baseRect);
+
+    // Dark Line (Partial Opacity -> Gray in Mask -> Dims Content)
+    const lineRect = createSvgEl('rect', {
+        y: '0',
+        width: '100',
+        height: scanHeight * 0.4,
+        fill: '#b0b0b0', // Light gray = slightly transparent in mask = dim scanline
+    });
+    scanPattern.appendChild(lineRect);
+
+    defs.appendChild(scanPattern);
+
+    // Mask
+    const mask = createSvgEl('mask', {
+        id: 'scanline-mask',
+        maskUnits: 'userSpaceOnUse',
+        x: '-50',
+        y: '-50',
+        width: '200',
+        height: '200',
+    });
+    const maskRect = createSvgEl('rect', {
+        x: '-50',
+        y: '-50',
+        width: '200',
+        height: '200',
+        fill: 'url(#scanline-pattern)',
+    });
+    mask.appendChild(maskRect);
+    defs.appendChild(mask);
+
+    svgLayerEl.appendChild(defs);
+
+    // Apply mask to groups so it covers eyes + decor but not empty space
+    eyeGazeGroup = createSvgEl('g', { class: 'svg-eye-gaze', mask: 'url(#scanline-mask)' });
+    mouthGazeGroup = createSvgEl('g', { class: 'svg-mouth-gaze', mask: 'url(#scanline-mask)' });
     decorGroup = createSvgEl('g', { class: 'svg-decor-gaze' });
 
     leftEyePathEl = createSvgEl('path', { class: 'svg-eye left' });

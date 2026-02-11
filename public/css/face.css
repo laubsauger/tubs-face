@@ -11,29 +11,9 @@
   top: auto;
 
   /* SVG Fullscreen Override */
+  /* SVG Fullscreen Override - reverted to allow parallax but keep size constrained */
   &.use-svg-renderer {
-    width: 100vw;
-    height: 100vh;
-    max-width: none;
-    max-height: none;
-    aspect-ratio: unset;
-    /* We handle movement inside the SVG, so reset container movement if desirable, 
-       but --face-look-x/y are applied to #face. 
-       Actually, if #face is significantly larger than the viewport, moving it might shift off-screen.
-       But here we make it exactly viewport size.
-       Movement should ideally happen inside the SVG (parallax).
-       If typical CSS movement is applied to the container, a 100vw container moving by 50px will show whitespace.
-       However, the SVG renderer seems to handle gaze internally via applyGazeTransforms.
-       Wait, face-renderer.js applies transform to #face in CSS mode?
-       No, `translate3d` is in the CSS rule for #face. 
-       The JS updates `--face-look-x` variables on `document.body` or `#face`?
-       Let's assume the JS updates variables.
-       If we want the container to be static and full screen, we should unset the transform.
-    */
-    transform: none;
-    position: fixed;
-    inset: 0;
-    z-index: 0;
+    overflow: visible;
   }
 
   filter: none !important;
@@ -115,17 +95,6 @@
 #face-svg-layer .svg-decor {
   /* Shadow Filter */
   filter: drop-shadow(0 0 26px rgba(var(--face-glow-rgb), 0.36)) drop-shadow(0 0 54px rgba(var(--face-glow-rgb), 0.16));
-
-  /* Scanline Mask */
-  -webkit-mask-image: linear-gradient(to bottom, black 50%, rgba(0, 0, 0, 0.2) 50%, rgba(0, 0, 0, 0.2));
-  mask-image: linear-gradient(to bottom, black 50%, rgba(0, 0, 0, 0.2) 50%, rgba(0, 0, 0, 0.2));
-  -webkit-mask-size: 100% 6px;
-  mask-size: 100% 6px;
-  -webkit-mask-repeat: repeat;
-  mask-repeat: repeat;
-
-  /* Animation */
-  animation: scanMaskDrift 3s linear infinite;
 }
 
 #face-svg-layer .svg-mouth,
