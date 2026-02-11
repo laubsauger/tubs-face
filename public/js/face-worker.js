@@ -230,9 +230,9 @@ async function detectFaces(imageData, width, height) {
   const float32 = inputFloat32;
   const pixelCount = INPUT_SIZE * INPUT_SIZE;
   for (let i = 0; i < pixelCount; i++) {
-    float32[i]                  = (pixels[i * 4 + 2] - 127.5) / 128.0; // B
-    float32[pixelCount + i]     = (pixels[i * 4 + 1] - 127.5) / 128.0; // G
-    float32[2 * pixelCount + i] = (pixels[i * 4]     - 127.5) / 128.0; // R
+    float32[i] = (pixels[i * 4 + 2] - 127.5) / 128.0; // B
+    float32[pixelCount + i] = (pixels[i * 4 + 1] - 127.5) / 128.0; // G
+    float32[2 * pixelCount + i] = (pixels[i * 4] - 127.5) / 128.0; // R
   }
 
   const inputName = detSession.inputNames[0];
@@ -250,8 +250,8 @@ async function detectFaces(imageData, width, height) {
   // Group: dim1 = scores, dim4 = boxes, dim10 = landmarks
   // Within each group, sort by number of elements descending (stride 8 = most, stride 32 = least)
   const scoreOutputs = outputs.filter(o => o.dims[o.dims.length - 1] === 1).sort((a, b) => b.data.length - a.data.length);
-  const boxOutputs   = outputs.filter(o => o.dims[o.dims.length - 1] === 4).sort((a, b) => b.data.length - a.data.length);
-  const kpsOutputs   = outputs.filter(o => o.dims[o.dims.length - 1] === 10).sort((a, b) => b.data.length - a.data.length);
+  const boxOutputs = outputs.filter(o => o.dims[o.dims.length - 1] === 4).sort((a, b) => b.data.length - a.data.length);
+  const kpsOutputs = outputs.filter(o => o.dims[o.dims.length - 1] === 10).sort((a, b) => b.data.length - a.data.length);
 
   // Diagnostic on first frame
   frameCount++;
@@ -277,8 +277,8 @@ async function detectFaces(imageData, width, height) {
     const numAnchors = gridH * gridW * 2;
 
     const scoreData = scoreOutputs[si] ? scoreOutputs[si].data : null;
-    const boxData   = boxOutputs[si]   ? boxOutputs[si].data   : null;
-    const kpsData   = kpsOutputs[si]   ? kpsOutputs[si].data   : null;
+    const boxData = boxOutputs[si] ? boxOutputs[si].data : null;
+    const kpsData = kpsOutputs[si] ? kpsOutputs[si].data : null;
 
     if (!scoreData || !boxData) {
       anchorOffset += numAnchors;
@@ -419,9 +419,9 @@ function estimateUmeyama(src, dst) {
 
   const R = [
     [U[0][0] * V[0][0] * d[0] + U[0][1] * V[0][1] * d[1],
-     U[0][0] * V[1][0] * d[0] + U[0][1] * V[1][1] * d[1]],
+    U[0][0] * V[1][0] * d[0] + U[0][1] * V[1][1] * d[1]],
     [U[1][0] * V[0][0] * d[0] + U[1][1] * V[0][1] * d[1],
-     U[1][0] * V[1][0] * d[0] + U[1][1] * V[1][1] * d[1]]
+    U[1][0] * V[1][0] * d[0] + U[1][1] * V[1][1] * d[1]]
   ];
 
   const sc = (S[0] * d[0] + S[1] * d[1]) / srcVar;
@@ -470,8 +470,8 @@ async function extractEmbedding(imageData, width, height, landmarks) {
   // ArcFace: BGR order (OpenCV convention), normalize to [-1, 1]
   const float32 = embFloat32;
   for (let i = 0; i < 112 * 112; i++) {
-    float32[i]              = (pixels[i * 4 + 2] / 127.5) - 1.0; // B
-    float32[112 * 112 + i]  = (pixels[i * 4 + 1] / 127.5) - 1.0; // G
+    float32[i] = (pixels[i * 4 + 2] / 127.5) - 1.0; // B
+    float32[112 * 112 + i] = (pixels[i * 4 + 1] / 127.5) - 1.0; // G
     float32[2 * 112 * 112 + i] = (pixels[i * 4] / 127.5) - 1.0;  // R
   }
 
@@ -493,21 +493,10 @@ const TRACK_IOU_THRESH = 0.45;   // min IoU to consider same face
 const TRACK_MAX_AGE = 8;         // reuse embedding for up to N frames
 let prevTracked = [];             // { box, embedding, age }
 
-function trackIoU(a, b) {
-  const x1 = Math.max(a[0], b[0]);
-  const y1 = Math.max(a[1], b[1]);
-  const x2 = Math.min(a[2], b[2]);
-  const y2 = Math.min(a[3], b[3]);
-  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-  const aA = (a[2] - a[0]) * (a[3] - a[1]);
-  const aB = (b[2] - b[0]) * (b[3] - b[1]);
-  return inter / (aA + aB - inter + 1e-6);
-}
-
 function findTrackedMatch(box) {
   let bestIdx = -1, bestIoU = 0;
   for (let i = 0; i < prevTracked.length; i++) {
-    const ov = trackIoU(box, prevTracked[i].box);
+    const ov = iou(box, prevTracked[i].box);
     if (ov > TRACK_IOU_THRESH && ov > bestIoU) {
       bestIoU = ov;
       bestIdx = i;
@@ -579,9 +568,9 @@ self.onmessage = async (e) => {
         .map(f => ({ box: f.box, embedding: f.embedding, age: f._trackedAge || 0 }));
 
       const inferenceMs = Math.round(performance.now() - t0);
-      postMessage({ type: 'faces', faces, inferenceMs, embeddingsExtracted, embeddingsReused });
+      postMessage({ type: 'faces', faces, inferenceMs, embeddingsExtracted, embeddingsReused, requestId: e.data.requestId });
     } catch (err) {
-      postMessage({ type: 'error', message: err.message });
+      postMessage({ type: 'error', message: err.message, requestId: e.data.requestId });
     } finally {
       busy = false;
     }

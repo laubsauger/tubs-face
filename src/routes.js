@@ -443,6 +443,88 @@ function handleRequest(req, res) {
     return;
   }
 
+  // Face Ingestion Routes
+  if (req.method === 'GET' && url.pathname === '/ingest/list') {
+    const inputDir = path.join(__dirname, '../input_faces');
+    const files = [];
+
+    if (fs.existsSync(inputDir)) {
+      const entries = fs.readdirSync(inputDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const name = entry.name;
+          const personDir = path.join(inputDir, name);
+          const personFiles = fs.readdirSync(personDir).filter(f => /\.(jpg|jpeg|png)$/i.test(f));
+          for (const f of personFiles) {
+            files.push({
+              name,
+              filename: f,
+              url: `/raw-faces/${encodeURIComponent(name)}/${encodeURIComponent(f)}`,
+              relPath: `${name}/${f}`
+            });
+          }
+        }
+      }
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ files }));
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/ingest/done') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { relPath } = JSON.parse(body);
+        if (!relPath) throw new Error('Missing relPath');
+
+        const inputPath = path.join(__dirname, '../input_faces', relPath);
+        const processedPath = path.join(__dirname, '../processed_faces', relPath);
+
+        if (fs.existsSync(inputPath)) {
+          const targetDir = path.dirname(processedPath);
+          fs.mkdirSync(targetDir, { recursive: true });
+          fs.renameSync(inputPath, processedPath);
+          console.log(`[Ingest] Moved ${relPath} to processed_faces`);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // Serve raw face images for ingestion
+  if (req.method === 'GET' && url.pathname.startsWith('/raw-faces/')) {
+    const relPath = decodeURIComponent(url.pathname.replace('/raw-faces/', ''));
+    const fullPath = path.join(__dirname, '../input_faces', relPath);
+
+    // preventing directory traversal for security
+    if (!fullPath.startsWith(path.join(__dirname, '../input_faces'))) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        res.end('Not found');
+      } else {
+        const ext = path.extname(fullPath).toLowerCase();
+        const mime = mimeTypes[ext] || 'application/octet-stream';
+        res.writeHead(200, { 'Content-Type': mime });
+        res.end(data);
+      }
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/config') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(runtimeConfig));

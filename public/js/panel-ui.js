@@ -75,3 +75,49 @@ export function startUptimeTimer() {
         $('#stat-uptime').textContent = `${h}:${m}:${s}`;
     }, 1000);
 }
+
+export function initCameraResize() {
+    const pip = document.getElementById('camera-pip');
+    if (!pip) return;
+
+    ['n', 'w', 'nw'].forEach(dir => {
+        const handle = pip.querySelector(`.pip-resize-${dir}`);
+        if (!handle) return;
+
+        let startX, startY, startW, startH;
+
+        handle.addEventListener('mousedown', (e) => {
+            if (pip.classList.contains('enroll-mode')) return;
+            e.preventDefault();
+            startX = e.clientX;
+            startY = e.clientY;
+            startW = pip.offsetWidth;
+            startH = pip.offsetHeight;
+            pip.classList.add('resizing');
+            document.addEventListener('mousemove', onDrag);
+            document.addEventListener('mouseup', onUp);
+        });
+
+        function onDrag(e) {
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            if (dir.includes('n')) {
+                // Dragging up = increasing height (since anchored bottom)
+                const newH = Math.max(150, Math.min(600, startH - dy));
+                pip.style.height = `${newH}px`;
+            }
+            if (dir.includes('w')) {
+                // Dragging left = increasing width (since anchored right)
+                const newW = Math.max(200, Math.min(800, startW - dx));
+                pip.style.width = `${newW}px`;
+            }
+        }
+
+        function onUp() {
+            pip.classList.remove('resizing');
+            document.removeEventListener('mousemove', onDrag);
+            document.removeEventListener('mouseup', onUp);
+        }
+    });
+}

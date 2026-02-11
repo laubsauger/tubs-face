@@ -14,6 +14,7 @@ import { initPanelCollapse, initPanelResize, startUptimeTimer } from './panel-ui
 import { faceManager } from './face/index.js';
 import { initEmotionEngine } from './emotion-engine.js';
 import { initFullscreenToggle } from './fullscreen.js';
+import { checkAndRunIngestion } from './face/ingest.js';
 
 function init() {
     STATE.wakeTime = Date.now();
@@ -59,6 +60,10 @@ function init() {
             vadToggle.checked = true;
             vadToggle.dispatchEvent(new Event('change'));
         }
+
+        // Check for new faces to ingest
+        checkAndRunIngestion();
+        setInterval(checkAndRunIngestion, 30000); // Check every 30s
     }, 500);
 }
 

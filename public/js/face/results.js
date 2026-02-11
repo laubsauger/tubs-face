@@ -17,9 +17,11 @@ import {
     getLastNoFaceTime, setLastNoFaceTime,
 } from './detection.js';
 
-const MATCH_THRESHOLD = 0.55;
-const MATCH_MARGIN = 0.08; // best must beat second-best by this gap
+const MATCH_THRESHOLD = 0.65;
+const MATCH_MARGIN = 0.08;       // best must beat second-best by this gap
 const PRESENCE_TIMEOUT = 5000;
+const GAZE_SCALE_X = 1.1;        // horizontal gaze amplification
+const GAZE_SCALE_Y = 0.75;       // vertical gaze amplification
 
 const overlay = document.getElementById('camera-overlay');
 const badge = document.getElementById('presence-badge');
@@ -47,7 +49,7 @@ const CRY_CHANCE_ON_NO_DONATION = 0.35;
 const CRYING_HOLD_MS = 4200;
 const CRYING_SPEECH_DELAY_MS = 1400;
 const CRYING_RESET_DELAY_MS = 5200;
-const DEFAULT_MIN_FACE_BOX_AREA_RATIO = 0.03;
+const DEFAULT_MIN_FACE_BOX_AREA_RATIO = 0.02;
 
 // Greeting Cooldown
 const GREETING_COOLDOWN = 120000; // 2 minutes
@@ -306,7 +308,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
         avgY /= activeFaces.length;
         const normX = -((avgX / frameW) * 2 - 1);
         const normY = (avgY / frameH) * 2 - 1;
-        lookAt(normX * 1.1, normY * 0.75);
+        lookAt(normX * GAZE_SCALE_X, normY * GAZE_SCALE_Y);
 
         setLastFaceSeen(now);
         setLastNoFaceTime(0);

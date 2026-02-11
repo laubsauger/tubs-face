@@ -5,7 +5,7 @@ const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = normalizeLlmMaxOutputTokens(process.env.GEMINI_MAX_OUTPUT_TOKENS || 120);
 const DEFAULT_DONATION_SIGNAL_MODE = normalizeDonationSignalMode(process.env.DONATION_SIGNAL_MODE || 'both');
-const DEFAULT_MIN_FACE_BOX_AREA_RATIO = normalizeMinFaceBoxAreaRatio(process.env.MIN_FACE_BOX_AREA_RATIO || 0.03);
+const DEFAULT_MIN_FACE_BOX_AREA_RATIO = normalizeMinFaceBoxAreaRatio(process.env.MIN_FACE_BOX_AREA_RATIO || 0.02);
 
 const sessionStats = {
   messagesIn: 0,

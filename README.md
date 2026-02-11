@@ -174,7 +174,7 @@ ASSISTANT_HISTORY_TTL_MS=240000
 ASSISTANT_MEMORY_TTL_MS=360000
 PRESENCE_CONTEXT_CLEAR_DELAY_MS=60000
 PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS=15000
-MIN_FACE_BOX_AREA_RATIO=0.03
+MIN_FACE_BOX_AREA_RATIO=0.02
 ```
 
 You can also change model/token cap at runtime:
@@ -192,11 +192,11 @@ Ignore tiny/far faces by bounding-box area ratio (fraction of full camera frame)
 ```bash
 curl -X POST http://localhost:3000/config \
   -H "Content-Type: application/json" \
-  -d '{"minFaceBoxAreaRatio":0.03}'
+  -d '{"minFaceBoxAreaRatio":0.02}'
 ```
 
 Increase this value to focus on closer people. Set `0` to disable filtering.
-At `0.03`, a square face box must be roughly `130x130` px on a `1024x576` frame.
+At `0.02`, a square face box must be roughly `109x109` px on a `1024x576` frame.
 
 ### Persona Editing
 

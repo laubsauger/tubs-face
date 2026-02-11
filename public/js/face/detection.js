@@ -4,6 +4,7 @@ import { handleFaceResults } from './results.js';
 import { isDebugVisible, renderDebugFrame } from './debug.js';
 
 // Config
+const CAPTURE_MAX_WIDTH = 960;
 const MIN_INTERVAL = 800;
 const MAX_INTERVAL = 5000;
 const IDLE_INTERVAL = 3000;
@@ -91,7 +92,7 @@ function captureFrame() {
         return;
     }
 
-    const scale = Math.min(1, 640 / vw);
+    const scale = Math.min(1, CAPTURE_MAX_WIDTH / vw);
     const w = Math.round(vw * scale);
     const h = Math.round(vh * scale);
 
@@ -123,6 +124,17 @@ export function initWorker() {
 
     worker.onmessage = (e) => {
         const msg = e.data;
+
+        // One-shot request handling
+        if (msg.requestId) {
+            const resolver = pendingRequests.get(msg.requestId);
+            if (resolver) {
+                if (msg.type === 'error') resolver.reject(new Error(msg.message));
+                else resolver.resolve(msg.faces);
+                pendingRequests.delete(msg.requestId);
+            }
+            return;
+        }
 
         switch (msg.type) {
             case 'ready':
@@ -159,4 +171,35 @@ export function initWorker() {
     };
 
     worker.postMessage({ type: 'init' });
+}
+
+// ── One-Shot Detection (Ingestion) ──
+const pendingRequests = new Map();
+let reqIdCounter = 0;
+
+export function runFaceDetectionOnBuffer(imageBuffer, width, height) {
+    if (!worker || !workerReady) throw new Error('Face worker not ready');
+    return new Promise((resolve, reject) => {
+        reqIdCounter++;
+        const rid = `req_${reqIdCounter}`;
+        pendingRequests.set(rid, { resolve, reject });
+        worker.postMessage({
+            type: 'detect',
+            imageBuffer,
+            width,
+            height,
+            requestId: rid
+        }, [imageBuffer]);
+    });
+}
+
+export function runFaceDetectionOnImage(img) {
+    if (!worker || !workerReady) throw new Error('Face worker not ready');
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    const osc = new OffscreenCanvas(w, h);
+    const ctx = osc.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    return runFaceDetectionOnBuffer(imageData.data.buffer, w, h);
 }

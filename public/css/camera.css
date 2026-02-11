@@ -5,7 +5,6 @@
   right: 20px;
   width: 320px;
   height: 240px;
-  resize: both;
   z-index: 100;
   border-radius: 12px;
   overflow: hidden;
@@ -31,7 +30,80 @@
 #camera-pip.collapsed {
   height: auto;
   width: 320px;
-  resize: none;
+}
+
+/* Resize Handles */
+.pip-resize-handle {
+  position: absolute;
+  z-index: 10;
+}
+
+.pip-resize-n {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 5px;
+  cursor: n-resize;
+}
+
+.pip-resize-s {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 5px;
+  cursor: s-resize;
+}
+
+.pip-resize-w {
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  cursor: w-resize;
+}
+
+.pip-resize-e {
+  right: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 5px;
+  cursor: e-resize;
+}
+
+.pip-resize-nw {
+  top: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: nw-resize;
+}
+
+.pip-resize-ne {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: ne-resize;
+}
+
+.pip-resize-sw {
+  bottom: 0;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  cursor: sw-resize;
+}
+
+.pip-resize-se {
+  bottom: 0;
+  right: 0;
+  width: 10px;
+  height: 10px;
+  cursor: se-resize;
+}
+
+#camera-pip.collapsed .pip-resize-handle {
+  display: none;
 }
 
 #camera-pip-header {
@@ -111,4 +183,66 @@ body.sleeping #camera-pip {
 
 body.sleeping #face-debug {
   opacity: 0.9;
+}
+
+/* Enrollment Mode (Modal) */
+#camera-pip.enroll-mode {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90vw;
+  max-width: 800px;
+  height: 80vh;
+  max-height: 600px;
+  border-radius: 20px;
+  box-shadow: 0 0 0 100vw rgba(0, 0, 0, 0.85);
+  /* backdrop */
+  z-index: 5000;
+  /* above everything */
+  transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+#camera-pip:not(.enroll-mode) #enroll-overlay {
+  display: none !important;
+}
+
+#camera-pip.enroll-mode #camera-feed {
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+
+#camera-pip.enroll-mode #camera-pip-header,
+#camera-pip.enroll-mode #presence-badge,
+#camera-pip.enroll-mode #camera-status {
+  display: none;
+  /* Hide clutter */
+}
+
+#camera-pip.enroll-mode #enroll-overlay {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8) 0%, rgba(0, 0, 0, 0) 25%, rgba(0, 0, 0, 0) 75%, rgba(0, 0, 0, 0.8) 100%);
+  backdrop-filter: none;
+  justify-content: flex-end;
+  /* Push controls to bottom */
+  padding-bottom: 40px;
+}
+
+#camera-pip.enroll-mode #enroll-instruction {
+  position: absolute;
+  top: 10%;
+  left: 0;
+  width: 100%;
+  font-size: 32px;
+  text-shadow: 0 4px 12px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+}
+
+#camera-pip.enroll-mode #enroll-status {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  width: 100%;
+  text-align: center;
+  font-size: 14px;
+  opacity: 0.8;
 }

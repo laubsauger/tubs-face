@@ -10,6 +10,7 @@
     "dev": "node src/bridge-server.js"
   },
   "dependencies": {
+    "fs-extra": "^11.3.3",
     "ws": "^8.16.0"
   }
 }

@@ -38,6 +38,8 @@ export function toggleDebug() {
     if (debugVisible) {
         if (lastDebugFaces.length > 0) renderDebugDetections(lastDebugFaces, 0);
         renderLibrary();
+    } else {
+        dismissThumbPreview();
     }
 }
 
@@ -113,6 +115,52 @@ function escapeDebugHTML(str) {
     return d.innerHTML;
 }
 
+// ── Thumbnail Preview ──
+
+const thumbPreview = document.createElement('div');
+thumbPreview.className = 'lib-thumb-preview hidden';
+thumbPreview.innerHTML = '<img />';
+document.body.appendChild(thumbPreview);
+const thumbPreviewImg = thumbPreview.querySelector('img');
+let thumbPinned = false;
+
+function showThumbPreview(src, anchorEl) {
+    thumbPreviewImg.src = src;
+    thumbPreview.classList.remove('hidden');
+
+    // Position to the left of the debug panel, vertically centered on the thumbnail
+    const panelRect = debugPanel.getBoundingClientRect();
+    const thumbRect = anchorEl.getBoundingClientRect();
+    const previewSize = 200;
+
+    let left = panelRect.left - previewSize - 12;
+    if (left < 8) left = panelRect.right + 12; // flip to right if no room
+
+    let top = thumbRect.top + thumbRect.height / 2 - previewSize / 2;
+    top = Math.max(8, Math.min(window.innerHeight - previewSize - 8, top));
+
+    thumbPreview.style.left = left + 'px';
+    thumbPreview.style.top = top + 'px';
+}
+
+function hideThumbPreview() {
+    if (thumbPinned) return;
+    thumbPreview.classList.add('hidden');
+}
+
+function dismissThumbPreview() {
+    thumbPinned = false;
+    thumbPreview.classList.remove('pinned');
+    thumbPreview.classList.add('hidden');
+}
+
+// Dismiss pinned preview on click outside
+document.addEventListener('mousedown', (e) => {
+    if (thumbPinned && !thumbPreview.contains(e.target) && !e.target.closest('.lib-emb-thumb')) {
+        dismissThumbPreview();
+    }
+});
+
 // ── Face Library Manager ──
 
 function renderLibrary() {
@@ -150,7 +198,7 @@ function renderLibrary() {
             if (e.thumbnail) {
                 html += `<img class="lib-emb-thumb" src="${e.thumbnail}" alt="" />`;
             } else {
-                html += `<span class="lib-emb-thumb lib-emb-thumb-none">?</span>`;
+                html += `<span class="lib-emb-thumb lib-emb-thumb-none">—</span>`;
             }
             html += `<span class="lib-emb-date">${date}</span>`;
             html += `<button class="lib-btn danger" data-delete-id="${e.id}">✕</button>`;
@@ -168,6 +216,19 @@ function renderLibrary() {
     });
     libraryList.querySelectorAll('[data-delete-name]').forEach(btn => {
         btn.addEventListener('click', () => deleteAllForName(btn.dataset.deleteName));
+    });
+
+    // Wire up thumbnail preview (hover + click-to-pin)
+    libraryList.querySelectorAll('img.lib-emb-thumb').forEach(img => {
+        img.addEventListener('mouseenter', () => showThumbPreview(img.src, img));
+        img.addEventListener('mouseleave', () => hideThumbPreview());
+        img.addEventListener('click', (e) => {
+            e.stopPropagation();
+            thumbPinned = !thumbPinned;
+            thumbPreview.classList.toggle('pinned', thumbPinned);
+            if (thumbPinned) showThumbPreview(img.src, img);
+            else dismissThumbPreview();
+        });
     });
 }
 
