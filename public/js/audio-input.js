@@ -22,6 +22,7 @@ let analyser = null;
 let micStream = null;
 let micReady = false;
 let visualizeRafId = null;
+const ECHO_COOLDOWN_MS = 1500; // ignore mic input briefly after TTS ends
 
 export function isVadActive() {
     return vadActive;
@@ -81,6 +82,7 @@ export async function initVAD() {
         myvad = await vad.MicVAD.new({
             onSpeechStart: () => {
                 if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
+                if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) return;
                 console.log('Speech start detected');
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Listening...';
@@ -95,6 +97,11 @@ export async function initVAD() {
                 }
                 clearInterruptionTimer();
                 if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
+                if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) {
+                    console.log('[VAD] Ignoring speech end — echo cooldown');
+                    setExpression('idle');
+                    return;
+                }
                 console.log('Speech end detected');
                 processVadAudio(audio);
             },
@@ -353,8 +360,13 @@ async function sendVoice(blob, isVad = false) {
             const wakeInfo = data.wake
                 ? ` [wake:${data.wake.version || 'unknown'} ${data.wake.reason || 'n/a'} ${data.wake.matchedSource || ''} ${data.wake.matchedToken || ''}]`
                 : '';
-            const prefix = data.ignored ? `[Ignored${wakeInfo}] ` : '';
-            logChat('sys', `${prefix}"${data.text}"`);
+
+            // Only log ignored messages or explicit debug info here.
+            // Successful messages are broadcast back via WS as 'user_message' events.
+            if (data.ignored) {
+                const prefix = `[Ignored${wakeInfo}] `;
+                logChat('sys', `${prefix}"${data.text}"`);
+            }
         }
 
         if (data.ignored) {

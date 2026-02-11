@@ -2,6 +2,7 @@ export const STATE = {
     connected: false,
     sleeping: false,
     speaking: false,
+    speakingEndedAt: 0,
     recording: false,
     expression: 'idle',
     turns: 0,

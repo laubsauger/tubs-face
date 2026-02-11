@@ -60,7 +60,8 @@ function startSubtitles(text, duration) {
     const totalWords = segments.reduce((n, seg) => n + seg.length, 0);
     if (!totalWords) return;
 
-    const msPerWord = (duration * 1000) / totalWords;
+    // Speed up slightly (0.9x) to ensure subtitles finish before audio 'onended' cuts them off
+    const msPerWord = ((duration * 0.9) * 1000) / totalWords;
     let segIdx = 0;
     let wordIdx = 0;
 
@@ -117,6 +118,7 @@ export function enqueueSpeech(text, donation = null) {
 export function processQueue() {
     if (STATE.ttsQueue.length === 0) {
         STATE.speaking = false;
+        STATE.speakingEndedAt = Date.now();
         setExpression('idle');
         $('#stat-listen-state').textContent = 'Idle';
         speechBubble.classList.remove('visible');
