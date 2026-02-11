@@ -179,27 +179,27 @@ function detectWakeWord(text) {
     leadingTailWindow.length > 0 &&
     leadingTailHasCue &&
     !leadingTailHasNarrationBlocker;
+  // "Tubbs are...", "Tubbs can you...", "Tubbs what..." — direct cue within 2 tokens after wake
+  const wakeWithImmediateCue = hasWakeToken &&
+    afterWake.length > 0 &&
+    afterWake.slice(0, 2).some(token => WAKE_DIRECT_CUE_TOKENS.has(token) || WAKE_QUERY_CUE_TOKENS.has(token));
 
+  // Strong aliases (tubs, tubbs, tub, etc.) → always detected if found anywhere.
+  // If someone says "tubs" near the robot, it's for Tubs or worth responding to.
+  // Weak aliases (terps, turps) → still require positional/contextual cues.
+  const isWeak = isWeakWakeAlias(wakeMatch.token);
   const detected = hasWakeToken && (
-    (isWeakWakeAlias(wakeMatch.token)
+    isWeak
       ? (
         greetingNearWake ||
         greetingWithTrailingWake ||
         wakeAfterPoliteLead ||
         wakeWithDirectCue ||
+        wakeWithImmediateCue ||
         wakeCalledInTail ||
         wakeTailAddressedByLeadingCue
       )
-      : (
-        greetingNearWake ||
-        greetingWithTrailingWake ||
-        wakeFirst ||
-        standaloneWake ||
-        wakeAfterPoliteLead ||
-        wakeWithDirectCue ||
-        wakeCalledInTail ||
-        wakeTailAddressedByLeadingCue
-      ))
+      : true
   );
   const reason = !hasWakeToken
     ? 'no_wake_token'
@@ -217,11 +217,13 @@ function detectWakeWord(text) {
         ? 'polite_lead_then_wake'
       : wakeWithDirectCue
         ? 'wake_with_direct_cue'
+      : wakeWithImmediateCue
+        ? 'wake_immediate_cue'
       : wakeCalledInTail
         ? 'wake_called_in_tail'
       : wakeTailAddressedByLeadingCue
         ? 'leading_cue_before_wake_tail'
-          : 'wake_token_not_addressed';
+          : 'name_mentioned';
 
   return {
     detected,

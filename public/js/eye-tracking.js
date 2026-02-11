@@ -16,6 +16,13 @@ const SPRING_DAMPING = 22;
 const STOP_POS_EPS = 0.0012;
 const STOP_VEL_EPS = 0.0012;
 
+// ── Idle wander config ──
+const WANDER_MIN_DELAY_MS = 1800;
+const WANDER_MAX_DELAY_MS = 5000;
+const WANDER_X_RANGE = 0.35;      // max horizontal wander (±)
+const WANDER_Y_RANGE = 0.18;      // max vertical wander (±)
+const WANDER_CENTER_CHANCE = 0.3;  // 30% chance to look back to center
+
 let curX = 0;
 let curY = 0;
 let velX = 0;
@@ -24,6 +31,8 @@ let targetX = 0;
 let targetY = 0;
 let animating = false;
 let lastTickMs = 0;
+let wanderTimer = null;
+let wandering = false;
 
 function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -101,7 +110,55 @@ function ensureAnimationLoop() {
     requestAnimationFrame(tick);
 }
 
+// ── Idle wander ──
+
+function stopWander() {
+    if (wanderTimer) {
+        clearTimeout(wanderTimer);
+        wanderTimer = null;
+    }
+    wandering = false;
+}
+
+function scheduleWander() {
+    if (wanderTimer) return;
+    const delay = WANDER_MIN_DELAY_MS + Math.random() * (WANDER_MAX_DELAY_MS - WANDER_MIN_DELAY_MS);
+    wanderTimer = setTimeout(() => {
+        wanderTimer = null;
+        if (!wandering) return;
+        wanderStep();
+    }, delay);
+}
+
+function wanderStep() {
+    if (!wandering) return;
+
+    if (Math.random() < WANDER_CENTER_CHANCE) {
+        // Look back toward center (with slight offset for naturalness)
+        targetX = (Math.random() - 0.5) * 0.08;
+        targetY = (Math.random() - 0.5) * 0.04;
+    } else {
+        targetX = (Math.random() * 2 - 1) * WANDER_X_RANGE;
+        targetY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
+    }
+
+    ensureAnimationLoop();
+    scheduleWander();
+}
+
+function startWander() {
+    if (wandering) return;
+    wandering = true;
+    // First wander after a short pause so the return-to-center settles
+    wanderTimer = setTimeout(() => {
+        wanderTimer = null;
+        if (!wandering) return;
+        wanderStep();
+    }, 800);
+}
+
 export function lookAt(x, y) {
+    stopWander();
     targetX = easeInput(x);
     targetY = easeInput(y);
     ensureAnimationLoop();
@@ -111,4 +168,5 @@ export function resetGaze() {
     targetX = 0;
     targetY = 0;
     ensureAnimationLoop();
+    startWander();
 }
