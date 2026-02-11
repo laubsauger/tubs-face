@@ -140,7 +140,7 @@ export function initWorker() {
 
             case 'faces':
                 workerBusy = false;
-                handleFaceResults(msg.faces, msg.inferenceMs);
+                handleFaceResults(msg.faces, msg.inferenceMs, msg.embeddingsExtracted, msg.embeddingsReused);
                 scheduleNextCapture();
                 break;
 

@@ -47,6 +47,7 @@ const CRY_CHANCE_ON_NO_DONATION = 0.35;
 const CRYING_HOLD_MS = 4200;
 const CRYING_SPEECH_DELAY_MS = 1400;
 const CRYING_RESET_DELAY_MS = 5200;
+const DEFAULT_MIN_FACE_BOX_AREA_RATIO = 0.03;
 
 // Greeting Cooldown
 const GREETING_COOLDOWN = 120000; // 2 minutes
@@ -101,7 +102,23 @@ function maybeCryAfterNoDonation(name, firstSeenTs) {
     }, CRYING_RESET_DELAY_MS);
 }
 
-export function handleFaceResults(faces, inferenceMs) {
+function getMinFaceBoxAreaRatio() {
+    const configured = Number(STATE.minFaceBoxAreaRatio);
+    if (!Number.isFinite(configured)) return DEFAULT_MIN_FACE_BOX_AREA_RATIO;
+    return Math.max(0, Math.min(0.2, configured));
+}
+
+function isFaceCloseEnough(face, frameW, frameH, minAreaRatio) {
+    if (!face || !Array.isArray(face.box) || face.box.length < 4) return false;
+    const [x1, y1, x2, y2] = face.box;
+    const boxW = Math.max(0, x2 - x1);
+    const boxH = Math.max(0, y2 - y1);
+    const area = boxW * boxH;
+    const frameArea = Math.max(1, frameW * frameH);
+    return (area / frameArea) >= minAreaRatio;
+}
+
+export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, embeddingsReused = 0) {
     setLastInferenceMs(inferenceMs);
     const faceLibrary = getFaceLibrary();
     const currentInterval = getCurrentInterval();
@@ -110,13 +127,27 @@ export function handleFaceResults(faces, inferenceMs) {
     const ctx = overlay.getContext('2d');
     ctx.clearRect(0, 0, overlay.width, overlay.height);
 
-    const intervalStr = `${Math.round(currentInterval)}ms`;
-    statusEl.textContent = `${faces.length} face(s) · ${inferenceMs}ms · ⏱${intervalStr}`;
+    const frameW = captureCanvas.width || 640;
+    const frameH = captureCanvas.height || 480;
+    const minFaceBoxAreaRatio = getMinFaceBoxAreaRatio();
+    const activeFaces = minFaceBoxAreaRatio > 0
+        ? faces.filter(face => isFaceCloseEnough(face, frameW, frameH, minFaceBoxAreaRatio))
+        : faces;
+    const farFacesDiscarded = Math.max(0, faces.length - activeFaces.length);
+
+    const intervalStr = `⏱${Math.round(currentInterval)}ms`;
+    const embStr = embeddingsReused > 0 ? `${embeddingsExtracted}new+${embeddingsReused}cached` : '';
+    let status = `${activeFaces.length} face(s)`;
+    if (farFacesDiscarded > 0) status += ` +${farFacesDiscarded} far`;
+    status += ` · ${inferenceMs}ms`;
+    if (embStr) status += ` (${embStr})`;
+    status += ` · ${intervalStr}`;
+    statusEl.textContent = status;
 
     const recognized = [];
     const debugFaces = [];
 
-    for (const face of faces) {
+    for (const face of activeFaces) {
         const candidates = [];
         let bestMatch = null;
         let bestSim = 0;
@@ -213,10 +244,10 @@ export function handleFaceResults(faces, inferenceMs) {
 
     // ── Change detection ──
     const currentNames = new Set(recognized);
-    const unknownCount = faces.length - currentNames.size;
+    const unknownCount = activeFaces.length - currentNames.size;
     const newNames = [...currentNames].filter(n => !prevRecognizedNames.has(n));
     const lostNames = [...prevRecognizedNames].filter(n => !currentNames.has(n));
-    const faceCountChanged = faces.length !== prevFaceCount;
+    const faceCountChanged = activeFaces.length !== prevFaceCount;
 
     // Update last-seen timestamps for departure debounce
     for (const name of currentNames) {
@@ -258,23 +289,21 @@ export function handleFaceResults(faces, inferenceMs) {
     }
 
     // Update STATE
-    STATE.facesDetected = faces.length;
+    STATE.facesDetected = activeFaces.length;
     STATE.personsPresent = [...currentNames];
     const now = Date.now();
     pruneTrackedNames(now);
 
-    if (faces.length > 0) {
+    if (activeFaces.length > 0) {
         // Eye tracking — average centroid of all detected faces
-        const frameW = captureCanvas.width || 640;
-        const frameH = captureCanvas.height || 480;
         let avgX = 0, avgY = 0;
-        for (const f of faces) {
+        for (const f of activeFaces) {
             const [fx1, fy1, fx2, fy2] = f.box;
             avgX += (fx1 + fx2) / 2;
             avgY += (fy1 + fy2) / 2;
         }
-        avgX /= faces.length;
-        avgY /= faces.length;
+        avgX /= activeFaces.length;
+        avgY /= activeFaces.length;
         const normX = -((avgX / frameW) * 2 - 1);
         const normY = (avgY / frameH) * 2 - 1;
         lookAt(normX * 1.1, normY * 0.75);
@@ -334,7 +363,7 @@ export function handleFaceResults(faces, inferenceMs) {
 
         // Broadcast presence when composition changes
         if (faceCountChanged || newNames.length > 0 || lostNames.length > 0) {
-            sendPresence(true, STATE.personsPresent, faces.length);
+            sendPresence(true, STATE.personsPresent, activeFaces.length);
         }
 
         clearTimeout(presenceTimer);
@@ -359,7 +388,7 @@ export function handleFaceResults(faces, inferenceMs) {
 
     // Always update tracking state at end of frame
     prevRecognizedNames = currentNames;
-    prevFaceCount = faces.length;
+    prevFaceCount = activeFaces.length;
 }
 
 function updateBadge(recognized, unknownCount) {

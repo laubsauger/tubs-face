@@ -22,5 +22,6 @@ export const STATE = {
     presenceDetected: false,
     lastDonationSignalAt: 0,
     donationSignalMode: 'both',
+    minFaceBoxAreaRatio: 0.03,
     chatVerbosity: 'all',
 };

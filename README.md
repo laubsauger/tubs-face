@@ -144,7 +144,7 @@ LLM Assistant (Gemini API)
 | `/sleep` | POST | Put bot to sleep |
 | `/wake` | POST | Wake bot up |
 | `/config` | GET | Get current config |
-| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`) |
+| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`, `minFaceBoxAreaRatio`) |
 | `/checkout/paypal/order` | POST | Create PayPal order (optional checkout flow) |
 | `/checkout/paypal/capture` | POST | Capture PayPal order; emits confident donation signal on completion |
 | `/donations/confirm` | POST | Manual donation signal injection (`implied`/`confident`) |
@@ -174,6 +174,7 @@ ASSISTANT_HISTORY_TTL_MS=240000
 ASSISTANT_MEMORY_TTL_MS=360000
 PRESENCE_CONTEXT_CLEAR_DELAY_MS=60000
 PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS=15000
+MIN_FACE_BOX_AREA_RATIO=0.03
 ```
 
 You can also change model/token cap at runtime:
@@ -183,6 +184,19 @@ curl -X POST http://localhost:3000/config \
   -H "Content-Type: application/json" \
   -d '{"llmModel":"gemini-2.5-flash-lite","llmMaxOutputTokens":96}'
 ```
+
+### Face Distance Filter
+
+Ignore tiny/far faces by bounding-box area ratio (fraction of full camera frame):
+
+```bash
+curl -X POST http://localhost:3000/config \
+  -H "Content-Type: application/json" \
+  -d '{"minFaceBoxAreaRatio":0.03}'
+```
+
+Increase this value to focus on closer people. Set `0` to disable filtering.
+At `0.03`, a square face box must be roughly `130x130` px on a `1024x576` frame.
 
 ### Persona Editing
 

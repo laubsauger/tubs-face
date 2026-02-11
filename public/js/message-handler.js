@@ -52,6 +52,12 @@ function setSleepTimeoutMs(timeoutMs) {
     if (label) label.textContent = secs >= 60 ? `${Math.round(secs / 60)}m` : `${secs}s`;
 }
 
+function setMinFaceBoxAreaRatio(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    STATE.minFaceBoxAreaRatio = Math.max(0, Math.min(0.2, parsed));
+}
+
 function setExpressionIfAllowed(expr) {
     if (isDonationJoyActive() && JOY_LOCKED_EXPRESSIONS.has(expr)) {
         return;
@@ -136,6 +142,7 @@ function applyConfig(msg) {
     setSleepTimeoutMs(msg.sleepTimeout);
     setModel(msg.model);
     setDonationSignalMode(msg.donationSignalMode);
+    setMinFaceBoxAreaRatio(msg.minFaceBoxAreaRatio);
 }
 
 export function handleMessage(msg) {

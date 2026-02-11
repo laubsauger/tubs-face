@@ -8,6 +8,7 @@ const {
   normalizeLlmModel,
   normalizeLlmMaxOutputTokens,
   normalizeDonationSignalMode,
+  normalizeMinFaceBoxAreaRatio,
 } = require('./config');
 const { broadcast, getClients } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
@@ -402,13 +403,17 @@ function handleRequest(req, res) {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
-        const { name, embedding } = JSON.parse(body);
+        const { name, embedding, thumbnail } = JSON.parse(body);
         if (!name || !embedding || !Array.isArray(embedding)) {
           throw new Error('Missing name or embedding array');
         }
         const lib = readFaceLib();
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        lib.faces.push({ id, name, embedding, createdAt: Date.now() });
+        const entry = { id, name, embedding, createdAt: Date.now() };
+        if (thumbnail && typeof thumbnail === 'string') {
+          entry.thumbnail = thumbnail;
+        }
+        lib.faces.push(entry);
         writeFaceLib(lib);
         console.log(`[Faces] Added "${name}" (id=${id})`);
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -467,6 +472,9 @@ function handleRequest(req, res) {
         }
         if (Object.hasOwn(config, 'donationSignalMode')) {
           config.donationSignalMode = normalizeDonationSignalMode(config.donationSignalMode);
+        }
+        if (Object.hasOwn(config, 'minFaceBoxAreaRatio')) {
+          config.minFaceBoxAreaRatio = normalizeMinFaceBoxAreaRatio(config.minFaceBoxAreaRatio);
         }
 
         const nextConfig = { ...runtimeConfig, ...config };

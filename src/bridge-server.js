@@ -17,7 +17,7 @@
  *   POST /webhooks/paypal         — PayPal webhook donation event intake
  *   GET  /stats     — Return current session stats
  *   GET  /config    — Get runtime config
- *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel, llmModel, llmMaxOutputTokens, donationSignalMode }
+ *   POST /config    — Update runtime config: { sleepTimeout, model, prompt, sttModel, llmModel, llmMaxOutputTokens, donationSignalMode, minFaceBoxAreaRatio }
  */
 
 const http = require('http');

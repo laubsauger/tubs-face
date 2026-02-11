@@ -1,4 +1,5 @@
 import { getFaceLibrary, loadFaceLibrary } from './library.js';
+import { getCurrentInterval } from './detection.js';
 
 let debugVisible = false;
 let lastDebugFaces = [];
@@ -63,7 +64,7 @@ export function renderDebugFrame(captureCanvas, w, h) {
 export function renderDebugDetections(faces, inferenceMs) {
     const faceLibrary = getFaceLibrary();
 
-    document.getElementById('dbg-interval').textContent = `—`;
+    document.getElementById('dbg-interval').textContent = `${Math.round(getCurrentInterval())}ms`;
     document.getElementById('dbg-inference').textContent = `${inferenceMs}ms`;
     document.getElementById('dbg-faces').textContent = faces.length;
     const names = [...new Set(faceLibrary.map(f => f.name))];
@@ -146,7 +147,11 @@ function renderLibrary() {
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
             }) : '—';
             html += `<div class="lib-embedding-row">`;
-            html += `<span class="lib-emb-id">${e.id}</span>`;
+            if (e.thumbnail) {
+                html += `<img class="lib-emb-thumb" src="${e.thumbnail}" alt="" />`;
+            } else {
+                html += `<span class="lib-emb-thumb lib-emb-thumb-none">?</span>`;
+            }
             html += `<span class="lib-emb-date">${date}</span>`;
             html += `<button class="lib-btn danger" data-delete-id="${e.id}">✕</button>`;
             html += `</div>`;

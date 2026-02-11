@@ -485,6 +485,37 @@ async function extractEmbedding(imageData, width, height, landmarks) {
   return raw.map(v => v / norm);
 }
 
+// ── Face Tracking (skip redundant embeddings) ──
+// Cache embeddings for faces that haven't moved much between frames.
+// ArcFace extraction is ~40-50% of total inference time, so reusing
+// embeddings for stable faces roughly halves the per-frame cost.
+const TRACK_IOU_THRESH = 0.45;   // min IoU to consider same face
+const TRACK_MAX_AGE = 8;         // reuse embedding for up to N frames
+let prevTracked = [];             // { box, embedding, age }
+
+function trackIoU(a, b) {
+  const x1 = Math.max(a[0], b[0]);
+  const y1 = Math.max(a[1], b[1]);
+  const x2 = Math.min(a[2], b[2]);
+  const y2 = Math.min(a[3], b[3]);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const aA = (a[2] - a[0]) * (a[3] - a[1]);
+  const aB = (b[2] - b[0]) * (b[3] - b[1]);
+  return inter / (aA + aB - inter + 1e-6);
+}
+
+function findTrackedMatch(box) {
+  let bestIdx = -1, bestIoU = 0;
+  for (let i = 0; i < prevTracked.length; i++) {
+    const ov = trackIoU(box, prevTracked[i].box);
+    if (ov > TRACK_IOU_THRESH && ov > bestIoU) {
+      bestIoU = ov;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
 // ── Message Handler ──
 self.onmessage = async (e) => {
   const { type } = e.data;
@@ -510,19 +541,45 @@ self.onmessage = async (e) => {
 
       const faces = await detectFaces(imageData, width, height);
 
-      // Extract embeddings for each detected face
+      // Match detected faces against previous frame's tracked faces.
+      // Reuse cached embedding if the face hasn't moved much and the
+      // cache isn't too stale. Otherwise extract a fresh embedding.
+      const usedTracked = new Set();
+      let embeddingsExtracted = 0;
+      let embeddingsReused = 0;
+
       for (const face of faces) {
         if (!face.landmarks) { face.embedding = null; continue; }
+
+        const tIdx = findTrackedMatch(face.box);
+        if (tIdx !== -1 && !usedTracked.has(tIdx)) {
+          const tracked = prevTracked[tIdx];
+          if (tracked.embedding && tracked.age < TRACK_MAX_AGE) {
+            face.embedding = tracked.embedding;
+            face._trackedAge = tracked.age + 1;
+            usedTracked.add(tIdx);
+            embeddingsReused++;
+            continue;
+          }
+        }
+
         try {
           face.embedding = await extractEmbedding(imageData, width, height, face.landmarks);
+          face._trackedAge = 0;
+          embeddingsExtracted++;
         } catch (err) {
           console.warn('[Worker] Embedding failed:', err);
           face.embedding = null;
         }
       }
 
+      // Update tracking cache
+      prevTracked = faces
+        .filter(f => f.embedding)
+        .map(f => ({ box: f.box, embedding: f.embedding, age: f._trackedAge || 0 }));
+
       const inferenceMs = Math.round(performance.now() - t0);
-      postMessage({ type: 'faces', faces, inferenceMs });
+      postMessage({ type: 'faces', faces, inferenceMs, embeddingsExtracted, embeddingsReused });
     } catch (err) {
       postMessage({ type: 'error', message: err.message });
     } finally {

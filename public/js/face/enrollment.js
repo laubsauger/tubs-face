@@ -25,9 +25,14 @@ export async function enrollFace() {
     const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
     const worker = getWorker();
 
-    const embeddings = [];
+    const samples = []; // { embedding, thumbnail }
     const SAMPLES = 5;
     const SAMPLE_DELAY = 800;
+    const THUMB_SIZE = 80;
+    const thumbCanvas = document.createElement('canvas');
+    thumbCanvas.width = THUMB_SIZE;
+    thumbCanvas.height = THUMB_SIZE;
+    const thumbCtx = thumbCanvas.getContext('2d');
 
     for (let i = 0; i < SAMPLES; i++) {
         if (i > 0) {
@@ -51,13 +56,13 @@ export async function enrollFace() {
         const imageData = captureCtx.getImageData(0, 0, w, h);
         const buffer = imageData.data.buffer.slice(0);
 
-        const embedding = await new Promise((resolve) => {
+        const faceResult = await new Promise((resolve) => {
             const handler = (e) => {
                 if (e.data.type === 'faces') {
                     worker.removeEventListener('message', handler);
                     const faces = e.data.faces;
                     if (faces.length === 1 && faces[0].embedding) {
-                        resolve(faces[0].embedding);
+                        resolve(faces[0]);
                     } else {
                         resolve(null);
                     }
@@ -72,36 +77,52 @@ export async function enrollFace() {
             }, [buffer]);
         });
 
-        if (embedding) {
+        if (faceResult) {
+            const embedding = faceResult.embedding;
             let isDuplicate = false;
-            for (const prev of embeddings) {
-                if (cosineSimilarity(embedding, prev) > 0.95) {
+            for (const prev of samples) {
+                if (cosineSimilarity(embedding, prev.embedding) > 0.95) {
                     isDuplicate = true;
                     break;
                 }
             }
             if (!isDuplicate) {
-                embeddings.push(embedding);
+                // Crop face bounding box as thumbnail
+                const [x1, y1, x2, y2] = faceResult.box;
+                const pad = Math.max((x2 - x1), (y2 - y1)) * 0.15;
+                const cx = Math.max(0, x1 - pad);
+                const cy = Math.max(0, y1 - pad);
+                const cw = Math.min(w - cx, (x2 - x1) + pad * 2);
+                const ch = Math.min(h - cy, (y2 - y1) + pad * 2);
+                thumbCtx.clearRect(0, 0, THUMB_SIZE, THUMB_SIZE);
+                thumbCtx.drawImage(captureCanvas, cx, cy, cw, ch, 0, 0, THUMB_SIZE, THUMB_SIZE);
+                const thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
+
+                samples.push({ embedding, thumbnail });
             }
         }
     }
 
     setWorkerBusy(false);
 
-    if (embeddings.length === 0) {
+    if (samples.length === 0) {
         logChat('sys', `No valid face samples captured for "${trimmedName}"`);
         return;
     }
 
-    logChat('sys', `Saving ${embeddings.length} distinct embedding(s) for "${trimmedName}"...`);
+    logChat('sys', `Saving ${samples.length} distinct embedding(s) for "${trimmedName}"...`);
 
     let saved = 0;
-    for (const emb of embeddings) {
+    for (const sample of samples) {
         try {
             const res = await fetch('/faces', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: trimmedName, embedding: emb })
+                body: JSON.stringify({
+                    name: trimmedName,
+                    embedding: sample.embedding,
+                    thumbnail: sample.thumbnail,
+                })
             });
             const data = await res.json();
             if (data.ok) saved++;
