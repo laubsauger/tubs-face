@@ -181,7 +181,15 @@ export async function enrollFace() {
                 const cw = Math.min(w - cx, (x2 - x1) + pad * 2);
                 const ch = Math.min(h - cy, (y2 - y1) + pad * 2);
                 thumbCtx.clearRect(0, 0, THUMB_SIZE, THUMB_SIZE);
-                thumbCtx.drawImage(captureCanvas, cx, cy, cw, ch, 0, 0, THUMB_SIZE, THUMB_SIZE);
+                thumbCtx.fillStyle = '#000';
+                thumbCtx.fillRect(0, 0, THUMB_SIZE, THUMB_SIZE);
+                // Fit face into square preserving aspect ratio
+                const scale = Math.min(THUMB_SIZE / cw, THUMB_SIZE / ch);
+                const dw = cw * scale;
+                const dh = ch * scale;
+                const dx = (THUMB_SIZE - dw) / 2;
+                const dy = (THUMB_SIZE - dh) / 2;
+                thumbCtx.drawImage(captureCanvas, cx, cy, cw, ch, dx, dy, dw, dh);
                 const thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
 
                 const thumbWrap = document.createElement('div');
