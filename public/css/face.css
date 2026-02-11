@@ -866,7 +866,7 @@ body.sleeping .zzz {
   border-radius: 10px;
   backdrop-filter: blur(8px);
   font-family: 'Outfit', sans-serif;
-  font-size: clamp(20px, 3.5vw, 44px);
+  font-size: clamp(17px, 2.9vw, 36px);
   font-weight: 600;
   line-height: 1.4;
   text-align: center;

@@ -10,8 +10,8 @@ const MEMORY_LIMIT = 8;
 const MEMORY_CONTEXT_SIZE = 4;
 const MEMORY_TTL_MS = Number.parseInt(process.env.ASSISTANT_MEMORY_TTL_MS || '360000', 10);
 const INPUT_CHAR_LIMIT = 800;
-const OUTPUT_CHAR_LIMIT = 220;
-const MAX_OUTPUT_SENTENCES = 2;
+const OUTPUT_CHAR_LIMIT = 280;
+const MAX_OUTPUT_SENTENCES = 3;
 const DONATION_MARKER = '[[SHOW_QR]]';
 const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_NUDGE_INTERVAL = 6;
@@ -73,6 +73,7 @@ const EMOJI_GUIDE_LINES = [
 ];
 const TRAILING_PUNCT_RE = /[.!?]+\s*$/;
 const TRAILING_EMOJI_CLUSTER_RE = /(?:\s*)(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*$/u;
+const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*/u;
 
 const conversationHistory = [];
 const memoryFacts = new Map();
@@ -309,29 +310,45 @@ function buildSystemInstruction() {
 
   promptSections.push(
     [
-      'Optional emotion emoji protocol (for face animation):',
-      '- You may append an emoji only at the very end of the reply as the last character.',
-      '- If you use an emoji, it MUST be exactly one from this supported set; otherwise use no emoji.',
-      ...EMOJI_GUIDE_LINES.map((line) => `  - ${line}`),
-      '- Do not place emoji mid-sentence. Do not add multiple emojis.',
+      'Face emoji: start every reply with exactly one emoji from this set, then a space, then text.',
+      'Example: "😏 You really thought you could walk past me?"',
+      ...EMOJI_GUIDE_LINES.map((line) => `  ${line}`),
+      'One emoji, first character only, no emoji elsewhere.',
     ].join('\n')
   );
-  promptSections.push('Token budget policy: stay concise by default and avoid long preambles.');
-  promptSections.push('Style guardrail: sound like natural casual speech, not an AI assistant.');
-  promptSections.push('Conversation guardrail: often end with a short follow-up question that keeps momentum.');
   return promptSections.join('\n\n');
 }
 
 function splitTrailingEmotionEmoji(text) {
   const normalized = normalizeInput(text);
   if (!normalized) {
+    return { text: '', emoji: null, emotion: null };
+  }
+
+  function makeResult(cleanText, emoji) {
+    if (!emoji) return { text: cleanText, emoji: null, emotion: null };
+    const mapped = EMOJI_EMOTION_MAP[emoji];
+    if (!mapped) return { text: cleanText, emoji: null, emotion: null };
     return {
-      text: '',
-      emoji: null,
-      emotion: null,
+      text: cleanText,
+      emoji,
+      emotion: {
+        emoji,
+        label: mapped.label,
+        expression: mapped.expression,
+        impulse: { ...mapped.impulse },
+      },
     };
   }
 
+  // 1. Check for leading emoji (preferred protocol)
+  const leadMatch = normalized.match(LEADING_EMOJI_RE);
+  if (leadMatch && EMOJI_EMOTION_MAP[leadMatch[1]]) {
+    const rest = normalized.slice(leadMatch[0].length).trim();
+    return makeResult(rest || normalized, leadMatch[1]);
+  }
+
+  // 2. Fallback: check for trailing emoji (old protocol)
   const punctMatch = normalized.match(TRAILING_PUNCT_RE);
   const punctuation = punctMatch ? punctMatch[0].trim() : '';
   let core = punctMatch ? normalized.slice(0, punctMatch.index).trimEnd() : normalized;
@@ -345,36 +362,11 @@ function splitTrailingEmotionEmoji(text) {
   }
 
   if (!trailingEmojis.length) {
-    return {
-      text: normalized,
-      emoji: null,
-      emotion: null,
-    };
+    return { text: normalized, emoji: null, emotion: null };
   }
 
-  // Tolerant protocol:
-  // - if multiple trailing emojis appear, use the last one
-  // - emoji must still be from the supported set
   const emoji = trailingEmojis[trailingEmojis.length - 1];
-  const mapped = EMOJI_EMOTION_MAP[emoji];
-  if (!mapped) {
-    return {
-      text: `${core}${punctuation}`.trim(),
-      emoji: null,
-      emotion: null,
-    };
-  }
-
-  return {
-    text: `${core}${punctuation}`.trim(),
-    emoji,
-    emotion: {
-      emoji,
-      label: mapped.label,
-      expression: mapped.expression,
-      impulse: { ...mapped.impulse },
-    },
-  };
+  return makeResult(`${core}${punctuation}`.trim(), emoji);
 }
 
 async function generateAssistantReply(userText) {
@@ -418,6 +410,7 @@ async function generateAssistantReply(userText) {
   }
 
   let responseText = '';
+  let rawEmotion = null;
   let source = 'llm';
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
@@ -431,9 +424,14 @@ async function generateAssistantReply(userText) {
         systemInstruction: buildSystemInstruction(),
         contents: buildContents(normalizedInput),
         maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-        temperature: 0.45,
+        temperature: 1,
       });
-      responseText = clampOutput(llmResult.text);
+      console.log(`[LLM] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
+      // Extract emoji BEFORE clamping — clamp cuts trailing sentences where emoji lives
+      const rawEmoji = splitTrailingEmotionEmoji(llmResult.text);
+      rawEmotion = rawEmoji.emotion;
+      responseText = clampOutput(rawEmoji.text);
+      console.log(`[LLM] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
       model = llmResult.model || model;
       usageIn = Number(llmResult.usage.promptTokenCount || 0);
       usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
@@ -448,16 +446,18 @@ async function generateAssistantReply(userText) {
   }
 
   if (!responseText) {
-    responseText = clampOutput(generateDemoResponse(normalizedInput));
+    const fallbackText = generateDemoResponse(normalizedInput);
+    const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
+    rawEmotion = rawEmotion || fallbackEmoji.emotion;
+    responseText = clampOutput(fallbackEmoji.text);
   }
 
-  const parsedEmoji = splitTrailingEmotionEmoji(responseText);
-  responseText = parsedEmoji.text;
-  const emotion = parsedEmoji.emotion;
+  const emotion = rawEmotion;
 
   const donationSignal = extractDonationSignal(responseText);
   const nudged = maybeInjectDonationNudge(donationSignal.text, donationSignal.donation.show);
   responseText = clampOutput(nudged.text);
+  console.log(`[LLM] After 2nd clampOutput (${responseText.length} chars): ${responseText}`);
   if (!responseText) {
     responseText = `Please help my wheel fund on Venmo @${DEFAULT_VENMO_HANDLE} so Rapha can see Thailand.`;
   }
@@ -498,9 +498,8 @@ async function generateProactiveReply(context) {
   }
 
   const proactiveInstruction = buildSystemInstruction() + '\n\n' +
-    'PROACTIVE CONTEXT: You are initiating conversation. ' + context + '\n' +
-    'Say something engaging, curious, or playful to start or continue conversation. ' +
-    'Keep it short (1 sentence). Sound natural, not forced.';
+    'PROACTIVE: You are starting conversation unprompted. ' + context + '\n' +
+    'One punchy sentence. Be curious, weird, or provocative — make them want to respond.';
 
   const contents = [];
   pruneConversationHistory();
@@ -512,6 +511,7 @@ async function generateProactiveReply(context) {
   contents.push({ role: 'user', parts: [{ text: '[silence]' }] });
 
   let responseText = '';
+  let rawEmotion = null;
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
   let usageOut = 0;
@@ -523,9 +523,13 @@ async function generateProactiveReply(context) {
       systemInstruction: proactiveInstruction,
       contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-      temperature: 0.65,
+      temperature: 1,
     });
-    responseText = clampOutput(llmResult.text);
+    console.log(`[LLM:proactive] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
+    const rawEmoji = splitTrailingEmotionEmoji(llmResult.text);
+    rawEmotion = rawEmoji.emotion;
+    responseText = clampOutput(rawEmoji.text);
+    console.log(`[LLM:proactive] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
@@ -536,12 +540,11 @@ async function generateProactiveReply(context) {
 
   if (!responseText) return null;
 
-  const parsedEmoji = splitTrailingEmotionEmoji(responseText);
-  responseText = parsedEmoji.text;
-  const emotion = parsedEmoji.emotion;
+  const emotion = rawEmotion;
 
   const donationSignal = extractDonationSignal(responseText);
   responseText = clampOutput(donationSignal.text);
+  console.log(`[LLM:proactive] Final (${responseText.length} chars): ${responseText}`);
   if (!responseText) return null;
 
   // Only push the model response to history (not the fake user prompt)

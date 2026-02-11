@@ -20,6 +20,15 @@ export function escapeHTML(str) {
     return d.innerHTML;
 }
 
+function normalizeLogText(text) {
+    // Strip non-printable control chars that can render unpredictably in HTML text nodes.
+    const normalized = String(text ?? '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+    return normalized;
+}
+
 function isVisibleForVerbosity(type) {
     if (STATE.chatVerbosity === 'chat') return type !== 'sys';
     if (STATE.chatVerbosity === 'minimal') return type === 'in';
@@ -28,6 +37,7 @@ function isVisibleForVerbosity(type) {
 
 export function logChat(type, text) {
     const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const safeText = normalizeLogText(text);
 
     // Always update stats regardless of verbosity
     if (type === 'in' || type === 'out') {
@@ -43,7 +53,17 @@ export function logChat(type, text) {
     msg.dataset.type = type;
     if (!isVisibleForVerbosity(type)) msg.hidden = true;
     const prefix = type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
-    msg.innerHTML = `<span class="ts">${ts}</span><span class="content">${prefix} ${escapeHTML(text)}</span>`;
+
+    const tsEl = document.createElement('span');
+    tsEl.className = 'ts';
+    tsEl.textContent = ts;
+
+    const contentEl = document.createElement('span');
+    contentEl.className = 'content';
+    contentEl.textContent = `${prefix} ${safeText}`;
+
+    msg.appendChild(tsEl);
+    msg.appendChild(contentEl);
     chatLog.appendChild(msg);
     scheduleScroll();
 

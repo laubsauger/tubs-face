@@ -179,13 +179,17 @@ export function handleMessage(msg) {
 
     switch (msg.type) {
         case 'speak':
+            console.log(`[MSG] Received speak (${msg.text?.length} chars):`, msg.text);
             if (msg.emotion?.impulse) {
                 pushEmotionImpulse(msg.emotion.impulse, 'spoken');
             }
             // Emotion expression is passed through the TTS queue
             // and pulsed AFTER speech ends (not before/during)
-            enqueueSpeech(msg.text, msg.donation, msg.emotion || null);
-            logChat('out', msg.text);
+            {
+                const spokenText = enqueueSpeech(msg.text, msg.donation, msg.emotion || null);
+                const emojiTag = msg.emotion?.emoji ? `${msg.emotion.emoji} ` : '';
+                logChat('out', emojiTag + spokenText);
+            }
             STATE.totalMessages++;
             resetProactiveTimer();
             break;

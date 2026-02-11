@@ -57,6 +57,9 @@ let currentExpression = 'idle';
 let activeRenderer = 'css';
 let speakingTimer = null;
 let speakingIndex = 0;
+let blinkTimer = null;
+
+const NO_BLINK_EXPRESSIONS = new Set(['sleep', 'love']);
 
 let shapeLibrary = null;
 let shapeLoadDegraded = false;
@@ -300,10 +303,15 @@ function applyDecor(decorFeatures = [], duration = 0, ease = 'sine.inOut') {
             } else {
                 el.style.opacity = String(Number.isFinite(Number(feature.opacity)) ? Number(feature.opacity) : 1);
             }
-        } else if (gsap && duration > 0) {
-            gsap.to(el, { duration, ease, opacity: 0, overwrite: true });
         } else {
-            el.style.opacity = '0';
+            // Reset class to prevent CSS rules (e.g. .svg-tear opacity/animation) from overriding
+            el.setAttribute('class', 'svg-decor');
+            el.removeAttribute('d');
+            if (gsap && duration > 0) {
+                gsap.to(el, { duration, ease, opacity: 0, overwrite: true });
+            } else {
+                el.style.opacity = '0';
+            }
         }
     }
 }
@@ -349,6 +357,73 @@ function applyShapeProfile(shapeKey, options = {}) {
     if (svgLayerEl) {
         svgLayerEl.dataset.svgTint = profile.tint || 'neutral';
     }
+}
+
+function squashFeature(feature, squashRatio = 0.08) {
+    if (!feature || !feature.points || feature.points.length === 0) return null;
+
+    // Find vertical center of the eye
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of feature.points) {
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+    }
+    const centerY = (minY + maxY) / 2;
+
+    // Squash all Y coords toward center
+    const squashedPoints = feature.points.map(p => ({
+        x: p.x,
+        y: centerY + (p.y - centerY) * squashRatio,
+    }));
+
+    return {
+        ...feature,
+        points: squashedPoints,
+    };
+}
+
+export function blinkSvgEyes() {
+    if (activeRenderer !== 'svg') return;
+
+    const exprKey = resolveExpressionKey();
+    const shapeKey = expressionToShapeKey(exprKey);
+    if (NO_BLINK_EXPRESSIONS.has(shapeKey)) return;
+
+    // Don't overlap blinks
+    if (blinkTimer) return;
+
+    const gsap = getGsap();
+    const leftState = featureState.leftEye;
+    const rightState = featureState.rightEye;
+    if (!leftState || !rightState) return;
+
+    // Snapshot current open-eye features to restore after blink
+    const openLeft = cloneFeature(leftState);
+    const openRight = cloneFeature(rightState);
+
+    // Create squashed "closed" eye features
+    const closedLeft = squashFeature(openLeft);
+    const closedRight = squashFeature(openRight);
+    if (!closedLeft || !closedRight) return;
+
+    const CLOSE_MS = 60;
+    const HOLD_MS = 80;
+    const OPEN_MS = 70;
+
+    // Close eyes
+    morphFeature('leftEye', closedLeft, CLOSE_MS / 1000, 'sine.in');
+    morphFeature('rightEye', closedRight, CLOSE_MS / 1000, 'sine.in');
+
+    // Reopen after hold
+    blinkTimer = setTimeout(() => {
+        morphFeature('leftEye', openLeft, OPEN_MS / 1000, 'sine.out');
+        morphFeature('rightEye', openRight, OPEN_MS / 1000, 'sine.out');
+
+        blinkTimer = setTimeout(() => {
+            blinkTimer = null;
+        }, OPEN_MS + 20);
+    }, CLOSE_MS + HOLD_MS);
 }
 
 function startSpeakingCycle() {

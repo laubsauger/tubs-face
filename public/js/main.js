@@ -6,7 +6,7 @@ import { STATE } from './state.js';
 import { $ } from './dom.js';
 import { logChat, initVerbosityToggle } from './chat-log.js';
 import { startIdleLoop } from './expressions.js';
-import { connectWS } from './websocket.js';
+import { connectWS, getWs } from './websocket.js';
 import { initMicrophone, initVAD, initVadToggle, initNoiseGate, initWaveformBars } from './audio-input.js';
 import { resetSleepTimer, enterSleep, initSleepSlider } from './sleep.js';
 import { initKeyboard } from './keyboard.js';
@@ -16,6 +16,7 @@ import { initEmotionEngine } from './emotion-engine.js';
 import { initFullscreenToggle } from './fullscreen.js';
 import { checkAndRunIngestion } from './face/ingest.js';
 import { initFaceRenderer } from './face-renderer.js';
+import { initProactive } from './proactive.js';
 
 function initVoiceSelector() {
     const select = document.getElementById('tts-voice');
@@ -57,6 +58,7 @@ function init() {
     initFaceRenderer();
     faceManager.init();
     initEmotionEngine();
+    initProactive(getWs);
 
     connectWS();
     resetSleepTimer();

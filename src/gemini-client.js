@@ -35,12 +35,15 @@ async function generateGeminiContent({
   }
 
   const endpoint = `${DEFAULT_GEMINI_BASE_URL}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  console.log(`[Gemini] Request: model=${model}, maxOutputTokens=${maxOutputTokens}, temperature=${temperature}`);
   const payload = {
     contents,
     generationConfig: {
       maxOutputTokens,
       temperature,
-      topP: 0.9,
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
     },
   };
 
@@ -96,6 +99,7 @@ async function generateGeminiContent({
   }
 
   const text = extractResponseText(json);
+  console.log(`[Gemini] Extracted text (${text.length} chars), finishReason: ${json.candidates?.[0]?.finishReason || 'unknown'}, usage: promptTokens=${json.usageMetadata?.promptTokenCount || '?'}, outputTokens=${json.usageMetadata?.candidatesTokenCount || '?'}`);
   if (!text) {
     const err = new Error('Gemini response did not contain text output');
     err.code = 'GEMINI_EMPTY_RESPONSE';

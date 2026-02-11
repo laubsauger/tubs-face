@@ -127,6 +127,7 @@ function initWebSocket(server) {
                 sessionStats.model = reply.model;
               }
 
+              console.log(`[WS] Broadcasting speak (${reply.text.length} chars): ${reply.text}`);
               broadcast({
                 type: 'speak',
                 text: reply.text,
