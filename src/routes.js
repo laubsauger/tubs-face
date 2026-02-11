@@ -19,6 +19,11 @@ const { logConversation } = require('./logger');
 
 const staticPath = path.join(__dirname, '../public');
 
+// After a wake word is detected, Tubs stays in "conversation mode" for this
+// duration — subsequent speech is processed without requiring the wake word.
+const CONVERSATION_WINDOW_MS = 45_000; // 45 seconds
+let lastConversationAt = 0;
+
 const mimeTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -106,14 +111,16 @@ function handleRequest(req, res) {
         const text = result.text;
         console.log(`[Transcribed] "${text}"`);
         let wake = null;
+        const inConversation = (Date.now() - lastConversationAt) < CONVERSATION_WINDOW_MS;
 
         if (wakeWord) {
           wake = detectWakeWord(text);
+          const skipWake = !wake.detected && inConversation;
           console.log(
-            `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} reason=${wake.reason} source=${wake.matchedSource || ''} normalized="${wake.normalized}" matched="${wake.matchedToken || ''}"`
+            `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} convo=${inConversation} skip=${skipWake} reason=${wake.reason} source=${wake.matchedSource || ''} normalized="${wake.normalized}" matched="${wake.matchedToken || ''}"`
           );
-          if (!wake.detected) {
-            console.log('[Voice] Wake word not detected, ignoring.');
+          if (!wake.detected && !inConversation) {
+            console.log('[Voice] Wake word not detected and not in conversation, ignoring.');
             broadcast({ type: 'expression', expression: 'idle' });
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -127,11 +134,15 @@ function handleRequest(req, res) {
             }));
             return;
           }
+          if (skipWake) {
+            console.log('[Voice] No wake word but in conversation mode — processing.');
+          }
         }
 
         broadcast({ type: 'incoming', text: text });
         logConversation('USER', text);
         sessionStats.messagesIn++;
+        lastConversationAt = Date.now();
 
         const reply = await generateAssistantReply(text);
         broadcast({
@@ -190,6 +201,7 @@ function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && url.pathname === '/sleep') {
+    lastConversationAt = 0;
     broadcast({ type: 'sleep' });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));

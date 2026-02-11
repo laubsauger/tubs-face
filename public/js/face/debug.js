@@ -1,4 +1,4 @@
-import { getFaceLibrary } from './library.js';
+import { getFaceLibrary, loadFaceLibrary } from './library.js';
 
 let debugVisible = false;
 let lastDebugFaces = [];
@@ -7,9 +7,16 @@ const debugPanel = document.getElementById('face-debug');
 const debugCanvas = document.getElementById('face-debug-canvas');
 const debugDetections = document.getElementById('face-debug-detections');
 const debugClose = document.getElementById('face-debug-close');
+const libraryList = document.getElementById('face-library-list');
+const libraryRefresh = document.getElementById('face-library-refresh');
 
 debugClose.addEventListener('click', () => {
     toggleDebug();
+});
+
+libraryRefresh.addEventListener('click', async () => {
+    await loadFaceLibrary();
+    renderLibrary();
 });
 
 export function isDebugVisible() {
@@ -27,8 +34,9 @@ export function setLastDebugFaces(faces) {
 export function toggleDebug() {
     debugVisible = !debugVisible;
     debugPanel.classList.toggle('hidden', !debugVisible);
-    if (debugVisible && lastDebugFaces.length > 0) {
-        renderDebugDetections(lastDebugFaces, 0);
+    if (debugVisible) {
+        if (lastDebugFaces.length > 0) renderDebugDetections(lastDebugFaces, 0);
+        renderLibrary();
     }
 }
 
@@ -102,4 +110,84 @@ function escapeDebugHTML(str) {
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+}
+
+// ── Face Library Manager ──
+
+function renderLibrary() {
+    const lib = getFaceLibrary();
+    if (!lib.length) {
+        libraryList.innerHTML = '<div style="color:var(--text-dim);padding:4px 0;font-size:11px;">Library empty</div>';
+        return;
+    }
+
+    // Group by name
+    const byName = {};
+    for (const entry of lib) {
+        if (!byName[entry.name]) byName[entry.name] = [];
+        byName[entry.name].push(entry);
+    }
+
+    libraryList.innerHTML = '';
+    for (const [name, entries] of Object.entries(byName).sort((a, b) => a[0].localeCompare(b[0]))) {
+        const card = document.createElement('div');
+        card.className = 'lib-person';
+
+        let html = `<div class="lib-person-header">`;
+        html += `<span class="lib-person-name">${escapeDebugHTML(name)}</span>`;
+        html += `<div class="lib-person-actions">`;
+        html += `<span class="lib-person-count">${entries.length} emb</span>`;
+        html += `<button class="lib-btn danger" data-delete-name="${escapeDebugHTML(name)}">Delete All</button>`;
+        html += `</div></div>`;
+
+        html += `<div class="lib-embeddings">`;
+        for (const e of entries) {
+            const date = e.createdAt ? new Date(e.createdAt).toLocaleString('en-US', {
+                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+            }) : '—';
+            html += `<div class="lib-embedding-row">`;
+            html += `<span class="lib-emb-id">${e.id}</span>`;
+            html += `<span class="lib-emb-date">${date}</span>`;
+            html += `<button class="lib-btn danger" data-delete-id="${e.id}">✕</button>`;
+            html += `</div>`;
+        }
+        html += `</div>`;
+
+        card.innerHTML = html;
+        libraryList.appendChild(card);
+    }
+
+    // Wire up delete buttons
+    libraryList.querySelectorAll('[data-delete-id]').forEach(btn => {
+        btn.addEventListener('click', () => deleteEmbedding(btn.dataset.deleteId));
+    });
+    libraryList.querySelectorAll('[data-delete-name]').forEach(btn => {
+        btn.addEventListener('click', () => deleteAllForName(btn.dataset.deleteName));
+    });
+}
+
+async function deleteEmbedding(id) {
+    try {
+        const res = await fetch(`/faces?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        await loadFaceLibrary();
+        renderLibrary();
+    } catch (err) {
+        console.error('[Faces] Delete failed:', err);
+    }
+}
+
+async function deleteAllForName(name) {
+    const lib = getFaceLibrary();
+    const ids = lib.filter(e => e.name === name).map(e => e.id);
+    if (!ids.length) return;
+    try {
+        for (const id of ids) {
+            await fetch(`/faces?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        }
+        await loadFaceLibrary();
+        renderLibrary();
+    } catch (err) {
+        console.error('[Faces] Bulk delete failed:', err);
+    }
 }

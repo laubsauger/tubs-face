@@ -26,7 +26,7 @@ const PULSE_DURATION_MS = 920;
 const EXPRESSION_PULSE_DURATIONS_MS = Object.freeze({
     smile: 980,
     happy: 1300,
-    sad: 1700,
+    sad: 3200,
     thinking: 1100,
     love: 1600,
 });

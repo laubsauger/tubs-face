@@ -4,8 +4,8 @@ const WAKE_MATCHER_VERSION = '2026-02-11.3';
 const WAKE_ALIASES = new Set([
   'tubs', 'tub', 'tubbs', 'top', 'tops', 'tab', 'tap', 'tup',
   'tob', 'toob', 'dub', 'dubs', 'tobbs', 'etab', 'hotops',
-  'terps', 'turps',
 ]);
+const WAKE_WEAK_ALIASES = new Set(['terps', 'turps']);
 const WAKE_GLUE_PREFIXES = ['h', 'ho', 'hey', 'e', 'eh', 'a', 'at', 'yo', 'ok', 'okay'];
 const WAKE_POLITE_LEAD_TOKENS = new Set(['thank', 'thanks', 'you', 'please', 'sorry', 'excuse', 'me']);
 const WAKE_DIRECT_CUE_TOKENS = new Set([
@@ -61,18 +61,10 @@ function levenshteinDistance(a, b) {
 
 function isWakeAlias(token) {
   if (!token || token.length < 3 || token.length > 8) return false;
-  const candidates = new Set([token, token.replace(/(.)\1+/g, '$1')]);
-
-  for (const prefix of WAKE_GLUE_PREFIXES) {
-    if (token.startsWith(prefix) && token.length > prefix.length + 2) {
-      const stripped = token.slice(prefix.length);
-      candidates.add(stripped);
-      candidates.add(stripped.replace(/(.)\1+/g, '$1'));
-    }
-  }
+  const candidates = getWakeCandidates(token);
 
   for (const candidate of candidates) {
-    if (WAKE_ALIASES.has(candidate)) return true;
+    if (WAKE_ALIASES.has(candidate) || WAKE_WEAK_ALIASES.has(candidate)) return true;
     if (candidate.length < 3 || candidate.length > 6) continue;
 
     if (levenshteinDistance(candidate, 'tubs') <= 1) return true;
@@ -83,6 +75,24 @@ function isWakeAlias(token) {
   }
 
   return false;
+}
+
+function isWeakWakeAlias(token) {
+  if (!token || token.length < 3 || token.length > 8) return false;
+  const candidates = getWakeCandidates(token);
+  return [...candidates].some(candidate => WAKE_WEAK_ALIASES.has(candidate));
+}
+
+function getWakeCandidates(token) {
+  const candidates = new Set([token, token.replace(/(.)\1+/g, '$1')]);
+  for (const prefix of WAKE_GLUE_PREFIXES) {
+    if (token.startsWith(prefix) && token.length > prefix.length + 2) {
+      const stripped = token.slice(prefix.length);
+      candidates.add(stripped);
+      candidates.add(stripped.replace(/(.)\1+/g, '$1'));
+    }
+  }
+  return candidates;
 }
 
 function findWakeToken(tokens) {
@@ -171,19 +181,32 @@ function detectWakeWord(text) {
     !leadingTailHasNarrationBlocker;
 
   const detected = hasWakeToken && (
-    greetingNearWake ||
-    greetingWithTrailingWake ||
-    wakeFirst ||
-    standaloneWake ||
-    wakeAfterPoliteLead ||
-    wakeWithDirectCue ||
-    wakeCalledInTail ||
-    wakeTailAddressedByLeadingCue
+    (isWeakWakeAlias(wakeMatch.token)
+      ? (
+        greetingNearWake ||
+        greetingWithTrailingWake ||
+        wakeAfterPoliteLead ||
+        wakeWithDirectCue ||
+        wakeCalledInTail ||
+        wakeTailAddressedByLeadingCue
+      )
+      : (
+        greetingNearWake ||
+        greetingWithTrailingWake ||
+        wakeFirst ||
+        standaloneWake ||
+        wakeAfterPoliteLead ||
+        wakeWithDirectCue ||
+        wakeCalledInTail ||
+        wakeTailAddressedByLeadingCue
+      ))
   );
   const reason = !hasWakeToken
     ? 'no_wake_token'
-    : greetingNearWake
-      ? 'greeting_near_wake'
+    : !detected
+      ? 'wake_token_not_addressed'
+      : greetingNearWake
+        ? 'greeting_near_wake'
       : greetingWithTrailingWake
         ? 'greeting_with_trailing_wake'
       : wakeFirst

@@ -5,8 +5,8 @@ let idleVariant = 'soft';
 const EXPRESSION_MIN_HOLD_MS = Object.freeze({
     smile: 1000,
     happy: 1400,
-    sad: 1800,
-    crying: 2600,
+    sad: 3200,
+    crying: 4200,
     love: 1600,
 });
 

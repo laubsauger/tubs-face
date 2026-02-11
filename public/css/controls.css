@@ -331,3 +331,130 @@
 .debug-candidate.below .cand-score {
   color: var(--text-dim);
 }
+
+/* Face Library Manager */
+#face-library-section {
+  margin-top: 16px;
+  border-top: 1px solid var(--panel-border);
+  padding-top: 12px;
+}
+
+#face-library-header {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+#face-library-refresh {
+  cursor: pointer;
+  font-size: 16px;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+#face-library-refresh:hover {
+  opacity: 1;
+  color: var(--accent);
+}
+
+#face-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lib-person {
+  background: rgba(30, 35, 55, 0.6);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(60, 70, 110, 0.2);
+}
+
+.lib-person-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.lib-person-name {
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--accent);
+}
+
+.lib-person-count {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.lib-person-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.lib-btn {
+  background: none;
+  border: 1px solid rgba(60, 70, 110, 0.3);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.lib-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lib-btn.danger {
+  color: var(--text-dim);
+}
+
+.lib-btn.danger:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.lib-embeddings {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lib-embedding-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.lib-embedding-row:hover {
+  background: rgba(60, 70, 110, 0.15);
+}
+
+.lib-embedding-row .lib-emb-id {
+  font-variant-numeric: tabular-nums;
+  font-size: 10px;
+}
+
+.lib-embedding-row .lib-emb-date {
+  font-size: 10px;
+}
+
+.lib-embedding-row .lib-btn {
+  padding: 1px 6px;
+  font-size: 9px;
+}

@@ -17,7 +17,8 @@ import {
     getLastNoFaceTime, setLastNoFaceTime,
 } from './detection.js';
 
-const MATCH_THRESHOLD = 0.45;
+const MATCH_THRESHOLD = 0.55;
+const MATCH_MARGIN = 0.08; // best must beat second-best by this gap
 const PRESENCE_TIMEOUT = 5000;
 
 const overlay = document.getElementById('camera-overlay');
@@ -34,35 +35,38 @@ let wakeGreetedNames = null; // set of names greeted on wake (suppresses duplica
 // Departure debounce: track when each name was last seen so we don't
 // react to single-frame detection flickers.
 const DEPARTURE_DEBOUNCE = 3000; // ms before confirming someone left
+const MIN_CONFIRMED_FRAMES_FOR_DEPARTURE = 4; // require stable presence before any leave callout
 let lastSeenByName = new Map();   // name → timestamp
 let departureTimers = new Map();  // name → setTimeout id
 let firstSeenByName = new Map();   // name → timestamp (session presence start)
+let seenFramesByName = new Map();  // name → number of frames observed this presence cycle
+let departureEligibleNames = new Set(); // names that had confirmed presence and may trigger "left"
 let lastCryAt = 0;
 const CRY_COOLDOWN = 45000;
 const CRY_CHANCE_ON_NO_DONATION = 0.35;
+const CRYING_HOLD_MS = 4200;
+const CRYING_SPEECH_DELAY_MS = 1400;
+const CRYING_RESET_DELAY_MS = 5200;
 
 // Greeting Cooldown
 const GREETING_COOLDOWN = 120000; // 2 minutes
 const lastGreetedByName = new Map(); // name -> timestamp
-const TRACKED_NAME_TTL_MS = 6 * 60 * 1000;
+const PERSON_FORGET_AFTER_MS = 60 * 1000;
 
 function pruneTrackedNames(nowTs) {
-    for (const [name, ts] of lastSeenByName.entries()) {
-        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
-            lastSeenByName.delete(name);
+    const staleNames = [];
+    for (const [name, lastSeenTs] of lastSeenByName.entries()) {
+        if (nowTs - lastSeenTs > PERSON_FORGET_AFTER_MS) {
+            staleNames.push(name);
         }
     }
 
-    for (const [name, ts] of firstSeenByName.entries()) {
-        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
-            firstSeenByName.delete(name);
-        }
-    }
-
-    for (const [name, ts] of lastGreetedByName.entries()) {
-        if (nowTs - ts > TRACKED_NAME_TTL_MS) {
-            lastGreetedByName.delete(name);
-        }
+    for (const name of staleNames) {
+        lastSeenByName.delete(name);
+        firstSeenByName.delete(name);
+        lastGreetedByName.delete(name);
+        seenFramesByName.delete(name);
+        departureEligibleNames.delete(name);
     }
 }
 
@@ -83,18 +87,18 @@ function maybeCryAfterNoDonation(name, firstSeenTs) {
     ];
     const line = lines[Math.floor(Math.random() * lines.length)];
 
-    setExpression('crying', { force: true, holdMs: 2600 });
+    setExpression('crying', { force: true, holdMs: CRYING_HOLD_MS });
     setTimeout(() => {
         if (STATE.expression === 'crying' && !STATE.speaking) {
             enqueueSpeech(line);
         }
-    }, 850);
+    }, CRYING_SPEECH_DELAY_MS);
 
     setTimeout(() => {
         if (STATE.expression === 'crying' && !STATE.speaking) {
             setExpression('idle');
         }
-    }, 3200);
+    }, CRYING_RESET_DELAY_MS);
 }
 
 export function handleFaceResults(faces, inferenceMs) {
@@ -127,9 +131,16 @@ export function handleFaceResults(faces, inferenceMs) {
             }
 
             const sortedCandidates = Object.values(byName).sort((a, b) => b.sim - a.sim);
+            const topSim = sortedCandidates[0]?.sim || 0;
+            const secondSim = sortedCandidates[1]?.sim || 0;
+            const marginOk = sortedCandidates.length <= 1 || (topSim - secondSim) >= MATCH_MARGIN;
+
             for (const c of sortedCandidates) {
-                candidates.push({ name: c.name, score: c.sim, isMatch: c.sim > MATCH_THRESHOLD });
-                if (c.sim > MATCH_THRESHOLD && c.sim > bestSim) {
+                const passesThreshold = c.sim > MATCH_THRESHOLD;
+                const isTop = c === sortedCandidates[0];
+                const accepted = passesThreshold && isTop && marginOk;
+                candidates.push({ name: c.name, score: c.sim, isMatch: accepted });
+                if (accepted && c.sim > bestSim) {
                     bestSim = c.sim;
                     bestMatch = c;
                 }
@@ -211,6 +222,11 @@ export function handleFaceResults(faces, inferenceMs) {
     for (const name of currentNames) {
         lastSeenByName.set(name, Date.now());
         if (!firstSeenByName.has(name)) firstSeenByName.set(name, Date.now());
+        const nextSeenFrames = (seenFramesByName.get(name) || 0) + 1;
+        seenFramesByName.set(name, nextSeenFrames);
+        if (nextSeenFrames >= MIN_CONFIRMED_FRAMES_FOR_DEPARTURE) {
+            departureEligibleNames.add(name);
+        }
         // Cancel any pending departure if they reappeared
         if (departureTimers.has(name)) {
             clearTimeout(departureTimers.get(name));
@@ -225,8 +241,14 @@ export function handleFaceResults(faces, inferenceMs) {
                 departureTimers.delete(name);
                 // Confirm they're still gone
                 if (!prevRecognizedNames.has(name)) {
+                    const wasDepartureEligible = departureEligibleNames.has(name);
+                    seenFramesByName.delete(name);
+                    departureEligibleNames.delete(name);
+                    if (!wasDepartureEligible) {
+                        firstSeenByName.delete(name);
+                        return;
+                    }
                     logChat('sys', `${name} left`);
-                    lastSeenByName.delete(name);
                     const firstSeenTs = firstSeenByName.get(name) || Date.now();
                     firstSeenByName.delete(name);
                     maybeCryAfterNoDonation(name, firstSeenTs);
@@ -362,8 +384,9 @@ function checkPresenceTimeout() {
         // Clean up departure tracking
         for (const timer of departureTimers.values()) clearTimeout(timer);
         departureTimers.clear();
-        lastSeenByName.clear();
         firstSeenByName.clear();
+        seenFramesByName.clear();
+        departureEligibleNames.clear();
         badge.classList.remove('visible');
         sendPresence(false, [], 0);
     }

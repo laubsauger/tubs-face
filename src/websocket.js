@@ -8,7 +8,7 @@ let lastPresenceContextClearAt = 0;
 let pendingPresenceContextClear = null;
 const PRESENCE_CONTEXT_CLEAR_DELAY_MS = Math.max(
   0,
-  Number.parseInt(process.env.PRESENCE_CONTEXT_CLEAR_DELAY_MS || '90000', 10) || 90000
+  Number.parseInt(process.env.PRESENCE_CONTEXT_CLEAR_DELAY_MS || '60000', 10) || 60000
 );
 const PRESENCE_CONTEXT_CLEAR_COOLDOWN_MS = Math.max(
   0,
