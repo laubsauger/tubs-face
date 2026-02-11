@@ -29,3 +29,4 @@ release
 !.env.example
 thumbnails/
 venv
+mlx_models

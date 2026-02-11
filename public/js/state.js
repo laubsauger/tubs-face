@@ -24,5 +24,10 @@ export const STATE = {
     lastDonationSignalAt: 0,
     donationSignalMode: 'both',
     minFaceBoxAreaRatio: 0.02,
+    faceRenderMode: 'svg',
     chatVerbosity: 'all',
+    // Kokoro TTS voice
+    kokoroVoice: 'af_heart',
+    // Audio noise gate — minimum RMS energy (0.0–1.0) for VAD audio to be sent
+    vadNoiseGate: 0.008,
 };

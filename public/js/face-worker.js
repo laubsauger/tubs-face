@@ -255,14 +255,14 @@ async function detectFaces(imageData, width, height) {
 
   // Diagnostic on first frame
   frameCount++;
-  if (frameCount <= 2) {
-    const diag = outputs.map(o => `${o.name}: [${o.dims.join(',')}]`).join(' | ');
-    postMessage({ type: 'progress', stage: 'diag', detail: `Outputs: ${diag}` });
-    postMessage({
-      type: 'progress', stage: 'diag',
-      detail: `Grouped: ${scoreOutputs.length} score, ${boxOutputs.length} box, ${kpsOutputs.length} kps`
-    });
-  }
+  // if (frameCount <= 2) {
+  // const diag = outputs.map(o => `${o.name}: [${o.dims.join(',')}]`).join(' | ');
+  // postMessage({ type: 'progress', stage: 'diag', detail: `Outputs: ${diag}` });
+  // postMessage({
+  //   type: 'progress', stage: 'diag',
+  //   detail: `Grouped: ${scoreOutputs.length} score, ${boxOutputs.length} box, ${kpsOutputs.length} kps`
+  // });
+  // }
 
   // Decode all detections
   const allScores = [];
@@ -333,19 +333,19 @@ async function detectFaces(imageData, width, height) {
   }
 
   // Diagnostic: score distribution
-  if (frameCount <= 2) {
-    let maxScore = 0;
-    let above03 = 0, above05 = 0;
-    for (let i = 0; i < allScores.length; i++) {
-      if (allScores[i] > maxScore) maxScore = allScores[i];
-      if (allScores[i] > 0.3) above03++;
-      if (allScores[i] > 0.5) above05++;
-    }
-    postMessage({
-      type: 'progress', stage: 'diag',
-      detail: `Scores: total=${allScores.length}, max=${maxScore.toFixed(4)}, >0.3=${above03}, >0.5=${above05}, rawMax=${maxRawScore.toFixed(4)}${maxRawScore > 1 ? ' (sigmoid applied)' : ''}`
-    });
-  }
+  // if (frameCount <= 2) {
+  //   let maxScore = 0;
+  //   let above03 = 0, above05 = 0;
+  //   for (let i = 0; i < allScores.length; i++) {
+  //     if (allScores[i] > maxScore) maxScore = allScores[i];
+  //     if (allScores[i] > 0.3) above03++;
+  //     if (allScores[i] > 0.5) above05++;
+  //   }
+  // postMessage({
+  //   type: 'progress', stage: 'diag',
+  //   detail: `Scores: total=${allScores.length}, max=${maxScore.toFixed(4)}, >0.3=${above03}, >0.5=${above05}, rawMax=${maxRawScore.toFixed(4)}${maxRawScore > 1 ? ' (sigmoid applied)' : ''}`
+  // });
+  // }
 
   // NMS
   const keepIdx = nms(allBoxes, allScores, NMS_THRESH);

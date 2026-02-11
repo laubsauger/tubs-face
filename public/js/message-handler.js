@@ -5,7 +5,8 @@ import { setExpression } from './expressions.js';
 import { enqueueSpeech } from './tts.js';
 import { hideDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
-import { pushEmotionImpulse, suggestEmotionExpression } from './emotion-engine.js';
+import { pushEmotionImpulse } from './emotion-engine.js';
+import { setFaceRenderMode } from './face-renderer.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
@@ -56,6 +57,11 @@ function setMinFaceBoxAreaRatio(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
     STATE.minFaceBoxAreaRatio = Math.max(0, Math.min(0.2, parsed));
+}
+
+function setRenderMode(mode) {
+    if (!mode) return;
+    setFaceRenderMode(mode, { persist: false });
 }
 
 function setExpressionIfAllowed(expr) {
@@ -138,11 +144,31 @@ function applyStats(msg) {
     setModel(msg.model);
 }
 
+function setNoiseGate(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    STATE.vadNoiseGate = Math.max(0, Math.min(0.06, parsed));
+    const slider = document.getElementById('noise-gate');
+    const label = document.getElementById('noise-gate-val');
+    if (slider) slider.value = STATE.vadNoiseGate;
+    if (label) label.textContent = STATE.vadNoiseGate.toFixed(3);
+}
+
+function setKokoroVoice(value) {
+    if (!value) return;
+    STATE.kokoroVoice = value;
+    const select = document.getElementById('tts-voice');
+    if (select) select.value = value;
+}
+
 function applyConfig(msg) {
     setSleepTimeoutMs(msg.sleepTimeout);
     setModel(msg.model);
     setDonationSignalMode(msg.donationSignalMode);
     setMinFaceBoxAreaRatio(msg.minFaceBoxAreaRatio);
+    setRenderMode(msg.faceRenderMode);
+    if (msg.vadNoiseGate != null) setNoiseGate(msg.vadNoiseGate);
+    if (msg.kokoroVoice) setKokoroVoice(msg.kokoroVoice);
 }
 
 export function handleMessage(msg) {
@@ -155,11 +181,10 @@ export function handleMessage(msg) {
             if (msg.emotion?.impulse) {
                 pushEmotionImpulse(msg.emotion.impulse, 'spoken');
             }
-            if (msg.emotion?.expression) {
-                suggestEmotionExpression(msg.emotion.expression);
-            }
-            enqueueSpeech(msg.text, msg.donation);
-            logChat('in', msg.text);
+            // Emotion expression is passed through the TTS queue
+            // and pulsed AFTER speech ends (not before/during)
+            enqueueSpeech(msg.text, msg.donation, msg.emotion || null);
+            logChat('out', msg.text);
             STATE.totalMessages++;
             break;
         case 'incoming':
@@ -173,7 +198,7 @@ export function handleMessage(msg) {
                     });
                 }
             }
-            logChat('out', msg.text);
+            logChat('in', msg.text);
             setExpressionIfAllowed('listening');
             break;
         case 'donation_signal':

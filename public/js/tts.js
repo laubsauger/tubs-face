@@ -3,8 +3,12 @@ import { $, loadingBar, speechBubble, subtitleEl } from './dom.js';
 import { setExpression } from './expressions.js';
 import { showDonationQr } from './donation-ui.js';
 import { clearInterruptionTimer } from './audio-input.js';
+import { suggestEmotionExpression } from './emotion-engine.js';
 
 const DONATION_HINT_RE = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
+
+const INTER_UTTERANCE_PAUSE_MS = 220;
+const POST_SPEECH_IDLE_DELAY_MS = 350;
 
 function inferDonationFromText(text) {
     if (!DONATION_HINT_RE.test(String(text || ''))) return null;
@@ -105,12 +109,15 @@ function stopSubtitles() {
 
 // ── TTS queue ──
 
-export function enqueueSpeech(text, donation = null) {
+// Queue items: { text, donation, emotion }
+let lastEmotion = null;
+
+export function enqueueSpeech(text, donation = null, emotion = null) {
     const donationPayload = donation?.show ? donation : inferDonationFromText(text);
     if (donationPayload?.show) {
         showDonationQr(donationPayload);
     }
-    STATE.ttsQueue.push(text);
+    STATE.ttsQueue.push({ text, donation: donationPayload, emotion });
     $('#stat-queue').textContent = STATE.ttsQueue.length;
     if (!STATE.speaking) processQueue();
 }
@@ -119,25 +126,38 @@ export function processQueue() {
     if (STATE.ttsQueue.length === 0) {
         STATE.speaking = false;
         STATE.speakingEndedAt = Date.now();
-        setExpression('idle');
-        $('#stat-listen-state').textContent = 'Idle';
         speechBubble.classList.remove('visible');
         stopSubtitles();
+        $('#stat-listen-state').textContent = 'Idle';
+
+        // Post-speech: pulse emotion expression if available, then idle
+        if (lastEmotion?.expression) {
+            suggestEmotionExpression(lastEmotion.expression);
+            lastEmotion = null;
+        } else {
+            setTimeout(() => {
+                if (!STATE.speaking) setExpression('idle');
+            }, POST_SPEECH_IDLE_DELAY_MS);
+        }
         return;
     }
 
-    const text = STATE.ttsQueue.shift();
+    const item = STATE.ttsQueue.shift();
     $('#stat-queue').textContent = STATE.ttsQueue.length;
 
     STATE.speaking = true;
     clearInterruptionTimer();
-    setExpression('speaking');
 
-    speechBubble.textContent = text;
+    // Show speech bubble immediately (visual feedback)
+    speechBubble.textContent = item.text;
     speechBubble.classList.add('visible');
-    loadingBar.classList.remove('active');
 
-    playTTS(text).catch(() => {
+    // DON'T set 'speaking' yet — keep current expression (e.g. 'thinking')
+    // DON'T remove loading bar yet — it'll be removed when audio starts
+
+    lastEmotion = item.emotion || null;
+
+    playTTS(item.text).catch(() => {
         STATE.speaking = false;
         processQueue();
     });
@@ -152,7 +172,7 @@ async function playTTS(text) {
         const res = await fetch('/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text })
+            body: JSON.stringify({ text, voice: STATE.kokoroVoice })
         });
 
         if (!res.ok) throw new Error('TTS Failed');
@@ -176,6 +196,11 @@ async function playTTS(text) {
         audio.oncanplaythrough = () => {
             const dur = isFinite(audio.duration) ? audio.duration : wordCount * 0.15;
             startSubtitles(text, dur);
+
+            // NOW set speaking expression — synced with actual audio
+            setExpression('speaking');
+            loadingBar.classList.remove('active');
+
             audio.play().catch(e => {
                 console.error("Audio play failed:", e);
                 cleanup();
@@ -194,7 +219,8 @@ async function playTTS(text) {
         audio.onended = () => {
             cleanup();
             stopSubtitles();
-            processQueue();
+            // Brief pause between utterances for natural pacing
+            setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
 
     } catch (e) {
@@ -208,10 +234,20 @@ function speakFallback(text) {
     console.log('[TTS] Using fallback speech synthesis');
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     const estimatedDuration = wordCount * 0.15;
+
+    // Set speaking expression for fallback too
+    setExpression('speaking');
+    loadingBar.classList.remove('active');
     startSubtitles(text, estimatedDuration);
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => { stopSubtitles(); processQueue(); };
-    utterance.onerror = () => { stopSubtitles(); processQueue(); };
+    utterance.onend = () => {
+        stopSubtitles();
+        setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
+    };
+    utterance.onerror = () => {
+        stopSubtitles();
+        processQueue();
+    };
     speechSynthesis.speak(utterance);
 }

@@ -76,13 +76,64 @@
   border: none;
 }
 
+.mini-select {
+  width: 84px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(60, 70, 110, 0.5);
+  background: rgba(16, 20, 32, 0.78);
+  color: var(--text-bright);
+  font-size: 10px;
+  font-family: 'Outfit', sans-serif;
+  letter-spacing: 0.04em;
+  padding: 0 6px;
+  outline: none;
+}
+
+.mini-select:focus {
+  border-color: rgba(0, 229, 160, 0.65);
+  box-shadow: 0 0 0 1px rgba(0, 229, 160, 0.2);
+}
+
+.face-render-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mini-pill {
+  min-width: 42px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(60, 70, 110, 0.5);
+  background: rgba(16, 20, 32, 0.72);
+  color: var(--text-dim);
+  font-size: 9px;
+  font-family: 'Outfit', sans-serif;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.mini-pill.svg {
+  border-color: rgba(0, 229, 160, 0.55);
+  color: var(--accent);
+}
+
+.mini-pill.fallback {
+  border-color: rgba(255, 193, 96, 0.45);
+  color: var(--warn);
+}
+
 /* Chat Log */
 #chat-log {
   display: flex;
   flex-direction: column;
   gap: 4px;
   overflow-y: auto;
-  max-height: 150px;
+  max-height: 320px;
   scrollbar-width: thin;
   scrollbar-color: rgba(60, 70, 110, 0.3) transparent;
   transition: opacity 0.3s ease;

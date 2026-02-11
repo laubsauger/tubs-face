@@ -22,7 +22,8 @@ Default runtime config:
   "sttModel": "small",
   "llmModel": "gemini-2.5-flash",
   "llmMaxOutputTokens": 120,
-  "donationSignalMode": "both"
+  "donationSignalMode": "both",
+  "faceRenderMode": "svg"
 }
 ```
 
@@ -70,6 +71,7 @@ Implemented in `src/bridge-server.js`:
 - `POST /tts` proxy TTS request to Python service
 - `POST /sleep` enter sleep mode
 - `POST /wake` wake mode
+- `GET /shapes/:name.svg` serve source SVG shape assets from `src/shapes`
 - `GET /config` read runtime config
 - `POST /config` update runtime config
 - `POST /checkout/paypal/order` create a PayPal order (optional checkout path)

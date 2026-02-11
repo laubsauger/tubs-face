@@ -1,5 +1,6 @@
 import { STATE } from './state.js';
 import { $, face, eyes, loadingBar } from './dom.js';
+import { setFaceRendererExpression } from './face-renderer.js';
 
 let idleVariant = 'soft';
 const EXPRESSION_MIN_HOLD_MS = Object.freeze({
@@ -27,6 +28,7 @@ function setIdleVariant(nextVariant) {
     idleVariant = nextVariant === 'flat' ? 'flat' : 'soft';
     if (STATE.expression === 'idle') {
         applyFaceClass('idle');
+        setFaceRendererExpression('idle');
     }
 }
 
@@ -90,6 +92,7 @@ export function setExpression(expr, options = {}) {
 
     // Remove all expression classes, set new one
     applyFaceClass(expr);
+    setFaceRendererExpression(expr);
     loadingBar.classList.toggle('active', expr === 'thinking');
     applyExpressionHold(expr, options);
     return true;

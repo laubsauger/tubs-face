@@ -7,7 +7,7 @@ import { $ } from './dom.js';
 import { logChat, initVerbosityToggle } from './chat-log.js';
 import { startIdleLoop } from './expressions.js';
 import { connectWS } from './websocket.js';
-import { initMicrophone, initVAD, initVadToggle, initWaveformBars } from './audio-input.js';
+import { initMicrophone, initVAD, initVadToggle, initNoiseGate, initWaveformBars } from './audio-input.js';
 import { resetSleepTimer, enterSleep, initSleepSlider } from './sleep.js';
 import { initKeyboard } from './keyboard.js';
 import { initPanelCollapse, initPanelResize, startUptimeTimer } from './panel-ui.js';
@@ -15,6 +15,26 @@ import { faceManager } from './face/index.js';
 import { initEmotionEngine } from './emotion-engine.js';
 import { initFullscreenToggle } from './fullscreen.js';
 import { checkAndRunIngestion } from './face/ingest.js';
+import { initFaceRenderer } from './face-renderer.js';
+
+function initVoiceSelector() {
+    const select = document.getElementById('tts-voice');
+    if (!select) return;
+    const saved = localStorage.getItem('kokoroVoice');
+    if (saved && select.querySelector(`option[value="${saved}"]`)) {
+        STATE.kokoroVoice = saved;
+    }
+    select.value = STATE.kokoroVoice;
+    select.addEventListener('change', () => {
+        STATE.kokoroVoice = select.value;
+        localStorage.setItem('kokoroVoice', select.value);
+        fetch('/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kokoroVoice: select.value }),
+        });
+    });
+}
 
 function init() {
     STATE.wakeTime = Date.now();
@@ -29,9 +49,12 @@ function init() {
     initPanelResize();
     initSleepSlider();
     initVadToggle();
+    initNoiseGate();
     initFullscreenToggle();
     initVerbosityToggle();
+    initVoiceSelector();
     initKeyboard();
+    initFaceRenderer();
     faceManager.init();
     initEmotionEngine();
 

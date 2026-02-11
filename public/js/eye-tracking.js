@@ -1,4 +1,5 @@
 import { eyes, face, mouth } from './dom.js';
+import { setFaceRendererGaze } from './face-renderer.js';
 
 const EYE_MAX_X = 236;
 const EYE_MAX_Y = 128;
@@ -61,6 +62,7 @@ function applyGaze(x, y) {
     const my = clamp(y * MOUTH_MAX_Y, -MOUTH_MAX_Y, MOUTH_MAX_Y);
     mouth.style.setProperty('--mouth-look-x', `${mx.toFixed(2)}px`);
     mouth.style.setProperty('--mouth-look-y', `${my.toFixed(2)}px`);
+    setFaceRendererGaze({ eyeX: ex, eyeY: ey, mouthX: mx, mouthY: my });
 
     const fx = clamp(x * FACE_MAX_X, -FACE_MAX_X, FACE_MAX_X);
     const fy = clamp(y * FACE_MAX_Y, -FACE_MAX_Y, FACE_MAX_Y);

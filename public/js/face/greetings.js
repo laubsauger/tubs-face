@@ -45,7 +45,6 @@ const WAKE_GREETINGS = [
 ];
 
 const JOIN_GREETINGS = [
-    // Named only (since we only greet known joins usually)
     "Hey %name%.",
     "Yo %name%.",
     "%name% joined.",
@@ -90,6 +89,42 @@ const JOIN_GREETINGS = [
     "%name% entered. Morale just went up.",
     "Hey %name%. What are we plotting?",
     "%name% joined the party.",
+    "%name%. Finally.",
+    "Oh look. %name% decided to show up.",
+    "%name% has arrived. Proceed accordingly.",
+    "Hey %name%. Long time no pixels.",
+    "%name%. The algorithm approves.",
+    "Yep, that's %name%.",
+    "%name% walked in like they own the place.",
+    "%name%. I knew I recognized that face.",
+    "Attention everyone. %name% is here.",
+    "%name%. Welcome to the chaos.",
+    "%name% just dropped in.",
+    "And there's %name%.",
+    "%name%. Right on schedule.",
+    "Oh snap, %name%.",
+    "%name%. Looking sharp.",
+    "%name% in the building.",
+    "Hey %name%. Missed you. Kind of.",
+    "%name%. My favorite human. Maybe.",
+    "Incoming: %name%.",
+    "%name% spotted in the wild.",
+    "%name%. Hey hey hey.",
+    "Is that %name%? It is.",
+    "%name% just materialized.",
+    "There goes the neighborhood. %name% is here.",
+    "%name%. Reporting for duty I see.",
+    "Ah yes. %name%. Classic.",
+    "%name%. The vibes just shifted.",
+    "Camera confirms: %name%.",
+    "%name% sighting confirmed.",
+    "Well hello %name%.",
+    "%name%. Perfect timing as always.",
+    "Hey %name%. Don't mind the cameras.",
+    "%name%. Acknowledged.",
+    "%name% status: present.",
+    "%name%. What's good?",
+    "Oh it's %name%. Cool cool cool.",
 ];
 
 const UNKNOWN_JOIN_GREETINGS = [
@@ -98,11 +133,74 @@ const UNKNOWN_JOIN_GREETINGS = [
     "Fresh human detected.",
     "Another guest just arrived.",
     "Someone popped in.",
+    "Unknown human detected.",
+    "Hey, who's that?",
+    "New challenger approaching.",
+    "Unregistered face detected.",
+    "Someone new just showed up.",
+    "I see a face I don't know.",
+    "Hmm. New person alert.",
+    "A mystery guest.",
+    "Face detected. Identity unknown.",
+    "Who is this? Register yourself.",
+    "Stranger danger. Just kidding. Maybe.",
+    "New face. Interesting.",
+    "Someone's here. Not sure who though.",
+    "Unidentified human in range.",
+    "I don't recognize this one.",
 ];
 
-const JOIN_GLOBAL_RECENT_LIMIT = 12;
-const JOIN_PER_NAME_RECENT_LIMIT = 4;
-const UNKNOWN_JOIN_RECENT_LIMIT = 3;
+const DEPARTURE_GREETINGS = [
+    "%name% left.",
+    "%name% walked out.",
+    "%name% disappeared.",
+    "%name% has left the building.",
+    "And %name% is gone.",
+    "%name% bounced.",
+    "%name% just dipped.",
+    "Bye %name%.",
+    "%name% exited the frame.",
+    "%name% vanished.",
+    "There goes %name%.",
+    "%name% signed off.",
+    "%name% is out.",
+    "%name% left the chat. Literally.",
+    "%name%. Gone. Just like that.",
+    "%name% ghosted us.",
+    "Farewell, %name%.",
+    "%name% has departed.",
+    "Lost visual on %name%.",
+    "%name% slipped away.",
+    "%name% pulled a disappearing act.",
+    "%name% left without saying goodbye.",
+    "%name%. Poof.",
+    "Camera lost %name%.",
+    "%name% is no longer detected.",
+    "%name% stepped out.",
+    "%name% peaced out.",
+    "And just like that, %name% is gone.",
+    "%name% left. Mood dropped.",
+    "%name% out. Hope they come back.",
+];
+
+const UNKNOWN_DEPARTURE_GREETINGS = [
+    "Someone left.",
+    "A face disappeared.",
+    "Unknown person left the frame.",
+    "Lost a face.",
+    "One less human detected.",
+    "Someone just walked away.",
+    "Unidentified person departed.",
+    "A mystery guest has left.",
+    "Face count dropped.",
+    "Someone vanished.",
+];
+
+const JOIN_GLOBAL_RECENT_LIMIT = 20;
+const JOIN_PER_NAME_RECENT_LIMIT = 6;
+const UNKNOWN_JOIN_RECENT_LIMIT = 6;
+const DEPARTURE_RECENT_LIMIT = 8;
+const UNKNOWN_DEPARTURE_RECENT_LIMIT = 3;
 
 const joinGlobalRecent = [];
 const joinRecentByName = new Map();
@@ -159,10 +257,39 @@ export function getRandomWakeGreeting(name) {
     return template.replace('%name%', name);
 }
 
+const departureRecent = [];
+const unknownDepartureRecent = [];
+
+function pickDepartureTemplate(name) {
+    const recentSet = new Set(departureRecent);
+    let candidates = DEPARTURE_GREETINGS.filter((line) => !recentSet.has(line));
+    if (!candidates.length) candidates = DEPARTURE_GREETINGS;
+    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+    pushRecent(departureRecent, chosen, DEPARTURE_RECENT_LIMIT);
+    return chosen;
+}
+
+function pickUnknownDepartureTemplate() {
+    const recentSet = new Set(unknownDepartureRecent);
+    let candidates = UNKNOWN_DEPARTURE_GREETINGS.filter((line) => !recentSet.has(line));
+    if (!candidates.length) candidates = UNKNOWN_DEPARTURE_GREETINGS;
+    const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+    pushRecent(unknownDepartureRecent, chosen, UNKNOWN_DEPARTURE_RECENT_LIMIT);
+    return chosen;
+}
+
 export function getRandomJoinGreeting(name) {
     if (!name) {
         return pickUnknownJoinTemplate();
     }
     const template = pickJoinTemplate(name);
+    return template.replace('%name%', name);
+}
+
+export function getRandomDepartureGreeting(name) {
+    if (!name) {
+        return pickUnknownDepartureTemplate();
+    }
+    const template = pickDepartureTemplate(name);
     return template.replace('%name%', name);
 }

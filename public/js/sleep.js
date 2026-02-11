@@ -67,6 +67,7 @@ export function exitSleep() {
     });
 
     logChat('sys', '☀️ Awake!');
+    setExpression('idle', { force: true, skipHold: true });
     resetSleepTimer();
     triggerBlink();
 }

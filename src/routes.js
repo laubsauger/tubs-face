@@ -9,6 +9,8 @@ const {
   normalizeLlmMaxOutputTokens,
   normalizeDonationSignalMode,
   normalizeMinFaceBoxAreaRatio,
+  normalizeFaceRenderMode,
+  normalizeKokoroVoice,
 } = require('./config');
 const { broadcast, getClients } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
@@ -525,6 +527,38 @@ function handleRequest(req, res) {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname.startsWith('/shapes/')) {
+    const filename = decodeURIComponent(url.pathname.replace('/shapes/', ''));
+    if (!/^[a-zA-Z0-9._-]+\.svg$/.test(filename)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid shape filename' }));
+      return;
+    }
+
+    const shapesDir = path.join(__dirname, 'shapes');
+    const fullPath = path.join(shapesDir, filename);
+    if (!fullPath.startsWith(shapesDir)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Forbidden' }));
+      return;
+    }
+
+    fs.readFile(fullPath, (err, data) => {
+      if (err) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Shape not found' }));
+        return;
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'image/svg+xml',
+        'Cache-Control': 'public, max-age=3600',
+      });
+      res.end(data);
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/config') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(runtimeConfig));
@@ -557,6 +591,12 @@ function handleRequest(req, res) {
         }
         if (Object.hasOwn(config, 'minFaceBoxAreaRatio')) {
           config.minFaceBoxAreaRatio = normalizeMinFaceBoxAreaRatio(config.minFaceBoxAreaRatio);
+        }
+        if (Object.hasOwn(config, 'faceRenderMode')) {
+          config.faceRenderMode = normalizeFaceRenderMode(config.faceRenderMode);
+        }
+        if (Object.hasOwn(config, 'kokoroVoice')) {
+          config.kokoroVoice = normalizeKokoroVoice(config.kokoroVoice);
         }
 
         const nextConfig = { ...runtimeConfig, ...config };
@@ -603,7 +643,8 @@ function handleRequest(req, res) {
 
     const contentType = mimeTypes[ext] || 'application/octet-stream';
     const isImmutable = ext === '.onnx' || ext === '.wasm';
-    const cacheControl = filePath === 'index.html'
+    const isHotReloadAsset = ext === '.js' || ext === '.css' || ext === '.mjs' || ext === '.html';
+    const cacheControl = filePath === 'index.html' || isHotReloadAsset
       ? 'no-cache'
       : isImmutable
         ? 'public, max-age=604800, immutable'

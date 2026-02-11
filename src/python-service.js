@@ -18,6 +18,8 @@ function startTranscriptionService(modelName = runtimeConfig.sttModel) {
       env: {
         ...process.env,
         WHISPER_MODEL: resolvedModel,
+        TTS_BACKEND: runtimeConfig.ttsBackend || 'kokoro',
+        STT_BACKEND: runtimeConfig.sttBackend || 'mlx',
       },
     }
   );

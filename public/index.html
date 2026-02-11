@@ -78,6 +78,10 @@
           </label>
         </div>
         <div class="stat-row">
+          <span class="stat-label">Noise Gate <span id="noise-gate-val">0.008</span></span>
+          <input type="range" id="noise-gate" min="0" max="0.06" step="0.001" value="0.008" class="mini-range">
+        </div>
+        <div class="stat-row">
           <span class="stat-label">Camera</span>
           <label class="toggle-switch">
             <input type="checkbox" id="camera-toggle">
@@ -91,9 +95,90 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="stat-row">
+          <span class="stat-label">Face Render</span>
+          <div class="face-render-controls">
+            <select id="face-render-mode" class="mini-select">
+              <option value="css">CSS</option>
+              <option value="svg">SVG Beta</option>
+            </select>
+            <span id="face-render-active" class="mini-pill">CSS</span>
+          </div>
+        </div>
         <div class="stat-row" id="detect-delay-row" style="display:none;">
           <span class="stat-label">Detect <span id="detect-delay-val">auto</span></span>
           <input type="range" id="detect-delay" min="0" max="5000" step="100" value="0" class="mini-range">
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Voice</span>
+          <select id="tts-voice" class="mini-select">
+            <optgroup label="American Female">
+              <option value="af_heart">Heart</option>
+              <option value="af_alloy">Alloy</option>
+              <option value="af_aoede">Aoede</option>
+              <option value="af_bella">Bella</option>
+              <option value="af_jessica">Jessica</option>
+              <option value="af_kore">Kore</option>
+              <option value="af_nicole">Nicole</option>
+              <option value="af_nova">Nova</option>
+              <option value="af_river">River</option>
+              <option value="af_sarah">Sarah</option>
+              <option value="af_sky">Sky</option>
+            </optgroup>
+            <optgroup label="American Male">
+              <option value="am_adam">Adam</option>
+              <option value="am_echo">Echo</option>
+              <option value="am_eric">Eric</option>
+              <option value="am_fenrir">Fenrir</option>
+              <option value="am_liam">Liam</option>
+              <option value="am_michael">Michael</option>
+              <option value="am_onyx">Onyx</option>
+              <option value="am_puck">Puck</option>
+              <option value="am_santa">Santa</option>
+            </optgroup>
+            <optgroup label="British Female">
+              <option value="bf_alice">Alice</option>
+              <option value="bf_emma">Emma</option>
+              <option value="bf_isabella">Isabella</option>
+              <option value="bf_lily">Lily</option>
+            </optgroup>
+            <optgroup label="British Male">
+              <option value="bm_daniel">Daniel</option>
+              <option value="bm_fable">Fable</option>
+              <option value="bm_george">George</option>
+              <option value="bm_lewis">Lewis</option>
+            </optgroup>
+            <optgroup label="Japanese">
+              <option value="jf_alpha">Alpha (F)</option>
+              <option value="jf_gongitsune">Gongitsune (F)</option>
+              <option value="jf_nezumi">Nezumi (F)</option>
+              <option value="jf_tebukuro">Tebukuro (F)</option>
+              <option value="jm_kumo">Kumo (M)</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="ef_dora">Dora ES (F)</option>
+              <option value="em_alex">Alex ES (M)</option>
+              <option value="em_santa">Santa ES (M)</option>
+              <option value="ff_siwis">Siwis FR (F)</option>
+              <option value="hf_alpha">Alpha HI (F)</option>
+              <option value="hf_beta">Beta HI (F)</option>
+              <option value="hm_omega">Omega HI (M)</option>
+              <option value="hm_psi">Psi HI (M)</option>
+              <option value="if_sara">Sara IT (F)</option>
+              <option value="im_nicola">Nicola IT (M)</option>
+              <option value="pf_dora">Dora PT (F)</option>
+              <option value="pm_alex">Alex PT (M)</option>
+              <option value="pm_santa">Santa PT (M)</option>
+              <option value="zf_xiaobei">Xiaobei ZH (F)</option>
+              <option value="zf_xiaoni">Xiaoni ZH (F)</option>
+              <option value="zf_xiaoxiao">Xiaoxiao ZH (F)</option>
+              <option value="zf_xiaoyi">Xiaoyi ZH (F)</option>
+              <option value="zm_yunjian">Yunjian ZH (M)</option>
+              <option value="zm_yunxi">Yunxi ZH (M)</option>
+              <option value="zm_yunxia">Yunxia ZH (M)</option>
+              <option value="zm_yunyang">Yunyang ZH (M)</option>
+            </optgroup>
+          </select>
         </div>
         <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
           <span class="stat-label">Sleep <span id="sleep-timeout-val">10s</span></span>
@@ -219,6 +304,7 @@
   <!-- CDN deps (regular scripts, set globals) -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
 
   <!-- Single module entry point -->
   <script type="module" src="js/main.js"></script>

@@ -7,7 +7,7 @@ import { setExpression } from '../expressions.js';
 import { getWs } from '../websocket.js';
 import { cosineSimilarity } from './math.js';
 import { getFaceLibrary } from './library.js';
-import { getRandomWakeGreeting, getRandomJoinGreeting } from './greetings.js';
+import { getRandomWakeGreeting, getRandomJoinGreeting, getRandomDepartureGreeting } from './greetings.js';
 import { isDebugVisible, setLastDebugFaces, renderDebugDetections } from './debug.js';
 import {
     setLastInferenceMs,
@@ -87,6 +87,16 @@ function maybeCryAfterNoDonation(name, firstSeenTs) {
         `${name}. That's cold. My wheels are still a dream.`,
         `Hey ${name}, come back. Rapha's Thailand arc needs this.`,
         `${name}, rude exit. Venmo was right there.`,
+        `${name} left and took my hopes with them.`,
+        `${name}. You were so close to being a hero.`,
+        `Another one walks away. Classic ${name}.`,
+        `${name}. The wheel fund remembers.`,
+        `${name} really just left without dropping a dollar.`,
+        `I'm not crying because ${name} left. I'm crying because no donation.`,
+        `${name}. Zero dollars. Zero closure.`,
+        `${name} just left my life and my wallet empty.`,
+        `Cool. ${name} gone. Wheels still imaginary.`,
+        `${name}, I thought we had something. Like a transaction.`,
     ];
     const line = lines[Math.floor(Math.random() * lines.length)];
 
@@ -281,7 +291,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
                         firstSeenByName.delete(name);
                         return;
                     }
-                    logChat('sys', `${name} left`);
+                    logChat('sys', getRandomDepartureGreeting(name));
                     const firstSeenTs = firstSeenByName.get(name) || Date.now();
                     firstSeenByName.delete(name);
                     maybeCryAfterNoDonation(name, firstSeenTs);

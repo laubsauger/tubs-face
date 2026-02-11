@@ -1,3 +1,6 @@
 flask
 faster-whisper
 pyttsx3
+mlx-audio
+misaki[en]
+lightning-whisper-mlx

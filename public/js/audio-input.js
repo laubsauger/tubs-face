@@ -72,6 +72,11 @@ export async function initMicrophone() {
 }
 
 export async function initVAD() {
+    if (myvad) {
+        console.log('[VAD] Already initialized, skipping.');
+        return;
+    }
+
     try {
         logChat('sys', 'Initializing VAD...');
 
@@ -146,7 +151,39 @@ export function initVadToggle() {
     });
 }
 
+export function initNoiseGate() {
+    const slider = document.getElementById('noise-gate');
+    const label = document.getElementById('noise-gate-val');
+    if (!slider) return;
+    slider.value = STATE.vadNoiseGate;
+    if (label) label.textContent = STATE.vadNoiseGate;
+    slider.addEventListener('input', () => {
+        STATE.vadNoiseGate = parseFloat(slider.value);
+        if (label) label.textContent = STATE.vadNoiseGate.toFixed(3);
+    });
+}
+
+function computeRMS(float32Array) {
+    let sum = 0;
+    for (let i = 0; i < float32Array.length; i++) {
+        sum += float32Array[i] * float32Array[i];
+    }
+    return Math.sqrt(sum / float32Array.length);
+}
+
 async function processVadAudio(float32Array) {
+    const rms = computeRMS(float32Array);
+    const gate = STATE.vadNoiseGate || 0;
+
+    if (rms < gate) {
+        console.log(`[VAD] Below noise gate (RMS ${rms.toFixed(4)} < ${gate}) — discarding`);
+        const statState = $('#stat-listen-state');
+        if (statState) statState.textContent = 'Idle';
+        setExpression('idle');
+        return;
+    }
+
+    console.log(`[VAD] RMS ${rms.toFixed(4)} — sending`);
     const wavBlob = audioBufferToWav(float32Array);
     sendVoice(wavBlob, true);
 }
