@@ -706,6 +706,8 @@ body.sleeping #mouth {
 
 /* ── Speech Bubble ── */
 #speech-bubble {
+  /* Keep this legacy node hidden to avoid duplicate transcript overlays. */
+  display: none !important;
   position: absolute;
   bottom: -60px;
   left: 50%;

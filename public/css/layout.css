@@ -26,8 +26,7 @@
 .hidden-ui #ptt-indicator,
 .hidden-ui .speech-bubble,
 .hidden-ui #donation-card,
-.hidden-ui #camera-pip,
-.hidden-ui #subtitle {
+.hidden-ui #camera-pip {
   opacity: 0 !important;
   pointer-events: none;
 }

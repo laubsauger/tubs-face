@@ -6,8 +6,8 @@ import { getWorker, isWorkerReady, setWorkerBusy, scheduleNextCapture, getVideo,
 
 const CAPTURE_MAX_WIDTH = 960;
 const THUMB_SIZE = 200;
-const DUPE_SIMILARITY_THRESH = 0.98;
-const MAX_DUPE_RETRIES = 1;
+const DUPE_SIMILARITY_THRESH = 0.92;
+const MAX_DUPE_RETRIES = 2;
 const AUTO_SAVE_SECONDS = 10;
 const SAMPLE_DELAY = 1400;
 
@@ -18,7 +18,6 @@ const INSTRUCTIONS = [
     { text: 'Tilt your head UP a bit', icon: '⬆️', hint: 'Like you\'re looking at a tall shelf' },
     { text: 'Tilt your head DOWN', icon: '⬇️', hint: 'Like reading your phone' },
     { text: 'Give me a SMILE', icon: '🙂', hint: 'Doesn\'t have to be your best — just natural' },
-    { text: 'Look at camera again', icon: '😐', hint: 'Almost done! Neutral face, eyes forward' },
 ];
 
 // UI Refs
@@ -67,7 +66,7 @@ export async function enrollFace() {
     const trimmedName = name.trim();
 
     // Mode Selection
-    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (7 poses)\nCancel = Single Capture (1 sample)`);
+    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (6 poses)\nCancel = Single Capture (1 sample)`);
     const targetSamples = isFullEnrollment ? INSTRUCTIONS.length : 1;
     const instructions = isFullEnrollment ? INSTRUCTIONS : [{ text: 'Look at Camera', icon: '📸' }];
 
@@ -102,8 +101,8 @@ export async function enrollFace() {
             if (instructionEl) {
                 instructionEl.setAttribute('data-icon', instr.icon);
                 instructionEl.classList.add('new-pose');
-                instructionEl.innerHTML = `<span class="enroll-main">${instr.text}</span>` +
-                    (instr.hint ? `<span class="enroll-hint">${instr.hint}</span>` : '');
+                instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-main">${instr.text}</span>` +
+                    (instr.hint ? `<span class="enroll-hint">${instr.hint}</span>` : '') + `</div>`;
             }
             statusEl.innerHTML = `<span class="enroll-progress">POSE ${i + 1} of ${targetSamples}</span>`;
 
@@ -115,14 +114,14 @@ export async function enrollFace() {
             for (let c = 3; c > 0; c--) {
                 playCountdownTick();
                 if (instructionEl) {
-                    instructionEl.innerHTML = `<span class="enroll-main">${instr.text}</span>` +
-                        `<span class="enroll-countdown">${c}</span>`;
+                    instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-main">${instr.text}</span>` +
+                        `<span class="enroll-countdown">${c}</span></div>`;
                     instructionEl.setAttribute('data-icon', instr.icon);
                 }
                 await new Promise(r => setTimeout(r, 800));
             }
             if (instructionEl) {
-                instructionEl.innerHTML = `<span class="enroll-snap">SNAP!</span>`;
+                instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-snap">SNAP!</span></div>`;
             }
             playShutter();
 
@@ -194,7 +193,7 @@ export async function enrollFace() {
                     playFail();
                     if (dupeRetries <= MAX_DUPE_RETRIES) {
                         if (instructionEl) {
-                            instructionEl.innerHTML = `<span class="enroll-warn">Too similar!</span><span class="enroll-hint">Move your head more — retrying this pose</span>`;
+                            instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-warn">Too similar!</span><span class="enroll-hint">Move your head more — retrying this pose</span></div>`;
                         }
                         await new Promise(r => setTimeout(r, 1500));
                         i--; // retry same pose
@@ -202,7 +201,7 @@ export async function enrollFace() {
                     }
                     // Exceeded retries — accept it but mark as discarded
                     if (instructionEl) {
-                        instructionEl.innerHTML = `<span class="enroll-warn">Still similar — skipping</span><span class="enroll-hint">Moving on to next pose</span>`;
+                        instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-warn">Still similar — skipping</span><span class="enroll-hint">Moving on to next pose</span></div>`;
                     }
                     await new Promise(r => setTimeout(r, 800));
                 } else {
@@ -258,7 +257,7 @@ export async function enrollFace() {
                 // Failed capture (no face) -> Retry
                 playFail();
                 if (instructionEl) {
-                    instructionEl.innerHTML = `<span class="enroll-error">No face detected!</span><span class="enroll-hint">Make sure your face is visible and try again</span>`;
+                    instructionEl.innerHTML = `<div class="enroll-text-wrap"><span class="enroll-error">No face detected!</span><span class="enroll-hint">Make sure your face is visible and try again</span></div>`;
                 }
                 await new Promise(r => setTimeout(r, 1500));
                 i--;

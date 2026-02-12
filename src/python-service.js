@@ -42,6 +42,17 @@ function startTranscriptionService(modelName = runtimeConfig.sttModel) {
       pythonProcess = null;
     }
     console.log(`[Python] Exited with code ${code}`);
+
+    // Auto-restart on unexpected crash (code !== 0 or null means signal/crash)
+    if (code !== 0) {
+      console.error(`\n${'='.repeat(60)}\n[CRASH] Python TTS/STT service died (exit code ${code})\n${'='.repeat(60)}\n`);
+      setTimeout(() => {
+        if (!pythonProcess) {
+          console.log('[Python] Auto-restarting...');
+          startTranscriptionService(runtimeConfig.sttModel);
+        }
+      }, 2000);
+    }
   });
 }
 

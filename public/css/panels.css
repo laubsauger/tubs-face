@@ -188,26 +188,29 @@
   overflow: hidden;
 }
 
-/* Enrollment Overlay */
+/* Enrollment Overlay (instruction bar above video) */
 #enroll-overlay {
   display: flex;
   flex-direction: column;
   align-items: center;
   z-index: 200;
-  gap: 8px;
+  flex-shrink: 0;
 }
 
 #enroll-status {
   color: #fff;
-  font-size: 15px;
+  font-size: 13px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
-  background: rgba(0, 0, 0, 0.5);
-  padding: 8px 18px;
-  border-radius: 8px;
-  backdrop-filter: blur(4px);
+  padding: 6px 18px;
+  text-align: center;
+  width: 100%;
+  box-sizing: border-box;
+  height: 32px;
+  line-height: 20px;
+  overflow: hidden;
 }
 
 #enroll-strip {
@@ -320,41 +323,41 @@
 }
 
 #enroll-instruction {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   text-align: center;
   color: #fff;
-  margin-bottom: 20px;
-  min-height: 120px;
+  height: 110px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.7);
-  border-radius: 16px;
-  padding: 20px 28px;
-  backdrop-filter: blur(8px);
-  border: 2px solid rgba(0, 229, 160, 0.3);
-  transition: transform 0.3s ease, border-color 0.3s ease;
+  gap: 18px;
+  background: #0a0c14;
+  border-radius: 20px 20px 0 0;
+  padding: 0 32px;
+  border-bottom: 2px solid rgba(0, 229, 160, 0.3);
+  transition: border-color 0.3s ease;
+  width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 #enroll-instruction.new-pose {
-  transform: scale(1.05);
   border-color: rgba(0, 229, 160, 0.8);
   animation: pose-flash 0.4s ease;
 }
 
 #enroll-instruction::before {
   content: attr(data-icon);
-  font-size: 56px;
+  font-size: 46px;
   display: block;
-  margin-bottom: 4px;
+  flex-shrink: 0;
   filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.6));
 }
 
 .enroll-main {
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 800;
   color: var(--accent, #00e5a0);
   text-transform: uppercase;
@@ -362,15 +365,21 @@
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
 }
 
+.enroll-text-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .enroll-hint {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 400;
   color: rgba(255, 255, 255, 0.7);
   font-style: italic;
 }
 
 .enroll-countdown {
-  font-size: 64px;
+  font-size: 48px;
   font-weight: 900;
   color: #fff;
   line-height: 1;
@@ -379,7 +388,7 @@
 }
 
 .enroll-snap {
-  font-size: 42px;
+  font-size: 32px;
   font-weight: 900;
   color: var(--accent, #00e5a0);
   text-shadow: 0 0 24px rgba(0, 229, 160, 0.6);
@@ -408,9 +417,9 @@
 }
 
 @keyframes pose-flash {
-  0% { transform: scale(1); border-color: rgba(0, 229, 160, 0.3); }
-  50% { transform: scale(1.08); border-color: rgba(0, 229, 160, 1); }
-  100% { transform: scale(1.05); border-color: rgba(0, 229, 160, 0.8); }
+  0% { border-color: rgba(0, 229, 160, 0.3); }
+  50% { border-color: rgba(0, 229, 160, 1); }
+  100% { border-color: rgba(0, 229, 160, 0.8); }
 }
 
 @keyframes countdown-pop {

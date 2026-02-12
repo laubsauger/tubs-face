@@ -14,16 +14,15 @@
   -webkit-backdrop-filter: blur(12px);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
   transition: opacity 0.4s ease, transform 0.4s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 #camera-pip.hidden {
   display: none;
 }
 
-#camera-pip.collapsed #camera-feed,
-#camera-pip.collapsed #camera-overlay,
-#camera-pip.collapsed #camera-status,
-#camera-pip.collapsed #presence-badge {
+#camera-pip.collapsed #camera-video-wrap {
   display: none;
 }
 
@@ -119,6 +118,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 
 #camera-pip-header::after {
@@ -132,9 +132,17 @@
   transform: rotate(-90deg);
 }
 
+/* Video + Canvas Wrapper — overlay canvas always aligned with video */
+#camera-video-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 #camera-feed {
   width: 100%;
-  height: calc(100% - 30px);
+  height: 100%;
   object-fit: cover;
   transform: scaleX(-1);
   display: block;
@@ -142,10 +150,10 @@
 
 #camera-overlay {
   position: absolute;
-  top: 30px;
+  top: 0;
   left: 0;
   width: 100%;
-  height: calc(100% - 30px);
+  height: 100%;
   pointer-events: none;
 }
 
@@ -161,7 +169,7 @@
 
 #presence-badge {
   position: absolute;
-  top: 32px;
+  top: 6px;
   right: 6px;
   font-size: 9px;
   font-family: 'Outfit', sans-serif;
@@ -185,84 +193,74 @@ body.sleeping #face-debug {
   opacity: 0.9;
 }
 
-/* Enrollment Mode (Modal) */
+/* ============================
+   Enrollment Mode (Modal)
+   ============================ */
+
+/* Hide enrollment elements when NOT in enroll mode */
+#camera-pip:not(.enroll-mode) #enroll-overlay,
+#camera-pip:not(.enroll-mode) #enroll-strip,
+#camera-pip:not(.enroll-mode) #enroll-actions {
+  display: none !important;
+}
+
 #camera-pip.enroll-mode {
   position: fixed;
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 95vw;
-  max-width: 1000px;
-  height: 90vh;
-  max-height: 800px;
+  width: 96vw;
+  max-width: 1100px;
+  height: 92vh;
+  max-height: 880px;
   border-radius: 20px;
   box-shadow: 0 0 0 100vw rgba(0, 0, 0, 0.85);
   z-index: 5000;
   transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
-  display: flex;
-  flex-direction: column;
   background: #0a0c14;
 }
 
-#camera-pip:not(.enroll-mode) #enroll-overlay {
-  display: none !important;
+#camera-pip.enroll-mode #camera-pip-header {
+  display: none;
 }
 
-#camera-pip.enroll-mode #camera-feed {
-  object-fit: cover;
-  transform: scaleX(-1);
-  flex: 1;
-  min-height: 0;
+/* Instruction bar — sits above video in flex flow */
+#camera-pip.enroll-mode #enroll-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+#camera-pip.enroll-mode #camera-video-wrap {
   border-radius: 0 0 20px 20px;
 }
 
-#camera-pip.enroll-mode #camera-pip-header,
+#camera-pip.enroll-mode #camera-feed {
+  border-radius: 0 0 20px 20px;
+}
+
 #camera-pip.enroll-mode #presence-badge,
 #camera-pip.enroll-mode #camera-status {
   display: none;
 }
 
-#camera-pip.enroll-mode #enroll-overlay {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  background: none;
-  backdrop-filter: none;
-  padding: 0;
-  top: auto;
-  left: auto;
-  right: auto;
-  bottom: auto;
-}
-
-#camera-pip.enroll-mode #enroll-instruction {
-  position: relative;
-  width: 100%;
-  padding: 16px 24px;
-  border-radius: 20px 20px 0 0;
-}
-
-#camera-pip.enroll-mode #enroll-status {
-  position: relative;
-  width: 100%;
-  text-align: center;
-  padding: 8px 0 4px;
-  border-radius: 0;
-  background: none;
-}
-
+/* Thumbnail strip — overlaid at bottom of video */
 #camera-pip.enroll-mode #enroll-strip {
   position: absolute;
-  bottom: 16px;
+  bottom: 12px;
   left: 0;
   width: 100%;
   z-index: 10;
+  display: flex;
   justify-content: center;
 }
 
+/* Action buttons — overlaid above thumbnail strip */
 #camera-pip.enroll-mode #enroll-actions {
   position: absolute;
-  bottom: 100px;
+  bottom: 90px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 10;

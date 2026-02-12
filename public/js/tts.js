@@ -1,5 +1,5 @@
 import { STATE } from './state.js';
-import { $, loadingBar, speechBubble, subtitleEl } from './dom.js';
+import { $, loadingBar, subtitleEl } from './dom.js';
 import { setExpression, startSpeaking, stopSpeaking } from './expressions.js';
 import { showDonationQr } from './donation-ui.js';
 import { clearInterruptionTimer } from './audio-input.js';
@@ -28,7 +28,11 @@ function normalizeSpeechText(text) {
     return String(text ?? '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+        // Strip any emoji that slipped through — TTS should never read emoji aloud
+        .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 let subtitleRafId = null;
 let subtitleAudioRef = null;
@@ -194,6 +198,38 @@ function startSpeechSafety(durationMs) {
 // ── TTS queue ──
 
 let lastEmotion = null;
+let currentAudioElement = null;
+
+export function stopAllTTS() {
+    console.log('[TTS] stopAllTTS — clearing queue and stopping playback');
+    // Clear the queue
+    STATE.ttsQueue.length = 0;
+    $('#stat-queue').textContent = '0';
+
+    // Stop current audio element — remove handlers BEFORE clearing src
+    // to prevent onerror from triggering speakFallback
+    if (currentAudioElement) {
+        currentAudioElement.oncanplaythrough = null;
+        currentAudioElement.onerror = null;
+        currentAudioElement.onended = null;
+        currentAudioElement.pause();
+        currentAudioElement.src = '';
+        currentAudioElement = null;
+    }
+
+    // Cancel browser speech synthesis
+    speechSynthesis.cancel();
+
+    // Reset state
+    clearSpeechSafety();
+    stopSubtitles();
+    STATE.speaking = false;
+    STATE.speakingEndedAt = Date.now();
+    stopSpeaking();
+    loadingBar.classList.remove('active');
+    $('#stat-listen-state').textContent = 'Idle';
+    setExpression('listening');
+}
 
 export function enqueueSpeech(text, donation = null, emotion = null) {
     const normalizedText = normalizeSpeechText(text);
@@ -214,7 +250,6 @@ export function processQueue() {
     if (STATE.ttsQueue.length === 0) {
         STATE.speaking = false;
         STATE.speakingEndedAt = Date.now();
-        speechBubble.classList.remove('visible');
         stopSubtitles();
         stopSpeaking();
         $('#stat-listen-state').textContent = 'Idle';
@@ -236,10 +271,6 @@ export function processQueue() {
 
     STATE.speaking = true;
     clearInterruptionTimer();
-
-    // Show speech bubble immediately (visual feedback)
-    speechBubble.textContent = item.text;
-    speechBubble.classList.add('visible');
 
     lastEmotion = item.emotion || null;
 
@@ -273,8 +304,10 @@ async function playTTS(text) {
         const audioURL = URL.createObjectURL(blob);
         const audio = new Audio();
         audio.src = audioURL;
+        currentAudioElement = audio;
 
         function cleanup() {
+            if (currentAudioElement === audio) currentAudioElement = null;
             URL.revokeObjectURL(audioURL);
         }
 

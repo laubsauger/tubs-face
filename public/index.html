@@ -257,19 +257,21 @@
 
     <!-- Camera PIP -->
     <div id="camera-pip" class="hidden">
-      <div class="pip-resize-handle pip-resize-n"></div>
-      <div class="pip-resize-handle pip-resize-w"></div>
-      <div class="pip-resize-handle pip-resize-nw"></div>
       <div id="camera-pip-header">Camera</div>
-      <video id="camera-feed" autoplay playsinline muted></video>
-      <canvas id="camera-overlay"></canvas>
-      <div id="camera-status"></div>
-      <div id="presence-badge"></div>
 
-      <!-- Enrollment Overlay -->
+      <!-- Enrollment: instruction bar above video -->
       <div id="enroll-overlay" class="hidden">
-        <div id="enroll-status">Capturing samples...</div>
         <div id="enroll-instruction"></div>
+        <div id="enroll-status">Capturing samples...</div>
+      </div>
+
+      <!-- Video + canvas wrapper (overlay always aligned with video) -->
+      <div id="camera-video-wrap">
+        <video id="camera-feed" autoplay playsinline muted></video>
+        <canvas id="camera-overlay"></canvas>
+        <div id="camera-status"></div>
+        <div id="presence-badge"></div>
+        <!-- Enrollment: overlaid on video bottom -->
         <div id="enroll-strip"></div>
         <div id="enroll-actions" class="hidden">
           <button id="enroll-cancel" class="btn-cancel">Discard All</button>

@@ -17,6 +17,7 @@ import {
     getLastFaceSeen, setLastFaceSeen,
     getLastNoFaceTime, setLastNoFaceTime,
 } from './detection.js';
+import { captureFrameBase64 } from '../vision-capture.js';
 
 const MATCH_THRESHOLD = 0.65;
 const MATCH_MARGIN = 0.08;       // best must beat second-best by this gap
@@ -380,6 +381,22 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
         // Broadcast presence when composition changes
         if (faceCountChanged || newNames.length > 0 || lostNames.length > 0) {
             sendPresence(true, STATE.personsPresent, activeFaces.length);
+
+            // New face(s) entered — send appearance frame so next interaction has visual context
+            if (newNames.length > 0 || (faceCountChanged && activeFaces.length > prevFaceCount)) {
+                const frame = captureFrameBase64();
+                if (frame) {
+                    const ws = getWs();
+                    if (ws && ws.readyState === 1) {
+                        ws.send(JSON.stringify({
+                            type: 'appearance_frame',
+                            frame,
+                            faces: STATE.personsPresent,
+                            count: activeFaces.length,
+                        }));
+                    }
+                }
+            }
         }
 
         clearTimeout(presenceTimer);

@@ -4,6 +4,7 @@ export const STATE = {
     speaking: false,
     speakingEndedAt: 0,
     recording: false,
+    inConversation: false,
     expression: 'idle',
     turns: 0,
     totalMessages: 0,
@@ -30,4 +31,6 @@ export const STATE = {
     kokoroVoice: 'af_heart',
     // Audio noise gate — minimum RMS energy (0.0–1.0) for VAD audio to be sent
     vadNoiseGate: 0.008,
+    // Streaming turn tracking
+    currentTurnId: null,
 };

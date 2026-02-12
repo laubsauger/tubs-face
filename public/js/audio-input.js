@@ -2,10 +2,15 @@ import { STATE } from './state.js';
 import { $, pttIndicator, waveformContainer } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression } from './expressions.js';
+import { stopAllTTS } from './tts.js';
+import { getWs } from './websocket.js';
+import { captureFrameBase64 } from './vision-capture.js';
 
 let myvad = null;
 let vadActive = false;
 let isTranscribing = false;
+let bargeInTimer = null;
+let bargeInCount = 0;
 let interruptionTimer = null;
 let interruptionRecorder = null;
 let interruptionChunks = [];
@@ -14,6 +19,13 @@ let interrupted = false;
 const INTERRUPTION_CHANCE = 0.3;
 const SHORT_LIMIT_MS = 5000;  // Interrupt after 5s if active
 const LONG_LIMIT_MS = 15000;  // Always interrupt after 15s (safety)
+
+// --- Max chunk duration: force-flush audio if speech runs too long ---
+const MAX_SPEECH_DURATION_MS = 15000; // 15 seconds — force-flush if speech never stops
+let maxChunkTimer = null;
+let chunkRecorder = null;
+let chunkRecorderChunks = [];
+let speechStartTime = 0;
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -86,22 +98,49 @@ export async function initVAD() {
 
         myvad = await vad.MicVAD.new({
             onSpeechStart: () => {
-                if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
+                if (!vadActive || STATE.sleeping) return;
                 if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) return;
+
+                // Barge-in: user starts speaking while Tubs is talking.
+                // Requires sustained speech (1.5s) to confirm — not every little sound.
+                if (STATE.speaking && STATE.currentTurnId) {
+                    bargeInCount++;
+                    console.log(`[VAD] Possible barge-in #${bargeInCount} — waiting for sustained speech`);
+                    if (bargeInTimer) clearTimeout(bargeInTimer);
+                    bargeInTimer = setTimeout(() => {
+                        bargeInTimer = null;
+                        if (!STATE.speaking) { bargeInCount = 0; return; }
+                        // Need at least 2 consecutive speech-start events to confirm
+                        if (bargeInCount < 2) { bargeInCount = 0; return; }
+                        console.log('[VAD] Barge-in confirmed! Stopping TTS and interrupting.');
+                        bargeInCount = 0;
+                        const turnId = STATE.currentTurnId;
+                        stopAllTTS();
+                        const wsConn = getWs();
+                        if (wsConn && wsConn.readyState === 1) {
+                            wsConn.send(JSON.stringify({ type: 'interrupt', turnId }));
+                        }
+                    }, 1500);
+                    return;
+                }
+
                 console.log('Speech start detected');
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Listening...';
                 setExpression('listening');
                 startInterruptionTimer();
+                startMaxChunkTimer();
             },
             onSpeechEnd: (audio) => {
                 if (interrupted) {
                     console.log('Ignoring VAD speech end (already interrupted)');
                     interrupted = false;
+                    clearMaxChunkTimer();
                     return;
                 }
                 clearInterruptionTimer();
-                if (!vadActive || isTranscribing || STATE.speaking || STATE.sleeping) return;
+                clearMaxChunkTimer();
+                if (!vadActive || STATE.sleeping) return;
                 if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) {
                     console.log('[VAD] Ignoring speech end — echo cooldown');
                     setExpression('idle');
@@ -111,7 +150,9 @@ export async function initVAD() {
                 processVadAudio(audio);
             },
             onVADMisfire: () => {
+                if (bargeInTimer) { clearTimeout(bargeInTimer); bargeInTimer = null; bargeInCount = 0; }
                 clearInterruptionTimer();
+                clearMaxChunkTimer();
                 console.log('VAD Misfire');
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Idle';
@@ -141,6 +182,7 @@ export function initVadToggle() {
             pttIndicator.textContent = 'Listening (Always On)';
             pttIndicator.classList.add('mic-ready');
             waveformContainer.classList.add('active');
+            updateWaveformMode();
             startVisualize();
         } else {
             logChat('sys', 'Always On: DISABLED');
@@ -183,9 +225,48 @@ async function processVadAudio(float32Array) {
         return;
     }
 
-    console.log(`[VAD] RMS ${rms.toFixed(4)} — sending`);
+    console.log(`[VAD] RMS ${rms.toFixed(4)} — sending segment`);
     const wavBlob = audioBufferToWav(float32Array);
-    sendVoice(wavBlob, true);
+    sendVoiceSegment(wavBlob);
+}
+
+async function sendVoiceSegment(blob) {
+    if (!STATE.connected) {
+        logChat('sys', 'Not connected — voice not sent');
+        return;
+    }
+
+    // Capture camera frame and send to server before voice segment
+    const frame = captureFrameBase64();
+    if (frame) {
+        const wsConn = getWs();
+        if (wsConn && wsConn.readyState === 1) {
+            wsConn.send(JSON.stringify({ type: 'camera_frame', frame }));
+        }
+    }
+
+    // Non-blocking: don't set isTranscribing, allow more segments
+    const statState = $('#stat-listen-state');
+    if (statState) statState.textContent = 'Accumulating...';
+
+    try {
+        const res = await fetch('/voice/segment?wakeWord=true', {
+            method: 'POST',
+            body: blob,
+            headers: { 'Content-Type': 'audio/webm' }
+        });
+
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        if (data.ignored) {
+            console.log(`[Segment] Ignored: "${data.text}"`);
+            if (statState) statState.textContent = 'Idle';
+            if (!data.text || !data.wake) setExpression('idle');
+        }
+    } catch (err) {
+        console.error('[Audio] Segment send failed:', err);
+    }
 }
 
 function audioBufferToWav(float32Array) {
@@ -271,6 +352,9 @@ function startInterruptionTimer() {
             interruptionRecorder.stop();
         }
 
+        // Restart max chunk timer so it records fresh from this point
+        startMaxChunkTimer();
+
     }, limit);
 }
 
@@ -287,6 +371,73 @@ export function clearInterruptionTimer() {
         }
         interruptionRecorder = null;
     }
+}
+
+// --- Max chunk duration: force-flush long continuous speech ---
+function startMaxChunkTimer() {
+    clearMaxChunkTimer();
+    speechStartTime = Date.now();
+
+    // Start a parallel recorder to capture audio for the forced flush
+    if (micStream) {
+        try {
+            chunkRecorderChunks = [];
+            chunkRecorder = new MediaRecorder(micStream, { mimeType: 'audio/webm' });
+            chunkRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) chunkRecorderChunks.push(e.data);
+            };
+            chunkRecorder.start();
+        } catch (e) {
+            console.error('[VAD] Failed to start chunk recorder:', e);
+        }
+    }
+
+    maxChunkTimer = setTimeout(() => {
+        if (!vadActive || STATE.speaking || STATE.sleeping) {
+            clearMaxChunkTimer();
+            return;
+        }
+
+        const elapsed = Date.now() - speechStartTime;
+        console.log(`[VAD] Max chunk duration reached (${Math.round(elapsed / 1000)}s) — force-flushing audio`);
+
+        // Stop the chunk recorder and send its audio
+        if (chunkRecorder && chunkRecorder.state === 'recording') {
+            const recorder = chunkRecorder;
+            recorder.onstop = () => {
+                if (chunkRecorderChunks.length > 0) {
+                    const blob = new Blob(chunkRecorderChunks, { type: 'audio/webm' });
+                    console.log(`[VAD] Force-flushed ${Math.round(blob.size / 1024)}KB of audio`);
+                    sendVoice(blob, true);
+                }
+                chunkRecorderChunks = [];
+            };
+            recorder.stop();
+        }
+        chunkRecorder = null;
+
+        // Also clear the interruption timer since we're handling the flush
+        clearInterruptionTimer();
+        interrupted = true; // Tell onSpeechEnd to ignore the next event from this segment
+
+        // Restart the timer for the *next* chunk of continuous speech
+        startMaxChunkTimer();
+
+    }, MAX_SPEECH_DURATION_MS);
+}
+
+function clearMaxChunkTimer() {
+    if (maxChunkTimer) {
+        clearTimeout(maxChunkTimer);
+        maxChunkTimer = null;
+    }
+    if (chunkRecorder) {
+        if (chunkRecorder.state === 'recording') {
+            chunkRecorder.stop();
+        }
+        chunkRecorder = null;
+    }
+    chunkRecorderChunks = [];
 }
 
 export function initWaveformBars() {
@@ -374,7 +525,17 @@ async function sendVoice(blob, isVad = false) {
         return;
     }
 
+    // Capture camera frame and send to server before voice transcription
+    const frame = captureFrameBase64();
+    if (frame) {
+        const wsConn = getWs();
+        if (wsConn && wsConn.readyState === 1) {
+            wsConn.send(JSON.stringify({ type: 'camera_frame', frame }));
+        }
+    }
+
     isTranscribing = true;
+    updateWaveformMode();
     $('#stat-listen-state').textContent = 'Transcribing...';
     logChat('sys', 'Transcribing audio...');
 
@@ -416,6 +577,27 @@ async function sendVoice(blob, isVad = false) {
         logChat('sys', '⚠️ Voice upload failed');
     } finally {
         isTranscribing = false;
+        updateWaveformMode();
         if (!STATE.speaking) $('#stat-listen-state').textContent = 'Idle';
+    }
+}
+
+/**
+ * Update the waveform container CSS class to reflect current mic state:
+ * - 'waveform-idle': gray — waiting for wake/trigger phrase
+ * - 'waveform-convo': green — in active conversation mode
+ * - 'waveform-transcribing': blue — currently transcribing audio
+ */
+export function updateWaveformMode() {
+    const el = waveformContainer;
+    if (!el) return;
+    el.classList.remove('waveform-idle', 'waveform-convo', 'waveform-transcribing');
+
+    if (isTranscribing) {
+        el.classList.add('waveform-transcribing');
+    } else if (STATE.inConversation) {
+        el.classList.add('waveform-convo');
+    } else {
+        el.classList.add('waveform-idle');
     }
 }

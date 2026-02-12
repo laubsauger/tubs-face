@@ -1,9 +1,12 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
-const { generateAssistantReply, generateProactiveReply, clearAssistantContext } = require('./assistant-service');
+const { generateStreamingAssistantReply, generateProactiveReply, clearAssistantContext } = require('./assistant-service');
+const crypto = require('crypto');
 const { logConversation } = require('./logger');
 
 let clients = new Set();
+let latestFrame = null; // { data: base64String, ts: number }
+let appearanceFrame = null; // { data, ts, faces, count } — consumed once on next interaction
 let lastPresenceContextClearAt = 0;
 let pendingPresenceContextClear = null;
 const PRESENCE_CONTEXT_CLEAR_DELAY_MS = Math.max(
@@ -87,6 +90,10 @@ function initWebSocket(server) {
                 ts: Date.now(),
               });
               logConversation('TUBS (proactive)', reply.text);
+
+              // Enter conversation mode so user can respond without wake word
+              const { touchConversation } = require('./routes');
+              touchConversation();
               broadcast({
                 type: 'stats',
                 tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
@@ -106,6 +113,26 @@ function initWebSocket(server) {
           return;
         }
 
+        if (msg.type === 'camera_frame') {
+          if (msg.frame && typeof msg.frame === 'string') {
+            latestFrame = { data: msg.frame, ts: Date.now() };
+          }
+          return;
+        }
+
+        if (msg.type === 'appearance_frame') {
+          if (msg.frame && typeof msg.frame === 'string') {
+            appearanceFrame = {
+              data: msg.frame,
+              ts: Date.now(),
+              faces: msg.faces || [],
+              count: msg.count || 0,
+            };
+            console.log(`[WS] Appearance frame stored (faces: ${(msg.faces || []).join(', ') || 'unknown'}, count: ${msg.count || 0})`);
+          }
+          return;
+        }
+
         if (msg.type === 'incoming') {
           sessionStats.messagesIn++;
           sessionStats.lastActivity = Date.now();
@@ -114,9 +141,17 @@ function initWebSocket(server) {
           logConversation('USER', msg.text);
           broadcast({ type: 'thinking' });
 
+          const turnId = crypto.randomBytes(6).toString('hex');
+          broadcast({ type: 'turn_start', turnId });
+
           void (async () => {
             try {
-              const reply = await generateAssistantReply(msg.text);
+              const reply = await generateStreamingAssistantReply(msg.text, {
+                broadcast,
+                turnId,
+                frame: msg.frame || getLatestFrame(),
+                appearanceFrame: consumeAppearanceFrame(),
+              });
 
               sessionStats.tokensIn += reply.tokens.in || 0;
               sessionStats.tokensOut += reply.tokens.out || 0;
@@ -127,14 +162,6 @@ function initWebSocket(server) {
                 sessionStats.model = reply.model;
               }
 
-              console.log(`[WS] Broadcasting speak (${reply.text.length} chars): ${reply.text}`);
-              broadcast({
-                type: 'speak',
-                text: reply.text,
-                donation: reply.donation,
-                emotion: reply.emotion || null,
-                ts: Date.now(),
-              });
               logConversation('TUBS', reply.text);
               broadcast({
                 type: 'stats',
@@ -153,6 +180,13 @@ function initWebSocket(server) {
               broadcast({ type: 'error', text: 'Response generation failed' });
             }
           })();
+        }
+
+        if (msg.type === 'interrupt') {
+          const { abortActiveTurn } = require('./routes');
+          if (msg.turnId) {
+            abortActiveTurn(msg.turnId);
+          }
         }
       } catch (e) {
         console.error('[WS] Bad message:', e.message);
@@ -183,4 +217,25 @@ function getClients() {
   return clients;
 }
 
-module.exports = { initWebSocket, broadcast, getClients };
+function getLatestFrame(maxAgeMs = 5000) {
+  if (!latestFrame) return null;
+  if (Date.now() - latestFrame.ts > maxAgeMs) return null;
+  return latestFrame.data;
+}
+
+/**
+ * Returns and clears the appearance frame (one-shot).
+ * Only fresh frames (< maxAgeMs) are returned.
+ */
+function consumeAppearanceFrame(maxAgeMs = 30000) {
+  if (!appearanceFrame) return null;
+  if (Date.now() - appearanceFrame.ts > maxAgeMs) {
+    appearanceFrame = null;
+    return null;
+  }
+  const frame = appearanceFrame;
+  appearanceFrame = null;
+  return frame;
+}
+
+module.exports = { initWebSocket, broadcast, getClients, getLatestFrame, consumeAppearanceFrame };

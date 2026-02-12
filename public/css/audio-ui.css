@@ -18,11 +18,24 @@
 
 .wave-bar {
   width: 3px;
-  background: var(--accent);
+  background: var(--waveform-color, #888);
   border-radius: 2px;
   height: 4px;
-  transition: height 0.08s ease;
+  transition: height 0.08s ease, background 0.4s ease;
   opacity: 0.7;
+}
+
+/* Waveform color modes */
+#waveform-container.waveform-idle .wave-bar {
+  --waveform-color: #888;
+}
+
+#waveform-container.waveform-convo .wave-bar {
+  --waveform-color: #4cdf7a;
+}
+
+#waveform-container.waveform-transcribing .wave-bar {
+  --waveform-color: #4ca8ff;
 }
 
 /* Push to Talk Indicator */

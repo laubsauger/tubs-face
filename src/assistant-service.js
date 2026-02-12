@@ -1,7 +1,7 @@
 const { runtimeConfig } = require('./config');
 const { generateDemoResponse } = require('./demo-response');
 const { loadSystemPrompt, pickGreetingResponse } = require('./persona');
-const { generateGeminiContent } = require('./gemini-client');
+const { generateGeminiContent, streamGeminiContent } = require('./gemini-client');
 
 const HISTORY_CONTEXT_SIZE = 6;
 const HISTORY_STORE_LIMIT = 24;
@@ -12,6 +12,9 @@ const MEMORY_TTL_MS = Number.parseInt(process.env.ASSISTANT_MEMORY_TTL_MS || '36
 const INPUT_CHAR_LIMIT = 800;
 const OUTPUT_CHAR_LIMIT = 280;
 const MAX_OUTPUT_SENTENCES = 3;
+const VISION_INTENT_RE = /\b(what do you see|what('s| is) (this|that|in front|around|over there)|what am i (holding|wearing|doing|showing|eating|drinking)|look at (this|that|me)|can you see|who am i|who is (this|that)|read (this|that|it|the)|how many (fingers|people|things)|describe (this|that|what)|tell me what you see|check (this|that) out|do you see|do i look|what color|what does it say|is (this|that) a)\b/i;
+const VISION_SYSTEM_ADDENDUM = `You can see right now — an image is attached showing what's in front of you. React to what you ACTUALLY see. Don't say "I see an image" or "in the image" — just react like you're looking at it. Be specific about real details. Roast what's funny. Comment on what's interesting. Stay in character as Tubs.`;
+const APPEARANCE_SYSTEM_ADDENDUM = `An image of the person you're talking to is attached. You can subtly reference what you see — what they're wearing, holding, their vibe — to make the conversation feel personal. Don't describe the image or announce that you can see them. Just weave in a detail naturally if it fits, like you're talking to someone you can see. Keep it casual.`;
 const DONATION_MARKER = '[[SHOW_QR]]';
 const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_NUDGE_INTERVAL = 6;
@@ -74,6 +77,10 @@ const EMOJI_GUIDE_LINES = [
 const TRAILING_PUNCT_RE = /[.!?]+\s*$/;
 const TRAILING_EMOJI_CLUSTER_RE = /(?:\s*)(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*$/u;
 const LEADING_EMOJI_RE = /^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*)\s*/u;
+
+function hasVisionIntent(text) {
+  return VISION_INTENT_RE.test(String(text || ''));
+}
 
 const conversationHistory = [];
 const memoryFacts = new Map();
@@ -297,17 +304,18 @@ function pruneConversationHistory(now = Date.now()) {
   }
 }
 
-function buildContents(nextUserText) {
+function buildContents(nextUserText, imageBase64 = null) {
   pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
   const contents = recent.map((entry) => ({
     role: entry.role,
     parts: [{ text: entry.text }],
   }));
-  contents.push({
-    role: 'user',
-    parts: [{ text: compactForHistory(nextUserText) }],
-  });
+  const userParts = [{ text: compactForHistory(nextUserText) }];
+  if (imageBase64) {
+    userParts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
+  }
+  contents.push({ role: 'user', parts: userParts });
   return contents;
 }
 
@@ -356,11 +364,12 @@ function splitTrailingEmotionEmoji(text) {
     };
   }
 
-  // 1. Check for leading emoji (preferred protocol)
+  // 1. Check for leading emoji (preferred protocol) — always strip it,
+  //    even if not in the emotion map (LLM may use unexpected emojis)
   const leadMatch = normalized.match(LEADING_EMOJI_RE);
-  if (leadMatch && EMOJI_EMOTION_MAP[leadMatch[1]]) {
+  if (leadMatch) {
     const rest = normalized.slice(leadMatch[0].length).trim();
-    return makeResult(rest || normalized, leadMatch[1]);
+    if (rest) return makeResult(rest, leadMatch[1]);
   }
 
   // 2. Fallback: check for trailing emoji (old protocol)
@@ -585,6 +594,241 @@ async function generateProactiveReply(context) {
   };
 }
 
+function createSentenceSplitter(onSentence) {
+  let buffer = '';
+  // Match sentence-ending punctuation followed by whitespace (or end)
+  const SENTENCE_END_RE = /([.!?])(\s)/;
+
+  return {
+    push(delta) {
+      buffer += delta;
+      // Emit complete sentences
+      let match;
+      while ((match = SENTENCE_END_RE.exec(buffer))) {
+        const sentence = buffer.slice(0, match.index + 1).trim();
+        buffer = buffer.slice(match.index + 2); // skip punct + whitespace
+        if (sentence) onSentence(sentence);
+      }
+    },
+    flush() {
+      const remaining = buffer.trim();
+      buffer = '';
+      if (remaining) onSentence(remaining);
+    },
+  };
+}
+
+async function generateStreamingAssistantReply(userText, { broadcast, turnId, abortController, frame, appearanceFrame }) {
+  const normalizedInput = normalizeInput(userText);
+  if (!normalizedInput) {
+    broadcast({ type: 'speak', text: 'I did not catch that. Try again.', ts: Date.now() });
+    return {
+      text: 'I did not catch that. Try again.',
+      source: 'empty',
+      model: runtimeConfig.llmModel,
+      tokens: { in: 1, out: 8 },
+      latencyMs: 0,
+    };
+  }
+
+  const startedAt = Date.now();
+  const greeting = pickGreetingResponse(normalizedInput);
+  extractMemory(normalizedInput);
+
+  // Fast-path: greetings use the existing non-streaming speak message
+  if (greeting) {
+    const parsed = splitTrailingEmotionEmoji(greeting);
+    const greetingText = parsed.text || 'Hey.';
+    pushHistory('user', normalizedInput);
+    pushHistory('model', greetingText);
+    assistantReplyCount += 1;
+    broadcast({
+      type: 'speak',
+      text: greetingText,
+      donation: buildDonationPayload(false),
+      emotion: parsed.emotion || null,
+      ts: Date.now(),
+    });
+    return {
+      text: greetingText,
+      source: 'greeting',
+      model: 'fast-greeting',
+      tokens: { in: estimateTokens(normalizedInput), out: estimateTokens(greetingText) },
+      latencyMs: Date.now() - startedAt,
+      costUsd: 0,
+      donation: buildDonationPayload(false),
+      emotion: parsed.emotion,
+    };
+  }
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey && !hasWarnedMissingApiKey) {
+    hasWarnedMissingApiKey = true;
+    console.warn('[LLM] GEMINI_API_KEY missing. Falling back to demo responses.');
+  }
+
+  // No API key → fall back to non-streaming demo response
+  if (!apiKey) {
+    const fallbackText = generateDemoResponse(normalizedInput);
+    const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
+    const responseText = clampOutput(fallbackEmoji.text);
+    pushHistory('user', normalizedInput);
+    pushHistory('model', responseText);
+    assistantReplyCount += 1;
+    broadcast({
+      type: 'speak',
+      text: responseText,
+      emotion: fallbackEmoji.emotion || null,
+      ts: Date.now(),
+    });
+    return {
+      text: responseText,
+      source: 'fallback',
+      model: 'fallback-demo',
+      tokens: { in: estimateTokens(normalizedInput), out: estimateTokens(responseText) },
+      latencyMs: Date.now() - startedAt,
+      costUsd: 0,
+    };
+  }
+
+  // Streaming LLM path
+  let chunkIndex = 0;
+  let sentenceCount = 0;
+  let fullText = '';
+  let rawEmotion = null;
+  let emotionExtracted = false;
+
+  const splitter = createSentenceSplitter((sentence) => {
+    if (sentenceCount >= MAX_OUTPUT_SENTENCES) return;
+
+    let text = sentence;
+    // Extract emotion emoji from first chunk only
+    if (!emotionExtracted) {
+      emotionExtracted = true;
+      const parsed = splitTrailingEmotionEmoji(text);
+      rawEmotion = parsed.emotion;
+      text = parsed.text;
+    }
+    text = stripFormatting(text);
+    if (!text) return;
+
+    sentenceCount++;
+    fullText += (fullText ? ' ' : '') + text;
+    broadcast({ type: 'speak_chunk', text, chunkIndex, turnId });
+    chunkIndex++;
+  });
+
+  let usageIn = 0;
+  let usageOut = 0;
+  let model = runtimeConfig.llmModel;
+
+  const useVision = hasVisionIntent(normalizedInput) && frame;
+  const useAppearance = !useVision && appearanceFrame?.data;
+  const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
+
+  if (useVision) {
+    console.log('[Vision] Intent detected — including camera frame in LLM request');
+  } else if (useAppearance) {
+    console.log(`[Vision] Appearance frame available (faces: ${(appearanceFrame.faces || []).join(', ') || 'unknown'}) — including in LLM request`);
+  }
+
+  try {
+    let systemInst = buildSystemInstruction();
+    if (useVision) {
+      systemInst += '\n\n' + VISION_SYSTEM_ADDENDUM;
+    } else if (useAppearance) {
+      systemInst += '\n\n' + APPEARANCE_SYSTEM_ADDENDUM;
+    }
+    const llmResult = await streamGeminiContent({
+      apiKey,
+      model: runtimeConfig.llmModel,
+      systemInstruction: systemInst,
+      contents: buildContents(normalizedInput, imageToSend),
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      temperature: 1,
+      onChunk: (delta) => splitter.push(delta),
+      abortSignal: abortController?.signal,
+    });
+
+    // Flush remaining buffer
+    if (sentenceCount < MAX_OUTPUT_SENTENCES) {
+      splitter.flush();
+    }
+
+    model = llmResult.model || model;
+    usageIn = Number(llmResult.usage.promptTokenCount || 0);
+    usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
+
+    // If no chunks were emitted (e.g. very short response), extract emotion from full text
+    if (!emotionExtracted && llmResult.text) {
+      const parsed = splitTrailingEmotionEmoji(stripFormatting(llmResult.text));
+      rawEmotion = parsed.emotion;
+      if (parsed.text) {
+        fullText = clampOutput(parsed.text);
+        broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
+        chunkIndex++;
+      }
+    }
+
+    if (llmResult.aborted) {
+      console.log(`[LLM:stream] Aborted after ${chunkIndex} chunks`);
+    }
+  } catch (err) {
+    console.error('[LLM:stream] Gemini streaming failed:', err.message);
+    // If we got partial output, send what we have
+    if (!fullText) {
+      const fallbackText = generateDemoResponse(normalizedInput);
+      const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
+      rawEmotion = rawEmotion || fallbackEmoji.emotion;
+      fullText = clampOutput(fallbackEmoji.text);
+      broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
+      chunkIndex++;
+      model = 'fallback-demo';
+    }
+  }
+
+  if (!fullText) {
+    fullText = `Please help my wheel fund on Venmo @tubs-wheel-fund so Rapha can see Thailand.`;
+    broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
+    chunkIndex++;
+  }
+
+  // Donation handling
+  const donationSignal = extractDonationSignal(fullText);
+  const nudged = maybeInjectDonationNudge(donationSignal.text, donationSignal.donation.show);
+  const finalDonation = nudged.forcedQr
+    ? buildDonationPayload(true, 'periodic_nudge')
+    : donationSignal.donation;
+
+  // Send speak_end
+  broadcast({
+    type: 'speak_end',
+    turnId,
+    emotion: rawEmotion || null,
+    donation: finalDonation,
+    fullText,
+  });
+
+  pushHistory('user', normalizedInput);
+  pushHistory('model', fullText);
+  assistantReplyCount += 1;
+
+  const tokensIn = usageIn || estimateTokens(normalizedInput);
+  const tokensOut = usageOut || estimateTokens(fullText);
+  const costUsd = estimateCostUsd(tokensIn, tokensOut);
+
+  return {
+    text: fullText,
+    source: 'llm',
+    model,
+    tokens: { in: tokensIn, out: tokensOut },
+    costUsd,
+    donation: finalDonation,
+    emotion: rawEmotion,
+    latencyMs: Date.now() - startedAt,
+  };
+}
+
 function clearAssistantContext(reason = 'manual') {
   conversationHistory.length = 0;
   memoryFacts.clear();
@@ -594,4 +838,4 @@ function clearAssistantContext(reason = 'manual') {
   }
 }
 
-module.exports = { generateAssistantReply, generateProactiveReply, clearAssistantContext };
+module.exports = { generateAssistantReply, generateStreamingAssistantReply, generateProactiveReply, clearAssistantContext };

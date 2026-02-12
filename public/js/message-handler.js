@@ -3,11 +3,12 @@ import { $, loadingBar } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression } from './expressions.js';
 import { enqueueSpeech } from './tts.js';
-import { hideDonationQr } from './donation-ui.js';
+import { hideDonationQr, showDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
 import { setFaceRenderMode } from './face-renderer.js';
 import { resetProactiveTimer } from './proactive.js';
+import { updateWaveformMode } from './audio-input.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
@@ -18,6 +19,7 @@ const DONATION_JOY_DURATION_MS = 1800;
 
 let donationJoyUntil = 0;
 let donationJoyResetTimer = null;
+let conversationExpireTimer = null;
 
 function isDonationJoyActive(now = Date.now()) {
     return now < donationJoyUntil;
@@ -193,6 +195,42 @@ export function handleMessage(msg) {
             STATE.totalMessages++;
             resetProactiveTimer();
             break;
+        case 'turn_start':
+            STATE.currentTurnId = msg.turnId;
+            break;
+        case 'speak_chunk':
+            // Ignore stale chunks from aborted turns
+            if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            console.log(`[MSG] speak_chunk #${msg.chunkIndex}: "${msg.text}"`);
+            enqueueSpeech(msg.text, null, null);
+            if (msg.chunkIndex === 0) {
+                logChat('out', msg.text);
+            } else {
+                logChat('out', msg.text);
+            }
+            STATE.totalMessages++;
+            resetProactiveTimer();
+            break;
+        case 'speak_end':
+            if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            console.log(`[MSG] speak_end turnId=${msg.turnId}`);
+            if (msg.emotion?.impulse) {
+                pushEmotionImpulse(msg.emotion.impulse, 'spoken');
+            }
+            if (msg.donation?.show) {
+                showDonationQr(msg.donation);
+            }
+            break;
+        case 'backchannel':
+            // Quick filler word while user is still speaking
+            if (!STATE.speaking) {
+                console.log(`[MSG] backchannel: "${msg.text}"`);
+                enqueueSpeech(msg.text, null, null);
+                // Brief nod expression
+                setExpressionIfAllowed('smile');
+                setTimeout(() => setExpressionIfAllowed('listening'), 800);
+            }
+            break;
         case 'incoming':
             {
                 const donationSignal = detectDonationSignal(msg.text);
@@ -242,6 +280,24 @@ export function handleMessage(msg) {
             break;
         case 'config':
             applyConfig(msg);
+            break;
+        case 'conversation_mode':
+            if (conversationExpireTimer) clearTimeout(conversationExpireTimer);
+            if (msg.active) {
+                STATE.inConversation = true;
+                updateWaveformMode();
+                // Auto-expire after the server's conversation window
+                if (msg.expiresIn) {
+                    conversationExpireTimer = setTimeout(() => {
+                        STATE.inConversation = false;
+                        updateWaveformMode();
+                        conversationExpireTimer = null;
+                    }, msg.expiresIn);
+                }
+            } else {
+                STATE.inConversation = false;
+                updateWaveformMode();
+            }
             break;
     }
 }

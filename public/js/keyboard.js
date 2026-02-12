@@ -6,6 +6,7 @@ import { startRecording, stopRecording } from './audio-input.js';
 import { getWs } from './websocket.js';
 import { faceManager } from './face/index.js';
 import { setFullscreenEnabled } from './fullscreen.js';
+import { captureFrameBase64 } from './vision-capture.js';
 
 let keyInputBuffer = '';
 
@@ -45,7 +46,10 @@ export function initKeyboard() {
 
             const ws = getWs();
             if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: 'incoming', text }));
+                const frame = captureFrameBase64();
+                const msg = { type: 'incoming', text };
+                if (frame) msg.frame = frame;
+                ws.send(JSON.stringify(msg));
                 logChat('out', text);
                 STATE.totalMessages++;
                 $('#stat-input-src').textContent = 'Keyboard';

@@ -12,11 +12,12 @@ const {
   normalizeFaceRenderMode,
   normalizeKokoroVoice,
 } = require('./config');
-const { broadcast, getClients } = require('./websocket');
+const { broadcast, getClients, getLatestFrame, consumeAppearanceFrame } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
 const { transcribeAudio, restartTranscriptionService } = require('./python-service');
 const { readFaceLib, writeFaceLib } = require('./face-library');
-const { generateAssistantReply } = require('./assistant-service');
+const { generateAssistantReply, generateStreamingAssistantReply } = require('./assistant-service');
+const crypto = require('crypto');
 const { createOrder: createPayPalOrder, captureOrder: capturePayPalOrder } = require('./paypal-client');
 const { logConversation } = require('./logger');
 
@@ -26,6 +27,27 @@ const staticPath = path.join(__dirname, '../public');
 // duration — subsequent speech is processed without requiring the wake word.
 const CONVERSATION_WINDOW_MS = 45_000; // 45 seconds
 let lastConversationAt = 0;
+
+// --- Turn accumulation state (Phase 2) ---
+let activeTurn = null;
+
+function computeEndpointTimeout(text) {
+  if (!text) return 700;
+  const words = text.trim().split(/\s+/);
+  if (/[.!?]\s*$/.test(text) && words.length > 3) return 400;
+  if (/[,]\s*$/.test(text) || /\b(and|but|so|because|or|then|that|which|when|while|if)\s*$/i.test(text)) return 1200;
+  if (words.length < 3) return 800;
+  return 700;
+}
+
+function abortActiveTurn(turnId) {
+  if (!activeTurn || activeTurn.turnId !== turnId) return false;
+  console.log(`[Turn] Aborting turn ${turnId}`);
+  if (activeTurn.abortController) activeTurn.abortController.abort();
+  if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
+  activeTurn = null;
+  return true;
+}
 
 const mimeTypes = {
   '.html': 'text/html',
@@ -146,14 +168,17 @@ function handleRequest(req, res) {
         logConversation('USER', text);
         sessionStats.messagesIn++;
         lastConversationAt = Date.now();
+        broadcast({ type: 'conversation_mode', active: true, expiresIn: CONVERSATION_WINDOW_MS });
 
-        const reply = await generateAssistantReply(text);
-        broadcast({
-          type: 'speak',
-          text: reply.text,
-          donation: reply.donation,
-          emotion: reply.emotion || null,
-          ts: Date.now(),
+        const turnId = crypto.randomBytes(6).toString('hex');
+        broadcast({ type: 'turn_start', turnId });
+
+        const reply = await generateStreamingAssistantReply(text, {
+          broadcast,
+          turnId,
+          abortController: activeTurn?.abortController,
+          frame: getLatestFrame(),
+          appearanceFrame: consumeAppearanceFrame(),
         });
         logConversation('TUBS', reply.text);
 
@@ -203,8 +228,142 @@ function handleRequest(req, res) {
     return;
   }
 
+  // --- Segment-based voice input (Phase 2: turn accumulation) ---
+  if (req.method === 'POST' && url.pathname === '/voice/segment') {
+    const wakeWord = url.searchParams.get('wakeWord') === 'true';
+    const FILLER_RE = /^(um+|uh+|hmm+|ah+|oh+|er+|huh|mhm|mm+)\s*[.!?]?\s*$/i;
+
+    let body = [];
+    req.on('data', chunk => body.push(chunk));
+    req.on('end', async () => {
+      const audioBuffer = Buffer.concat(body);
+      console.log(`[Segment] Received ${audioBuffer.length} bytes`);
+
+      try {
+        const result = await transcribeAudio(audioBuffer);
+        const text = result.text?.trim();
+        console.log(`[Segment] Transcribed: "${text}"`);
+
+        if (!text || FILLER_RE.test(text)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ignored: true, text }));
+          return;
+        }
+
+        // Wake word check on first segment of a new turn
+        if (wakeWord && !activeTurn) {
+          const inConversation = (Date.now() - lastConversationAt) < CONVERSATION_WINDOW_MS;
+          const wake = detectWakeWord(text);
+          if (!wake.detected && !inConversation) {
+            console.log('[Segment] Wake word not detected, not in conversation — ignoring.');
+            broadcast({ type: 'expression', expression: 'idle' });
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, ignored: true, text, wake }));
+            return;
+          }
+        }
+
+        // Create or extend active turn
+        if (!activeTurn) {
+          const turnId = crypto.randomBytes(6).toString('hex');
+          activeTurn = {
+            turnId,
+            segments: [],
+            fullText: '',
+            endpointTimer: null,
+            state: 'accumulating',
+            abortController: new AbortController(),
+          };
+          broadcast({ type: 'turn_start', turnId: activeTurn.turnId });
+        }
+
+        activeTurn.segments.push(text);
+        activeTurn.fullText = activeTurn.segments.join(' ');
+
+        // Backchannel: occasionally emit a filler when user has been speaking for 2+ segments
+        if (activeTurn.segments.length >= 2 && Math.random() < 0.4) {
+          const fillers = ['mhm', 'yeah', 'right', 'uh huh', 'okay', 'mm'];
+          const filler = fillers[Math.floor(Math.random() * fillers.length)];
+          broadcast({ type: 'backchannel', text: filler });
+        }
+
+        // Show progressive text
+        broadcast({ type: 'incoming', text: activeTurn.fullText });
+        lastConversationAt = Date.now();
+        broadcast({ type: 'conversation_mode', active: true, expiresIn: CONVERSATION_WINDOW_MS });
+
+        // Reset adaptive endpoint timer
+        if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
+        const timeout = computeEndpointTimeout(activeTurn.fullText);
+        console.log(`[Segment] Endpoint timeout: ${timeout}ms for "${activeTurn.fullText}"`);
+
+        activeTurn.endpointTimer = setTimeout(() => {
+          if (!activeTurn || activeTurn.state !== 'accumulating') return;
+          activeTurn.state = 'generating';
+          const turn = activeTurn;
+          const turnText = turn.fullText;
+          const turnId = turn.turnId;
+
+          console.log(`[Segment] Endpoint fired — generating reply for: "${turnText}"`);
+          logConversation('USER', turnText);
+          sessionStats.messagesIn++;
+          broadcast({ type: 'thinking' });
+
+          generateStreamingAssistantReply(turnText, {
+            broadcast,
+            turnId,
+            abortController: turn.abortController,
+            frame: getLatestFrame(),
+            appearanceFrame: consumeAppearanceFrame(),
+          }).then((reply) => {
+            logConversation('TUBS', reply.text);
+            sessionStats.messagesOut++;
+            sessionStats.lastActivity = Date.now();
+            sessionStats.tokensIn += reply.tokens.in || 0;
+            sessionStats.tokensOut += reply.tokens.out || 0;
+            sessionStats.costUsd += reply.costUsd || 0;
+            if (reply.model) sessionStats.model = reply.model;
+
+            broadcast({
+              type: 'stats',
+              tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
+              totals: {
+                in: sessionStats.tokensIn,
+                out: sessionStats.tokensOut,
+                cost: sessionStats.costUsd,
+              },
+              latency: reply.latencyMs,
+              model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
+              cost: reply.costUsd || 0,
+            });
+          }).catch((err) => {
+            console.error('[Segment] Generation error:', err);
+            broadcast({ type: 'error', text: 'Response generation failed' });
+          }).finally(() => {
+            // Clear turn if it's still the same one
+            if (activeTurn && activeTurn.turnId === turnId) {
+              activeTurn = null;
+            }
+          });
+        }, timeout);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, text, turnId: activeTurn?.turnId }));
+
+      } catch (err) {
+        console.error('[Segment] Error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      }
+    });
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname === '/sleep') {
     lastConversationAt = 0;
+    broadcast({ type: 'conversation_mode', active: false });
     broadcast({ type: 'sleep' });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true }));
@@ -802,4 +961,9 @@ function toDonationSignalFromPaypalEvent(eventType, event) {
   return null;
 }
 
-module.exports = { handleRequest };
+function touchConversation() {
+  lastConversationAt = Date.now();
+  broadcast({ type: 'conversation_mode', active: true, expiresIn: CONVERSATION_WINDOW_MS });
+}
+
+module.exports = { handleRequest, abortActiveTurn, touchConversation };
