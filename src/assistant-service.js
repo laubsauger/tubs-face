@@ -345,9 +345,9 @@ function buildTwoHeadAwarenessInstruction() {
   return [
     'Two-head mode is active.',
     `Runtime: mode=${mode}, turnPolicy=${turnPolicy}.`,
-    'You are main Tubs and Tiny Tubs exists as your small side head.',
-    'Treat Tiny Tubs as a distinct co-host voice that can interject short reactions or side commentary.',
-    'Keep your own response coherent even if Tiny Tubs says little or nothing on a turn.',
+    'You are main Tubs. Tiny Tubs (your small side head) has his own voice and speaks through his own audio.',
+    'Prefer letting Tiny Tubs speak for himself via his own beats rather than narrating what he says or thinks.',
+    'Occasional cross-references are fine, but default to giving him his own lines.',
     'Do not mention implementation details (routing, windows, TTS voices, JSON).',
   ].join('\n');
 }
@@ -677,6 +677,7 @@ Rules:
 - Use a clearly different speaking style per actor:
   - main = full thought / mission-forward
   - small = side commentary, ad-lib, or reaction
+- Each actor speaks as themselves in first person. If Tiny Tubs has something to say, give him his own small beat — don't have main narrate what Tiny Tubs thinks or says. Occasional cross-references are fine but the default is: let each head speak for itself.
 - Donation asks should primarily come from main.
 - If using donation marker [[SHOW_QR]], include it in main text only.
 - Every speak beat must include an emoji in the \"emoji\" field so each head gets an emotion cue.
@@ -751,6 +752,7 @@ async function generateAssistantReply(userText) {
 
   let responseText = '';
   let rawEmotion = null;
+  let preclampDonation = null;
   let source = 'llm';
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
@@ -772,7 +774,9 @@ async function generateAssistantReply(userText) {
       // Extract emoji BEFORE clamping — clamp cuts trailing sentences where emoji lives
       const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
       rawEmotion = rawEmoji.emotion;
-      responseText = clampOutput(rawEmoji.text);
+      // Extract donation signal BEFORE clamping so [[SHOW_QR]] isn't lost to sentence truncation
+      preclampDonation = extractDonationSignal(rawEmoji.text);
+      responseText = clampOutput(preclampDonation.text);
       console.log(`[LLM] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
       model = llmResult.model || model;
       usageIn = Number(llmResult.usage.promptTokenCount || 0);
@@ -791,12 +795,13 @@ async function generateAssistantReply(userText) {
     const fallbackText = generateDemoResponse(normalizedInput);
     const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
     rawEmotion = rawEmotion || fallbackEmoji.emotion;
-    responseText = clampOutput(fallbackEmoji.text);
+    preclampDonation = extractDonationSignal(fallbackEmoji.text);
+    responseText = clampOutput(preclampDonation.text);
   }
 
   const emotion = rawEmotion;
 
-  const donationSignal = extractDonationSignal(responseText);
+  const donationSignal = preclampDonation || extractDonationSignal(responseText);
   const nudged = maybeInjectDonationNudge(donationSignal.text, donationSignal.donation.show);
   responseText = clampOutput(nudged.text);
   console.log(`[LLM] After 2nd clampOutput (${responseText.length} chars): ${responseText}`);
@@ -854,6 +859,7 @@ async function generateProactiveReply(context) {
 
   let responseText = '';
   let rawEmotion = null;
+  let donationSignal = null;
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
   let usageOut = 0;
@@ -871,7 +877,10 @@ async function generateProactiveReply(context) {
     const cleanedText = stripFormatting(llmResult.text);
     const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
     rawEmotion = rawEmoji.emotion;
-    responseText = clampOutput(rawEmoji.text);
+    // Extract donation signal BEFORE clamping so [[SHOW_QR]] isn't lost to sentence truncation
+    const preclampSignal = extractDonationSignal(rawEmoji.text);
+    donationSignal = preclampSignal;
+    responseText = clampOutput(preclampSignal.text);
     console.log(`[LLM:proactive] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
@@ -885,7 +894,7 @@ async function generateProactiveReply(context) {
 
   const emotion = rawEmotion;
 
-  const donationSignal = extractDonationSignal(responseText);
+  if (!donationSignal) donationSignal = extractDonationSignal(responseText);
   responseText = clampOutput(donationSignal.text);
   console.log(`[LLM:proactive] Final (${responseText.length} chars): ${responseText}`);
   if (!responseText) return null;

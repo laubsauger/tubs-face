@@ -35,7 +35,7 @@ export const STATE = {
     secondaryVoice: 'jf_tebukuro',
     secondaryRenderQuality: 'balanced',
     secondaryAudioGain: 1.0,
-    secondarySubtitleEnabled: false,
+    secondarySubtitleEnabled: true,
     dualHeadEnabled: false,
     dualHeadMode: 'off',
     dualHeadTurnPolicy: 'llm_order',

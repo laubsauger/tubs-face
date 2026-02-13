@@ -318,8 +318,8 @@ function initGlitchColorPickers() {
 }
 
 function init() {
-    perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
-    setPerfSink(perfStats);
+    // perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
+    // setPerfSink(perfStats);
     STATE.wakeTime = Date.now();
     $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     $('#stat-model').textContent = STATE.model;

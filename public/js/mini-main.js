@@ -852,8 +852,8 @@ function connectWs() {
 }
 
 function init() {
-    perfStats = createPerfStats({ label: 'MINI PERF', anchor: 'top-right' });
-    setPerfSink(perfStats);
+    // perfStats = createPerfStats({ label: 'MINI PERF', anchor: 'top-right' });
+    // setPerfSink(perfStats);
     STATE.faceRenderMode = 'svg';
     initMiniFullscreenSync();
     initFaceRenderer();

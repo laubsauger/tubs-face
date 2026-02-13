@@ -62,8 +62,8 @@ const BLINK_OPEN_MS = 80;
 const BLINK_TOTAL_MS = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
 
 const SPEAK_CYCLE_MS = 280;
-const SPEAK_MIN_SCALE = 0.6;
-const SPEAK_MAX_SCALE = 2.0;
+const SPEAK_MIN_SCALE = 0.78;
+const SPEAK_MAX_SCALE = 1.42;
 
 const GAZE_EYE_RANGE_X = 0.14;
 const GAZE_EYE_RANGE_Y = 0.09;
@@ -72,10 +72,12 @@ const GAZE_MOUTH_RANGE_Y = 0.04;
 const GAZE_LERP = 0.12;
 
 const GLOW_ALPHA = 0.65;
-const FEATURE_BOX_GLOBAL_SCALE_X = 0.86;
-const FEATURE_BOX_GLOBAL_SCALE_Y = 0.86;
+const FEATURE_BOX_GLOBAL_SCALE_X = 0.92;
+const FEATURE_BOX_GLOBAL_SCALE_Y = 0.92;
 const FEATURE_MOUTH_SCALE_X = 0.92;
 const FEATURE_MOUTH_SCALE_Y = 0.9;
+const FEATURE_BOX_MAIN_BOOST = 0.03;
+const GLITCH_DIAG = true;
 
 // ── Module state ──────────────────────────
 
@@ -115,6 +117,8 @@ let baseFaceX = 0;
 let baseFaceY = 0;
 let faceW = 0;
 let faceH = 0;
+let containerCssW = 0;
+let containerCssH = 0;
 let effectivePixelSize = DEFAULT_CONFIG.pixel.size;
 let effectivePixelGap = DEFAULT_CONFIG.pixel.gap;
 
@@ -129,6 +133,8 @@ let lastBuiltExpression = '';
 let lastSleepingState = false;
 let lastBurstState = false;
 let glitchBurstSeed = Math.random() * 1000;
+let diagLastLogAt = 0;
+let lastGridDebug = null;
 
 // ── WebGPU state ──────────────────────────
 
@@ -400,15 +406,37 @@ fn sampleScene(uv: vec2f) -> vec4f {
 @vertex
 fn vsPost(@builtin(vertex_index) vid: u32) -> VSOut {
   var pos = vec2f(-1.0, -1.0);
+  var uv = vec2f(0.0, 0.0);
   switch (vid) {
-    case 0u: { pos = vec2f(-1.0, -1.0); }
-    case 1u: { pos = vec2f( 3.0, -1.0); }
-    default: { pos = vec2f(-1.0,  3.0); }
+    case 0u: {
+      pos = vec2f(-1.0, -1.0);
+      uv = vec2f(0.0, 0.0);
+    }
+    case 1u: {
+      pos = vec2f(1.0, -1.0);
+      uv = vec2f(1.0, 0.0);
+    }
+    case 2u: {
+      pos = vec2f(-1.0, 1.0);
+      uv = vec2f(0.0, 1.0);
+    }
+    case 3u: {
+      pos = vec2f(-1.0, 1.0);
+      uv = vec2f(0.0, 1.0);
+    }
+    case 4u: {
+      pos = vec2f(1.0, -1.0);
+      uv = vec2f(1.0, 0.0);
+    }
+    default: {
+      pos = vec2f(1.0, 1.0);
+      uv = vec2f(1.0, 1.0);
+    }
   }
 
   var out: VSOut;
   out.position = vec4f(pos, 0.0, 1.0);
-  out.uv = pos * 0.5 + vec2f(0.5, 0.5);
+  out.uv = uv;
   return out;
 }
 
@@ -605,11 +633,91 @@ function setGlitchVisualActive(active) {
     }
 }
 
+function logGlitchDiag(reason, frame = null) {
+    if (!GLITCH_DIAG) return;
+
+    const now = performance.now();
+    if (reason === 'frame' && now - diagLastLogAt < 1000) return;
+    diagLastLogAt = now;
+
+    const cr = containerEl?.getBoundingClientRect?.();
+    const fr = faceEl?.getBoundingClientRect?.();
+    const vv = window.visualViewport || null;
+    const lookX = parseFloat(faceEl?.style.getPropertyValue('--face-look-x')) || 0;
+    const lookY = parseFloat(faceEl?.style.getPropertyValue('--face-look-y')) || 0;
+    const source = containerEl?.id || 'unknown';
+
+    console.log('[GlitchFX][diag]', {
+        reason,
+        source,
+        mode: rendererKind,
+        enabled: Boolean(STATE.glitchFxEnabled),
+        ready: rendererReady,
+        visual: glitchVisualActive,
+        dpr: window.devicePixelRatio || 1,
+        viewport: {
+            innerW: window.innerWidth,
+            innerH: window.innerHeight,
+            visualW: vv?.width || null,
+            visualH: vv?.height || null,
+            visualScale: vv?.scale || null,
+        },
+        container: {
+            left: cr?.left || 0,
+            top: cr?.top || 0,
+            width: cr?.width || 0,
+            height: cr?.height || 0,
+            cssW: containerCssW,
+            cssH: containerCssH,
+        },
+        face: {
+            left: fr?.left || 0,
+            top: fr?.top || 0,
+            width: fr?.width || 0,
+            height: fr?.height || 0,
+            baseFaceX,
+            baseFaceY,
+            lookX,
+            lookY,
+        },
+        canvas: {
+            pxW: canvas?.width || 0,
+            pxH: canvas?.height || 0,
+            cssW: canvas?.clientWidth || 0,
+            cssH: canvas?.clientHeight || 0,
+            sceneW: gpuSceneWidth || 0,
+            sceneH: gpuSceneHeight || 0,
+        },
+        frame: frame ? {
+            W: frame.W,
+            H: frame.H,
+            pw: frame.pw,
+            ph: frame.ph,
+            faceOX: frame.faceOX,
+            faceOY: frame.faceOY,
+            sz: frame.sz,
+        } : null,
+        grid: {
+            pixels: pixelGrid.length,
+            debug: lastGridDebug,
+        },
+    });
+}
+
 function updateEffectivePixelMetrics() {
     const refFaceWidth = Math.max(1, faceW || faceEl?.getBoundingClientRect?.().width || 1);
     const scale = Math.max(0.16, Math.min(1.0, refFaceWidth / 1400));
     effectivePixelSize = Math.max(2, config.pixel.size * scale);
     effectivePixelGap = Math.max(0, config.pixel.gap * scale);
+}
+
+function getFeatureGlobalScale() {
+    const isMain = containerEl?.id === 'center';
+    const boost = isMain ? FEATURE_BOX_MAIN_BOOST : 0;
+    return {
+        x: FEATURE_BOX_GLOBAL_SCALE_X + boost,
+        y: FEATURE_BOX_GLOBAL_SCALE_Y + boost,
+    };
 }
 
 // ── Expression helpers ────────────────────
@@ -785,6 +893,8 @@ function sizeCanvas() {
     if (!containerEl || !canvas) return;
     const cr = containerEl.getBoundingClientRect();
     if (!cr.width || !cr.height) return;
+    containerCssW = cr.width;
+    containerCssH = cr.height;
 
     const dpr = window.devicePixelRatio || 1;
     cachedDpr = dpr;
@@ -826,6 +936,7 @@ function sizeCanvas() {
     }
 
     computeFacePosition();
+    logGlitchDiag('sizeCanvas');
 }
 
 function rebuildScanlinePattern() {
@@ -867,8 +978,9 @@ function buildPixelGrid() {
     const shapes = getModifiedShapes();
     const vb = config.svg.viewBox;
     const fitScale = Math.min(W / vb.w, H / vb.h);
-    const drawW = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
-    const drawH = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
+    const globalScale = getFeatureGlobalScale();
+    const drawW = vb.w * fitScale * globalScale.x;
+    const drawH = vb.h * fitScale * globalScale.y;
     const offsetX = (W - drawW) * 0.5;
     const offsetY = (H - drawH) * 0.5;
     const mapScaleX = drawW / vb.w;
@@ -931,12 +1043,45 @@ function buildPixelGrid() {
         }
     }
 
+    let minPX = Infinity;
+    let minPY = Infinity;
+    let maxPX = -Infinity;
+    let maxPY = -Infinity;
+    for (let i = 0; i < pixelGrid.length; i++) {
+        const p = pixelGrid[i];
+        minPX = Math.min(minPX, p.x);
+        minPY = Math.min(minPY, p.y);
+        maxPX = Math.max(maxPX, p.x + sz);
+        maxPY = Math.max(maxPY, p.y + sz);
+    }
+    if (!Number.isFinite(minPX)) {
+        minPX = 0; minPY = 0; maxPX = 0; maxPY = 0;
+    }
+    lastGridDebug = {
+        faceW: W,
+        faceH: H,
+        drawW,
+        drawH,
+        offsetX,
+        offsetY,
+        mapScaleX,
+        mapScaleY,
+        pixelSize: sz,
+        pixelGap: gap,
+        minPX,
+        minPY,
+        maxPX,
+        maxPY,
+    };
+
     lastBuiltExpression = getActiveExpression();
     lastSleepingState = STATE.sleeping;
 
     if (rendererKind === 'webgpu') {
         updateGpuInstanceBuffer();
     }
+
+    logGlitchDiag('grid');
 }
 
 function recolorPixelGrid() {
@@ -1314,8 +1459,8 @@ function computeFrameState(now) {
     const dpr = cachedDpr;
     const pw = canvas.width;
     const ph = canvas.height;
-    const W = pw / dpr;
-    const H = ph / dpr;
+    const W = containerCssW || (pw / dpr);
+    const H = containerCssH || (ph / dpr);
 
     const sz = effectivePixelSize;
 
@@ -1553,7 +1698,7 @@ function renderFrameWebGpu(frame) {
 
         swapPass.setPipeline(gpuPostPipeline);
         swapPass.setBindGroup(0, gpuPostBindGroup);
-        swapPass.draw(3, 1, 0, 0);
+        swapPass.draw(6, 1, 0, 0);
         swapPass.end();
 
         gpuDevice.queue.submit([encoder.finish()]);
@@ -1737,6 +1882,12 @@ function renderFrame(now) {
         return;
     }
 
+    const dprNow = window.devicePixelRatio || 1;
+    if (Math.abs(dprNow - cachedDpr) > 0.001) {
+        sizeCanvas();
+        buildPixelGrid();
+    }
+
     // Detect expression/sleep changes → rebuild grid
     const currentExpr = getActiveExpression();
     if (currentExpr !== lastBuiltExpression || STATE.sleeping !== lastSleepingState) {
@@ -1777,6 +1928,7 @@ function renderFrame(now) {
     }
 
     setGlitchVisualActive(drawn);
+    logGlitchDiag('frame', frame);
 }
 
 function startRenderLoop() {
