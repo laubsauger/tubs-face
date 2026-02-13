@@ -13,6 +13,7 @@ import { createSubtitleController } from './subtitles.js';
 import { startIdleBehavior } from './idle-behavior.js';
 import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
+import { initGlitchFx, enableGlitchFx, disableGlitchFx, setGlitchFxBaseColor } from './glitch-fx.js';
 
 const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
 const subtitleEl = document.getElementById('subtitle');
@@ -44,6 +45,8 @@ let secondaryAudioGain = 1.0;
 let secondarySubtitleEnabled = false;
 let miniSleeping = false;
 let muted = false;
+let glitchFxEnabled = false;
+let secondaryGlitchFxBaseColor = '#22d3ee';
 let currentExpression = 'idle';
 let idleVariant = 'soft';
 let mainHeadSpeaking = false;
@@ -720,7 +723,23 @@ function applyConfig(msg) {
             miniResetGaze();
         }
     }
-    console.log(`[MINI] config dualEnabled=${dualHeadEnabled} mode=${dualHeadMode} voice=${secondaryVoice} quality=${secondaryRenderQuality} subtitles=${secondarySubtitleEnabled}`);
+    if (Object.prototype.hasOwnProperty.call(msg, 'glitchFxEnabled')) {
+        const wasEnabled = glitchFxEnabled;
+        glitchFxEnabled = Boolean(msg.glitchFxEnabled);
+        if (glitchFxEnabled && !wasEnabled) {
+            setGlitchFxBaseColor(secondaryGlitchFxBaseColor);
+            enableGlitchFx();
+        } else if (!glitchFxEnabled && wasEnabled) {
+            disableGlitchFx();
+        }
+    }
+    if (msg.secondaryGlitchFxBaseColor) {
+        secondaryGlitchFxBaseColor = String(msg.secondaryGlitchFxBaseColor);
+        if (glitchFxEnabled) {
+            setGlitchFxBaseColor(secondaryGlitchFxBaseColor);
+        }
+    }
+    console.log(`[MINI] config dualEnabled=${dualHeadEnabled} mode=${dualHeadMode} voice=${secondaryVoice} quality=${secondaryRenderQuality} subtitles=${secondarySubtitleEnabled} glitch=${glitchFxEnabled}`);
 }
 
 function handleMessage(msg) {
@@ -838,6 +857,8 @@ function init() {
     STATE.faceRenderMode = 'svg';
     initMiniFullscreenSync();
     initFaceRenderer();
+    initGlitchFx();
+    setGlitchFxBaseColor(secondaryGlitchFxBaseColor);
     setFaceRenderMode('svg', { persist: false });
     setFaceRendererQuality(secondaryRenderQuality);
     setMiniExpression('idle');

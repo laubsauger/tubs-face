@@ -7,6 +7,7 @@ import { hideDonationQr, showDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
 import { setFaceRenderMode, setFaceRendererQuality } from './face-renderer.js';
+import { enableGlitchFx, disableGlitchFx, setGlitchFxBaseColor } from './glitch-fx.js';
 import { resetProactiveTimer } from './proactive.js';
 import { updateWaveformMode, setInputMuted } from './audio-input.js';
 import { buildLocalTurnTimeline } from './turn-script.js';
@@ -279,6 +280,26 @@ function applyConfig(msg) {
     if (hasOwn('secondarySubtitleEnabled')) setSecondarySubtitleEnabled(msg.secondarySubtitleEnabled);
     if (hasOwn('secondaryAudioGain')) setSecondaryAudioGain(msg.secondaryAudioGain);
     if (hasOwn('muted')) setMuted(msg.muted);
+    if (hasOwn('glitchFxEnabled')) {
+        const toggle = document.getElementById('glitch-fx-toggle');
+        if (msg.glitchFxEnabled) {
+            enableGlitchFx();
+            if (toggle) toggle.checked = true;
+        } else {
+            disableGlitchFx();
+            if (toggle) toggle.checked = false;
+        }
+    }
+    if (msg.glitchFxBaseColor) {
+        setGlitchFxBaseColor(msg.glitchFxBaseColor);
+        STATE.glitchFxBaseColor = msg.glitchFxBaseColor;
+        const picker = document.getElementById('glitch-fx-color');
+        if (picker) picker.value = msg.glitchFxBaseColor;
+    }
+    if (msg.secondaryGlitchFxBaseColor) {
+        const picker = document.getElementById('secondary-glitch-fx-color');
+        if (picker) picker.value = msg.secondaryGlitchFxBaseColor;
+    }
 }
 
 export function handleMessage(msg) {

@@ -17,6 +17,7 @@ import { initFullscreenToggle } from './fullscreen.js';
 import { checkAndRunIngestion } from './face/ingest.js';
 import { initFaceRenderer, setFaceRendererQuality } from './face-renderer.js';
 import { initProactive } from './proactive.js';
+import { initGlitchFx, setGlitchFxBaseColor } from './glitch-fx.js';
 import { onGazeTargetChanged } from './eye-tracking.js';
 import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
@@ -285,6 +286,25 @@ function initMuteToggle() {
     });
 }
 
+function initGlitchColorPickers() {
+    const mainColor = document.getElementById('glitch-fx-color');
+    if (mainColor) {
+        mainColor.addEventListener('input', () => {
+            setGlitchFxBaseColor(mainColor.value);
+            STATE.glitchFxBaseColor = mainColor.value;
+        });
+        mainColor.addEventListener('change', () => {
+            postConfigPatch({ glitchFxBaseColor: mainColor.value });
+        });
+    }
+    const secondaryColor = document.getElementById('secondary-glitch-fx-color');
+    if (secondaryColor) {
+        secondaryColor.addEventListener('change', () => {
+            postConfigPatch({ secondaryGlitchFxBaseColor: secondaryColor.value });
+        });
+    }
+}
+
 function init() {
     perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
     setPerfSink(perfStats);
@@ -315,6 +335,8 @@ function init() {
     initDualHeadControls();
     initKeyboard();
     initFaceRenderer();
+    initGlitchFx();
+    initGlitchColorPickers();
     faceManager.init();
     initEmotionEngine();
     initProactive(getWs);

@@ -16,6 +16,7 @@ const {
   normalizeDualHeadMode,
   normalizeSecondaryAudioGain,
   normalizeDualHeadTurnPolicy,
+  normalizeHexColor,
 } = require('./config');
 const { broadcast, getClients, getLatestFrame, consumeAppearanceFrame, abortActiveWsTurn } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
@@ -810,6 +811,15 @@ function handleRequest(req, res) {
         }
         if (Object.hasOwn(config, 'muted')) {
           config.muted = normalizeBooleanConfig(config.muted, 'muted');
+        }
+        if (Object.hasOwn(config, 'glitchFxEnabled')) {
+          config.glitchFxEnabled = normalizeBooleanConfig(config.glitchFxEnabled, 'glitchFxEnabled');
+        }
+        if (Object.hasOwn(config, 'glitchFxBaseColor')) {
+          config.glitchFxBaseColor = normalizeHexColor(config.glitchFxBaseColor, 'glitchFxBaseColor');
+        }
+        if (Object.hasOwn(config, 'secondaryGlitchFxBaseColor')) {
+          config.secondaryGlitchFxBaseColor = normalizeHexColor(config.secondaryGlitchFxBaseColor, 'secondaryGlitchFxBaseColor');
         }
 
         const nextConfig = { ...runtimeConfig, ...config };

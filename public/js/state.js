@@ -27,6 +27,8 @@ export const STATE = {
     minFaceBoxAreaRatio: 0.02,
     faceRenderMode: 'svg',
     renderQuality: 'high',
+    glitchFxEnabled: false,
+    glitchFxBaseColor: '#a855f7',
     chatVerbosity: 'all',
     // Kokoro TTS voice
     kokoroVoice: 'hm_omega',

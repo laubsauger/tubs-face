@@ -137,6 +137,16 @@ function normalizeSttBackend(value) {
   return normalized;
 }
 
+function normalizeHexColor(value, fieldName) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(normalized)) {
+    const err = new Error(`${fieldName} must be a valid hex color (e.g. #a855f7)`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
 function normalizeBooleanConfig(value, fieldName) {
   if (typeof value === 'boolean') return value;
   const normalized = String(value || '').trim().toLowerCase();
@@ -233,6 +243,9 @@ const runtimeConfig = {
   secondaryAudioGain: DEFAULT_SECONDARY_AUDIO_GAIN,
   dualHeadTurnPolicy: DEFAULT_DUAL_HEAD_TURN_POLICY,
   muted: DEFAULT_MUTED,
+  glitchFxEnabled: false,
+  glitchFxBaseColor: '#a855f7',
+  secondaryGlitchFxBaseColor: '#22d3ee',
 };
 
 
@@ -273,4 +286,5 @@ module.exports = {
   normalizeDualHeadMode,
   normalizeSecondaryAudioGain,
   normalizeDualHeadTurnPolicy,
+  normalizeHexColor,
 };

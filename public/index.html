@@ -120,6 +120,17 @@
             <option value="low">Low</option>
           </select>
         </div>
+        <div class="stat-row">
+          <span class="stat-label">Glitch FX</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="glitch-fx-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Glitch Color</span>
+          <input type="color" id="glitch-fx-color" value="#a855f7" class="mini-color">
+        </div>
         <div class="stat-row" id="detect-delay-row" style="display:none;">
           <span class="stat-label">Detect <span id="detect-delay-val">auto</span></span>
           <input type="range" id="detect-delay" min="0" max="5000" step="100" value="0" class="mini-range">
@@ -229,6 +240,10 @@
             <option value="balanced" selected>Balanced</option>
             <option value="low">Low</option>
           </select>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Small Glitch</span>
+          <input type="color" id="secondary-glitch-fx-color" value="#22d3ee" class="mini-color">
         </div>
         <div class="stat-row">
           <span class="stat-label">Small Subs</span>
