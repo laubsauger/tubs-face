@@ -1,6 +1,6 @@
 body.mini-window {
   margin: 0;
-  background: radial-gradient(circle at 25% 20%, #1a2136 0%, #0a0e18 68%);
+  background: radial-gradient(circle at center, #1a1a24 0%, #0a0a0f 80%);
   width: 100vw;
   height: 100vh;
   overflow: hidden;
@@ -15,6 +15,22 @@ body.mini-window {
   justify-content: center;
   padding: 8px;
   box-sizing: border-box;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+#mini-root::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 80vh;
+  height: 80vh;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0, 229, 160, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: -1;
 }
 
 #mini-face-wrap {
