@@ -47,21 +47,45 @@ export async function setFullscreenEnabled(enabled) {
     }
 }
 
-export function initFullscreenToggle() {
+export function initFullscreenToggle(options = {}) {
+    const onToggleRequested = typeof options.onToggleRequested === 'function'
+        ? options.onToggleRequested
+        : null;
+    const onStateChanged = typeof options.onStateChanged === 'function'
+        ? options.onStateChanged
+        : null;
     const toggle = document.getElementById('fullscreen-toggle');
     if (!toggle) return;
 
+    const emitState = () => {
+        if (onStateChanged) {
+            onStateChanged(isFullscreenActive());
+        }
+    };
+
     const handleChange = async () => {
+        const requested = Boolean(toggle.checked);
+        if (onToggleRequested) {
+            onToggleRequested(requested);
+        }
         try {
-            await setFullscreenEnabled(toggle.checked);
+            await setFullscreenEnabled(requested);
         } catch (err) {
             updateToggle();
+            emitState();
             logChat('sys', `Fullscreen unavailable: ${err.message}`);
         }
     };
 
     toggle.addEventListener('change', handleChange);
-    document.addEventListener('fullscreenchange', updateToggle);
-    document.addEventListener('webkitfullscreenchange', updateToggle);
+    document.addEventListener('fullscreenchange', () => {
+        updateToggle();
+        emitState();
+    });
+    document.addEventListener('webkitfullscreenchange', () => {
+        updateToggle();
+        emitState();
+    });
     updateToggle();
+    emitState();
 }

@@ -22,6 +22,8 @@ import { onGazeTargetChanged } from './eye-tracking.js';
 let miniWindowRef = null;
 let motionRelayInitialized = false;
 let headSpeechRelayInitialized = false;
+const DUAL_FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
+const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
 
 function postConfigPatch(patch) {
     return fetch('/config', {
@@ -31,6 +33,41 @@ function postConfigPatch(patch) {
     }).catch((err) => {
         console.error('[Config] Failed to update runtime config', err);
     });
+}
+
+function isMainFullscreenActive() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+function writeDualFullscreenIntent(enabled) {
+    try {
+        localStorage.setItem(DUAL_FULLSCREEN_STORAGE_KEY, enabled ? '1' : '0');
+    } catch {
+        // ignore storage errors
+    }
+}
+
+function syncMiniFullscreenIntent(enabled, { openIfNeeded = false } = {}) {
+    const desired = Boolean(enabled);
+    writeDualFullscreenIntent(desired);
+
+    if (!STATE.dualHeadEnabled || STATE.dualHeadMode === 'off') return;
+
+    let targetWindow = miniWindowRef;
+    if ((!targetWindow || targetWindow.closed) && desired && openIfNeeded) {
+        targetWindow = ensureMiniWindowOpen();
+    }
+    if (!targetWindow || targetWindow.closed) return;
+
+    try {
+        targetWindow.postMessage({
+            type: MINI_FULLSCREEN_MESSAGE_TYPE,
+            enabled: desired,
+            ts: Date.now(),
+        }, location.origin);
+    } catch (err) {
+        console.warn('[Mini] Failed to post fullscreen intent:', err);
+    }
 }
 
 function openMiniWindow({ focus = true } = {}) {
@@ -44,6 +81,16 @@ function openMiniWindow({ focus = true } = {}) {
     }
     miniWindowRef = opened;
     if (focus) opened.focus();
+
+    // If fullscreen is already active/desired, ask mini to follow once it is ready.
+    const fullscreenToggle = document.getElementById('fullscreen-toggle');
+    const fullscreenDesired = Boolean(fullscreenToggle?.checked || isMainFullscreenActive());
+    if (fullscreenDesired) {
+        setTimeout(() => {
+            syncMiniFullscreenIntent(true, { openIfNeeded: false });
+        }, 400);
+    }
+
     return opened;
 }
 
@@ -150,6 +197,9 @@ function initDualHeadControls() {
             postConfigPatch({ dualHeadEnabled: enabled });
             if (enabled) {
                 ensureMiniWindowOpen();
+                const fullscreenToggle = document.getElementById('fullscreen-toggle');
+                const fullscreenDesired = Boolean(fullscreenToggle?.checked || isMainFullscreenActive());
+                syncMiniFullscreenIntent(fullscreenDesired, { openIfNeeded: false });
             }
         });
     }
@@ -161,6 +211,9 @@ function initDualHeadControls() {
             postConfigPatch({ dualHeadMode: nextMode });
             if (nextMode !== 'off' && enabledToggle?.checked) {
                 ensureMiniWindowOpen();
+                const fullscreenToggle = document.getElementById('fullscreen-toggle');
+                const fullscreenDesired = Boolean(fullscreenToggle?.checked || isMainFullscreenActive());
+                syncMiniFullscreenIntent(fullscreenDesired, { openIfNeeded: false });
             }
         });
     }
@@ -225,7 +278,14 @@ function init() {
     initVadToggle();
     initMuteToggle();
     initNoiseGate();
-    initFullscreenToggle();
+    initFullscreenToggle({
+        onToggleRequested: (enabled) => {
+            syncMiniFullscreenIntent(enabled, { openIfNeeded: Boolean(enabled) });
+        },
+        onStateChanged: (enabled) => {
+            syncMiniFullscreenIntent(enabled, { openIfNeeded: false });
+        },
+    });
     initVerbosityToggle();
     initVoiceSelector();
     initDualHeadControls();

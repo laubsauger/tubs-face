@@ -21,6 +21,8 @@ const REACTION_PAUSE_MS = 420;
 const REMOTE_SPEECH_STALE_MS = 20000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_TIMEOUT_PAD_MS = 1500;
+const DUAL_FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
+const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
 
 let ws = null;
 let ttsQueue = [];
@@ -46,8 +48,117 @@ let mainSpeechWaitTimer = null;
 let localSpeechActive = false;
 let stopIdleBehavior = null;
 let lastMainMotionAt = 0;
+let desiredMiniFullscreen = false;
+let pendingMiniFullscreen = false;
 
 const REMOTE_BLINK_MIN_GAP_MS = 900;
+
+function readDualFullscreenIntent() {
+    try {
+        return localStorage.getItem(DUAL_FULLSCREEN_STORAGE_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function isMiniFullscreenActive() {
+    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
+}
+
+async function requestMiniFullscreen() {
+    const root = document.documentElement;
+    if (root.requestFullscreen) {
+        await root.requestFullscreen();
+        return;
+    }
+    if (root.webkitRequestFullscreen) {
+        root.webkitRequestFullscreen();
+        return;
+    }
+    throw new Error('Fullscreen API unavailable');
+}
+
+async function exitMiniFullscreen() {
+    if (document.exitFullscreen) {
+        await document.exitFullscreen();
+        return;
+    }
+    if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+        return;
+    }
+    throw new Error('Fullscreen API unavailable');
+}
+
+async function applyMiniFullscreenIntent(reason = 'sync') {
+    const active = isMiniFullscreenActive();
+    if (desiredMiniFullscreen === active) {
+        pendingMiniFullscreen = false;
+        return;
+    }
+
+    if (!desiredMiniFullscreen) {
+        pendingMiniFullscreen = false;
+        try {
+            await exitMiniFullscreen();
+        } catch {
+            // ignore
+        }
+        return;
+    }
+
+    try {
+        await requestMiniFullscreen();
+        pendingMiniFullscreen = false;
+    } catch (err) {
+        pendingMiniFullscreen = true;
+        console.log(`[MINI] fullscreen deferred (${reason}): ${err?.message || 'request failed'}`);
+    }
+}
+
+function initMiniFullscreenSync() {
+    desiredMiniFullscreen = readDualFullscreenIntent();
+
+    window.addEventListener('message', (event) => {
+        if (event.origin !== location.origin) return;
+        const msg = event?.data;
+        if (!msg || msg.type !== MINI_FULLSCREEN_MESSAGE_TYPE) return;
+        desiredMiniFullscreen = Boolean(msg.enabled);
+        void applyMiniFullscreenIntent('postMessage');
+    });
+
+    window.addEventListener('storage', (event) => {
+        if (event.key !== DUAL_FULLSCREEN_STORAGE_KEY) return;
+        desiredMiniFullscreen = readDualFullscreenIntent();
+        void applyMiniFullscreenIntent('storage');
+    });
+
+    const retryIfPending = () => {
+        if (!pendingMiniFullscreen || !desiredMiniFullscreen) return;
+        void applyMiniFullscreenIntent('gesture');
+    };
+
+    window.addEventListener('pointerdown', retryIfPending, { passive: true });
+    window.addEventListener('keydown', retryIfPending);
+    window.addEventListener('focus', retryIfPending);
+
+    document.addEventListener('fullscreenchange', () => {
+        if (desiredMiniFullscreen && !isMiniFullscreenActive()) {
+            pendingMiniFullscreen = true;
+        }
+    });
+    document.addEventListener('webkitfullscreenchange', () => {
+        if (desiredMiniFullscreen && !isMiniFullscreenActive()) {
+            pendingMiniFullscreen = true;
+        }
+    });
+
+    if (desiredMiniFullscreen) {
+        setTimeout(() => {
+            void applyMiniFullscreenIntent('init');
+        }, 120);
+    }
+}
 
 function summarizeTurnBeat(beat, index) {
     const actor = String(beat?.actor || 'main');
@@ -645,6 +756,7 @@ function connectWs() {
 
 function init() {
     STATE.faceRenderMode = 'svg';
+    initMiniFullscreenSync();
     initFaceRenderer();
     setFaceRenderMode('svg', { persist: false });
     setMiniExpression('idle');
