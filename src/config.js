@@ -209,6 +209,7 @@ const DEFAULT_SECONDARY_SUBTITLE_ENABLED = normalizeBooleanConfig(process.env.SE
 const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SECONDARY_AUDIO_GAIN || 1.0);
 const DEFAULT_DUAL_HEAD_TURN_POLICY = normalizeDualHeadTurnPolicy(process.env.DUAL_HEAD_TURN_POLICY || 'llm_order');
 const DEFAULT_MUTED = normalizeBooleanConfig(process.env.MUTED || false, 'muted');
+const DEFAULT_AMBIENT_AUDIO_ENABLED = normalizeBooleanConfig(process.env.AMBIENT_AUDIO_ENABLED || true, 'ambientAudioEnabled');
 
 const sessionStats = {
   messagesIn: 0,
@@ -243,7 +244,8 @@ const runtimeConfig = {
   secondaryAudioGain: DEFAULT_SECONDARY_AUDIO_GAIN,
   dualHeadTurnPolicy: DEFAULT_DUAL_HEAD_TURN_POLICY,
   muted: DEFAULT_MUTED,
-  glitchFxEnabled: false,
+  ambientAudioEnabled: DEFAULT_AMBIENT_AUDIO_ENABLED,
+  glitchFxEnabled: true,
   glitchFxBaseColor: '#a855f7',
   secondaryGlitchFxBaseColor: '#22d3ee',
 };
@@ -279,6 +281,7 @@ module.exports = {
   DEFAULT_SECONDARY_AUDIO_GAIN,
   DEFAULT_DUAL_HEAD_TURN_POLICY,
   DEFAULT_MUTED,
+  DEFAULT_AMBIENT_AUDIO_ENABLED,
   normalizeTtsBackend,
   normalizeSttBackend,
   normalizeKokoroVoice,

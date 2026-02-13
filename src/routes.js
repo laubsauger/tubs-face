@@ -812,6 +812,9 @@ function handleRequest(req, res) {
         if (Object.hasOwn(config, 'muted')) {
           config.muted = normalizeBooleanConfig(config.muted, 'muted');
         }
+        if (Object.hasOwn(config, 'ambientAudioEnabled')) {
+          config.ambientAudioEnabled = normalizeBooleanConfig(config.ambientAudioEnabled, 'ambientAudioEnabled');
+        }
         if (Object.hasOwn(config, 'glitchFxEnabled')) {
           config.glitchFxEnabled = normalizeBooleanConfig(config.glitchFxEnabled, 'glitchFxEnabled');
         }

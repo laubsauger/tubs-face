@@ -36,12 +36,14 @@ function runBlink(durationMs = randomBlinkDurationMs()) {
 function applyFaceClass(expr) {
     const wasSpeaking = face.classList.contains('speaking');
     const hadSvg = face.classList.contains('use-svg-renderer');
+    const hadGlitch = face.classList.contains('use-glitch-fx');
     if (expr === 'idle') {
         face.className = idleVariant === 'flat' ? 'idle-flat' : '';
     } else {
         face.className = expr;
     }
     if (hadSvg) face.classList.add('use-svg-renderer');
+    if (hadGlitch) face.classList.add('use-glitch-fx');
     if (wasSpeaking) face.classList.add('speaking');
 }
 

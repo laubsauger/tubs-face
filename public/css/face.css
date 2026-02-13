@@ -187,7 +187,7 @@ body.sleeping #face.use-svg-renderer #face-svg-layer {
   opacity: 0.46;
 }
 
-body.sleeping #face.use-glitch-fx #glitch-fx-canvas {
+body.sleeping #glitch-fx-canvas {
   opacity: 0.46;
 }
 
@@ -308,18 +308,17 @@ body.sleeping #face {
 }
 
 /* ── Glitch FX Canvas ── */
+/* Canvas lives in #center (main) or #mini-root (mini), NOT inside #face.
+   This lets glow/scanline effects fill the entire viewport. */
 #glitch-fx-canvas {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
   pointer-events: none;
-  z-index: 8;
-  display: none;
+  z-index: 5;
 }
 
-#face.use-glitch-fx #glitch-fx-canvas {
-  display: block;
+#face.use-glitch-fx {
+  z-index: 10;
 }
 
 #face.use-glitch-fx #face-svg-layer {

@@ -262,6 +262,13 @@ function setMuted(value) {
     setExpression('idle', { force: true, skipHold: true });
 }
 
+function setAmbientAudioEnabled(value) {
+    const enabled = Boolean(value);
+    STATE.ambientAudioEnabled = enabled;
+    const toggle = document.getElementById('ambient-audio-toggle');
+    if (toggle) toggle.checked = enabled;
+}
+
 function applyConfig(msg) {
     const hasOwn = (key) => Object.prototype.hasOwnProperty.call(msg, key);
     setSleepTimeoutMs(msg.sleepTimeout);
@@ -280,6 +287,7 @@ function applyConfig(msg) {
     if (hasOwn('secondarySubtitleEnabled')) setSecondarySubtitleEnabled(msg.secondarySubtitleEnabled);
     if (hasOwn('secondaryAudioGain')) setSecondaryAudioGain(msg.secondaryAudioGain);
     if (hasOwn('muted')) setMuted(msg.muted);
+    if (hasOwn('ambientAudioEnabled')) setAmbientAudioEnabled(msg.ambientAudioEnabled);
     if (hasOwn('glitchFxEnabled')) {
         const toggle = document.getElementById('glitch-fx-toggle');
         if (msg.glitchFxEnabled) {
@@ -365,6 +373,14 @@ export function handleMessage(msg) {
             }
             break;
         case 'head_speech_state':
+            window.dispatchEvent(new CustomEvent('tubs:head-speech-observed', {
+                detail: {
+                    actor: String(msg?.actor || '').toLowerCase(),
+                    state: String(msg?.state || '').toLowerCase() === 'end' ? 'end' : 'start',
+                    turnId: msg?.turnId || STATE.currentTurnId || null,
+                    ts: Number(msg?.ts) || Date.now(),
+                },
+            }));
             applyHeadSpeechState(msg);
             break;
         case 'turn_script':

@@ -3,8 +3,10 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 import { STATE } from './state.js';
+import { onGazeTargetChanged } from './eye-tracking.js';
+import { onBlink } from './expressions.js';
 
-// ── Default config (ROBOT_FX from docs/Glitch Tool/config.js) ──
+// ── Default config (ROBOT_FX) ──────────────
 
 const DEFAULT_CONFIG = {
     svg: {
@@ -33,7 +35,44 @@ const DEFAULT_CONFIG = {
     },
 };
 
-// ── Module state ────────────────────────────
+// ── Expression shape profiles ──────────────
+// Multipliers/offsets applied to base shapes per expression.
+
+const EXPRESSION_PROFILES = {
+    idle: null,
+    'idle-flat': null,
+    listening: { eyeH: 1.09, eyeW: 1.07 },
+    thinking: { eyeH: 0.5, eyeW: 1.15, eyeDy: 5, mouthW: 0.56, mouthH: 1.4, mouthRound: true },
+    smile: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
+    happy: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
+    sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7 },
+    crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7 },
+    love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5 },
+    sleep: { eyeH: 0.12, eyeDy: 8, mouthW: 0.8, mouthH: 0.5 },
+    angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4 },
+    surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 1.8, mouthRound: true },
+};
+
+// ── Animation constants ───────────────────
+
+const BLINK_CLOSE_MS = 80;
+const BLINK_HOLD_MS = 60;
+const BLINK_OPEN_MS = 80;
+const BLINK_TOTAL_MS = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
+
+const SPEAK_CYCLE_MS = 280;
+const SPEAK_MIN_SCALE = 0.6;
+const SPEAK_MAX_SCALE = 2.0;
+
+const GAZE_EYE_RANGE_X = 0.14;
+const GAZE_EYE_RANGE_Y = 0.09;
+const GAZE_MOUTH_RANGE_X = 0.06;
+const GAZE_MOUTH_RANGE_Y = 0.04;
+const GAZE_LERP = 0.12;
+
+const GLOW_ALPHA = 0.65;
+
+// ── Module state ──────────────────────────
 
 let config;
 let canvas = null;
@@ -41,20 +80,41 @@ let ctx = null;
 let tempCanvas = null;
 let tempCtx = null;
 let animFrameId = null;
-let pixelGrid = [];       // { x, y, hueOff, brightOff, lut }
+
+let pixelGrid = [];
+let shapeGroups = [];   // group index per pixel: 0=leftEye, 1=rightEye, 2=mouth
+let shapeCenters = [];  // { cx, cy } per shape (face-relative CSS coords)
+
 let baseHSL = { h: 271, s: 91, l: 65 };
-let scanBeamRGB = { r: 166, g: 0, b: 255 };
 let startTime = 0;
-let colorLUTs = new Map(); // hue-key → hex-string[101]
+let colorLUTs = new Map();
 let scanlinePattern = null;
 let cachedDpr = 1;
 let cachedGlowFilter = 'blur(14px)';
 let cachedScanBeamRGBA = 'rgba(166,0,255,0.26)';
 let resizeTimer = null;
 
-const GLOW_ALPHA = 0.65;
+let faceEl = null;
+let containerEl = null;
 
-// ── Utility ─────────────────────────────────
+// Face position within the canvas (the canvas fills the viewport container,
+// so we need to know where #face is to draw the pixel grid correctly).
+let baseFaceX = 0;
+let baseFaceY = 0;
+let faceW = 0;
+let faceH = 0;
+
+// Dynamic face state
+let gazeTargetX = 0;
+let gazeTargetY = 0;
+let currentGazeX = 0;
+let currentGazeY = 0;
+let blinkStartTime = 0;
+let blinkActive = false;
+let lastBuiltExpression = '';
+let lastSleepingState = false;
+
+// ── Utility ───────────────────────────────
 
 function hexToHSL(hex) {
     const r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -89,8 +149,6 @@ function hslToRGB(h, s, l) {
     };
 }
 
-// Pre-compute 101 hex color strings for a given (hue, saturation) pair.
-// Indexed by integer lightness 0–100. Eliminates per-frame string alloc.
 function getColorLUT(h, s) {
     const key = (Math.round(h) + 360) % 360;
     let lut = colorLUTs.get(key);
@@ -108,7 +166,6 @@ function applyDerivedColors(hex) {
     const hsl = hexToHSL(hex);
     baseHSL = hsl;
     const sb = hslToRGB(hsl.h, 100, 50);
-    scanBeamRGB = sb;
     cachedScanBeamRGBA = `rgba(${sb.r},${sb.g},${sb.b},0.26)`;
     cachedGlowFilter = `blur(${Math.round(config.glow.pixelGlow * cachedDpr)}px)`;
 }
@@ -132,17 +189,84 @@ function isInsideRoundedRect(px, py, rx, ry, rw, rh, rrx, rry) {
     return dx * dx + dy * dy <= 1;
 }
 
-// ── Canvas sizing ───────────────────────────
+// ── Expression helpers ────────────────────
+
+function getActiveExpression() {
+    if (STATE.sleeping) return 'sleep';
+    return STATE.expression || 'idle';
+}
+
+function getModifiedShapes() {
+    const expr = getActiveExpression();
+    const profile = EXPRESSION_PROFILES[expr] || null;
+    const base = config.svg.shapes;
+    const shapes = base.map(s => ({ ...s }));
+    if (!profile) return shapes;
+
+    // Eyes (shapes 0 and 1)
+    for (let i = 0; i < 2; i++) {
+        const s = shapes[i];
+        const cx = s.x + s.w / 2;
+        const cy = s.y + s.h / 2;
+        if (profile.eyeW) { s.w *= profile.eyeW; s.x = cx - s.w / 2; }
+        if (profile.eyeH) { s.h *= profile.eyeH; s.y = cy - s.h / 2; }
+        if (profile.eyeDy) { s.y += profile.eyeDy; }
+        s.rx = Math.min(s.rx, s.w / 2);
+        s.ry = Math.min(s.ry, s.h / 2);
+    }
+
+    // Mouth (shape 2)
+    const m = shapes[2];
+    const mcx = m.x + m.w / 2;
+    const mcy = m.y + m.h / 2;
+    if (profile.mouthW) { m.w *= profile.mouthW; m.x = mcx - m.w / 2; }
+    if (profile.mouthH) { m.h *= profile.mouthH; m.y = mcy - m.h / 2; }
+    if (profile.mouthRound) { m.rx = Math.min(m.w, m.h) / 2; m.ry = m.rx; }
+    m.rx = Math.min(m.rx, m.w / 2);
+    m.ry = Math.min(m.ry, m.h / 2);
+
+    return shapes;
+}
+
+function getBlinkFactor(now) {
+    if (!blinkActive) return 0;
+    const elapsed = now - blinkStartTime;
+    if (elapsed >= BLINK_TOTAL_MS) { blinkActive = false; return 0; }
+    if (elapsed < BLINK_CLOSE_MS) return elapsed / BLINK_CLOSE_MS;
+    if (elapsed < BLINK_CLOSE_MS + BLINK_HOLD_MS) return 1;
+    return 1 - (elapsed - BLINK_CLOSE_MS - BLINK_HOLD_MS) / BLINK_OPEN_MS;
+}
+
+function getSpeakMouthScale(now) {
+    if (!faceEl || !faceEl.classList.contains('speaking')) return 1;
+    const phase = ((now - startTime) % SPEAK_CYCLE_MS) / SPEAK_CYCLE_MS;
+    return SPEAK_MIN_SCALE + (SPEAK_MAX_SCALE - SPEAK_MIN_SCALE) *
+        (0.5 + 0.5 * Math.sin(phase * Math.PI * 2));
+}
+
+// ── Canvas & layout sizing ────────────────
+
+function computeFacePosition() {
+    if (!faceEl || !containerEl) return;
+    const cr = containerEl.getBoundingClientRect();
+    const fr = faceEl.getBoundingClientRect();
+    // Subtract the current parallax transform to get the base position
+    const lookX = parseFloat(faceEl.style.getPropertyValue('--face-look-x')) || 0;
+    const lookY = parseFloat(faceEl.style.getPropertyValue('--face-look-y')) || 0;
+    baseFaceX = fr.left - cr.left - lookX;
+    baseFaceY = fr.top - cr.top - lookY;
+    faceW = fr.width;
+    faceH = fr.height;
+}
 
 function sizeCanvas() {
-    const face = document.getElementById('face');
-    if (!face || !canvas) return;
-    const rect = face.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+    if (!containerEl || !canvas) return;
+    const cr = containerEl.getBoundingClientRect();
+    if (!cr.width || !cr.height) return;
     const dpr = window.devicePixelRatio || 1;
     cachedDpr = dpr;
-    const pw = Math.round(rect.width * dpr);
-    const ph = Math.round(rect.height * dpr);
+    const pw = Math.round(cr.width * dpr);
+    const ph = Math.round(cr.height * dpr);
     if (canvas.width === pw && canvas.height === ph) return;
     canvas.width = pw;
     canvas.height = ph;
@@ -154,6 +278,7 @@ function sizeCanvas() {
     tempCanvas.width = pw;
     tempCanvas.height = ph;
     cachedGlowFilter = `blur(${Math.round(config.glow.pixelGlow * dpr)}px)`;
+    computeFacePosition();
     rebuildScanlinePattern();
 }
 
@@ -170,18 +295,21 @@ function rebuildScanlinePattern() {
     scanlinePattern = ctx.createPattern(pc, 'repeat');
 }
 
-// ── Pixel grid computation ──────────────────
+// ── Pixel grid computation ────────────────
+// Pixel positions are in face-relative CSS coordinates.
+// The face offset (baseFaceX/Y + parallax) is added at draw time.
 
 function buildPixelGrid() {
     pixelGrid = [];
+    shapeGroups = [];
+    shapeCenters = [];
     colorLUTs.clear();
-    const face = document.getElementById('face');
-    if (!face) return;
-    const rect = face.getBoundingClientRect();
-    const W = rect.width;
-    const H = rect.height;
+    if (!faceEl) return;
+    const W = faceW || faceEl.getBoundingClientRect().width;
+    const H = faceH || faceEl.getBoundingClientRect().height;
     if (!W || !H) return;
 
+    const shapes = getModifiedShapes();
     const vb = config.svg.viewBox;
     const scale = Math.min(W / vb.w, H / vb.h);
     const offsetX = (W - vb.w * scale) / 2;
@@ -192,13 +320,16 @@ function buildPixelGrid() {
     const hueVar = config.color.hueVariation;
     const brightVar = config.color.brightnessVariation;
 
-    for (const shape of config.svg.shapes) {
+    for (let si = 0; si < shapes.length; si++) {
+        const shape = shapes[si];
         const sx = offsetX + shape.x * scale;
         const sy = offsetY + shape.y * scale;
         const sw = shape.w * scale;
         const sh = shape.h * scale;
         const srx = shape.rx * scale;
         const sry = shape.ry * scale;
+
+        shapeCenters.push({ cx: sx + sw / 2, cy: sy + sh / 2 });
 
         const cols = Math.floor(sw / stride);
         const rows = Math.floor(sh / stride);
@@ -224,12 +355,15 @@ function buildPixelGrid() {
                     brightOff: bOff,
                     lut: getColorLUT(baseHSL.h + hOff, baseHSL.s),
                 });
+                shapeGroups.push(si);
             }
         }
     }
+
+    lastBuiltExpression = getActiveExpression();
+    lastSleepingState = STATE.sleeping;
 }
 
-// Rebuild only the color LUTs (preserves grid positions & random offsets)
 function recolorPixelGrid() {
     colorLUTs.clear();
     for (let i = 0; i < pixelGrid.length; i++) {
@@ -237,23 +371,49 @@ function recolorPixelGrid() {
     }
 }
 
-// ── Render loop ─────────────────────────────
+// ── Render loop ───────────────────────────
 
 function renderFrame(now) {
     if (!STATE.glitchFxEnabled) { animFrameId = null; return; }
     animFrameId = requestAnimationFrame(renderFrame);
 
+    // Detect expression/sleep changes → rebuild grid
+    const currentExpr = getActiveExpression();
+    if (currentExpr !== lastBuiltExpression || STATE.sleeping !== lastSleepingState) {
+        buildPixelGrid();
+    }
+
+    // Smooth gaze interpolation
+    currentGazeX += (gazeTargetX - currentGazeX) * GAZE_LERP;
+    currentGazeY += (gazeTargetY - currentGazeY) * GAZE_LERP;
+
     const t = (now - startTime) / 1000;
     const dpr = cachedDpr;
     const pw = canvas.width;
     const ph = canvas.height;
-    const W = pw / dpr;
-    const H = ph / dpr;
+    const W = pw / dpr;   // canvas CSS width (viewport width)
+    const H = ph / dpr;   // canvas CSS height (viewport height)
     if (!pw || !ph) return;
 
     const sz = config.pixel.size;
 
-    // ── Time-based modulators ─────────────
+    // Face parallax offset (reads CSS custom properties set by eye-tracking)
+    const faceLookX = parseFloat(faceEl?.style.getPropertyValue('--face-look-x')) || 0;
+    const faceLookY = parseFloat(faceEl?.style.getPropertyValue('--face-look-y')) || 0;
+    const faceOX = baseFaceX + faceLookX;
+    const faceOY = baseFaceY + faceLookY;
+
+    // Gaze offsets in CSS pixels
+    const eyeGazeX = currentGazeX * faceW * GAZE_EYE_RANGE_X;
+    const eyeGazeY = currentGazeY * faceH * GAZE_EYE_RANGE_Y;
+    const mouthGazeX = currentGazeX * faceW * GAZE_MOUTH_RANGE_X;
+    const mouthGazeY = currentGazeY * faceH * GAZE_MOUTH_RANGE_Y;
+
+    // Blink & speaking
+    const blinkF = getBlinkFactor(now);
+    const mouthScale = getSpeakMouthScale(now);
+
+    // ── Time-based modulators ──
 
     const bp = config.brightnessPulse;
     const pulseMod = bp.enabled
@@ -283,8 +443,8 @@ function renderFrame(now) {
         ? 1 - fl.flickerDepth * (0.5 + 0.5 * Math.sin(t * fl.flickerSpeed * 2))
         : 1;
 
-    // ── Pass 1: Sharp pixels (DPR transform, CSS coords) ──
-    // No shadowBlur — glow is composited via blur drawImage in pass 2.
+    // ── Pass 1: Sharp pixels ──
+    // Pixel positions are face-relative; we add faceOX/OY + gaze offsets.
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, W, H);
@@ -292,21 +452,48 @@ function renderFrame(now) {
     const bsl = baseHSL.l;
     for (let i = 0; i < pixelGrid.length; i++) {
         const p = pixelGrid[i];
+        const group = shapeGroups[i];
+
+        let drawX = p.x + faceOX;
+        let drawY = p.y + faceOY;
+        let drawSzY = sz;
+
+        // Eye gaze + blink (groups 0 and 1)
+        if (group <= 1) {
+            drawX += eyeGazeX;
+            drawY += eyeGazeY;
+            if (blinkF > 0 && shapeCenters[group]) {
+                const centerY = shapeCenters[group].cy + faceOY + eyeGazeY;
+                drawY = centerY + (drawY - centerY) * (1 - blinkF);
+                drawSzY = Math.max(2, sz * (1 - blinkF * 0.85));
+            }
+        }
+
+        // Mouth gaze + speaking (group 2)
+        if (group === 2) {
+            drawX += mouthGazeX;
+            drawY += mouthGazeY;
+            if (mouthScale !== 1 && shapeCenters[2]) {
+                const centerY = shapeCenters[2].cy + faceOY + mouthGazeY;
+                drawY = centerY + (drawY - centerY) * mouthScale;
+            }
+        }
+
+        // Lightness with scan beam
         let l = (bsl + p.brightOff) * pulseMod;
         if (sb.enabled) {
-            const dist = Math.abs(p.y + sz * 0.5 - scanY);
+            const dist = Math.abs(drawY + sz * 0.5 - scanY);
             if (dist < sbHalfW) {
                 l += (1 - dist / sbHalfW) * sb.brightness * 30;
             }
         }
-        // Clamp + round to integer index for LUT
+
         const li = l < 0 ? 0 : l > 100 ? 100 : (l + 0.5) | 0;
         ctx.fillStyle = p.lut[li];
-        ctx.fillRect(p.x, p.y, sz, sz);
+        ctx.fillRect(drawX, drawY, sz, drawSzY);
     }
 
-    // ── Pass 2: Glow bloom (physical pixel space) ──
-    // Copy sharp pixels → temp, then composite blurred glow + sharp back.
+    // ── Pass 2: Glow bloom ──
 
     tempCtx.setTransform(1, 0, 0, 1, 0, 0);
     tempCtx.clearRect(0, 0, pw, ph);
@@ -315,18 +502,15 @@ function renderFrame(now) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, pw, ph);
 
-    // Blurred glow layer
     ctx.filter = cachedGlowFilter;
     ctx.globalAlpha = GLOW_ALPHA * config.glow.bloomIntensity * flickerMod;
     ctx.drawImage(tempCanvas, 0, 0);
 
-    // Sharp pixels on top
     ctx.filter = 'none';
     ctx.globalAlpha = flickerMod;
     ctx.drawImage(tempCanvas, 0, 0);
 
-    // ── Pass 3: Chromatic aberration (physical pixel space) ──
-    // Draw hue-rotated copy of sharp pixels at an offset with lighter blend.
+    // ── Pass 3: Chromatic aberration ──
 
     if (chr.enabled && chr.intensity > 0) {
         ctx.filter = 'hue-rotate(40deg)';
@@ -337,7 +521,7 @@ function renderFrame(now) {
         ctx.globalCompositeOperation = 'source-over';
     }
 
-    // ── Pass 4: Glitch slice (physical pixel space) ──
+    // ── Pass 4: Glitch slice ──
 
     if (inBurst) {
         tempCtx.clearRect(0, 0, pw, ph);
@@ -345,18 +529,17 @@ function renderFrame(now) {
         ctx.clearRect(0, 0, pw, ph);
 
         const sliceH = Math.ceil(ph / gs.sliceCount);
-        for (let i = 0; i < gs.sliceCount; i++) {
+        for (let j = 0; j < gs.sliceCount; j++) {
             if (Math.random() < gs.gapChance) continue;
-            const sy = i * sliceH;
+            const sy = j * sliceH;
             const off = ((Math.random() - 0.5) * 2 * gs.maxOffset * gs.intensity * dpr) | 0;
             ctx.drawImage(tempCanvas, 0, sy, pw, sliceH, off, sy, pw, sliceH);
         }
     }
 
-    // ── Pass 5: Scan beam glow overlay (DPR transform) ──
+    // ── Pass 5: Scan beam glow overlay ──
 
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
     if (sb.enabled) {
         const beamHalf = sb.lineWidth * sz;
         const grad = ctx.createLinearGradient(0, scanY - beamHalf, 0, scanY + beamHalf);
@@ -368,7 +551,7 @@ function renderFrame(now) {
         ctx.fillRect(0, scanY - beamHalf, W, beamHalf * 2);
     }
 
-    // ── Pass 6: Scanlines (physical pixel space, pattern fill) ──
+    // ── Pass 6: Scanlines ──
 
     if (fl.scanlines && scanlinePattern) {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -382,19 +565,20 @@ function renderFrame(now) {
         ctx.restore();
     }
 
-    // Reset for next frame
+    // Reset
     ctx.globalAlpha = 1;
     ctx.filter = 'none';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-// ── Public API ──────────────────────────────
+// ── Public API ────────────────────────────
 
 export function enableGlitchFx() {
     if (STATE.glitchFxEnabled && animFrameId) return;
     STATE.glitchFxEnabled = true;
-    const face = document.getElementById('face');
-    if (face) face.classList.add('use-glitch-fx');
+    if (faceEl) faceEl.classList.add('use-glitch-fx');
+    if (canvas) canvas.style.display = 'block';
+    computeFacePosition();
     sizeCanvas();
     buildPixelGrid();
     startTime = performance.now();
@@ -403,8 +587,8 @@ export function enableGlitchFx() {
 
 export function disableGlitchFx() {
     STATE.glitchFxEnabled = false;
-    const face = document.getElementById('face');
-    if (face) face.classList.remove('use-glitch-fx');
+    if (faceEl) faceEl.classList.remove('use-glitch-fx');
+    if (canvas) canvas.style.display = 'none';
     if (animFrameId) {
         cancelAnimationFrame(animFrameId);
         animFrameId = null;
@@ -433,17 +617,21 @@ export function setGlitchFxConfig(newConfig) {
 
 export function initGlitchFx() {
     config = structuredClone(DEFAULT_CONFIG);
+    faceEl = document.getElementById('face');
+
+    // Find the viewport-filling container to host the canvas
+    containerEl = document.getElementById('center')
+        || document.getElementById('mini-root')
+        || (faceEl && faceEl.parentElement);
 
     canvas = document.createElement('canvas');
     canvas.id = 'glitch-fx-canvas';
+    canvas.style.display = 'none';
     ctx = canvas.getContext('2d');
 
-    const face = document.getElementById('face');
-    const zzzAnchor = document.getElementById('zzz-anchor');
-    if (face && zzzAnchor) {
-        face.insertBefore(canvas, zzzAnchor);
-    } else if (face) {
-        face.appendChild(canvas);
+    if (containerEl) {
+        // Insert at start so it's behind other content in the container
+        containerEl.insertBefore(canvas, containerEl.firstChild);
     }
 
     applyDerivedColors(config.color.base);
@@ -462,17 +650,36 @@ export function initGlitchFx() {
         });
     }
 
-    // Debounced resize
-    if (face) {
+    // Gaze tracking
+    onGazeTargetChanged(({ x, y }) => {
+        gazeTargetX = x;
+        gazeTargetY = y;
+    });
+
+    // Blink animation
+    onBlink(() => {
+        blinkActive = true;
+        blinkStartTime = performance.now();
+    });
+
+    // Debounced resize — recompute face position + rebuild grid
+    const resizeTarget = containerEl || faceEl;
+    if (resizeTarget) {
         new ResizeObserver(() => {
             if (!STATE.glitchFxEnabled) return;
             clearTimeout(resizeTimer);
             resizeTimer = setTimeout(() => {
+                computeFacePosition();
                 sizeCanvas();
                 buildPixelGrid();
             }, 80);
-        }).observe(face);
+        }).observe(resizeTarget);
     }
 
     startTime = performance.now();
+
+    // Auto-enable if state says so
+    if (STATE.glitchFxEnabled) {
+        enableGlitchFx();
+    }
 }

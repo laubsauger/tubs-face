@@ -21,6 +21,7 @@ import { initGlitchFx, setGlitchFxBaseColor } from './glitch-fx.js';
 import { onGazeTargetChanged } from './eye-tracking.js';
 import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
+import { initAmbientAudio } from './ambient-audio.js';
 
 let miniWindowRef = null;
 let motionRelayInitialized = false;
@@ -286,6 +287,17 @@ function initMuteToggle() {
     });
 }
 
+function initAmbientAudioToggle() {
+    const ambientToggle = document.getElementById('ambient-audio-toggle');
+    if (!ambientToggle) return;
+    ambientToggle.checked = STATE.ambientAudioEnabled !== false;
+    ambientToggle.addEventListener('change', () => {
+        const enabled = Boolean(ambientToggle.checked);
+        STATE.ambientAudioEnabled = enabled;
+        postConfigPatch({ ambientAudioEnabled: enabled });
+    });
+}
+
 function initGlitchColorPickers() {
     const mainColor = document.getElementById('glitch-fx-color');
     if (mainColor) {
@@ -321,6 +333,7 @@ function init() {
     initSleepSlider();
     initVadToggle();
     initMuteToggle();
+    initAmbientAudioToggle();
     initNoiseGate();
     initFullscreenToggle({
         onToggleRequested: (enabled) => {
@@ -347,6 +360,7 @@ function init() {
     resetSleepTimer();
     initMicrophone();
     initVAD();
+    initAmbientAudio();
 
     startIdleLoop();
     startUptimeTimer();
