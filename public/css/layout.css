@@ -26,7 +26,7 @@
 .hidden-ui #ptt-indicator,
 .hidden-ui .speech-bubble,
 .hidden-ui #donation-card,
-.hidden-ui #camera-pip {
+.hidden-ui #subtitle {
   opacity: 0 !important;
   pointer-events: none;
 }
@@ -84,8 +84,4 @@ body.sleeping #center {
 
 body.sleeping #center::after {
   opacity: 1;
-}
-
-body.sleeping .panel {
-  filter: brightness(0.15);
 }

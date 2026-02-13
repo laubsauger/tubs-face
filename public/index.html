@@ -78,6 +78,13 @@
           </label>
         </div>
         <div class="stat-row">
+          <span class="stat-label">Mute</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="mute-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
           <span class="stat-label">Noise Gate <span id="noise-gate-val">0.008</span></span>
           <input type="range" id="noise-gate" min="0" max="0.06" step="0.001" value="0.008" class="mini-range">
         </div>
@@ -179,6 +186,48 @@
               <option value="zm_yunyang">Yunyang ZH (M)</option>
             </optgroup>
           </select>
+        </div>
+        <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
+          <span class="stat-label">Two Heads</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="dual-head-enabled">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Head Mode</span>
+          <select id="dual-head-mode" class="mini-select">
+            <option value="off">Off</option>
+            <option value="llm_directed">LLM</option>
+            <option value="mirror">Mirror</option>
+          </select>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Turn Policy</span>
+          <select id="dual-head-turn-policy" class="mini-select">
+            <option value="llm_order">LLM</option>
+            <option value="main_first">Main First</option>
+            <option value="small_first">Small First</option>
+          </select>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Small Voice</span>
+          <select id="secondary-tts-voice" class="mini-select"></select>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Small Subs</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="secondary-subtitle-enabled">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Small Gain <span id="secondary-audio-gain-val">0.90</span></span>
+          <input type="range" id="secondary-audio-gain" min="0" max="1" step="0.05" value="0.9" class="mini-range">
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Mini Window</span>
+          <button id="open-mini-window" class="mini-btn">Open</button>
         </div>
         <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
           <span class="stat-label">Sleep <span id="sleep-timeout-val">10s</span></span>

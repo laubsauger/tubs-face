@@ -1,6 +1,8 @@
 import { STATE } from './state.js';
 import { $, face, eyes, loadingBar } from './dom.js';
 import { setFaceRendererExpression, setFaceRendererSpeaking, blinkSvgEyes } from './face-renderer.js';
+import { lookAt, resetGaze } from './eye-tracking.js';
+import { startIdleBehavior } from './idle-behavior.js';
 
 let idleVariant = 'soft';
 const EXPRESSION_MIN_HOLD_MS = Object.freeze({
@@ -15,6 +17,21 @@ let holdUntilTs = 0;
 let heldExpression = '';
 let holdTimer = null;
 let pendingExpression = null;
+let stopIdleBehavior = null;
+const blinkListeners = new Set();
+
+function randomBlinkDurationMs() {
+    return 95 + Math.floor(Math.random() * 90); // 95-184ms
+}
+
+function runBlink(durationMs = randomBlinkDurationMs()) {
+    const ms = Math.max(70, Math.min(260, Number(durationMs) || 140));
+    eyes.forEach((eye) => eye.classList.add('blink'));
+    setTimeout(() => {
+        eyes.forEach((eye) => eye.classList.remove('blink'));
+    }, ms);
+    blinkSvgEyes();
+}
 
 function applyFaceClass(expr) {
     const wasSpeaking = face.classList.contains('speaking');
@@ -103,17 +120,33 @@ export function setExpression(expr, options = {}) {
 }
 
 export function triggerBlink() {
-    eyes.forEach(e => e.classList.add('blink'));
-    setTimeout(() => eyes.forEach(e => e.classList.remove('blink')), 150);
-    blinkSvgEyes();
+    for (const listener of blinkListeners) {
+        try {
+            listener();
+        } catch {
+            // ignore listener errors
+        }
+    }
+    runBlink();
 }
 
 export function blink() {
-    eyes.forEach(eye => eye.classList.add('blink'));
-    setTimeout(() => {
-        eyes.forEach(eye => eye.classList.remove('blink'));
-    }, 150);
-    blinkSvgEyes();
+    for (const listener of blinkListeners) {
+        try {
+            listener();
+        } catch {
+            // ignore listener errors
+        }
+    }
+    runBlink();
+}
+
+export function onBlink(listener) {
+    if (typeof listener !== 'function') return () => {};
+    blinkListeners.add(listener);
+    return () => {
+        blinkListeners.delete(listener);
+    };
 }
 
 export function startSpeaking() {
@@ -127,26 +160,17 @@ export function stopSpeaking() {
 }
 
 export function startIdleLoop() {
+    if (typeof stopIdleBehavior === 'function') return;
     setIdleVariant('soft');
-
-    setInterval(() => {
-        if (STATE.sleeping) return;
-        blink();
-    }, 4000 + Math.random() * 2000);
-
-    setInterval(() => {
-        if (STATE.sleeping || STATE.speaking || STATE.expression !== 'idle') return;
-
-        const r = Math.random();
-        if (r < 0.45) {
-            setExpression('smile');
-            setTimeout(() => {
-                if (STATE.expression === 'smile') setExpression('idle');
-            }, 1300 + Math.random() * 900);
-            return;
-        }
-
-        // Keep idle approachable on average, but preserve occasional straight-neutral look.
-        setIdleVariant(r < 0.85 ? 'soft' : 'flat');
-    }, 5000);
+    stopIdleBehavior = startIdleBehavior({
+        isSleeping: () => STATE.sleeping,
+        isSpeaking: () => STATE.speaking,
+        getExpression: () => STATE.expression,
+        setExpression: (expr) => setExpression(expr),
+        setIdleVariant,
+        blink,
+        lookAt,
+        resetGaze,
+        canLookAround: () => !STATE.presenceDetected,
+    });
 }

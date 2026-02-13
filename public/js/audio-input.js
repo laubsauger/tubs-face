@@ -36,6 +36,11 @@ let micReady = false;
 let visualizeRafId = null;
 const ECHO_COOLDOWN_MS = 1500; // ignore mic input briefly after TTS ends
 
+// Barge-in requires noticeably louder speech than the normal noise gate
+// to filter out background chatter and distant voices
+const BARGE_IN_RMS_FLOOR = 0.03; // absolute minimum RMS for barge-in
+const BARGE_IN_GATE_MULTIPLIER = 4; // barge-in threshold = noise gate × this
+
 export function isVadActive() {
     return vadActive;
 }
@@ -102,17 +107,30 @@ export async function initVAD() {
                 if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) return;
 
                 // Barge-in: user starts speaking while Tubs is talking.
-                // Requires sustained speech (1.5s) to confirm — not every little sound.
+                // Requires sustained LOUD speech to confirm — background chatter
+                // and distant voices are filtered out by RMS volume check.
                 if (STATE.speaking && STATE.currentTurnId) {
+                    const rms = getCurrentMicRMS();
+                    const threshold = getBargeInThreshold();
+                    if (rms < threshold) {
+                        console.log(`[VAD] Barge-in ignored — too quiet (RMS ${rms.toFixed(4)} < ${threshold.toFixed(4)})`);
+                        return;
+                    }
                     bargeInCount++;
-                    console.log(`[VAD] Possible barge-in #${bargeInCount} — waiting for sustained speech`);
+                    console.log(`[VAD] Possible barge-in #${bargeInCount} (RMS ${rms.toFixed(4)}) — waiting for sustained speech`);
                     if (bargeInTimer) clearTimeout(bargeInTimer);
                     bargeInTimer = setTimeout(() => {
                         bargeInTimer = null;
                         if (!STATE.speaking) { bargeInCount = 0; return; }
-                        // Need at least 2 consecutive speech-start events to confirm
                         if (bargeInCount < 2) { bargeInCount = 0; return; }
-                        console.log('[VAD] Barge-in confirmed! Stopping TTS and interrupting.');
+                        // Final volume check at confirmation time
+                        const confirmRms = getCurrentMicRMS();
+                        if (confirmRms < threshold) {
+                            console.log(`[VAD] Barge-in cancelled — quiet at confirmation (RMS ${confirmRms.toFixed(4)})`);
+                            bargeInCount = 0;
+                            return;
+                        }
+                        console.log(`[VAD] Barge-in confirmed! (RMS ${confirmRms.toFixed(4)}) Stopping TTS.`);
                         bargeInCount = 0;
                         const turnId = STATE.currentTurnId;
                         stopAllTTS();
@@ -141,6 +159,11 @@ export async function initVAD() {
                 clearInterruptionTimer();
                 clearMaxChunkTimer();
                 if (!vadActive || STATE.sleeping) return;
+                // Don't process audio while Tubs is speaking — it's likely echo
+                if (STATE.speaking) {
+                    console.log('[VAD] Ignoring speech end — Tubs is speaking (likely echo)');
+                    return;
+                }
                 if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) {
                     console.log('[VAD] Ignoring speech end — echo cooldown');
                     setExpression('idle');
@@ -176,21 +199,53 @@ export async function initVAD() {
 
 export function initVadToggle() {
     $('#vad-toggle').addEventListener('change', (e) => {
-        vadActive = e.target.checked;
-        if (vadActive) {
-            logChat('sys', 'Always On: ENABLED');
-            pttIndicator.textContent = 'Listening (Always On)';
-            pttIndicator.classList.add('mic-ready');
-            waveformContainer.classList.add('active');
-            updateWaveformMode();
-            startVisualize();
-        } else {
-            logChat('sys', 'Always On: DISABLED');
-            pttIndicator.textContent = 'Hold Space to Talk';
-            waveformContainer.classList.remove('active');
-            $('#stat-listen-state').textContent = 'Idle';
-        }
+        applyVadToggleState(Boolean(e.target.checked), { silent: false });
     });
+}
+
+function applyVadToggleState(enabled, { silent = false } = {}) {
+    vadActive = Boolean(enabled);
+    const toggle = $('#vad-toggle');
+    if (toggle) toggle.checked = vadActive;
+
+    if (vadActive) {
+        if (!silent) logChat('sys', 'Always On: ENABLED');
+        pttIndicator.textContent = 'Listening (Always On)';
+        pttIndicator.classList.add('mic-ready');
+        waveformContainer.classList.add('active');
+        updateWaveformMode();
+        startVisualize();
+        return;
+    }
+
+    if (!silent) logChat('sys', 'Always On: DISABLED');
+    pttIndicator.textContent = 'Hold Space to Talk';
+    waveformContainer.classList.remove('active');
+    $('#stat-listen-state').textContent = 'Idle';
+}
+
+export function setAlwaysOnEnabled(enabled, options = {}) {
+    applyVadToggleState(Boolean(enabled), options);
+}
+
+export function setInputMuted(muted) {
+    const nextMuted = Boolean(muted);
+    STATE.muted = nextMuted;
+
+    if (!nextMuted) return;
+
+    setAlwaysOnEnabled(false, { silent: true });
+    clearInterruptionTimer();
+    clearMaxChunkTimer();
+    interrupted = false;
+    isTranscribing = false;
+
+    if (STATE.recording) {
+        stopRecording();
+    }
+
+    $('#stat-listen-state').textContent = 'Idle';
+    updateWaveformMode();
 }
 
 export function initNoiseGate() {
@@ -213,6 +268,18 @@ function computeRMS(float32Array) {
     return Math.sqrt(sum / float32Array.length);
 }
 
+/** Live mic RMS from analyser node — used for barge-in volume checks */
+function getCurrentMicRMS() {
+    if (!analyser) return 0;
+    const data = new Float32Array(analyser.fftSize);
+    analyser.getFloatTimeDomainData(data);
+    return computeRMS(data);
+}
+
+function getBargeInThreshold() {
+    return Math.max(BARGE_IN_RMS_FLOOR, (STATE.vadNoiseGate || 0.008) * BARGE_IN_GATE_MULTIPLIER);
+}
+
 async function processVadAudio(float32Array) {
     const rms = computeRMS(float32Array);
     const gate = STATE.vadNoiseGate || 0;
@@ -231,6 +298,7 @@ async function processVadAudio(float32Array) {
 }
 
 async function sendVoiceSegment(blob) {
+    if (STATE.muted) return;
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
         return;
@@ -454,7 +522,7 @@ export function startRecording() {
         sleeping: STATE.sleeping,
         micReady: micReady
     });
-    if (STATE.recording || STATE.sleeping || !micReady) return;
+    if (STATE.recording || STATE.sleeping || !micReady || STATE.muted) return;
 
     if (audioContext.state === 'suspended') audioContext.resume();
 
@@ -520,6 +588,7 @@ function startVisualize() {
 }
 
 async function sendVoice(blob, isVad = false) {
+    if (STATE.muted) return;
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
         return;

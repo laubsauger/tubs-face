@@ -28,7 +28,14 @@ export const STATE = {
     faceRenderMode: 'svg',
     chatVerbosity: 'all',
     // Kokoro TTS voice
-    kokoroVoice: 'af_heart',
+    kokoroVoice: 'hm_omega',
+    secondaryVoice: 'jf_tebukuro',
+    secondaryAudioGain: 0.9,
+    secondarySubtitleEnabled: false,
+    dualHeadEnabled: false,
+    dualHeadMode: 'off',
+    dualHeadTurnPolicy: 'llm_order',
+    muted: false,
     // Audio noise gate — minimum RMS energy (0.0–1.0) for VAD audio to be sent
     vadNoiseGate: 0.008,
     // Streaming turn tracking

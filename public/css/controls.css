@@ -95,6 +95,23 @@
   box-shadow: 0 0 0 1px rgba(0, 229, 160, 0.2);
 }
 
+.mini-btn {
+  min-width: 52px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid rgba(60, 70, 110, 0.55);
+  background: rgba(16, 20, 32, 0.8);
+  color: var(--text-bright);
+  font-size: 10px;
+  font-family: 'Outfit', sans-serif;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  border-color: rgba(0, 229, 160, 0.55);
+}
+
 .face-render-controls {
   display: inline-flex;
   align-items: center;

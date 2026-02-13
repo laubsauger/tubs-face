@@ -2,15 +2,18 @@ import { STATE } from './state.js';
 import { $, loadingBar } from './dom.js';
 import { logChat } from './chat-log.js';
 import { setExpression } from './expressions.js';
-import { enqueueSpeech } from './tts.js';
+import { enqueueSpeech, stopAllTTS, enqueueTurnScript, applyHeadSpeechState } from './tts.js';
 import { hideDonationQr, showDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
 import { setFaceRenderMode } from './face-renderer.js';
 import { resetProactiveTimer } from './proactive.js';
-import { updateWaveformMode } from './audio-input.js';
+import { updateWaveformMode, setInputMuted } from './audio-input.js';
+import { buildLocalTurnTimeline } from './turn-script.js';
+import { clearFaceVisionReactionsForMute } from './face/results.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
+const MUTED_ALLOWED_TYPES = new Set(['config', 'stats', 'ping', 'system', 'error', 'sleep', 'wake']);
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
 const DONATION_SIGNAL_MODES = new Set(['both', 'implied', 'confident', 'off']);
 const DONATION_CONFIRM_RE = /\b(?:i(?:'ve| have| just)?\s*(?:sent|donated|paid|venmoed)|sent you|i got you|i did donate|donation sent|venmo sent|paid you)\b/i;
@@ -20,6 +23,20 @@ const DONATION_JOY_DURATION_MS = 1800;
 let donationJoyUntil = 0;
 let donationJoyResetTimer = null;
 let conversationExpireTimer = null;
+
+function summarizeTurnBeat(beat, index) {
+    const actor = String(beat?.actor || 'main');
+    const action = String(beat?.action || 'speak');
+    const emoji = beat?.emotion?.emoji || '-';
+    const text = String(beat?.text || '').replace(/\s+/g, ' ').trim();
+    const preview = text.length > 56 ? `${text.slice(0, 56)}...` : text;
+    return `${index}:${actor}/${action}/${emoji}${preview ? ` "${preview}"` : ''}`;
+}
+
+function summarizeTurnScript(beats) {
+    if (!Array.isArray(beats) || beats.length === 0) return '[none]';
+    return beats.map((beat, idx) => summarizeTurnBeat(beat, idx)).join(' | ');
+}
 
 function isDonationJoyActive(now = Date.now()) {
     return now < donationJoyUntil;
@@ -164,7 +181,68 @@ function setKokoroVoice(value) {
     if (select) select.value = value;
 }
 
+function setSecondaryVoice(value) {
+    if (!value) return;
+    STATE.secondaryVoice = value;
+    const select = document.getElementById('secondary-tts-voice');
+    if (select) select.value = value;
+}
+
+function setDualHeadEnabled(value) {
+    STATE.dualHeadEnabled = Boolean(value);
+    const toggle = document.getElementById('dual-head-enabled');
+    if (toggle) toggle.checked = STATE.dualHeadEnabled;
+}
+
+function setDualHeadMode(value) {
+    if (!value) return;
+    STATE.dualHeadMode = value;
+    const select = document.getElementById('dual-head-mode');
+    if (select) select.value = value;
+}
+
+function setDualHeadTurnPolicy(value) {
+    if (!value) return;
+    STATE.dualHeadTurnPolicy = value;
+    const select = document.getElementById('dual-head-turn-policy');
+    if (select) select.value = value;
+}
+
+function setSecondarySubtitleEnabled(value) {
+    STATE.secondarySubtitleEnabled = Boolean(value);
+    const toggle = document.getElementById('secondary-subtitle-enabled');
+    if (toggle) toggle.checked = STATE.secondarySubtitleEnabled;
+}
+
+function setSecondaryAudioGain(value) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return;
+    STATE.secondaryAudioGain = Math.max(0, Math.min(1, parsed));
+    const slider = document.getElementById('secondary-audio-gain');
+    const label = document.getElementById('secondary-audio-gain-val');
+    if (slider) slider.value = String(STATE.secondaryAudioGain);
+    if (label) label.textContent = STATE.secondaryAudioGain.toFixed(2);
+}
+
+function setMuted(value) {
+    const muted = Boolean(value);
+    STATE.muted = muted;
+    const toggle = document.getElementById('mute-toggle');
+    if (toggle) toggle.checked = muted;
+    setInputMuted(muted);
+    if (!muted) {
+        updateWaveformMode();
+        return;
+    }
+    stopAllTTS();
+    clearFaceVisionReactionsForMute();
+    hideDonationQr();
+    loadingBar.classList.remove('active');
+    setExpression('idle', { force: true, skipHold: true });
+}
+
 function applyConfig(msg) {
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(msg, key);
     setSleepTimeoutMs(msg.sleepTimeout);
     setModel(msg.model);
     setDonationSignalMode(msg.donationSignalMode);
@@ -172,11 +250,24 @@ function applyConfig(msg) {
     setRenderMode(msg.faceRenderMode);
     if (msg.vadNoiseGate != null) setNoiseGate(msg.vadNoiseGate);
     if (msg.kokoroVoice) setKokoroVoice(msg.kokoroVoice);
+    if (hasOwn('dualHeadEnabled')) setDualHeadEnabled(msg.dualHeadEnabled);
+    if (msg.dualHeadMode) setDualHeadMode(msg.dualHeadMode);
+    if (msg.dualHeadTurnPolicy) setDualHeadTurnPolicy(msg.dualHeadTurnPolicy);
+    if (msg.secondaryVoice) setSecondaryVoice(msg.secondaryVoice);
+    if (hasOwn('secondarySubtitleEnabled')) setSecondarySubtitleEnabled(msg.secondarySubtitleEnabled);
+    if (hasOwn('secondaryAudioGain')) setSecondaryAudioGain(msg.secondaryAudioGain);
+    if (hasOwn('muted')) setMuted(msg.muted);
 }
 
 export function handleMessage(msg) {
     if (!NON_ACTIVITY_TYPES.has(msg.type)) {
         STATE.lastActivity = Date.now();
+    }
+
+    if (STATE.muted) {
+        if (!MUTED_ALLOWED_TYPES.has(msg.type)) {
+            return;
+        }
     }
 
     switch (msg.type) {
@@ -196,6 +287,13 @@ export function handleMessage(msg) {
             resetProactiveTimer();
             break;
         case 'turn_start':
+            // New turn — flush any speech still queued from the previous turn
+            if (STATE.currentTurnId && STATE.currentTurnId !== msg.turnId) {
+                if (STATE.speaking || STATE.ttsQueue?.length > 0) {
+                    console.log(`[MSG] New turn ${msg.turnId} — flushing stale speech from ${STATE.currentTurnId}`);
+                    stopAllTTS();
+                }
+            }
             STATE.currentTurnId = msg.turnId;
             break;
         case 'speak_chunk':
@@ -219,6 +317,26 @@ export function handleMessage(msg) {
             }
             if (msg.donation?.show) {
                 showDonationQr(msg.donation);
+            }
+            break;
+        case 'head_speech_state':
+            applyHeadSpeechState(msg);
+            break;
+        case 'turn_script':
+            if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            console.log(`[MSG] turn_script turnId=${msg.turnId} beats=${msg.beats?.length || 0}`);
+            logChat('sys', `TURN ${msg.turnId || 'n/a'} ${summarizeTurnScript(msg.beats || [])}`);
+            {
+                const timeline = buildLocalTurnTimeline(msg.beats || [], 'main');
+                if (timeline.length === 0) break;
+                enqueueTurnScript(timeline, msg.donation || null);
+                for (const beat of timeline) {
+                    if (beat?.action !== 'speak' || !beat?.text) continue;
+                    const emojiTag = beat?.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
+                    logChat('out', emojiTag + beat.text);
+                }
+                STATE.totalMessages++;
+                resetProactiveTimer();
             }
             break;
         case 'backchannel':
@@ -271,10 +389,10 @@ export function handleMessage(msg) {
             break;
         case 'sleep':
             hideDonationQr();
-            enterSleep();
+            enterSleep({ sync: false });
             break;
         case 'wake':
-            exitSleep();
+            exitSleep({ sync: false });
             break;
         case 'stats':
             applyStats(msg);

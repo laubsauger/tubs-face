@@ -1,0 +1,53 @@
+body.mini-window {
+  margin: 0;
+  background: radial-gradient(circle at 25% 20%, #1a2136 0%, #0a0e18 68%);
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#mini-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+#mini-face-wrap {
+  position: relative;
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+#face {
+  width: min(calc(100vw - 16px), calc((100vh - 16px) * 1.25));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+}
+
+#mini-reaction {
+  position: absolute;
+  right: 8px;
+  top: 8px;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(142, 160, 242, 0.45);
+  background: rgba(8, 12, 20, 0.68);
+  font-size: 15px;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+#mini-reaction.visible {
+  opacity: 1;
+}

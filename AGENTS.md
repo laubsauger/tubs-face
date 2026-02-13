@@ -23,7 +23,13 @@ Default runtime config:
   "llmModel": "gemini-2.5-flash",
   "llmMaxOutputTokens": 256,
   "donationSignalMode": "both",
-  "faceRenderMode": "svg"
+  "faceRenderMode": "svg",
+  "dualHeadEnabled": false,
+  "dualHeadMode": "off",
+  "secondaryVoice": "am_puck",
+  "secondarySubtitleEnabled": false,
+  "secondaryAudioGain": 0.9,
+  "dualHeadTurnPolicy": "llm_order"
 }
 ```
 
@@ -39,6 +45,7 @@ Default runtime config:
   - Short rolling memory and token/cost accounting are included in session stats.
   - Replies may append one supported trailing emoji token, which maps to face emotion cues.
   - Supported emoji cues: `🙂`, `😄`, `😏`, `🥺`, `😢`, `😤`, `🤖`, `🫶`.
+  - Optional dual-head mode: one LLM call can return an ordered `turn_script` (`main` + `small` beats). Main window renders `main`; `mini.html` renders `small`.
 - Listening / voice input:
   - Browser captures audio (`MediaRecorder` + Web Audio visualization).
   - Audio is sent to `POST /voice` on the bridge.

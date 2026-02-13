@@ -57,6 +57,7 @@ const DEFAULT_MIN_FACE_BOX_AREA_RATIO = 0.02;
 const GREETING_COOLDOWN = 120000; // 2 minutes
 const lastGreetedByName = new Map(); // name -> timestamp
 const PERSON_FORGET_AFTER_MS = 60 * 1000;
+let mutedVisionSuppressionApplied = false;
 
 function pruneTrackedNames(nowTs) {
     const staleNames = [];
@@ -76,7 +77,7 @@ function pruneTrackedNames(nowTs) {
 }
 
 function maybeCryAfterNoDonation(name, firstSeenTs) {
-    if (STATE.sleeping || STATE.speaking) return;
+    if (STATE.muted || STATE.sleeping || STATE.speaking) return;
     const donationTs = STATE.lastDonationSignalAt || 0;
     if (donationTs >= firstSeenTs) return;
     if (Date.now() - lastCryAt < CRY_COOLDOWN) return;
@@ -114,6 +115,47 @@ function maybeCryAfterNoDonation(name, firstSeenTs) {
             setExpression('idle');
         }
     }, CRYING_RESET_DELAY_MS);
+}
+
+function clearDepartureTracking() {
+    for (const timer of departureTimers.values()) {
+        clearTimeout(timer);
+    }
+    departureTimers.clear();
+    lastSeenByName.clear();
+    firstSeenByName.clear();
+    seenFramesByName.clear();
+    departureEligibleNames.clear();
+}
+
+function suppressVisionReactionsNow({ notifyPresenceOff = true } = {}) {
+    clearTimeout(presenceTimer);
+    presenceTimer = null;
+    clearDepartureTracking();
+    wakeGreetedNames = null;
+    prevRecognizedNames = new Set();
+    prevFaceCount = 0;
+
+    STATE.facesDetected = 0;
+    STATE.personsPresent = [];
+    badge.classList.remove('visible');
+
+    if (STATE.presenceDetected) {
+        STATE.presenceDetected = false;
+        onPresenceChanged(false);
+        if (notifyPresenceOff) {
+            sendPresence(false, [], 0);
+        }
+    }
+
+    setLastFaceSeen(0);
+    setLastNoFaceTime(Date.now());
+    resetGaze();
+}
+
+export function clearFaceVisionReactionsForMute() {
+    suppressVisionReactionsNow({ notifyPresenceOff: true });
+    mutedVisionSuppressionApplied = true;
 }
 
 function getMinFaceBoxAreaRatio() {
@@ -157,6 +199,15 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
     if (embStr) status += ` (${embStr})`;
     status += ` · ${intervalStr}`;
     statusEl.textContent = status;
+
+    if (STATE.muted) {
+        if (!mutedVisionSuppressionApplied) {
+            suppressVisionReactionsNow({ notifyPresenceOff: true });
+            mutedVisionSuppressionApplied = true;
+        }
+        return;
+    }
+    mutedVisionSuppressionApplied = false;
 
     const recognized = [];
     const debugFaces = [];
@@ -284,6 +335,12 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
         if (!departureTimers.has(name)) {
             departureTimers.set(name, setTimeout(() => {
                 departureTimers.delete(name);
+                if (STATE.muted) {
+                    seenFramesByName.delete(name);
+                    departureEligibleNames.delete(name);
+                    firstSeenByName.delete(name);
+                    return;
+                }
                 // Confirm they're still gone
                 if (!prevRecognizedNames.has(name)) {
                     const wasDepartureEligible = departureEligibleNames.has(name);
@@ -445,11 +502,7 @@ function checkPresenceTimeout() {
         prevRecognizedNames = new Set();
         prevFaceCount = 0;
         // Clean up departure tracking
-        for (const timer of departureTimers.values()) clearTimeout(timer);
-        departureTimers.clear();
-        firstSeenByName.clear();
-        seenFramesByName.clear();
-        departureEligibleNames.clear();
+        clearDepartureTracking();
         badge.classList.remove('visible');
         sendPresence(false, [], 0);
         onPresenceChanged(false);

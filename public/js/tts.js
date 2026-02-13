@@ -4,11 +4,25 @@ import { setExpression, startSpeaking, stopSpeaking } from './expressions.js';
 import { showDonationQr } from './donation-ui.js';
 import { clearInterruptionTimer } from './audio-input.js';
 import { suggestEmotionExpression } from './emotion-engine.js';
+import { createSubtitleController } from './subtitles.js';
 
 const DONATION_HINT_RE = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
+const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
 
 const INTER_UTTERANCE_PAUSE_MS = 220;
 const POST_SPEECH_IDLE_DELAY_MS = 350;
+const REACTION_PAUSE_MS = 420;
+const REMOTE_SPEECH_STALE_MS = 20000;
+const REMOTE_WAIT_POLL_MS = 90;
+const REMOTE_WAIT_TIMEOUT_PAD_MS = 1500;
+
+const subtitles = createSubtitleController(subtitleEl);
+let speechSafetyTimer = null;
+let currentAudioElement = null;
+let lastEmotion = null;
+let remoteSmallSpeaking = false;
+let remoteSmallSpeakingUntil = 0;
+let remoteWaitTimer = null;
 
 function inferDonationFromText(text) {
     if (!DONATION_HINT_RE.test(String(text || ''))) return null;
@@ -19,195 +33,140 @@ function inferDonationFromText(text) {
     };
 }
 
-// ── Subtitle system ──
-
-const MAX_SEGMENT_CHARS = 36;
-let subtitleTimer = null;
-
 function normalizeSpeechText(text) {
     return String(text ?? '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
+        .replace(DONATION_MARKER_RE, ' ')
         .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-        // Strip any emoji that slipped through — TTS should never read emoji aloud
         .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, '')
         .replace(/\s+/g, ' ')
         .trim();
 }
-let subtitleRafId = null;
-let subtitleAudioRef = null;
 
-function segmentText(text) {
-    const words = text.split(/\s+/).filter(Boolean);
-    const segments = [];
-    let current = [];
-    let len = 0;
-
-    for (const w of words) {
-        const added = len === 0 ? w.length : len + 1 + w.length;
-        if (added > MAX_SEGMENT_CHARS && current.length > 0) {
-            segments.push(current);
-            current = [w];
-            len = w.length;
-        } else {
-            current.push(w);
-            len = added;
-        }
-    }
-    if (current.length) segments.push(current);
-    return segments;
-}
-
-function renderSegment(words) {
-    subtitleEl.innerHTML = words.map(w => `<span class="word">${w}</span> `).join('');
-    subtitleEl.classList.add('visible');
-}
-
-/**
- * Start subtitles synced to an audio element or a fixed duration.
- * @param {string} text  Full speech text
- * @param {HTMLAudioElement|number} source  Audio element (synced) or duration in seconds (interval-based)
- */
 function startSubtitles(text, source) {
-    stopSubtitles();
-    const segments = segmentText(text);
-    const totalWords = segments.reduce((n, seg) => n + seg.length, 0);
-    if (!totalWords) return;
-
-    // Build segment boundary map
-    let cumWords = 0;
-    const segBounds = segments.map(seg => {
-        const start = cumWords;
-        cumWords += seg.length;
-        return { start, end: cumWords, words: seg };
-    });
-
-    let currentSegIdx = -1;
-    let lastWordInSeg = -1;
-
-    function updateHighlightTo(globalIdx) {
-        // Find which segment this word belongs to
-        let segIdx = 0;
-        for (let i = 0; i < segBounds.length; i++) {
-            if (globalIdx >= segBounds[i].start && globalIdx < segBounds[i].end) {
-                segIdx = i;
-                break;
-            }
-        }
-
-        // Switch segment if needed
-        if (segIdx !== currentSegIdx) {
-            currentSegIdx = segIdx;
-            renderSegment(segBounds[segIdx].words);
-            lastWordInSeg = -1;
-        }
-
-        // Highlight up to target word in current segment
-        const localIdx = globalIdx - segBounds[segIdx].start;
-        if (localIdx > lastWordInSeg) {
-            const wordEls = subtitleEl.querySelectorAll('.word');
-            for (let i = lastWordInSeg + 1; i <= localIdx; i++) {
-                if (i > 0 && wordEls[i - 1]) {
-                    wordEls[i - 1].classList.remove('active');
-                    wordEls[i - 1].classList.add('spoken');
-                }
-                if (wordEls[i]) wordEls[i].classList.add('active');
-            }
-            lastWordInSeg = localIdx;
-        }
-    }
-
-    subtitleEl.classList.add('visible');
-
-    if (source instanceof HTMLAudioElement && isFinite(source.duration) && source.duration > 0) {
-        // Audio-synced mode: use requestAnimationFrame + audio.currentTime
-        subtitleAudioRef = source;
-        const duration = source.duration;
-
-        // Show first segment immediately
-        currentSegIdx = 0;
-        renderSegment(segBounds[0].words);
-
-        function tick() {
-            if (!subtitleAudioRef || subtitleAudioRef.ended) return;
-
-            const t = Math.min(subtitleAudioRef.currentTime / duration, 0.99);
-            const globalIdx = Math.min(Math.floor(t * totalWords), totalWords - 1);
-            if (globalIdx >= 0) updateHighlightTo(globalIdx);
-
-            subtitleRafId = requestAnimationFrame(tick);
-        }
-
-        subtitleRafId = requestAnimationFrame(tick);
-    } else {
-        // Duration-based fallback (for SpeechSynthesis or unknown duration)
-        const duration = (typeof source === 'number' && source > 0) ? source : totalWords * 0.35;
-        const msPerWord = (duration * 0.85 * 1000) / totalWords;
-        let flatIdx = 0;
-
-        // Show first segment immediately
-        currentSegIdx = 0;
-        renderSegment(segBounds[0].words);
-
-        subtitleTimer = setInterval(() => {
-            if (flatIdx >= totalWords) {
-                stopSubtitles();
-                return;
-            }
-            updateHighlightTo(flatIdx);
-            flatIdx++;
-        }, msPerWord);
-    }
+    subtitles.start(text, source);
 }
 
 function stopSubtitles() {
-    if (subtitleRafId) {
-        cancelAnimationFrame(subtitleRafId);
-        subtitleRafId = null;
-    }
-    subtitleAudioRef = null;
-    clearInterval(subtitleTimer);
-    subtitleTimer = null;
-    subtitleEl.classList.remove('visible');
+    subtitles.stop();
 }
 
-// ── Speech safety timeout ──
-
-let speechSafetyTimer = null;
-
 function clearSpeechSafety() {
-    if (speechSafetyTimer) {
-        clearTimeout(speechSafetyTimer);
-        speechSafetyTimer = null;
+    if (!speechSafetyTimer) return;
+    clearTimeout(speechSafetyTimer);
+    speechSafetyTimer = null;
+}
+
+function emitHeadSpeechState(state, turnId = null) {
+    const detail = {
+        actor: 'main',
+        state: state === 'end' ? 'end' : 'start',
+        turnId: turnId || STATE.currentTurnId || null,
+        ts: Date.now(),
+    };
+    window.dispatchEvent(new CustomEvent('tubs:head-speech-state', { detail }));
+}
+
+function clearRemoteWaitTimer() {
+    if (!remoteWaitTimer) return;
+    clearTimeout(remoteWaitTimer);
+    remoteWaitTimer = null;
+}
+
+function markRemoteSmallSpeaking(isSpeaking, ts = Date.now()) {
+    remoteSmallSpeaking = Boolean(isSpeaking);
+    remoteSmallSpeakingUntil = remoteSmallSpeaking ? (ts + REMOTE_SPEECH_STALE_MS) : 0;
+}
+
+function isRemoteSmallSpeakingNow() {
+    if (!remoteSmallSpeaking) return false;
+    if (Date.now() > remoteSmallSpeakingUntil) {
+        remoteSmallSpeaking = false;
+        remoteSmallSpeakingUntil = 0;
+        return false;
+    }
+    return true;
+}
+
+function shouldGateMainSpeech() {
+    if (!STATE.dualHeadEnabled || STATE.dualHeadMode === 'off') return false;
+    return isRemoteSmallSpeakingNow();
+}
+
+function isRemoteActorSpeaking(actor) {
+    const actorKey = String(actor || '').toLowerCase();
+    if (actorKey === 'small') return isRemoteSmallSpeakingNow();
+    return false;
+}
+
+function waitForRemoteActor(item) {
+    const remoteActor = item?.actor || 'small';
+    const now = Date.now();
+    if (!item._waitRemoteStartedAt) {
+        item._waitRemoteStartedAt = now;
+        item._waitRemoteSawStart = false;
+    }
+
+    const remoteSpeaking = isRemoteActorSpeaking(remoteActor);
+    if (remoteSpeaking) {
+        item._waitRemoteSawStart = true;
+    }
+
+    const timeoutMs = Math.max(1000, Number(item?.delayMs) || 0) + REMOTE_WAIT_TIMEOUT_PAD_MS;
+    const elapsed = now - item._waitRemoteStartedAt;
+    const done = (item._waitRemoteSawStart && !remoteSpeaking) || (!item._waitRemoteSawStart && elapsed >= timeoutMs);
+    if (done) return true;
+
+    STATE.ttsQueue.unshift(item);
+    $('#stat-queue').textContent = STATE.ttsQueue.length;
+    STATE.speaking = false;
+    stopSpeaking();
+    remoteWaitTimer = setTimeout(() => {
+        remoteWaitTimer = null;
+        processQueue();
+    }, REMOTE_WAIT_POLL_MS);
+    return false;
+}
+
+export function applyHeadSpeechState(msg) {
+    const actor = String(msg?.actor || '').toLowerCase();
+    if (actor !== 'small') return;
+    const state = String(msg?.state || '').toLowerCase();
+    if (state === 'start') {
+        markRemoteSmallSpeaking(true, Number(msg?.ts) || Date.now());
+        return;
+    }
+    markRemoteSmallSpeaking(false, Number(msg?.ts) || Date.now());
+    if (!STATE.speaking && STATE.ttsQueue.length > 0) {
+        clearRemoteWaitTimer();
+        setTimeout(() => processQueue(), 0);
     }
 }
 
 function startSpeechSafety(durationMs) {
     clearSpeechSafety();
-    // If audio doesn't end naturally, force-advance the queue
     speechSafetyTimer = setTimeout(() => {
         speechSafetyTimer = null;
         if (STATE.speaking) {
-            console.warn('[TTS] Safety timeout — audio did not end, forcing advance');
+            console.warn('[TTS] Safety timeout - forcing queue advance');
             stopSubtitles();
             processQueue();
         }
     }, durationMs + 2000);
 }
 
-// ── TTS queue ──
-
-let lastEmotion = null;
-let currentAudioElement = null;
+function pushQueueItem(item, autoStart = true) {
+    STATE.ttsQueue.push(item);
+    $('#stat-queue').textContent = STATE.ttsQueue.length;
+    if (autoStart && !STATE.speaking) processQueue();
+}
 
 export function stopAllTTS() {
-    console.log('[TTS] stopAllTTS — clearing queue and stopping playback');
-    // Clear the queue
+    console.log('[TTS] stopAllTTS - clearing queue and stopping playback');
     STATE.ttsQueue.length = 0;
     $('#stat-queue').textContent = '0';
 
-    // Stop current audio element — remove handlers BEFORE clearing src
-    // to prevent onerror from triggering speakFallback
     if (currentAudioElement) {
         currentAudioElement.oncanplaythrough = null;
         currentAudioElement.onerror = null;
@@ -217,12 +176,14 @@ export function stopAllTTS() {
         currentAudioElement = null;
     }
 
-    // Cancel browser speech synthesis
     speechSynthesis.cancel();
 
-    // Reset state
     clearSpeechSafety();
+    clearRemoteWaitTimer();
     stopSubtitles();
+    if (STATE.speaking) {
+        emitHeadSpeechState('end');
+    }
     STATE.speaking = false;
     STATE.speakingEndedAt = Date.now();
     stopSpeaking();
@@ -233,19 +194,94 @@ export function stopAllTTS() {
 
 export function enqueueSpeech(text, donation = null, emotion = null) {
     const normalizedText = normalizeSpeechText(text);
+    if (!normalizedText) return '';
+
     console.log(`[TTS] Enqueue (${normalizedText.length} chars): ${normalizedText}`);
+
     const donationPayload = donation?.show ? donation : inferDonationFromText(normalizedText);
     if (donationPayload?.show) {
         showDonationQr(donationPayload);
     }
-    STATE.ttsQueue.push({ text: normalizedText, donation: donationPayload, emotion });
+
+    pushQueueItem({
+        action: 'speak',
+        text: normalizedText,
+        donation: donationPayload,
+        emotion: emotion || null,
+    });
+
+    return normalizedText;
+}
+
+export function enqueueTurnScript(beats = [], donation = null) {
+    if (donation?.show) {
+        showDonationQr(donation);
+    }
+
+    if (!Array.isArray(beats) || beats.length === 0) return;
+
+    for (const beat of beats) {
+        const actionRaw = String(beat?.action || '').toLowerCase();
+        const action = actionRaw === 'react'
+            ? 'react'
+            : actionRaw === 'wait_remote'
+                ? 'wait_remote'
+                : actionRaw === 'wait'
+                    ? 'wait'
+                    : 'speak';
+        const emotion = beat?.emotion || null;
+        const delayMs = Number(beat?.delayMs) || REACTION_PAUSE_MS;
+
+        if (action === 'wait') {
+            pushQueueItem({
+                action: 'wait',
+                delayMs: Math.max(120, delayMs),
+            }, false);
+            continue;
+        }
+
+        if (action === 'react') {
+            pushQueueItem({
+                action: 'react',
+                emotion,
+                delayMs: Math.max(120, delayMs),
+            }, false);
+            continue;
+        }
+
+        if (action === 'wait_remote') {
+            pushQueueItem({
+                action: 'wait_remote',
+                actor: beat?.actor || 'small',
+                delayMs: Math.max(120, delayMs),
+            }, false);
+            continue;
+        }
+
+        const text = normalizeSpeechText(beat?.text || '');
+        if (!text) continue;
+
+        pushQueueItem({
+            action: 'speak',
+            text,
+            donation: null,
+            emotion,
+        }, false);
+    }
+
     $('#stat-queue').textContent = STATE.ttsQueue.length;
     if (!STATE.speaking) processQueue();
-    return normalizedText;
+}
+
+function handleReactionItem(item) {
+    if (item.emotion?.expression) {
+        suggestEmotionExpression(item.emotion.expression);
+    }
 }
 
 export function processQueue() {
     clearSpeechSafety();
+    clearRemoteWaitTimer();
 
     if (STATE.ttsQueue.length === 0) {
         STATE.speaking = false;
@@ -254,7 +290,6 @@ export function processQueue() {
         stopSpeaking();
         $('#stat-listen-state').textContent = 'Idle';
 
-        // Post-speech: pulse emotion expression if available, then idle
         if (lastEmotion?.expression) {
             suggestEmotionExpression(lastEmotion.expression);
             lastEmotion = null;
@@ -266,40 +301,96 @@ export function processQueue() {
         return;
     }
 
+    // Stop any currently playing audio before starting the next item —
+    // prevents two Audio elements from playing simultaneously
+    if (currentAudioElement) {
+        currentAudioElement.oncanplaythrough = null;
+        currentAudioElement.onerror = null;
+        currentAudioElement.onended = null;
+        currentAudioElement.pause();
+        currentAudioElement.src = '';
+        currentAudioElement = null;
+    }
+    speechSynthesis.cancel();
+
     const item = STATE.ttsQueue.shift();
     $('#stat-queue').textContent = STATE.ttsQueue.length;
+
+    if (item.action === 'speak' && shouldGateMainSpeech()) {
+        STATE.ttsQueue.unshift(item);
+        $('#stat-queue').textContent = STATE.ttsQueue.length;
+        STATE.speaking = false;
+        stopSpeaking();
+        remoteWaitTimer = setTimeout(() => {
+            remoteWaitTimer = null;
+            processQueue();
+        }, REMOTE_WAIT_POLL_MS);
+        return;
+    }
 
     STATE.speaking = true;
     STATE.lastActivity = Date.now();
     clearInterruptionTimer();
 
+    if (item.action === 'wait') {
+        stopSubtitles();
+        stopSpeaking();
+        setTimeout(() => processQueue(), Math.max(120, item.delayMs || REACTION_PAUSE_MS));
+        return;
+    }
+
+    if (item.action === 'wait_remote') {
+        stopSubtitles();
+        stopSpeaking();
+        STATE.speaking = false;
+        if (waitForRemoteActor(item)) {
+            setTimeout(() => processQueue(), 0);
+        }
+        return;
+    }
+
+    if (item.action === 'react') {
+        handleReactionItem(item);
+        setTimeout(() => processQueue(), Math.max(100, item.delayMs || REACTION_PAUSE_MS));
+        return;
+    }
+
     lastEmotion = item.emotion || null;
 
-    playTTS(item.text).catch(() => {
+    playTTS(item).catch(() => {
         clearSpeechSafety();
         STATE.speaking = false;
         processQueue();
     });
 }
 
-async function playTTS(text) {
+async function playTTS(item) {
     $('#stat-listen-state').textContent = 'Speaking...';
 
     try {
+        let localSpeechActive = false;
+        const markLocalSpeechStart = () => {
+            if (localSpeechActive) return;
+            localSpeechActive = true;
+            emitHeadSpeechState('start', STATE.currentTurnId);
+        };
+        const markLocalSpeechEnd = () => {
+            if (!localSpeechActive) return;
+            localSpeechActive = false;
+            emitHeadSpeechState('end', STATE.currentTurnId);
+        };
+
         const res = await fetch('/tts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice: STATE.kokoroVoice })
+            body: JSON.stringify({ text: item.text, voice: STATE.kokoroVoice })
         });
 
         if (!res.ok) throw new Error('TTS Failed');
 
         const blob = await res.blob();
-
-        console.log(`[TTS] Received blob size: ${blob.size}, type: ${blob.type}`);
-
         if (blob.size < 100) {
-            throw new Error('TTS Audio too small (likely error)');
+            throw new Error('TTS audio too small');
         }
 
         const audioURL = URL.createObjectURL(blob);
@@ -312,7 +403,6 @@ async function playTTS(text) {
             URL.revokeObjectURL(audioURL);
         }
 
-        // Guard: only process canplaythrough once
         let started = false;
 
         audio.oncanplaythrough = () => {
@@ -320,64 +410,75 @@ async function playTTS(text) {
             started = true;
 
             const dur = isFinite(audio.duration) ? audio.duration : 0;
-
-            // Sync subtitles to the actual audio element
-            startSubtitles(text, audio);
-
-            // Start speaking mouth overlay
+            startSubtitles(item.text, audio);
             startSpeaking();
             loadingBar.classList.remove('active');
-
-            // Safety timeout in case onended doesn't fire
             startSpeechSafety(dur > 0 ? dur * 1000 : 10000);
 
-            audio.play().catch(e => {
-                console.error("Audio play failed:", e);
+            audio.play().catch((e) => {
+                console.error('[TTS] Audio play failed:', e);
                 clearSpeechSafety();
+                markLocalSpeechEnd();
                 cleanup();
                 stopSubtitles();
                 processQueue();
             });
         };
 
+        audio.onplay = () => {
+            markLocalSpeechStart();
+        };
+
         audio.onerror = () => {
             clearSpeechSafety();
+            markLocalSpeechEnd();
             cleanup();
             stopSubtitles();
-            speakFallback(text);
+            speakFallback(item);
         };
 
         audio.onended = () => {
             clearSpeechSafety();
+            markLocalSpeechEnd();
             cleanup();
             stopSubtitles();
+            stopSpeaking();
             setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
-
     } catch (e) {
-        console.error("TTS Error:", e);
+        console.error('[TTS] Error:', e);
         clearSpeechSafety();
         stopSubtitles();
-        speakFallback(text);
+        speakFallback(item);
     }
 }
 
-function speakFallback(text) {
+function speakFallback(item) {
     console.log('[TTS] Using fallback speech synthesis');
-    const wordCount = text.split(/\s+/).filter(Boolean).length;
+    const wordCount = item.text.split(/\s+/).filter(Boolean).length;
     const estimatedDuration = wordCount * 0.35;
 
     startSpeaking();
     loadingBar.classList.remove('active');
-    startSubtitles(text, estimatedDuration);
+    startSubtitles(item.text, estimatedDuration);
 
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(item.text);
+    let fallbackStarted = false;
+    utterance.onstart = () => {
+        if (fallbackStarted) return;
+        fallbackStarted = true;
+        emitHeadSpeechState('start', STATE.currentTurnId);
+    };
     utterance.onend = () => {
+        if (fallbackStarted) emitHeadSpeechState('end', STATE.currentTurnId);
         stopSubtitles();
+        stopSpeaking();
         setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
     };
     utterance.onerror = () => {
+        if (fallbackStarted) emitHeadSpeechState('end', STATE.currentTurnId);
         stopSubtitles();
+        stopSpeaking();
         processQueue();
     };
     speechSynthesis.speak(utterance);

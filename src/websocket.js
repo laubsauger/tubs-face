@@ -2,11 +2,12 @@ const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
 const { generateStreamingAssistantReply, generateProactiveReply, clearAssistantContext } = require('./assistant-service');
 const crypto = require('crypto');
-const { logConversation } = require('./logger');
+const { logConversation, logTubsReply } = require('./logger');
 
 let clients = new Set();
 let latestFrame = null; // { data: base64String, ts: number }
 let appearanceFrame = null; // { data, ts, faces, count } — consumed once on next interaction
+let activeWsTurn = null; // { turnId, abortController } — for aborting stale generations
 let lastPresenceContextClearAt = 0;
 let pendingPresenceContextClear = null;
 const PRESENCE_CONTEXT_CLEAR_DELAY_MS = Math.max(
@@ -57,6 +58,36 @@ function initWebSocket(server) {
           return;
         }
 
+        if (msg.type === 'face_motion') {
+          const rawX = Number(msg.x);
+          const rawY = Number(msg.y);
+          if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return;
+          const x = Math.max(-1, Math.min(1, rawX));
+          const y = Math.max(-1, Math.min(1, rawY));
+          broadcast({ type: 'face_motion', x, y, ts: Date.now() });
+          return;
+        }
+
+        if (msg.type === 'face_blink') {
+          broadcast({ type: 'face_blink', ts: Date.now() });
+          return;
+        }
+
+        if (msg.type === 'head_speech_state') {
+          const actor = String(msg.actor || '').toLowerCase() === 'small' ? 'small' : 'main';
+          const state = String(msg.state || '').toLowerCase() === 'end' ? 'end' : 'start';
+          const turnId = msg.turnId ? String(msg.turnId) : null;
+          console.log(`[WS:speech] actor=${actor} state=${state} turn=${turnId || 'n/a'}`);
+          broadcast({
+            type: 'head_speech_state',
+            actor,
+            state,
+            turnId,
+            ts: Date.now(),
+          });
+          return;
+        }
+
         if (msg.type === 'presence') {
           if (msg.present === true) {
             cancelPresenceContextClear();
@@ -70,6 +101,10 @@ function initWebSocket(server) {
         }
 
         if (msg.type === 'proactive') {
+          if (runtimeConfig.muted === true) {
+            broadcast({ type: 'expression', expression: 'idle' });
+            return;
+          }
           void (async () => {
             try {
               const reply = await generateProactiveReply(msg.context || 'Someone is nearby');
@@ -89,7 +124,7 @@ function initWebSocket(server) {
                 emotion: reply.emotion || null,
                 ts: Date.now(),
               });
-              logConversation('TUBS (proactive)', reply.text);
+              logConversation('TUBS:main (proactive)', reply.text);
 
               // Enter conversation mode so user can respond without wake word
               const { touchConversation } = require('./routes');
@@ -134,14 +169,27 @@ function initWebSocket(server) {
         }
 
         if (msg.type === 'incoming') {
+          if (runtimeConfig.muted === true) {
+            broadcast({ type: 'expression', expression: 'idle' });
+            return;
+          }
           sessionStats.messagesIn++;
           sessionStats.lastActivity = Date.now();
+
+          // Abort any in-flight generation from previous turn
+          if (activeWsTurn) {
+            console.log(`[WS] Aborting previous turn ${activeWsTurn.turnId} — new message arrived`);
+            activeWsTurn.abortController.abort();
+            activeWsTurn = null;
+          }
 
           broadcast({ type: 'incoming', text: msg.text });
           logConversation('USER', msg.text);
           broadcast({ type: 'thinking' });
 
           const turnId = crypto.randomBytes(6).toString('hex');
+          const abortController = new AbortController();
+          activeWsTurn = { turnId, abortController };
           broadcast({ type: 'turn_start', turnId });
 
           void (async () => {
@@ -149,6 +197,7 @@ function initWebSocket(server) {
               const reply = await generateStreamingAssistantReply(msg.text, {
                 broadcast,
                 turnId,
+                abortController,
                 frame: msg.frame || getLatestFrame(),
                 appearanceFrame: consumeAppearanceFrame(),
               });
@@ -162,7 +211,7 @@ function initWebSocket(server) {
                 sessionStats.model = reply.model;
               }
 
-              logConversation('TUBS', reply.text);
+              logTubsReply(reply);
               broadcast({
                 type: 'stats',
                 tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
@@ -178,6 +227,10 @@ function initWebSocket(server) {
             } catch (err) {
               console.error('[WS] Assistant generation failed:', err);
               broadcast({ type: 'error', text: 'Response generation failed' });
+            } finally {
+              if (activeWsTurn && activeWsTurn.turnId === turnId) {
+                activeWsTurn = null;
+              }
             }
           })();
         }
@@ -217,6 +270,14 @@ function getClients() {
   return clients;
 }
 
+function abortActiveWsTurn(reason = 'manual') {
+  if (!activeWsTurn) return false;
+  console.log(`[WS] Aborting active turn ${activeWsTurn.turnId} (${reason})`);
+  activeWsTurn.abortController.abort();
+  activeWsTurn = null;
+  return true;
+}
+
 function getLatestFrame(maxAgeMs = 5000) {
   if (!latestFrame) return null;
   if (Date.now() - latestFrame.ts > maxAgeMs) return null;
@@ -238,4 +299,11 @@ function consumeAppearanceFrame(maxAgeMs = 30000) {
   return frame;
 }
 
-module.exports = { initWebSocket, broadcast, getClients, getLatestFrame, consumeAppearanceFrame };
+module.exports = {
+  initWebSocket,
+  broadcast,
+  getClients,
+  getLatestFrame,
+  consumeAppearanceFrame,
+  abortActiveWsTurn,
+};

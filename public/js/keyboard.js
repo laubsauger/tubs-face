@@ -22,6 +22,7 @@ export function initKeyboard() {
                 exitSleep();
                 return;
             }
+            if (STATE.muted) return;
             startRecording();
             return;
         }
@@ -38,6 +39,7 @@ export function initKeyboard() {
             keyInputBuffer = '';
 
             if (STATE.sleeping) exitSleep();
+            if (STATE.muted) return;
 
             if (/go to sleep/i.test(text)) {
                 enterSleep();

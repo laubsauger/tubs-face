@@ -126,6 +126,48 @@ function normalizeSttBackend(value) {
   return normalized;
 }
 
+function normalizeBooleanConfig(value, fieldName) {
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  const err = new Error(`${fieldName} must be a boolean`);
+  err.code = 'BAD_CONFIG';
+  throw err;
+}
+
+function normalizeDualHeadMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const allowed = new Set(['off', 'llm_directed', 'mirror']);
+  if (!allowed.has(normalized)) {
+    const err = new Error('dualHeadMode must be one of: off, llm_directed, mirror');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
+function normalizeSecondaryAudioGain(value) {
+  const parsed = Number.parseFloat(String(value));
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+    const err = new Error('secondaryAudioGain must be a number between 0 and 1');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return parsed;
+}
+
+function normalizeDualHeadTurnPolicy(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const allowed = new Set(['llm_order', 'main_first', 'small_first']);
+  if (!allowed.has(normalized)) {
+    const err = new Error('dualHeadTurnPolicy must be one of: llm_order, main_first, small_first');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
 
 /* --- 3. Resolved Configuration --- */
 const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
@@ -136,7 +178,14 @@ const DEFAULT_MIN_FACE_BOX_AREA_RATIO = normalizeMinFaceBoxAreaRatio(process.env
 const DEFAULT_FACE_RENDER_MODE = normalizeFaceRenderMode(process.env.FACE_RENDER_MODE || 'svg');
 const DEFAULT_TTS_BACKEND = normalizeTtsBackend(process.env.TTS_BACKEND || 'kokoro');
 const DEFAULT_STT_BACKEND = normalizeSttBackend(process.env.STT_BACKEND || 'mlx');
-const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'af_heart');
+const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'hm_omega');
+const DEFAULT_DUAL_HEAD_ENABLED = normalizeBooleanConfig(process.env.DUAL_HEAD_ENABLED || false, 'dualHeadEnabled');
+const DEFAULT_DUAL_HEAD_MODE = normalizeDualHeadMode(process.env.DUAL_HEAD_MODE || 'off');
+const DEFAULT_SECONDARY_VOICE = normalizeKokoroVoice(process.env.SECONDARY_VOICE || 'jf_tebukuro');
+const DEFAULT_SECONDARY_SUBTITLE_ENABLED = normalizeBooleanConfig(process.env.SECONDARY_SUBTITLE_ENABLED || false, 'secondarySubtitleEnabled');
+const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SECONDARY_AUDIO_GAIN || 0.9);
+const DEFAULT_DUAL_HEAD_TURN_POLICY = normalizeDualHeadTurnPolicy(process.env.DUAL_HEAD_TURN_POLICY || 'llm_order');
+const DEFAULT_MUTED = normalizeBooleanConfig(process.env.MUTED || false, 'muted');
 
 const sessionStats = {
   messagesIn: 0,
@@ -162,6 +211,13 @@ const runtimeConfig = {
   ttsBackend: DEFAULT_TTS_BACKEND,
   sttBackend: DEFAULT_STT_BACKEND,
   kokoroVoice: DEFAULT_KOKORO_VOICE,
+  dualHeadEnabled: DEFAULT_DUAL_HEAD_ENABLED,
+  dualHeadMode: DEFAULT_DUAL_HEAD_MODE,
+  secondaryVoice: DEFAULT_SECONDARY_VOICE,
+  secondarySubtitleEnabled: DEFAULT_SECONDARY_SUBTITLE_ENABLED,
+  secondaryAudioGain: DEFAULT_SECONDARY_AUDIO_GAIN,
+  dualHeadTurnPolicy: DEFAULT_DUAL_HEAD_TURN_POLICY,
+  muted: DEFAULT_MUTED,
 };
 
 
@@ -185,7 +241,18 @@ module.exports = {
   DEFAULT_TTS_BACKEND,
   DEFAULT_STT_BACKEND,
   DEFAULT_KOKORO_VOICE,
+  DEFAULT_DUAL_HEAD_ENABLED,
+  DEFAULT_DUAL_HEAD_MODE,
+  DEFAULT_SECONDARY_VOICE,
+  DEFAULT_SECONDARY_SUBTITLE_ENABLED,
+  DEFAULT_SECONDARY_AUDIO_GAIN,
+  DEFAULT_DUAL_HEAD_TURN_POLICY,
+  DEFAULT_MUTED,
   normalizeTtsBackend,
   normalizeSttBackend,
   normalizeKokoroVoice,
+  normalizeBooleanConfig,
+  normalizeDualHeadMode,
+  normalizeSecondaryAudioGain,
+  normalizeDualHeadTurnPolicy,
 };

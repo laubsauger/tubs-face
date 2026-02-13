@@ -33,6 +33,7 @@ let animating = false;
 let lastTickMs = 0;
 let wanderTimer = null;
 let wandering = false;
+const gazeTargetListeners = new Set();
 
 function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -110,6 +111,17 @@ function ensureAnimationLoop() {
     requestAnimationFrame(tick);
 }
 
+function emitGazeTargetChanged() {
+    const payload = { x: targetX, y: targetY };
+    for (const listener of gazeTargetListeners) {
+        try {
+            listener(payload);
+        } catch {
+            // ignore listener errors
+        }
+    }
+}
+
 // ── Idle wander ──
 
 function stopWander() {
@@ -142,6 +154,7 @@ function wanderStep() {
         targetY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
     }
 
+    emitGazeTargetChanged();
     ensureAnimationLoop();
     scheduleWander();
 }
@@ -161,12 +174,22 @@ export function lookAt(x, y) {
     stopWander();
     targetX = easeInput(x);
     targetY = easeInput(y);
+    emitGazeTargetChanged();
     ensureAnimationLoop();
 }
 
 export function resetGaze() {
     targetX = 0;
     targetY = 0;
+    emitGazeTargetChanged();
     ensureAnimationLoop();
     startWander();
+}
+
+export function onGazeTargetChanged(listener) {
+    if (typeof listener !== 'function') return () => {};
+    gazeTargetListeners.add(listener);
+    return () => {
+        gazeTargetListeners.delete(listener);
+    };
 }

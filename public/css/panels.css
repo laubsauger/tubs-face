@@ -92,6 +92,23 @@
   max-width: none;
 }
 
+#panel-input {
+  max-height: calc(100vh - 44px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(60, 70, 110, 0.38) transparent;
+}
+
+#panel-input::-webkit-scrollbar {
+  width: 6px;
+}
+
+#panel-input::-webkit-scrollbar-thumb {
+  background: rgba(60, 70, 110, 0.45);
+  border-radius: 4px;
+}
+
 /* Original TR is gone, but we keep BL/BR */
 
 #panel-bl {

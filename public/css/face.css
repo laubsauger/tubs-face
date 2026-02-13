@@ -514,6 +514,7 @@ body.sleeping .eye {
   transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.22s cubic-bezier(0.4, 0, 0.2, 1),
     filter 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-origin: center bottom;
   box-shadow: 0 0 14px rgba(var(--face-glow-rgb), 0.14);
   animation: mouthScanDrift 2.2s linear infinite;
   opacity: calc(0.84 + var(--mood-pos) * 0.14 - var(--mood-neg) * 0.05);

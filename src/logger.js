@@ -30,4 +30,20 @@ function logConversation(speaker, text) {
   ensureStream().write(line);
 }
 
-module.exports = { logConversation };
+/**
+ * Log a Tubs reply, attributing per-actor when beats are present (dual-head).
+ * Falls back to plain "TUBS" for single-head replies.
+ * @param {{ text: string, beats?: Array<{ actor: string, action: string, text: string }> | null, source?: string }} reply
+ */
+function logTubsReply(reply) {
+  if (Array.isArray(reply.beats) && reply.beats.length > 0) {
+    for (const beat of reply.beats) {
+      if (beat.action !== 'speak' || !beat.text) continue;
+      logConversation(`TUBS:${beat.actor}`, beat.text);
+    }
+    return;
+  }
+  logConversation('TUBS', reply.text);
+}
+
+module.exports = { logConversation, logTubsReply };

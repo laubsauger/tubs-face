@@ -186,7 +186,7 @@
 }
 
 body.sleeping #camera-pip {
-  opacity: 0.7;
+  opacity: 1;
 }
 
 body.sleeping #face-debug {

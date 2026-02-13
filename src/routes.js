@@ -11,15 +11,19 @@ const {
   normalizeMinFaceBoxAreaRatio,
   normalizeFaceRenderMode,
   normalizeKokoroVoice,
+  normalizeBooleanConfig,
+  normalizeDualHeadMode,
+  normalizeSecondaryAudioGain,
+  normalizeDualHeadTurnPolicy,
 } = require('./config');
-const { broadcast, getClients, getLatestFrame, consumeAppearanceFrame } = require('./websocket');
+const { broadcast, getClients, getLatestFrame, consumeAppearanceFrame, abortActiveWsTurn } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
 const { transcribeAudio, restartTranscriptionService } = require('./python-service');
 const { readFaceLib, writeFaceLib } = require('./face-library');
 const { generateAssistantReply, generateStreamingAssistantReply } = require('./assistant-service');
 const crypto = require('crypto');
 const { createOrder: createPayPalOrder, captureOrder: capturePayPalOrder } = require('./paypal-client');
-const { logConversation } = require('./logger');
+const { logConversation, logTubsReply } = require('./logger');
 
 const staticPath = path.join(__dirname, '../public');
 
@@ -30,6 +34,10 @@ let lastConversationAt = 0;
 
 // --- Turn accumulation state (Phase 2) ---
 let activeTurn = null;
+
+function isMuted() {
+  return runtimeConfig.muted === true;
+}
 
 function computeEndpointTimeout(text) {
   if (!text) return 700;
@@ -104,6 +112,11 @@ function handleRequest(req, res) {
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
       try {
+        if (isMuted()) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted' }));
+          return;
+        }
         const { text } = JSON.parse(body);
         if (!text) throw new Error('Missing text');
         broadcast({ type: 'speak', text, ts: Date.now() });
@@ -126,6 +139,13 @@ function handleRequest(req, res) {
     let body = [];
     req.on('data', chunk => body.push(chunk));
     req.on('end', async () => {
+      if (isMuted()) {
+        broadcast({ type: 'expression', expression: 'idle' });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted' }));
+        return;
+      }
+
       const audioBuffer = Buffer.concat(body);
       console.log(`[Voice] Received ${audioBuffer.length} bytes`);
 
@@ -180,7 +200,7 @@ function handleRequest(req, res) {
           frame: getLatestFrame(),
           appearanceFrame: consumeAppearanceFrame(),
         });
-        logConversation('TUBS', reply.text);
+        logTubsReply(reply);
 
         sessionStats.messagesOut++;
         sessionStats.lastActivity = Date.now();
@@ -236,6 +256,12 @@ function handleRequest(req, res) {
     let body = [];
     req.on('data', chunk => body.push(chunk));
     req.on('end', async () => {
+      if (isMuted()) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted' }));
+        return;
+      }
+
       const audioBuffer = Buffer.concat(body);
       console.log(`[Segment] Received ${audioBuffer.length} bytes`);
 
@@ -316,7 +342,7 @@ function handleRequest(req, res) {
             frame: getLatestFrame(),
             appearanceFrame: consumeAppearanceFrame(),
           }).then((reply) => {
-            logConversation('TUBS', reply.text);
+            logTubsReply(reply);
             sessionStats.messagesOut++;
             sessionStats.lastActivity = Date.now();
             sessionStats.tokensIn += reply.tokens.in || 0;
@@ -757,6 +783,27 @@ function handleRequest(req, res) {
         if (Object.hasOwn(config, 'kokoroVoice')) {
           config.kokoroVoice = normalizeKokoroVoice(config.kokoroVoice);
         }
+        if (Object.hasOwn(config, 'dualHeadEnabled')) {
+          config.dualHeadEnabled = normalizeBooleanConfig(config.dualHeadEnabled, 'dualHeadEnabled');
+        }
+        if (Object.hasOwn(config, 'dualHeadMode')) {
+          config.dualHeadMode = normalizeDualHeadMode(config.dualHeadMode);
+        }
+        if (Object.hasOwn(config, 'secondaryVoice')) {
+          config.secondaryVoice = normalizeKokoroVoice(config.secondaryVoice);
+        }
+        if (Object.hasOwn(config, 'secondarySubtitleEnabled')) {
+          config.secondarySubtitleEnabled = normalizeBooleanConfig(config.secondarySubtitleEnabled, 'secondarySubtitleEnabled');
+        }
+        if (Object.hasOwn(config, 'secondaryAudioGain')) {
+          config.secondaryAudioGain = normalizeSecondaryAudioGain(config.secondaryAudioGain);
+        }
+        if (Object.hasOwn(config, 'dualHeadTurnPolicy')) {
+          config.dualHeadTurnPolicy = normalizeDualHeadTurnPolicy(config.dualHeadTurnPolicy);
+        }
+        if (Object.hasOwn(config, 'muted')) {
+          config.muted = normalizeBooleanConfig(config.muted, 'muted');
+        }
 
         const nextConfig = { ...runtimeConfig, ...config };
         const shouldRestartStt = nextConfig.sttModel !== runtimeConfig.sttModel;
@@ -766,6 +813,20 @@ function handleRequest(req, res) {
         }
 
         Object.assign(runtimeConfig, nextConfig);
+
+        if (runtimeConfig.muted && activeTurn) {
+          if (activeTurn.abortController) activeTurn.abortController.abort();
+          if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
+          activeTurn = null;
+        }
+
+        if (runtimeConfig.muted) {
+          abortActiveWsTurn('muted');
+          lastConversationAt = 0;
+          broadcast({ type: 'conversation_mode', active: false });
+          broadcast({ type: 'expression', expression: 'idle' });
+        }
+
         broadcast({ type: 'config', ...runtimeConfig });
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({

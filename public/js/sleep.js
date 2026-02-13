@@ -8,6 +8,13 @@ import { stopAllTTS } from './tts.js';
 
 let sleepTimer = null;
 
+function syncSleepState(isSleeping) {
+    const endpoint = isSleeping ? '/sleep' : '/wake';
+    fetch(endpoint, { method: 'POST' }).catch((err) => {
+        console.warn(`[Sleep] Failed to sync ${endpoint}:`, err);
+    });
+}
+
 export function resetSleepTimer() {
     clearTimeout(sleepTimer);
     sleepTimer = null;
@@ -29,7 +36,8 @@ export function resetSleepTimer() {
     }
 }
 
-export function enterSleep() {
+export function enterSleep(options = {}) {
+    const shouldSync = options.sync !== false;
     if (STATE.sleeping) {
         console.log('[Sleep] enterSleep blocked: already sleeping');
         return;
@@ -57,10 +65,12 @@ export function enterSleep() {
     subtitleEl.classList.remove('visible');
     setExpression('idle', { force: true, skipHold: true });
     resetGaze();
+    if (shouldSync) syncSleepState(true);
     logChat('sys', '💤 Sleep mode');
 }
 
-export function exitSleep() {
+export function exitSleep(options = {}) {
+    const shouldSync = options.sync !== false;
     if (!STATE.sleeping) {
         console.log('[Sleep] exitSleep blocked: not sleeping');
         return;
@@ -72,14 +82,10 @@ export function exitSleep() {
     STATE.lastActivity = Date.now();
     $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 
-    document.querySelectorAll('.panel').forEach((p, i) => {
-        p.style.opacity = '0';
-        setTimeout(() => { p.style.opacity = ''; }, 100 + i * 200);
-    });
-
     logChat('sys', '☀️ Awake!');
     setExpression('idle', { force: true, skipHold: true });
     resetSleepTimer();
+    if (shouldSync) syncSleepState(false);
     triggerBlink();
 }
 
