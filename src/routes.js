@@ -10,6 +10,7 @@ const {
   normalizeDonationSignalMode,
   normalizeMinFaceBoxAreaRatio,
   normalizeFaceRenderMode,
+  normalizeRenderQuality,
   normalizeKokoroVoice,
   normalizeBooleanConfig,
   normalizeDualHeadMode,
@@ -780,6 +781,9 @@ function handleRequest(req, res) {
         if (Object.hasOwn(config, 'faceRenderMode')) {
           config.faceRenderMode = normalizeFaceRenderMode(config.faceRenderMode);
         }
+        if (Object.hasOwn(config, 'renderQuality')) {
+          config.renderQuality = normalizeRenderQuality(config.renderQuality, 'renderQuality');
+        }
         if (Object.hasOwn(config, 'kokoroVoice')) {
           config.kokoroVoice = normalizeKokoroVoice(config.kokoroVoice);
         }
@@ -791,6 +795,9 @@ function handleRequest(req, res) {
         }
         if (Object.hasOwn(config, 'secondaryVoice')) {
           config.secondaryVoice = normalizeKokoroVoice(config.secondaryVoice);
+        }
+        if (Object.hasOwn(config, 'secondaryRenderQuality')) {
+          config.secondaryRenderQuality = normalizeRenderQuality(config.secondaryRenderQuality, 'secondaryRenderQuality');
         }
         if (Object.hasOwn(config, 'secondarySubtitleEnabled')) {
           config.secondarySubtitleEnabled = normalizeBooleanConfig(config.secondarySubtitleEnabled, 'secondarySubtitleEnabled');

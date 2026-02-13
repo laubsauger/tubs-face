@@ -104,6 +104,17 @@ function normalizeFaceRenderMode(value) {
   return normalized;
 }
 
+function normalizeRenderQuality(value, fieldName = 'renderQuality') {
+  const normalized = String(value || '').trim().toLowerCase();
+  const allowed = new Set(['high', 'balanced', 'low']);
+  if (!allowed.has(normalized)) {
+    const err = new Error(`${fieldName} must be one of: high, balanced, low`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
+
 function normalizeTtsBackend(value) {
   const normalized = String(value || '').trim().toLowerCase();
   const allowed = new Set(['kokoro', 'system']);
@@ -149,8 +160,8 @@ function normalizeDualHeadMode(value) {
 
 function normalizeSecondaryAudioGain(value) {
   const parsed = Number.parseFloat(String(value));
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
-    const err = new Error('secondaryAudioGain must be a number between 0 and 1');
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1.2) {
+    const err = new Error('secondaryAudioGain must be a number between 0 and 1.2');
     err.code = 'BAD_CONFIG';
     throw err;
   }
@@ -176,14 +187,16 @@ const DEFAULT_LLM_MAX_OUTPUT_TOKENS = normalizeLlmMaxOutputTokens(process.env.GE
 const DEFAULT_DONATION_SIGNAL_MODE = normalizeDonationSignalMode(process.env.DONATION_SIGNAL_MODE || 'both');
 const DEFAULT_MIN_FACE_BOX_AREA_RATIO = normalizeMinFaceBoxAreaRatio(process.env.MIN_FACE_BOX_AREA_RATIO || 0.02);
 const DEFAULT_FACE_RENDER_MODE = normalizeFaceRenderMode(process.env.FACE_RENDER_MODE || 'svg');
+const DEFAULT_RENDER_QUALITY = normalizeRenderQuality(process.env.RENDER_QUALITY || 'high', 'renderQuality');
 const DEFAULT_TTS_BACKEND = normalizeTtsBackend(process.env.TTS_BACKEND || 'kokoro');
 const DEFAULT_STT_BACKEND = normalizeSttBackend(process.env.STT_BACKEND || 'mlx');
 const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'hm_omega');
 const DEFAULT_DUAL_HEAD_ENABLED = normalizeBooleanConfig(process.env.DUAL_HEAD_ENABLED || false, 'dualHeadEnabled');
 const DEFAULT_DUAL_HEAD_MODE = normalizeDualHeadMode(process.env.DUAL_HEAD_MODE || 'off');
 const DEFAULT_SECONDARY_VOICE = normalizeKokoroVoice(process.env.SECONDARY_VOICE || 'jf_tebukuro');
+const DEFAULT_SECONDARY_RENDER_QUALITY = normalizeRenderQuality(process.env.SECONDARY_RENDER_QUALITY || 'balanced', 'secondaryRenderQuality');
 const DEFAULT_SECONDARY_SUBTITLE_ENABLED = normalizeBooleanConfig(process.env.SECONDARY_SUBTITLE_ENABLED || false, 'secondarySubtitleEnabled');
-const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SECONDARY_AUDIO_GAIN || 0.9);
+const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SECONDARY_AUDIO_GAIN || 1.0);
 const DEFAULT_DUAL_HEAD_TURN_POLICY = normalizeDualHeadTurnPolicy(process.env.DUAL_HEAD_TURN_POLICY || 'llm_order');
 const DEFAULT_MUTED = normalizeBooleanConfig(process.env.MUTED || false, 'muted');
 
@@ -208,12 +221,14 @@ const runtimeConfig = {
   donationSignalMode: DEFAULT_DONATION_SIGNAL_MODE,
   minFaceBoxAreaRatio: DEFAULT_MIN_FACE_BOX_AREA_RATIO,
   faceRenderMode: DEFAULT_FACE_RENDER_MODE,
+  renderQuality: DEFAULT_RENDER_QUALITY,
   ttsBackend: DEFAULT_TTS_BACKEND,
   sttBackend: DEFAULT_STT_BACKEND,
   kokoroVoice: DEFAULT_KOKORO_VOICE,
   dualHeadEnabled: DEFAULT_DUAL_HEAD_ENABLED,
   dualHeadMode: DEFAULT_DUAL_HEAD_MODE,
   secondaryVoice: DEFAULT_SECONDARY_VOICE,
+  secondaryRenderQuality: DEFAULT_SECONDARY_RENDER_QUALITY,
   secondarySubtitleEnabled: DEFAULT_SECONDARY_SUBTITLE_ENABLED,
   secondaryAudioGain: DEFAULT_SECONDARY_AUDIO_GAIN,
   dualHeadTurnPolicy: DEFAULT_DUAL_HEAD_TURN_POLICY,
@@ -232,18 +247,21 @@ module.exports = {
   normalizeDonationSignalMode,
   normalizeMinFaceBoxAreaRatio,
   normalizeFaceRenderMode,
+  normalizeRenderQuality,
   DEFAULT_STT_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_LLM_MAX_OUTPUT_TOKENS,
   DEFAULT_DONATION_SIGNAL_MODE,
   DEFAULT_MIN_FACE_BOX_AREA_RATIO,
   DEFAULT_FACE_RENDER_MODE,
+  DEFAULT_RENDER_QUALITY,
   DEFAULT_TTS_BACKEND,
   DEFAULT_STT_BACKEND,
   DEFAULT_KOKORO_VOICE,
   DEFAULT_DUAL_HEAD_ENABLED,
   DEFAULT_DUAL_HEAD_MODE,
   DEFAULT_SECONDARY_VOICE,
+  DEFAULT_SECONDARY_RENDER_QUALITY,
   DEFAULT_SECONDARY_SUBTITLE_ENABLED,
   DEFAULT_SECONDARY_AUDIO_GAIN,
   DEFAULT_DUAL_HEAD_TURN_POLICY,

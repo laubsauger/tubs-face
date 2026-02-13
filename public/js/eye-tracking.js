@@ -1,5 +1,6 @@
 import { eyes, face, mouth } from './dom.js';
 import { setFaceRendererGaze } from './face-renderer.js';
+import { perfMark, perfTime } from './perf-hooks.js';
 
 const EYE_MAX_X = 236;
 const EYE_MAX_Y = 128;
@@ -81,6 +82,7 @@ function applyGaze(x, y) {
 }
 
 function tick(nowMs) {
+    const t0 = performance.now();
     if (!lastTickMs) lastTickMs = nowMs;
     const dt = clamp((nowMs - lastTickMs) / 1000, 0.008, 0.04);
     lastTickMs = nowMs;
@@ -99,9 +101,13 @@ function tick(nowMs) {
         applyGaze(curX, curY);
         animating = false;
         lastTickMs = 0;
+        perfTime('eye_tick_ms', performance.now() - t0);
+        perfMark('eye_tick');
         return;
     }
 
+    perfTime('eye_tick_ms', performance.now() - t0);
+    perfMark('eye_tick');
     requestAnimationFrame(tick);
 }
 

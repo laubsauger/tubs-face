@@ -527,8 +527,10 @@ self.onmessage = async (e) => {
       const { width, height } = e.data;
       const imageData = new ImageData(new Uint8ClampedArray(e.data.imageBuffer), width, height);
       const t0 = performance.now();
+      const tDetectStart = performance.now();
 
       const faces = await detectFaces(imageData, width, height);
+      const detectMs = performance.now() - tDetectStart;
 
       // Match detected faces against previous frame's tracked faces.
       // Reuse cached embedding if the face hasn't moved much and the
@@ -536,6 +538,7 @@ self.onmessage = async (e) => {
       const usedTracked = new Set();
       let embeddingsExtracted = 0;
       let embeddingsReused = 0;
+      const tEmbedStart = performance.now();
 
       for (const face of faces) {
         if (!face.landmarks) { face.embedding = null; continue; }
@@ -568,7 +571,20 @@ self.onmessage = async (e) => {
         .map(f => ({ box: f.box, embedding: f.embedding, age: f._trackedAge || 0 }));
 
       const inferenceMs = Math.round(performance.now() - t0);
-      postMessage({ type: 'faces', faces, inferenceMs, embeddingsExtracted, embeddingsReused, requestId: e.data.requestId });
+      const embedMs = performance.now() - tEmbedStart;
+      postMessage({
+        type: 'faces',
+        faces,
+        inferenceMs,
+        embeddingsExtracted,
+        embeddingsReused,
+        stageTimings: {
+          detectMs,
+          embedMs,
+          totalMs: performance.now() - t0,
+        },
+        requestId: e.data.requestId,
+      });
     } catch (err) {
       postMessage({ type: 'error', message: err.message, requestId: e.data.requestId });
     } finally {

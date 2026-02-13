@@ -6,8 +6,8 @@ import { getWorker, isWorkerReady, setWorkerBusy, scheduleNextCapture, getVideo,
 
 const CAPTURE_MAX_WIDTH = 960;
 const THUMB_SIZE = 200;
-const DUPE_SIMILARITY_THRESH = 0.92;
-const MAX_DUPE_RETRIES = 2;
+const DUPE_SIMILARITY_THRESH = 0.82;
+const MAX_DUPE_RETRIES = 1;
 const AUTO_SAVE_SECONDS = 10;
 const SAMPLE_DELAY = 1400;
 
@@ -17,7 +17,6 @@ const INSTRUCTIONS = [
     { text: 'Turn your head RIGHT', icon: '➡️', hint: 'Mirror what you just did, other side' },
     { text: 'Tilt your head UP a bit', icon: '⬆️', hint: 'Like you\'re looking at a tall shelf' },
     { text: 'Tilt your head DOWN', icon: '⬇️', hint: 'Like reading your phone' },
-    { text: 'Give me a SMILE', icon: '🙂', hint: 'Doesn\'t have to be your best — just natural' },
 ];
 
 // UI Refs
@@ -66,7 +65,7 @@ export async function enrollFace() {
     const trimmedName = name.trim();
 
     // Mode Selection
-    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (6 poses)\nCancel = Single Capture (1 sample)`);
+    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (5 poses)\nCancel = Single Capture (1 sample)`);
     const targetSamples = isFullEnrollment ? INSTRUCTIONS.length : 1;
     const instructions = isFullEnrollment ? INSTRUCTIONS : [{ text: 'Look at Camera', icon: '📸' }];
 

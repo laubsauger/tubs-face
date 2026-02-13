@@ -18,6 +18,7 @@ import {
     getLastNoFaceTime, setLastNoFaceTime,
 } from './detection.js';
 import { captureFrameBase64 } from '../vision-capture.js';
+import { perfGauge, perfMark, perfTime } from '../perf-hooks.js';
 
 const MATCH_THRESHOLD = 0.65;
 const MATCH_MARGIN = 0.08;       // best must beat second-best by this gap
@@ -175,6 +176,7 @@ function isFaceCloseEnough(face, frameW, frameH, minAreaRatio) {
 }
 
 export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, embeddingsReused = 0) {
+    const resultsStart = performance.now();
     setLastInferenceMs(inferenceMs);
     const faceLibrary = getFaceLibrary();
     const currentInterval = getCurrentInterval();
@@ -205,6 +207,7 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
             suppressVisionReactionsNow({ notifyPresenceOff: true });
             mutedVisionSuppressionApplied = true;
         }
+        perfTime('face_results_ms', performance.now() - resultsStart);
         return;
     }
     mutedVisionSuppressionApplied = false;
@@ -404,6 +407,11 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
                 }
                 enqueueSpeech(greeting);
                 resetProactiveTimer();
+                // Activate conversation mode so the person can respond without wake word
+                const ws = getWs();
+                if (ws && ws.readyState === 1) {
+                    ws.send(JSON.stringify({ type: 'face_greeting' }));
+                }
             }, 400);
 
         } else {
@@ -425,6 +433,11 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
                     lastGreetedByName.set(n, Date.now());
                     logChat('sys', `New face recognized: ${n}`);
                     resetProactiveTimer();
+                    // Activate conversation mode so the person can respond without wake word
+                    const ws = getWs();
+                    if (ws && ws.readyState === 1) {
+                        ws.send(JSON.stringify({ type: 'face_greeting' }));
+                    }
                 }
             } else {
                 // Clear wake suppression once we've had one non-wake frame with no new names
@@ -480,6 +493,10 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
     // Always update tracking state at end of frame
     prevRecognizedNames = currentNames;
     prevFaceCount = activeFaces.length;
+    perfGauge('faces_active', activeFaces.length);
+    perfGauge('faces_recognized', currentNames.size);
+    perfMark('face_results');
+    perfTime('face_results_ms', performance.now() - resultsStart);
 }
 
 function updateBadge(recognized, unknownCount) {

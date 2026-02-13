@@ -6,11 +6,12 @@ import { enqueueSpeech, stopAllTTS, enqueueTurnScript, applyHeadSpeechState } fr
 import { hideDonationQr, showDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
-import { setFaceRenderMode } from './face-renderer.js';
+import { setFaceRenderMode, setFaceRendererQuality } from './face-renderer.js';
 import { resetProactiveTimer } from './proactive.js';
 import { updateWaveformMode, setInputMuted } from './audio-input.js';
 import { buildLocalTurnTimeline } from './turn-script.js';
 import { clearFaceVisionReactionsForMute } from './face/results.js';
+import { perfMark } from './perf-hooks.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const MUTED_ALLOWED_TYPES = new Set(['config', 'stats', 'ping', 'system', 'error', 'sleep', 'wake']);
@@ -82,6 +83,16 @@ function setMinFaceBoxAreaRatio(value) {
 function setRenderMode(mode) {
     if (!mode) return;
     setFaceRenderMode(mode, { persist: false });
+}
+
+function setRenderQuality(value) {
+    if (!value) return;
+    const normalized = String(value).trim().toLowerCase();
+    if (!['high', 'balanced', 'low'].includes(normalized)) return;
+    STATE.renderQuality = normalized;
+    setFaceRendererQuality(normalized);
+    const select = document.getElementById('face-render-quality');
+    if (select) select.value = normalized;
 }
 
 function setExpressionIfAllowed(expr) {
@@ -188,6 +199,15 @@ function setSecondaryVoice(value) {
     if (select) select.value = value;
 }
 
+function setSecondaryRenderQuality(value) {
+    if (!value) return;
+    const normalized = String(value).trim().toLowerCase();
+    if (!['high', 'balanced', 'low'].includes(normalized)) return;
+    STATE.secondaryRenderQuality = normalized;
+    const select = document.getElementById('secondary-render-quality');
+    if (select) select.value = normalized;
+}
+
 function setDualHeadEnabled(value) {
     STATE.dualHeadEnabled = Boolean(value);
     const toggle = document.getElementById('dual-head-enabled');
@@ -217,7 +237,7 @@ function setSecondarySubtitleEnabled(value) {
 function setSecondaryAudioGain(value) {
     const parsed = Number(value);
     if (!Number.isFinite(parsed)) return;
-    STATE.secondaryAudioGain = Math.max(0, Math.min(1, parsed));
+    STATE.secondaryAudioGain = Math.max(0, Math.min(1.2, parsed));
     const slider = document.getElementById('secondary-audio-gain');
     const label = document.getElementById('secondary-audio-gain-val');
     if (slider) slider.value = String(STATE.secondaryAudioGain);
@@ -248,18 +268,22 @@ function applyConfig(msg) {
     setDonationSignalMode(msg.donationSignalMode);
     setMinFaceBoxAreaRatio(msg.minFaceBoxAreaRatio);
     setRenderMode(msg.faceRenderMode);
+    if (msg.renderQuality) setRenderQuality(msg.renderQuality);
     if (msg.vadNoiseGate != null) setNoiseGate(msg.vadNoiseGate);
     if (msg.kokoroVoice) setKokoroVoice(msg.kokoroVoice);
     if (hasOwn('dualHeadEnabled')) setDualHeadEnabled(msg.dualHeadEnabled);
     if (msg.dualHeadMode) setDualHeadMode(msg.dualHeadMode);
     if (msg.dualHeadTurnPolicy) setDualHeadTurnPolicy(msg.dualHeadTurnPolicy);
     if (msg.secondaryVoice) setSecondaryVoice(msg.secondaryVoice);
+    if (msg.secondaryRenderQuality) setSecondaryRenderQuality(msg.secondaryRenderQuality);
     if (hasOwn('secondarySubtitleEnabled')) setSecondarySubtitleEnabled(msg.secondarySubtitleEnabled);
     if (hasOwn('secondaryAudioGain')) setSecondaryAudioGain(msg.secondaryAudioGain);
     if (hasOwn('muted')) setMuted(msg.muted);
 }
 
 export function handleMessage(msg) {
+    perfMark('ws_in');
+    perfMark(`ws_${String(msg?.type || 'unknown')}`);
     if (!NON_ACTIVITY_TYPES.has(msg.type)) {
         STATE.lastActivity = Date.now();
     }

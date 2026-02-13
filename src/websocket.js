@@ -100,6 +100,12 @@ function initWebSocket(server) {
           return;
         }
 
+        if (msg.type === 'face_greeting') {
+          const { touchConversation } = require('./routes');
+          touchConversation();
+          return;
+        }
+
         if (msg.type === 'proactive') {
           if (runtimeConfig.muted === true) {
             broadcast({ type: 'expression', expression: 'idle' });

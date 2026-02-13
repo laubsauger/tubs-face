@@ -15,13 +15,16 @@ import { faceManager } from './face/index.js';
 import { initEmotionEngine } from './emotion-engine.js';
 import { initFullscreenToggle } from './fullscreen.js';
 import { checkAndRunIngestion } from './face/ingest.js';
-import { initFaceRenderer } from './face-renderer.js';
+import { initFaceRenderer, setFaceRendererQuality } from './face-renderer.js';
 import { initProactive } from './proactive.js';
 import { onGazeTargetChanged } from './eye-tracking.js';
+import { createPerfStats } from './perf-stats.js';
+import { setPerfSink } from './perf-hooks.js';
 
 let miniWindowRef = null;
 let motionRelayInitialized = false;
 let headSpeechRelayInitialized = false;
+let perfStats = null;
 const DUAL_FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
 const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
 
@@ -131,6 +134,7 @@ function initDualHeadMotionRelay() {
             y: Number(y.toFixed(4)),
             ts: now,
         }));
+        perfStats?.mark('motion_out');
     });
 
     onBlink(() => {
@@ -138,6 +142,7 @@ function initDualHeadMotionRelay() {
         const ws = getWs();
         if (!ws || ws.readyState !== 1) return;
         ws.send(JSON.stringify({ type: 'face_blink', ts: Date.now() }));
+        perfStats?.mark('blink_out');
     });
 }
 
@@ -156,6 +161,7 @@ function initHeadSpeechRelay() {
             turnId: detail.turnId || STATE.currentTurnId || null,
             ts: Number(detail.ts) || Date.now(),
         }));
+        perfStats?.mark('speech_state_out');
     });
 }
 
@@ -186,6 +192,8 @@ function initDualHeadControls() {
     const turnPolicySelect = document.getElementById('dual-head-turn-policy');
     const subtitleToggle = document.getElementById('secondary-subtitle-enabled');
     const secondaryVoiceSelect = document.getElementById('secondary-tts-voice');
+    const renderQualitySelect = document.getElementById('face-render-quality');
+    const secondaryRenderQualitySelect = document.getElementById('secondary-render-quality');
     const secondaryGain = document.getElementById('secondary-audio-gain');
     const secondaryGainVal = document.getElementById('secondary-audio-gain-val');
     const openMiniWindowBtn = document.getElementById('open-mini-window');
@@ -236,6 +244,20 @@ function initDualHeadControls() {
         });
     }
 
+    if (renderQualitySelect) {
+        renderQualitySelect.addEventListener('change', () => {
+            const value = renderQualitySelect.value;
+            setFaceRendererQuality(value);
+            postConfigPatch({ renderQuality: value });
+        });
+    }
+
+    if (secondaryRenderQualitySelect) {
+        secondaryRenderQualitySelect.addEventListener('change', () => {
+            postConfigPatch({ secondaryRenderQuality: secondaryRenderQualitySelect.value });
+        });
+    }
+
     if (secondaryGain && secondaryGainVal) {
         secondaryGain.addEventListener('input', () => {
             secondaryGainVal.textContent = Number(secondaryGain.value).toFixed(2);
@@ -264,6 +286,8 @@ function initMuteToggle() {
 }
 
 function init() {
+    perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
+    setPerfSink(perfStats);
     STATE.wakeTime = Date.now();
     $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     $('#stat-model').textContent = STATE.model;

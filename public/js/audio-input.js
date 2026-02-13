@@ -5,6 +5,7 @@ import { setExpression } from './expressions.js';
 import { stopAllTTS } from './tts.js';
 import { getWs } from './websocket.js';
 import { captureFrameBase64 } from './vision-capture.js';
+import { perfGauge, perfMark, perfTime } from './perf-hooks.js';
 
 let myvad = null;
 let vadActive = false;
@@ -143,6 +144,7 @@ export async function initVAD() {
                 }
 
                 console.log('Speech start detected');
+                perfMark('vad_speech_start');
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Listening...';
                 setExpression('listening');
@@ -170,6 +172,7 @@ export async function initVAD() {
                     return;
                 }
                 console.log('Speech end detected');
+                perfMark('vad_speech_end');
                 processVadAudio(audio);
             },
             onVADMisfire: () => {
@@ -177,6 +180,7 @@ export async function initVAD() {
                 clearInterruptionTimer();
                 clearMaxChunkTimer();
                 console.log('VAD Misfire');
+                perfMark('vad_misfire');
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Idle';
                 setExpression('idle');
@@ -281,23 +285,28 @@ function getBargeInThreshold() {
 }
 
 async function processVadAudio(float32Array) {
+    const t0 = performance.now();
     const rms = computeRMS(float32Array);
     const gate = STATE.vadNoiseGate || 0;
+    perfGauge('vad_rms_x1000', rms * 1000);
 
     if (rms < gate) {
         console.log(`[VAD] Below noise gate (RMS ${rms.toFixed(4)} < ${gate}) — discarding`);
         const statState = $('#stat-listen-state');
         if (statState) statState.textContent = 'Idle';
         setExpression('idle');
+        perfTime('vad_process_ms', performance.now() - t0);
         return;
     }
 
     console.log(`[VAD] RMS ${rms.toFixed(4)} — sending segment`);
     const wavBlob = audioBufferToWav(float32Array);
     sendVoiceSegment(wavBlob);
+    perfTime('vad_process_ms', performance.now() - t0);
 }
 
 async function sendVoiceSegment(blob) {
+    const t0 = performance.now();
     if (STATE.muted) return;
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
@@ -318,6 +327,7 @@ async function sendVoiceSegment(blob) {
     if (statState) statState.textContent = 'Accumulating...';
 
     try {
+        perfMark('voice_segment_http');
         const res = await fetch('/voice/segment?wakeWord=true', {
             method: 'POST',
             body: blob,
@@ -334,6 +344,8 @@ async function sendVoiceSegment(blob) {
         }
     } catch (err) {
         console.error('[Audio] Segment send failed:', err);
+    } finally {
+        perfTime('voice_segment_http_ms', performance.now() - t0);
     }
 }
 
@@ -588,6 +600,7 @@ function startVisualize() {
 }
 
 async function sendVoice(blob, isVad = false) {
+    const t0 = performance.now();
     if (STATE.muted) return;
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
@@ -611,6 +624,7 @@ async function sendVoice(blob, isVad = false) {
     try {
         const url = isVad ? '/voice?wakeWord=true' : '/voice';
 
+        perfMark('voice_http');
         const res = await fetch(url, {
             method: 'POST',
             body: blob,
@@ -648,6 +662,7 @@ async function sendVoice(blob, isVad = false) {
         isTranscribing = false;
         updateWaveformMode();
         if (!STATE.speaking) $('#stat-listen-state').textContent = 'Idle';
+        perfTime('voice_http_ms', performance.now() - t0);
     }
 }
 

@@ -2,6 +2,7 @@ import { STATE } from '../state.js';
 import { logChat } from '../chat-log.js';
 import { handleFaceResults } from './results.js';
 import { isDebugVisible, renderDebugFrame } from './debug.js';
+import { perfMark, perfTime, perfGauge } from '../perf-hooks.js';
 
 // Config
 const CAPTURE_MAX_WIDTH = 960;
@@ -20,6 +21,7 @@ let lastInferenceMs = 500;
 let currentInterval = 1500;
 let lastFaceSeen = 0;
 let lastNoFaceTime = 0;
+let pendingDetectSentAt = 0;
 
 // DOM refs
 const video = document.getElementById('camera-feed');
@@ -71,6 +73,7 @@ export function scheduleNextCapture() {
     if (!STATE.cameraActive || !workerReady) return;
     clearTimeout(captureTimeout);
     currentInterval = computeInterval();
+    perfGauge('detect_interval_ms', currentInterval);
     captureTimeout = setTimeout(captureFrame, currentInterval);
 }
 
@@ -80,6 +83,7 @@ export function clearCapture() {
 }
 
 function captureFrame() {
+    const captureStart = performance.now();
     if (!video.srcObject || video.readyState < 2 || workerBusy || !workerReady) {
         scheduleNextCapture();
         return;
@@ -100,9 +104,15 @@ function captureFrame() {
         captureCanvas.width = w;
         captureCanvas.height = h;
     }
+    const drawStart = performance.now();
     captureCtx.drawImage(video, 0, 0, w, h);
+    perfTime('capture_draw_ms', performance.now() - drawStart);
 
+    const readStart = performance.now();
     const imageData = captureCtx.getImageData(0, 0, w, h);
+    perfTime('capture_read_ms', performance.now() - readStart);
+    perfTime('capture_total_ms', performance.now() - captureStart);
+    perfMark('capture_frame');
 
     if (isDebugVisible()) {
         renderDebugFrame(captureCanvas, w, h);
@@ -110,6 +120,7 @@ function captureFrame() {
 
     const buffer = imageData.data.buffer;
     workerBusy = true;
+    pendingDetectSentAt = performance.now();
     worker.postMessage({
         type: 'detect',
         imageBuffer: buffer,
@@ -152,6 +163,17 @@ export function initWorker() {
 
             case 'faces':
                 workerBusy = false;
+                if (pendingDetectSentAt > 0) {
+                    perfTime('detect_roundtrip_ms', performance.now() - pendingDetectSentAt);
+                    pendingDetectSentAt = 0;
+                }
+                perfTime('worker_infer_ms', Number(msg.inferenceMs) || 0);
+                if (msg.stageTimings && typeof msg.stageTimings === 'object') {
+                    perfTime('worker_detect_ms', Number(msg.stageTimings.detectMs) || 0);
+                    perfTime('worker_embed_ms', Number(msg.stageTimings.embedMs) || 0);
+                    perfTime('worker_total_ms', Number(msg.stageTimings.totalMs) || 0);
+                }
+                perfGauge('faces_detected', Array.isArray(msg.faces) ? msg.faces.length : 0);
                 handleFaceResults(msg.faces, msg.inferenceMs, msg.embeddingsExtracted, msg.embeddingsReused);
                 scheduleNextCapture();
                 break;

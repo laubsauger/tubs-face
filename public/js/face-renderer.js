@@ -1,10 +1,13 @@
 import { STATE } from './state.js';
 import { face } from './dom.js';
 import { buildFallbackFaceShapeLibrary, loadNormalizedFaceShapes } from './svg-shape-normalizer.js';
+import { perfMark, perfTime } from './perf-hooks.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const VALID_RENDER_MODES = new Set(['css', 'svg']);
+const VALID_RENDER_QUALITIES = new Set(['high', 'balanced', 'low']);
 const MODE_STORAGE_KEY = 'tubs.faceRenderMode';
+const SCANLINE_MASK_URL = 'url(#scanline-mask)';
 
 const TALK_SEQUENCE = Object.freeze(['talk1', 'talk2', 'talk3', 'talk2']);
 const SHAPE_KEY_BY_EXPRESSION = Object.freeze({
@@ -44,6 +47,12 @@ const PARALLAX_PROFILE = Object.freeze({
     mouthYMax: 1.0,
 });
 
+const QUALITY_PROFILE = Object.freeze({
+    high: { minGazeDelta: 0.05, minGazeIntervalMs: 0 },
+    balanced: { minGazeDelta: 0.25, minGazeIntervalMs: 12 },
+    low: { minGazeDelta: 0.6, minGazeIntervalMs: 28 },
+});
+
 const gazeCss = {
     eyeX: 0,
     eyeY: 0,
@@ -55,9 +64,12 @@ let initialized = false;
 let syncingSelect = false;
 let currentExpression = 'idle';
 let activeRenderer = 'css';
+let currentQuality = 'high';
 let speakingTimer = null;
 let speakingIndex = 0;
 let blinkTimer = null;
+let lastAppliedGazeAt = 0;
+let lastAppliedGaze = { eyeX: 0, eyeY: 0, mouthX: 0, mouthY: 0 };
 
 const NO_BLINK_EXPRESSIONS = new Set(['sleep', 'love']);
 
@@ -86,6 +98,11 @@ const featureState = {
 function normalizeMode(mode) {
     const normalized = String(mode || '').trim().toLowerCase();
     return VALID_RENDER_MODES.has(normalized) ? normalized : 'svg';
+}
+
+function normalizeQuality(quality) {
+    const normalized = String(quality || '').trim().toLowerCase();
+    return VALID_RENDER_QUALITIES.has(normalized) ? normalized : 'high';
 }
 
 function getGsap() {
@@ -122,6 +139,21 @@ function resolveInitialMode() {
     if (fromStorage) return normalizeMode(fromStorage);
 
     return 'svg';
+}
+
+function applyRenderQualityToDom() {
+    if (!face) return;
+    face.dataset.renderQuality = currentQuality;
+
+    if (!eyeGazeGroup || !mouthGazeGroup) return;
+    const scanlineEnabled = currentQuality !== 'low';
+    if (scanlineEnabled) {
+        eyeGazeGroup.setAttribute('mask', SCANLINE_MASK_URL);
+        mouthGazeGroup.setAttribute('mask', SCANLINE_MASK_URL);
+        return;
+    }
+    eyeGazeGroup.removeAttribute('mask');
+    mouthGazeGroup.removeAttribute('mask');
 }
 
 function createSvgEl(tag, attrs = {}) {
@@ -189,9 +221,12 @@ function renderFeatureToElement(el, feature) {
 }
 
 function renderMainFeatures() {
+    const t0 = performance.now();
     if (featureState.leftEye) renderFeatureToElement(leftEyePathEl, featureState.leftEye);
     if (featureState.rightEye) renderFeatureToElement(rightEyePathEl, featureState.rightEye);
     if (featureState.mouth) renderFeatureToElement(mouthPathEl, featureState.mouth);
+    perfTime('render_features_ms', performance.now() - t0);
+    perfMark('render_features');
 }
 
 function getProfileByShapeKey(shapeKey) {
@@ -223,6 +258,7 @@ function ensureFeatureState(part, targetFeature) {
 }
 
 function morphFeature(part, targetFeature, duration, ease) {
+    const t0 = performance.now();
     if (!targetFeature) return;
 
     ensureFeatureState(part, targetFeature);
@@ -243,6 +279,8 @@ function morphFeature(part, targetFeature, duration, ease) {
         state.strokeWidth = Number(targetFeature.strokeWidth) || 0;
         state.opacity = Number.isFinite(Number(targetFeature.opacity)) ? Number(targetFeature.opacity) : 1;
         renderMainFeatures();
+        perfTime('morph_setup_ms', performance.now() - t0);
+        perfMark('morph_setup');
         return;
     }
 
@@ -277,6 +315,8 @@ function morphFeature(part, targetFeature, duration, ease) {
             state.tween = null;
         },
     });
+    perfTime('morph_setup_ms', performance.now() - t0);
+    perfMark('morph_setup');
 }
 
 function setMouthWaveActive(enabled) {
@@ -317,6 +357,7 @@ function applyDecor(decorFeatures = [], duration = 0, ease = 'sine.inOut') {
 }
 
 function applyGazeTransforms() {
+    const t0 = performance.now();
     if (!eyeGazeGroup || !mouthGazeGroup || !shapeLibrary?.viewBox) return;
 
     const width = Math.max(1, face.clientWidth || 1);
@@ -336,9 +377,12 @@ function applyGazeTransforms() {
 
     eyeGazeGroup.setAttribute('transform', `translate(${toFixed(eyeX)} ${toFixed(eyeY)})`);
     mouthGazeGroup.setAttribute('transform', `translate(${toFixed(mouthX)} ${toFixed(mouthY)})`);
+    perfTime('gaze_transform_ms', performance.now() - t0);
+    perfMark('gaze_transform');
 }
 
 function applyShapeProfile(shapeKey, options = {}) {
+    const t0 = performance.now();
     const profile = getProfileByShapeKey(shapeKey);
     if (!profile) return;
 
@@ -357,6 +401,8 @@ function applyShapeProfile(shapeKey, options = {}) {
     if (svgLayerEl) {
         svgLayerEl.dataset.svgTint = profile.tint || 'neutral';
     }
+    perfTime('shape_profile_ms', performance.now() - t0);
+    perfMark('shape_profile');
 }
 
 function squashFeature(feature, squashRatio = 0.08) {
@@ -503,6 +549,7 @@ function syncRenderer(options = {}) {
     const useSvg = mode === 'svg';
 
     activeRenderer = useSvg ? 'svg' : 'css';
+    applyRenderQualityToDom();
     face.classList.toggle('use-svg-renderer', useSvg);
     updateModeStatus(mode);
 
@@ -666,7 +713,10 @@ export function initFaceRenderer() {
     }
 
     STATE.faceRenderMode = resolveInitialMode();
+    currentQuality = normalizeQuality(STATE.renderQuality);
+    STATE.renderQuality = currentQuality;
     buildSvgLayer();
+    applyRenderQualityToDom();
     initModeControl();
     syncModeSelect();
     writeStoredMode(STATE.faceRenderMode);
@@ -697,6 +747,17 @@ export function setFaceRenderMode(mode, options = {}) {
     }
 }
 
+export function setFaceRendererQuality(quality) {
+    const nextQuality = normalizeQuality(quality);
+    currentQuality = nextQuality;
+    STATE.renderQuality = nextQuality;
+    lastAppliedGazeAt = 0;
+    applyRenderQualityToDom();
+    if (activeRenderer === 'svg') {
+        applyGazeTransforms();
+    }
+}
+
 export function setFaceRendererExpression(expression) {
     currentExpression = String(expression || 'idle').toLowerCase();
     syncRenderer();
@@ -724,9 +785,23 @@ export function setFaceRendererGaze({ eyeX = 0, eyeY = 0, mouthX = 0, mouthY = 0
     gazeCss.mouthX = mouthX;
     gazeCss.mouthY = mouthY;
 
-    if (activeRenderer === 'svg') {
-        applyGazeTransforms();
+    if (activeRenderer !== 'svg') return;
+
+    const profile = QUALITY_PROFILE[currentQuality] || QUALITY_PROFILE.high;
+    const now = performance.now();
+    const delta = Math.max(
+        Math.abs(eyeX - lastAppliedGaze.eyeX),
+        Math.abs(eyeY - lastAppliedGaze.eyeY),
+        Math.abs(mouthX - lastAppliedGaze.mouthX),
+        Math.abs(mouthY - lastAppliedGaze.mouthY),
+    );
+    if (delta < profile.minGazeDelta && (now - lastAppliedGazeAt) < profile.minGazeIntervalMs) {
+        return;
     }
+
+    lastAppliedGazeAt = now;
+    lastAppliedGaze = { eyeX, eyeY, mouthX, mouthY };
+    applyGazeTransforms();
 }
 
 async function persistMode(mode) {

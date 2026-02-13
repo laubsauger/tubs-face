@@ -1208,6 +1208,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   let fullText = '';
   let rawEmotion = null;
   let emotionExtracted = false;
+  let donationMarkerDetected = false;
 
   const splitter = createSentenceSplitter((sentence) => {
     if (sentenceCount >= MAX_OUTPUT_SENTENCES) return;
@@ -1222,6 +1223,12 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       }
       text = parsed.text;
     }
+
+    // Check for donation marker before stripping it
+    if (text.includes(DONATION_MARKER) || DONATION_MARKER_RE.test(text)) {
+      donationMarkerDetected = true;
+    }
+
     text = stripFormatting(text);
     text = stripDonationMarkers(text);
     if (!text) return;
@@ -1275,7 +1282,11 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     // If no chunks were emitted (e.g. very short response), extract emotion from full text
     if (!emotionExtracted && llmResult.text) {
-      const parsed = splitTrailingEmotionEmoji(stripFormatting(llmResult.text));
+      const rawResText = llmResult.text;
+      if (rawResText.includes(DONATION_MARKER) || DONATION_MARKER_RE.test(rawResText)) {
+        donationMarkerDetected = true;
+      }
+      const parsed = splitTrailingEmotionEmoji(stripFormatting(rawResText));
       rawEmotion = parsed.emotion;
       if (parsed.text) {
         fullText = clampOutput(stripDonationMarkers(parsed.text));
@@ -1308,7 +1319,16 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   }
 
   // Donation handling
-  const donationSignal = extractDonationSignal(fullText);
+  let donationSignal = extractDonationSignal(fullText);
+
+  // If we detected a marker during streaming but it was stripped, force the signal to show
+  if (donationMarkerDetected && !donationSignal.donation.show) {
+    donationSignal = {
+      text: fullText,
+      donation: buildDonationPayload(true, 'marker_tracked')
+    };
+  }
+
   const nudged = maybeInjectDonationNudge(donationSignal.text, donationSignal.donation.show);
   const finalDonation = nudged.forcedQr
     ? buildDonationPayload(true, 'periodic_nudge')

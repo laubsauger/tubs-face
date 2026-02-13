@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoboEyes Viewer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>RoboEyes Viewer</h1>
+            <p class="subtitle">Interactive Robot Face Expression Simulator</p>
+        </header>
+
+        <main>
+            <div class="preview-section">
+                <canvas id="eyesCanvas" width="800" height="400"></canvas>
+            </div>
+
+            <div class="controls-section">
+                <div class="control-group">
+                    <label>Mood</label>
+                    <div class="button-group">
+                        <button class="control-btn active" data-mood="default">Default</button>
+                        <button class="control-btn" data-mood="happy">Happy</button>
+                        <button class="control-btn" data-mood="angry">Angry</button>
+                        <button class="control-btn" data-mood="tired">Tired</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Position</label>
+                    <div class="button-group">
+                        <button class="control-btn active" data-position="center">Center</button>
+                        <button class="control-btn" data-position="n">North</button>
+                        <button class="control-btn" data-position="ne">NE</button>
+                        <button class="control-btn" data-position="e">East</button>
+                        <button class="control-btn" data-position="se">SE</button>
+                        <button class="control-btn" data-position="s">South</button>
+                        <button class="control-btn" data-position="sw">SW</button>
+                        <button class="control-btn" data-position="w">West</button>
+                        <button class="control-btn" data-position="nw">NW</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Animations</label>
+                    <div class="button-group">
+                        <button class="control-btn" data-animation="blink">Blink</button>
+                        <button class="control-btn" data-animation="confused">Confused</button>
+                        <button class="control-btn" data-animation="laugh">Laugh</button>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Mode</label>
+                    <div class="button-group">
+                        <button class="control-btn active" data-mode="normal">Two Eyes</button>
+                        <button class="control-btn" data-mode="cyclops">Cyclops</button>
+                    </div>
+                </div>
+
+                <div class="control-group sliders">
+                    <div class="slider-control">
+                        <label>Eye Width: <span id="widthValue">60</span></label>
+                        <input type="range" id="eyeWidth" min="20" max="100" value="60">
+                    </div>
+                    <div class="slider-control">
+                        <label>Eye Height: <span id="heightValue">80</span></label>
+                        <input type="range" id="eyeHeight" min="20" max="120" value="80">
+                    </div>
+                    <div class="slider-control">
+                        <label>Border Radius: <span id="radiusValue">15</span></label>
+                        <input type="range" id="borderRadius" min="0" max="50" value="15">
+                    </div>
+                    <div class="slider-control">
+                        <label>Eye Spacing: <span id="spacingValue">40</span></label>
+                        <input type="range" id="eyeSpacing" min="10" max="100" value="40">
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Based on <a href="https://github.com/FluxGarage/RoboEyes" target="_blank">FluxGarage/RoboEyes</a></p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

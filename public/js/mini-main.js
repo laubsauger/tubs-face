@@ -4,12 +4,15 @@ import {
     setFaceRenderMode,
     setFaceRendererExpression,
     setFaceRendererSpeaking,
+    setFaceRendererQuality,
 } from './face-renderer.js';
 import { buildLocalTurnTimeline } from './turn-script.js';
 import { lookAt, resetGaze } from './eye-tracking.js';
 import { triggerBlink } from './expressions.js';
 import { createSubtitleController } from './subtitles.js';
 import { startIdleBehavior } from './idle-behavior.js';
+import { createPerfStats } from './perf-stats.js';
+import { setPerfSink } from './perf-hooks.js';
 
 const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
 const subtitleEl = document.getElementById('subtitle');
@@ -36,7 +39,8 @@ let lastRemoteBlinkAt = 0;
 let dualHeadEnabled = false;
 let dualHeadMode = 'off';
 let secondaryVoice = 'jf_tebukuro';
-let secondaryAudioGain = 0.9;
+let secondaryRenderQuality = 'balanced';
+let secondaryAudioGain = 1.0;
 let secondarySubtitleEnabled = false;
 let miniSleeping = false;
 let muted = false;
@@ -50,6 +54,10 @@ let stopIdleBehavior = null;
 let lastMainMotionAt = 0;
 let desiredMiniFullscreen = false;
 let pendingMiniFullscreen = false;
+let perfStats = null;
+let miniAudioCtx = null;
+let currentAudioSourceNode = null;
+let currentAudioGainNode = null;
 
 const REMOTE_BLINK_MIN_GAP_MS = 900;
 
@@ -176,8 +184,63 @@ function summarizeTurnScript(beats) {
 
 function clampGain(value) {
     const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return 0.9;
-    return Math.max(0, Math.min(1, parsed));
+    if (!Number.isFinite(parsed)) return 1.0;
+    return Math.max(0, Math.min(1.2, parsed));
+}
+
+function disconnectAudioGraph() {
+    if (currentAudioSourceNode) {
+        try {
+            currentAudioSourceNode.disconnect();
+        } catch {
+            // ignore
+        }
+        currentAudioSourceNode = null;
+    }
+    if (currentAudioGainNode) {
+        try {
+            currentAudioGainNode.disconnect();
+        } catch {
+            // ignore
+        }
+        currentAudioGainNode = null;
+    }
+}
+
+function applySecondaryGain(audioEl, gainValue) {
+    if (!audioEl) return;
+    const safeGain = clampGain(gainValue);
+    disconnectAudioGraph();
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) {
+        audioEl.volume = Math.max(0, Math.min(1, safeGain));
+        return;
+    }
+
+    try {
+        if (!miniAudioCtx) {
+            miniAudioCtx = new AudioCtx();
+        }
+        const source = miniAudioCtx.createMediaElementSource(audioEl);
+        const gainNode = miniAudioCtx.createGain();
+        gainNode.gain.value = safeGain;
+        source.connect(gainNode);
+        gainNode.connect(miniAudioCtx.destination);
+        currentAudioSourceNode = source;
+        currentAudioGainNode = gainNode;
+        audioEl.volume = 1;
+        if (miniAudioCtx.state === 'suspended') {
+            void miniAudioCtx.resume().catch(() => {
+                // Autoplay policies can block context resume. Fall back to native volume.
+                disconnectAudioGraph();
+                audioEl.volume = Math.max(0, Math.min(1, safeGain));
+            });
+        }
+    } catch {
+        // Fallback for browsers that reject media source wiring.
+        audioEl.volume = Math.max(0, Math.min(1, safeGain));
+    }
 }
 
 function normalizeText(text) {
@@ -368,6 +431,7 @@ function pushBeat(beat, autoStart = true) {
 
 function stopCurrentAudio() {
     if (!currentAudio) return;
+    disconnectAudioGraph();
     currentAudio.oncanplaythrough = null;
     currentAudio.onerror = null;
     currentAudio.onended = null;
@@ -559,12 +623,13 @@ async function playSpeakBeat(item) {
 
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
-        audio.volume = clampGain(secondaryAudioGain);
+        applySecondaryGain(audio, secondaryAudioGain);
         currentAudio = audio;
 
         audio.onended = () => {
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
+            disconnectAudioGraph();
             markLocalSpeechEnd();
             setFaceRendererSpeaking(false);
             hideSubtitle();
@@ -576,6 +641,7 @@ async function playSpeakBeat(item) {
             console.warn('[MINI] audio playback error, using speechSynthesis fallback');
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
+            disconnectAudioGraph();
             markLocalSpeechEnd();
             setFaceRendererSpeaking(false);
             hideSubtitle();
@@ -632,6 +698,13 @@ function applyConfig(msg) {
     if (msg.secondaryVoice) {
         secondaryVoice = String(msg.secondaryVoice);
     }
+    if (msg.secondaryRenderQuality) {
+        secondaryRenderQuality = String(msg.secondaryRenderQuality).trim().toLowerCase();
+        if (!['high', 'balanced', 'low'].includes(secondaryRenderQuality)) {
+            secondaryRenderQuality = 'balanced';
+        }
+        setFaceRendererQuality(secondaryRenderQuality);
+    }
     if (Object.prototype.hasOwnProperty.call(msg, 'secondaryAudioGain')) {
         secondaryAudioGain = clampGain(msg.secondaryAudioGain);
     }
@@ -647,10 +720,11 @@ function applyConfig(msg) {
             miniResetGaze();
         }
     }
-    console.log(`[MINI] config dualEnabled=${dualHeadEnabled} mode=${dualHeadMode} voice=${secondaryVoice} subtitles=${secondarySubtitleEnabled}`);
+    console.log(`[MINI] config dualEnabled=${dualHeadEnabled} mode=${dualHeadMode} voice=${secondaryVoice} quality=${secondaryRenderQuality} subtitles=${secondarySubtitleEnabled}`);
 }
 
 function handleMessage(msg) {
+    perfStats?.mark('ws_in');
     switch (msg.type) {
         case 'config':
             applyConfig(msg);
@@ -660,6 +734,7 @@ function handleMessage(msg) {
             stopAll();
             break;
         case 'turn_script': {
+            perfStats?.mark('turn_script_in');
             if (muted) return;
             if (!dualHeadEnabled || dualHeadMode === 'off') {
                 console.log(`[MINI] turn_script ignored (disabled/off) turn=${msg.turnId || 'n/a'} enabled=${dualHeadEnabled} mode=${dualHeadMode}`);
@@ -680,6 +755,7 @@ function handleMessage(msg) {
             break;
         }
         case 'head_speech_state': {
+            perfStats?.mark('speech_state_in');
             if (muted) return;
             const actor = String(msg.actor || '').toLowerCase();
             if (actor !== 'main') return;
@@ -696,6 +772,7 @@ function handleMessage(msg) {
             return;
         }
         case 'face_motion':
+            perfStats?.mark('motion_in');
             if (muted) return;
             if (!dualHeadEnabled || dualHeadMode === 'off') return;
             if (typeof msg.x !== 'number' || typeof msg.y !== 'number') return;
@@ -704,6 +781,7 @@ function handleMessage(msg) {
             lookAt(msg.x, msg.y);
             break;
         case 'face_blink':
+            perfStats?.mark('blink_in');
             if (muted) return;
             if (!dualHeadEnabled || dualHeadMode === 'off') return;
             if (miniSleeping) return;
@@ -755,10 +833,13 @@ function connectWs() {
 }
 
 function init() {
+    perfStats = createPerfStats({ label: 'MINI PERF', anchor: 'top-right' });
+    setPerfSink(perfStats);
     STATE.faceRenderMode = 'svg';
     initMiniFullscreenSync();
     initFaceRenderer();
     setFaceRenderMode('svg', { persist: false });
+    setFaceRendererQuality(secondaryRenderQuality);
     setMiniExpression('idle');
     miniResetGaze();
     initMiniIdleBehavior();

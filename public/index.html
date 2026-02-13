@@ -112,6 +112,14 @@
             <span id="face-render-active" class="mini-pill">CSS</span>
           </div>
         </div>
+        <div class="stat-row">
+          <span class="stat-label">Face FX</span>
+          <select id="face-render-quality" class="mini-select">
+            <option value="high" selected>High</option>
+            <option value="balanced">Balanced</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
         <div class="stat-row" id="detect-delay-row" style="display:none;">
           <span class="stat-label">Detect <span id="detect-delay-val">auto</span></span>
           <input type="range" id="detect-delay" min="0" max="5000" step="100" value="0" class="mini-range">
@@ -215,6 +223,14 @@
           <select id="secondary-tts-voice" class="mini-select"></select>
         </div>
         <div class="stat-row">
+          <span class="stat-label">Small FX</span>
+          <select id="secondary-render-quality" class="mini-select">
+            <option value="high">High</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="low">Low</option>
+          </select>
+        </div>
+        <div class="stat-row">
           <span class="stat-label">Small Subs</span>
           <label class="toggle-switch">
             <input type="checkbox" id="secondary-subtitle-enabled">
@@ -222,8 +238,8 @@
           </label>
         </div>
         <div class="stat-row">
-          <span class="stat-label">Small Gain <span id="secondary-audio-gain-val">0.90</span></span>
-          <input type="range" id="secondary-audio-gain" min="0" max="1" step="0.05" value="0.9" class="mini-range">
+          <span class="stat-label">Small Gain <span id="secondary-audio-gain-val">1.00</span></span>
+          <input type="range" id="secondary-audio-gain" min="0" max="1.2" step="0.05" value="1" class="mini-range">
         </div>
         <div class="stat-row">
           <span class="stat-label">Mini Window</span>
