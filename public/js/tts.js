@@ -270,6 +270,7 @@ export function processQueue() {
     $('#stat-queue').textContent = STATE.ttsQueue.length;
 
     STATE.speaking = true;
+    STATE.lastActivity = Date.now();
     clearInterruptionTimer();
 
     lastEmotion = item.emotion || null;

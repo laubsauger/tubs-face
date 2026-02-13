@@ -4,10 +4,12 @@
   "description": "Tubs Bot — Animated Chatbot Face Interface",
   "main": "bridge-server.js",
   "scripts": {
+    "postinstall": "bash scripts/setup-python.sh",
     "start": "node src/bridge-server.js",
     "kill": "pkill -f 'node src/bridge-server.js' && pkill -f 'transcription-service.py' || true",
     "restart": "npm run kill && sleep 1 && npm start",
-    "dev": "node src/bridge-server.js"
+    "dev": "node src/bridge-server.js",
+    "setup-python": "bash scripts/setup-python.sh"
   },
   "dependencies": {
     "fs-extra": "^11.3.3",

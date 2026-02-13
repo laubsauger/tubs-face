@@ -7,10 +7,14 @@ import tempfile
 import time
 import uuid
 import subprocess
+import threading
 import numpy as np
 from flask import Flask, request, jsonify, Response
 
 app = Flask(__name__)
+
+# Metal/MLX is not thread-safe — serialize all GPU operations
+_gpu_lock = threading.Lock()
 
 # Configuration
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
@@ -103,14 +107,15 @@ def tts():
 def _tts_kokoro(text, voice):
     t0 = time.time()
     try:
-        segments = []
-        for result in tts_model.generate(
-            text=text,
-            voice=voice,
-            speed=1.0,
-            lang_code="a",
-        ):
-            segments.append(np.array(result.audio))
+        with _gpu_lock:
+            segments = []
+            for result in tts_model.generate(
+                text=text,
+                voice=voice,
+                speed=1.0,
+                lang_code="a",
+            ):
+                segments.append(np.array(result.audio))
 
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
@@ -187,7 +192,8 @@ def _transcribe_mlx(tmp_path):
             ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", wav_path],
             check=True, timeout=10, capture_output=True,
         )
-        result = stt_model.transcribe(wav_path, language="en")
+        with _gpu_lock:
+            result = stt_model.transcribe(wav_path, language="en")
         elapsed = int((time.time() - t0) * 1000)
         text = result.get("text", "").strip()
         print(f"[STT] Transcribed in {elapsed}ms (mlx): {text[:80]}")

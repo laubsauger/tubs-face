@@ -410,7 +410,8 @@ export function handleFaceResults(faces, inferenceMs, embeddingsExtracted = 0, e
             presenceTimer = setTimeout(checkPresenceTimeout, PRESENCE_TIMEOUT);
         }
 
-        if (!STATE.sleeping && getLastFaceSeen() > 0 && STATE.sleepTimeout > 0) {
+        if (!STATE.sleeping && getLastFaceSeen() > 0 && STATE.sleepTimeout > 0
+            && !STATE.speaking && !STATE.inConversation) {
             const elapsed = now - getLastFaceSeen();
             if (elapsed > STATE.sleepTimeout) {
                 console.log(`[Face] No faces for ${Math.round(elapsed / 1000)}s (timeout: ${STATE.sleepTimeout / 1000}s) — entering sleep`);

@@ -232,6 +232,7 @@ export function handleMessage(msg) {
             }
             break;
         case 'incoming':
+            console.log(`[MSG] incoming: "${msg.text}"`);
             {
                 const donationSignal = detectDonationSignal(msg.text);
                 if (donationSignal) {

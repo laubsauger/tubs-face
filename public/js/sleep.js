@@ -4,6 +4,7 @@ import { logChat } from './chat-log.js';
 import { setExpression, triggerBlink } from './expressions.js';
 import { resetGaze } from './eye-tracking.js';
 import { hideDonationQr } from './donation-ui.js';
+import { stopAllTTS } from './tts.js';
 
 let sleepTimer = null;
 
@@ -17,6 +18,10 @@ export function resetSleepTimer() {
             sleepTimer = null;
             if (Date.now() - STATE.lastActivity >= STATE.sleepTimeout) {
                 enterSleep();
+                // If enterSleep was blocked (speaking, conversation, etc.), retry later
+                if (!STATE.sleeping) {
+                    resetSleepTimer();
+                }
             } else {
                 resetSleepTimer();
             }
@@ -33,14 +38,20 @@ export function enterSleep() {
         console.log('[Sleep] enterSleep blocked: facesDetected=' + STATE.facesDetected);
         return;
     }
+    if (STATE.speaking || STATE.ttsQueue?.length > 0) {
+        console.log('[Sleep] enterSleep blocked: still speaking');
+        return;
+    }
+    if (STATE.inConversation) {
+        console.log('[Sleep] enterSleep blocked: in conversation mode');
+        return;
+    }
     console.log('[Sleep] >>> ENTERING SLEEP');
     STATE.sleeping = true;
     body.classList.add('sleeping');
     clearTimeout(sleepTimer);
     sleepTimer = null;
-    speechSynthesis?.cancel();
-    STATE.ttsQueue = [];
-    STATE.speaking = false;
+    stopAllTTS();
     STATE.presenceDetected = false;
     hideDonationQr();
     subtitleEl.classList.remove('visible');
