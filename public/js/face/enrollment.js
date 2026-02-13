@@ -2,7 +2,7 @@ import { STATE } from '../state.js';
 import { logChat } from '../chat-log.js';
 import { cosineSimilarity } from './math.js';
 import { loadFaceLibrary } from './library.js';
-import { getWorker, isWorkerReady, setWorkerBusy, scheduleNextCapture, getVideo, getCaptureCanvas } from './detection.js';
+import { isWorkerReady, requestSharedFacesSnapshot, getVideo, getCaptureCanvas } from './detection.js';
 
 const CAPTURE_MAX_WIDTH = 960;
 const THUMB_SIZE = 200;
@@ -31,6 +31,7 @@ const pip = document.getElementById('camera-pip');
 
 // Sound Generator
 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+let enrollmentInProgress = false;
 
 function playTone(freq, endFreq, duration, type = 'square', vol = 0.1) {
     if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -54,45 +55,52 @@ function playSuccess() { playTone(800, 1600, 0.15, 'sine', 0.1); }
 function playFail() { playTone(300, 200, 0.2, 'sawtooth', 0.08); }
 
 export async function enrollFace() {
-    if (!STATE.cameraActive || !isWorkerReady()) {
-        logChat('sys', 'Camera must be active to enroll a face');
+    if (enrollmentInProgress) {
+        logChat('sys', 'Enrollment already in progress');
         return;
     }
 
-    const defaultName = STATE.personsPresent.length > 0 ? STATE.personsPresent[0] : '';
-    const name = prompt('Enter name for face:', defaultName);
-    if (!name || !name.trim()) return;
-    const trimmedName = name.trim();
-
-    // Mode Selection
-    const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (5 poses)\nCancel = Single Capture (1 sample)`);
-    const targetSamples = isFullEnrollment ? INSTRUCTIONS.length : 1;
-    const instructions = isFullEnrollment ? INSTRUCTIONS : [{ text: 'Look at Camera', icon: '📸' }];
+    enrollmentInProgress = true;
+    STATE.enrolling = true;
 
     try {
-        // Show Overlay
-        if (pip.classList.contains('hidden')) pip.classList.remove('hidden');
-        pip.classList.add('enroll-mode');
-        overlay.classList.remove('hidden');
-        actionsEl.classList.add('hidden');
-        stripEl.innerHTML = '';
+        if (!STATE.cameraActive || !isWorkerReady()) {
+            logChat('sys', 'Camera must be active to enroll a face');
+            return;
+        }
 
-        logChat('sys', `Enrolling "${trimmedName}" (${targetSamples} samples)...`);
+        const defaultName = STATE.personsPresent.length > 0 ? STATE.personsPresent[0] : '';
+        const name = prompt('Enter name for face:', defaultName);
+        if (!name || !name.trim()) return;
+        const trimmedName = name.trim();
 
-        const video = getVideo();
-        const captureCanvas = getCaptureCanvas();
-        const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
-        const worker = getWorker();
+        // Mode Selection
+        const isFullEnrollment = confirm(`Enrollment Mode:\nOK = Full Guided Enrollment (5 poses)\nCancel = Single Capture (1 sample)`);
+        const targetSamples = isFullEnrollment ? INSTRUCTIONS.length : 1;
+        const instructions = isFullEnrollment ? INSTRUCTIONS : [{ text: 'Look at Camera', icon: '📸' }];
 
-        const samples = [];
-        const thumbCanvas = document.createElement('canvas');
-        thumbCanvas.width = THUMB_SIZE;
-        thumbCanvas.height = THUMB_SIZE;
-        const thumbCtx = thumbCanvas.getContext('2d');
+        try {
+            // Show Overlay
+            if (pip.classList.contains('hidden')) pip.classList.remove('hidden');
+            pip.classList.add('enroll-mode');
+            overlay.classList.remove('hidden');
+            actionsEl.classList.add('hidden');
+            stripEl.innerHTML = '';
 
-        // Capture Loop
-        let dupeRetries = 0;
-        for (let i = 0; i < targetSamples; i++) {
+            logChat('sys', `Enrolling "${trimmedName}" (${targetSamples} samples)...`);
+
+            const video = getVideo();
+            const captureCanvas = getCaptureCanvas();
+            const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
+            const samples = [];
+            const thumbCanvas = document.createElement('canvas');
+            thumbCanvas.width = THUMB_SIZE;
+            thumbCanvas.height = THUMB_SIZE;
+            const thumbCtx = thumbCanvas.getContext('2d');
+
+            // Capture Loop
+            let dupeRetries = 0;
+            for (let i = 0; i < targetSamples; i++) {
             const instr = instructions[i] || { text: 'Look at Camera', icon: '📸', hint: '' };
 
             // New pose announcement — make it very obvious
@@ -144,30 +152,16 @@ export async function enrollFace() {
                 captureCanvas.height = h;
                 captureCtx.drawImage(video, 0, 0, w, h);
 
-                const imageData = captureCtx.getImageData(0, 0, w, h);
-                const buffer = imageData.data.buffer.slice(0);
-
-                // Detect
-                const faceResult = await new Promise((resolve) => {
-                    const handler = (e) => {
-                        if (e.data.type === 'faces') {
-                            worker.removeEventListener('message', handler);
-                            const faces = e.data.faces;
-                            if (faces.length === 1 && faces[0].embedding) {
-                                resolve(faces[0]);
-                            } else {
-                                resolve(null);
-                            }
-                        }
-                    };
-                    worker.addEventListener('message', handler);
-                    worker.postMessage({
-                        type: 'detect',
-                        imageBuffer: buffer,
-                        width: w,
-                        height: h
-                    }, [buffer]);
-                });
+                let faceResult = null;
+                try {
+                    const packet = await requestSharedFacesSnapshot(2400);
+                    const faces = Array.isArray(packet?.faces) ? packet.faces : [];
+                    if (faces.length === 1 && faces[0].embedding) {
+                        faceResult = faces[0];
+                    }
+                } catch {
+                    faceResult = null;
+                }
 
                 if (faceResult) {
                     capturedFace = faceResult;
@@ -263,7 +257,6 @@ export async function enrollFace() {
             }
         }
 
-        setWorkerBusy(false);
         if (instructionEl) {
             instructionEl.textContent = '';
             instructionEl.setAttribute('data-icon', '');
@@ -363,15 +356,18 @@ export async function enrollFace() {
             await loadFaceLibrary();
         }
 
-    } catch (err) {
-        console.error('[Enroll] Critical error:', err);
-        logChat('sys', 'Enrollment failed due to an error.');
+        } catch (err) {
+            console.error('[Enroll] Critical error:', err);
+            logChat('sys', 'Enrollment failed due to an error.');
+        } finally {
+            overlay.classList.add('hidden');
+            pip.classList.remove('enroll-mode');
+            stripEl.innerHTML = '';
+            statusEl.textContent = '';
+            actionsEl.classList.add('hidden');
+        }
     } finally {
-        overlay.classList.add('hidden');
-        pip.classList.remove('enroll-mode');
-        stripEl.innerHTML = '';
-        statusEl.textContent = '';
-        actionsEl.classList.add('hidden');
-        scheduleNextCapture();
+        STATE.enrolling = false;
+        enrollmentInProgress = false;
     }
 }

@@ -22,6 +22,7 @@ let currentInterval = 1500;
 let lastFaceSeen = 0;
 let lastNoFaceTime = 0;
 let pendingDetectSentAt = 0;
+const facesPacketListeners = new Set();
 
 // DOM refs
 const video = document.getElementById('camera-feed');
@@ -80,6 +81,56 @@ export function scheduleNextCapture() {
 export function clearCapture() {
     clearTimeout(captureTimeout);
     captureTimeout = null;
+}
+
+function emitFacesPacket(packet) {
+    for (const listener of facesPacketListeners) {
+        try {
+            listener(packet);
+        } catch {
+            // ignore listener errors
+        }
+    }
+}
+
+export function onFacesPacket(listener) {
+    if (typeof listener !== 'function') return () => {};
+    facesPacketListeners.add(listener);
+    return () => {
+        facesPacketListeners.delete(listener);
+    };
+}
+
+export function requestSharedFacesSnapshot(timeoutMs = 2200) {
+    if (!STATE.cameraActive || !workerReady) {
+        return Promise.reject(new Error('camera/detector not ready'));
+    }
+
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const cleanup = () => {
+            if (off) off();
+            clearTimeout(timer);
+        };
+        const off = onFacesPacket((packet) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(packet);
+        });
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            reject(new Error('faces snapshot timeout'));
+        }, Math.max(400, Number(timeoutMs) || 2200));
+
+        // Ask detector loop for a fresh pass now; if worker is busy,
+        // the next normal faces packet will still satisfy this promise.
+        clearTimeout(captureTimeout);
+        captureTimeout = null;
+        captureFrame();
+    });
 }
 
 function captureFrame() {
@@ -163,6 +214,13 @@ export function initWorker() {
 
             case 'faces':
                 workerBusy = false;
+                emitFacesPacket({
+                    faces: Array.isArray(msg.faces) ? msg.faces : [],
+                    inferenceMs: Number(msg.inferenceMs) || 0,
+                    ts: Date.now(),
+                    embeddingsExtracted: Number(msg.embeddingsExtracted) || 0,
+                    embeddingsReused: Number(msg.embeddingsReused) || 0,
+                });
                 if (pendingDetectSentAt > 0) {
                     perfTime('detect_roundtrip_ms', performance.now() - pendingDetectSentAt);
                     pendingDetectSentAt = 0;

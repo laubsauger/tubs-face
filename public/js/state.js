@@ -38,6 +38,7 @@ export const STATE = {
     dualHeadMode: 'off',
     dualHeadTurnPolicy: 'llm_order',
     muted: false,
+    enrolling: false,
     // Audio noise gate — minimum RMS energy (0.0–1.0) for VAD audio to be sent
     vadNoiseGate: 0.008,
     // Streaming turn tracking
