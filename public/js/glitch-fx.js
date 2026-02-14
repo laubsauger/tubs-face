@@ -22,13 +22,13 @@ const DEFAULT_CONFIG = {
     pixel: { size: 21, gap: 7, edgeSoftness: 0, borderRadius: 0 },
     color: { base: '#a855f7', hueVariation: 8, brightnessVariation: 8, opacityMin: 0.5 },
     glow: { pixelGlow: 14, outerBloom: 0, bloomIntensity: 1, color: '#5900ff', falloffCurve: 2.8 },
-    brightnessPulse: { enabled: true, dim: 0.82, bright: 1, speed: 5 },
+    brightnessPulse: { enabled: true, dim: 0.88, bright: 1, speed: 3 },
     scanBeam: { enabled: true, speed: 10, lineWidth: 7, brightness: 0.65, glowStrength: 26, jitter: 1, color: '#a600ff' },
     chromatic: { enabled: true, offsetX: 0, offsetY: 4.5, intensity: 0.65, animate: true, animateSpeed: 7 },
     glitchSlice: {
         enabled: true, sliceCount: 24, maxOffset: 5, speed: 28,
         intensity: 0.53, colorShift: 0.03, gapChance: 0.07,
-        interval: 6200, burstDuration: 3000,
+        interval: 18000, burstDuration: 1800,
     },
     glitch: {
         scanlines: true, scanlineIntensity: 0.41, scanlineSpacing: 5,
@@ -1416,7 +1416,7 @@ function computeFrameState(now) {
 
     const bp = config.brightnessPulse;
     const pulseMod = bp.enabled
-        ? bp.dim + (bp.bright - bp.dim) * Math.pow(0.5 + 0.5 * Math.sin(t * bp.speed * 0.3), 3)
+        ? bp.dim + (bp.bright - bp.dim) * Math.pow(0.5 + 0.5 * Math.sin(t * bp.speed * 0.3), 6)
         : 1;
 
     const sb = config.scanBeam;
