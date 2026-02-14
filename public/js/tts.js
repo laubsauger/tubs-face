@@ -15,7 +15,7 @@ const POST_SPEECH_IDLE_DELAY_MS = 350;
 const REACTION_PAUSE_MS = 420;
 const REMOTE_SPEECH_STALE_MS = 20000;
 const REMOTE_WAIT_POLL_MS = 90;
-const REMOTE_WAIT_TIMEOUT_PAD_MS = 1500;
+const REMOTE_WAIT_TIMEOUT_PAD_MS = 5000;
 
 const subtitles = createSubtitleController(subtitleEl);
 let speechSafetyTimer = null;

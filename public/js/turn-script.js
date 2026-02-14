@@ -1,5 +1,5 @@
-const DEFAULT_WORD_MS = 340;
-const MIN_SPEECH_MS = 420;
+const DEFAULT_WORD_MS = 440;
+const MIN_SPEECH_MS = 800;
 const REACTION_FALLBACK_MS = 420;
 
 function toNumber(value) {
