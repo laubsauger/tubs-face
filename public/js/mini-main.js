@@ -24,7 +24,7 @@ const INTER_UTTERANCE_PAUSE_MS = 200;
 const REACTION_PAUSE_MS = 420;
 const REMOTE_SPEECH_STALE_MS = 20000;
 const REMOTE_WAIT_POLL_MS = 90;
-const REMOTE_WAIT_TIMEOUT_PAD_MS = 1500;
+const REMOTE_WAIT_MAX_MS = 45000;
 const DUAL_FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
 const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
 
@@ -337,9 +337,12 @@ function waitForRemoteActor(item) {
         item._waitRemoteSawStart = true;
     }
 
-    const timeoutMs = Math.max(1000, Number(item?.delayMs) || 0) + REMOTE_WAIT_TIMEOUT_PAD_MS;
     const elapsed = now - item._waitRemoteStartedAt;
-    const done = (item._waitRemoteSawStart && !remoteSpeaking) || (!item._waitRemoteSawStart && elapsed >= timeoutMs);
+    const timedOut = !item._waitRemoteSawStart && elapsed >= REMOTE_WAIT_MAX_MS;
+    const done = (item._waitRemoteSawStart && !remoteSpeaking) || timedOut;
+    if (timedOut) {
+        console.warn('[MINI] wait_remote timed out waiting for main start; advancing queue');
+    }
     if (done) return true;
 
     ttsQueue.unshift(item);
@@ -510,7 +513,6 @@ function enqueueSmallBeats(beats) {
             pushBeat({
                 action: 'wait_remote',
                 actor: beat.actor || 'main',
-                delayMs: Math.max(120, delayMs),
             }, false);
             continue;
         }

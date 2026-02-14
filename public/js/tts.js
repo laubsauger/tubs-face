@@ -15,7 +15,8 @@ const POST_SPEECH_IDLE_DELAY_MS = 350;
 const REACTION_PAUSE_MS = 420;
 const REMOTE_SPEECH_STALE_MS = 20000;
 const REMOTE_WAIT_POLL_MS = 90;
-const REMOTE_WAIT_TIMEOUT_PAD_MS = 5000;
+const REMOTE_WAIT_MAX_MS = 45000;
+const SPEECH_SAFETY_MAX_MS = 60000;
 
 const subtitles = createSubtitleController(subtitleEl);
 let speechSafetyTimer = null;
@@ -114,9 +115,12 @@ function waitForRemoteActor(item) {
         item._waitRemoteSawStart = true;
     }
 
-    const timeoutMs = Math.max(1000, Number(item?.delayMs) || 0) + REMOTE_WAIT_TIMEOUT_PAD_MS;
     const elapsed = now - item._waitRemoteStartedAt;
-    const done = (item._waitRemoteSawStart && !remoteSpeaking) || (!item._waitRemoteSawStart && elapsed >= timeoutMs);
+    const timedOut = !item._waitRemoteSawStart && elapsed >= REMOTE_WAIT_MAX_MS;
+    const done = (item._waitRemoteSawStart && !remoteSpeaking) || timedOut;
+    if (timedOut) {
+        console.warn('[TTS] wait_remote timed out waiting for remote start; advancing queue');
+    }
     if (done) return true;
 
     STATE.ttsQueue.unshift(item);
@@ -145,7 +149,7 @@ export function applyHeadSpeechState(msg) {
     }
 }
 
-function startSpeechSafety(durationMs) {
+function startSpeechSafety() {
     clearSpeechSafety();
     speechSafetyTimer = setTimeout(() => {
         speechSafetyTimer = null;
@@ -154,7 +158,7 @@ function startSpeechSafety(durationMs) {
             stopSubtitles();
             processQueue();
         }
-    }, durationMs + 2000);
+    }, SPEECH_SAFETY_MAX_MS);
 }
 
 function pushQueueItem(item, autoStart = true) {
@@ -269,7 +273,6 @@ export function enqueueTurnScript(beats = [], donation = null) {
             pushQueueItem({
                 action: 'wait_remote',
                 actor: beat?.actor || 'small',
-                delayMs: Math.max(120, delayMs),
             }, false);
             continue;
         }
@@ -425,11 +428,10 @@ async function playTTS(item) {
             if (started) return;
             started = true;
 
-            const dur = isFinite(audio.duration) ? audio.duration : 0;
             startSubtitles(item.text, audio);
             startSpeaking();
             loadingBar.classList.remove('active');
-            startSpeechSafety(dur > 0 ? dur * 1000 : 10000);
+            startSpeechSafety();
 
             audio.play().catch((e) => {
                 console.error('[TTS] Audio play failed:', e);

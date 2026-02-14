@@ -34,19 +34,36 @@ export function buildLocalTurnTimeline(beats, localActor = 'main') {
     for (const beat of source) {
         if (!beat || typeof beat !== 'object') continue;
         const actor = String(beat.actor || 'main').toLowerCase() === 'small' ? 'small' : 'main';
-        const action = String(beat.action || '').toLowerCase() === 'react' ? 'react' : 'speak';
-        const delayMs = estimateBeatDurationMs(beat);
+        const actionRaw = String(beat.action || '').toLowerCase();
+        const action = actionRaw === 'react'
+            ? 'react'
+            : actionRaw === 'wait'
+                ? 'wait'
+                : 'speak';
+        const explicitDelay = toNumber(beat.delayMs);
+        const delayMs = explicitDelay != null
+            ? Math.max(120, Math.min(8000, explicitDelay))
+            : estimateBeatDurationMs(beat);
 
         if (actor !== actorKey) {
             if (action === 'speak') {
                 timeline.push({
                     action: 'wait_remote',
                     actor,
-                    delayMs,
                 });
                 continue;
             }
-            timeline.push({ action: 'wait', delayMs });
+            if (action === 'wait' && explicitDelay != null) {
+                timeline.push({ action: 'wait', delayMs });
+            }
+            continue;
+        }
+
+        if (action === 'wait') {
+            timeline.push({
+                action: 'wait',
+                delayMs,
+            });
             continue;
         }
 
@@ -55,7 +72,6 @@ export function buildLocalTurnTimeline(beats, localActor = 'main') {
                 action: 'speak',
                 text: beat.text || '',
                 emotion: beat.emotion || null,
-                delayMs,
             });
             continue;
         }
