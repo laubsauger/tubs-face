@@ -14,8 +14,10 @@ import { startIdleBehavior } from './idle-behavior.js';
 import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
 import { initGlitchFx, enableGlitchFx, disableGlitchFx, setGlitchFxBaseColor } from './glitch-fx.js';
+import { normalizeSpeechText } from './tts-text.js';
+import { createMiniFullscreenSync } from './mini/fullscreen-sync.js';
+import { createMiniAudioGainController } from './mini/audio-gain.js';
 
-const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
 const subtitleEl = document.getElementById('subtitle');
 const reactionEl = document.getElementById('mini-reaction');
 const subtitles = createSubtitleController(subtitleEl);
@@ -55,14 +57,14 @@ let mainSpeechWaitTimer = null;
 let localSpeechActive = false;
 let stopIdleBehavior = null;
 let lastMainMotionAt = 0;
-let desiredMiniFullscreen = false;
-let pendingMiniFullscreen = false;
 let perfStats = null;
-let miniAudioCtx = null;
-let currentAudioSourceNode = null;
-let currentAudioGainNode = null;
 
 const REMOTE_BLINK_MIN_GAP_MS = 900;
+const miniFullscreenSync = createMiniFullscreenSync({
+    storageKey: DUAL_FULLSCREEN_STORAGE_KEY,
+    messageType: MINI_FULLSCREEN_MESSAGE_TYPE,
+});
+const miniAudioGain = createMiniAudioGainController();
 
 function shouldEnablePerfOverlay() {
     try {
@@ -71,113 +73,6 @@ function shouldEnablePerfOverlay() {
         return perf === '1' || perf === 'true' || perf === 'on';
     } catch {
         return false;
-    }
-}
-
-function readDualFullscreenIntent() {
-    try {
-        return localStorage.getItem(DUAL_FULLSCREEN_STORAGE_KEY) === '1';
-    } catch {
-        return false;
-    }
-}
-
-function isMiniFullscreenActive() {
-    return Boolean(document.fullscreenElement || document.webkitFullscreenElement);
-}
-
-async function requestMiniFullscreen() {
-    const root = document.documentElement;
-    if (root.requestFullscreen) {
-        await root.requestFullscreen();
-        return;
-    }
-    if (root.webkitRequestFullscreen) {
-        root.webkitRequestFullscreen();
-        return;
-    }
-    throw new Error('Fullscreen API unavailable');
-}
-
-async function exitMiniFullscreen() {
-    if (document.exitFullscreen) {
-        await document.exitFullscreen();
-        return;
-    }
-    if (document.webkitExitFullscreen) {
-        document.webkitExitFullscreen();
-        return;
-    }
-    throw new Error('Fullscreen API unavailable');
-}
-
-async function applyMiniFullscreenIntent(reason = 'sync') {
-    const active = isMiniFullscreenActive();
-    if (desiredMiniFullscreen === active) {
-        pendingMiniFullscreen = false;
-        return;
-    }
-
-    if (!desiredMiniFullscreen) {
-        pendingMiniFullscreen = false;
-        try {
-            await exitMiniFullscreen();
-        } catch {
-            // ignore
-        }
-        return;
-    }
-
-    try {
-        await requestMiniFullscreen();
-        pendingMiniFullscreen = false;
-    } catch (err) {
-        pendingMiniFullscreen = true;
-        console.log(`[MINI] fullscreen deferred (${reason}): ${err?.message || 'request failed'}`);
-    }
-}
-
-function initMiniFullscreenSync() {
-    desiredMiniFullscreen = readDualFullscreenIntent();
-
-    window.addEventListener('message', (event) => {
-        if (event.origin !== location.origin) return;
-        const msg = event?.data;
-        if (!msg || msg.type !== MINI_FULLSCREEN_MESSAGE_TYPE) return;
-        desiredMiniFullscreen = Boolean(msg.enabled);
-        void applyMiniFullscreenIntent('postMessage');
-    });
-
-    window.addEventListener('storage', (event) => {
-        if (event.key !== DUAL_FULLSCREEN_STORAGE_KEY) return;
-        desiredMiniFullscreen = readDualFullscreenIntent();
-        void applyMiniFullscreenIntent('storage');
-    });
-
-    const retryIfPending = () => {
-        if (!pendingMiniFullscreen || !desiredMiniFullscreen) return;
-        void applyMiniFullscreenIntent('gesture');
-    };
-
-    window.addEventListener('pointerdown', retryIfPending, { passive: true });
-    window.addEventListener('keydown', retryIfPending);
-    window.addEventListener('focus', retryIfPending);
-
-    document.addEventListener('fullscreenchange', () => {
-        if (desiredMiniFullscreen && !isMiniFullscreenActive()) {
-            pendingMiniFullscreen = true;
-        }
-    });
-    document.addEventListener('webkitfullscreenchange', () => {
-        if (desiredMiniFullscreen && !isMiniFullscreenActive()) {
-            pendingMiniFullscreen = true;
-        }
-    });
-
-    if (desiredMiniFullscreen) {
-        setTimeout(() => {
-            void applyMiniFullscreenIntent('init');
-        }, 120);
     }
 }
 
@@ -193,78 +88,6 @@ function summarizeTurnBeat(beat, index) {
 function summarizeTurnScript(beats) {
     if (!Array.isArray(beats) || beats.length === 0) return '[none]';
     return beats.map((beat, idx) => summarizeTurnBeat(beat, idx)).join(' | ');
-}
-
-function clampGain(value) {
-    const parsed = Number(value);
-    if (!Number.isFinite(parsed)) return 1.0;
-    return Math.max(0, Math.min(1.2, parsed));
-}
-
-function disconnectAudioGraph() {
-    if (currentAudioSourceNode) {
-        try {
-            currentAudioSourceNode.disconnect();
-        } catch {
-            // ignore
-        }
-        currentAudioSourceNode = null;
-    }
-    if (currentAudioGainNode) {
-        try {
-            currentAudioGainNode.disconnect();
-        } catch {
-            // ignore
-        }
-        currentAudioGainNode = null;
-    }
-}
-
-function applySecondaryGain(audioEl, gainValue) {
-    if (!audioEl) return;
-    const safeGain = clampGain(gainValue);
-    disconnectAudioGraph();
-
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    if (!AudioCtx) {
-        audioEl.volume = Math.max(0, Math.min(1, safeGain));
-        return;
-    }
-
-    try {
-        if (!miniAudioCtx) {
-            miniAudioCtx = new AudioCtx();
-        }
-        const source = miniAudioCtx.createMediaElementSource(audioEl);
-        const gainNode = miniAudioCtx.createGain();
-        gainNode.gain.value = safeGain;
-        source.connect(gainNode);
-        gainNode.connect(miniAudioCtx.destination);
-        currentAudioSourceNode = source;
-        currentAudioGainNode = gainNode;
-        audioEl.volume = 1;
-        if (miniAudioCtx.state === 'suspended') {
-            void miniAudioCtx.resume().catch(() => {
-                // Autoplay policies can block context resume. Fall back to native volume.
-                disconnectAudioGraph();
-                audioEl.volume = Math.max(0, Math.min(1, safeGain));
-            });
-        }
-    } catch {
-        // Fallback for browsers that reject media source wiring.
-        audioEl.volume = Math.max(0, Math.min(1, safeGain));
-    }
-}
-
-function normalizeText(text) {
-    return String(text ?? '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(DONATION_MARKER_RE, ' ')
-        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-        .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, '')
-        .replace(/\s+/g, ' ')
-        .trim();
 }
 
 function clearReactionTimer() {
@@ -460,7 +283,7 @@ function pushBeat(beat, autoStart = true) {
 
 function stopCurrentAudio() {
     if (!currentAudio) return;
-    disconnectAudioGraph();
+    miniAudioGain.disconnect();
     currentAudio.oncanplaythrough = null;
     currentAudio.onerror = null;
     currentAudio.onended = null;
@@ -486,7 +309,7 @@ function enqueueSmallBeats(beats) {
     const hasSpeakBeat = source.some((beat) => {
         if (!beat || typeof beat !== 'object') return false;
         if (String(beat.action || '').toLowerCase() !== 'speak') return false;
-        return Boolean(normalizeText(beat.text || ''));
+        return Boolean(normalizeSpeechText(beat.text || ''));
     });
     let promotedReactToSpeak = false;
 
@@ -512,7 +335,7 @@ function enqueueSmallBeats(beats) {
         }
 
         if (action === 'react') {
-            const reactText = normalizeText(beat.text || '');
+            const reactText = normalizeSpeechText(beat.text || '');
             if (!hasSpeakBeat && reactText && !promotedReactToSpeak) {
                 promotedReactToSpeak = true;
                 console.log(`[MINI] promoting text react to speak (safety net): "${reactText.slice(0, 80)}"`);
@@ -540,7 +363,7 @@ function enqueueSmallBeats(beats) {
             continue;
         }
 
-        const text = normalizeText(beat.text || '');
+        const text = normalizeSpeechText(beat.text || '');
         if (!text) continue;
 
         pushBeat({
@@ -644,13 +467,13 @@ async function playSpeakBeat(item) {
 
         const audioUrl = URL.createObjectURL(blob);
         const audio = new Audio(audioUrl);
-        applySecondaryGain(audio, secondaryAudioGain);
+        miniAudioGain.apply(audio, secondaryAudioGain);
         currentAudio = audio;
 
         audio.onended = () => {
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
-            disconnectAudioGraph();
+            miniAudioGain.disconnect();
             markLocalSpeechEnd();
             setFaceRendererSpeaking(false);
             hideSubtitle();
@@ -662,7 +485,7 @@ async function playSpeakBeat(item) {
             console.warn('[MINI] audio playback error, using speechSynthesis fallback');
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
-            disconnectAudioGraph();
+            miniAudioGain.disconnect();
             markLocalSpeechEnd();
             setFaceRendererSpeaking(false);
             hideSubtitle();
@@ -728,7 +551,7 @@ function applyConfig(msg) {
         setFaceRendererQuality(secondaryRenderQuality);
     }
     if (Object.prototype.hasOwnProperty.call(msg, 'secondaryAudioGain')) {
-        secondaryAudioGain = clampGain(msg.secondaryAudioGain);
+        secondaryAudioGain = miniAudioGain.clampGain(msg.secondaryAudioGain);
     }
     if (Object.prototype.hasOwnProperty.call(msg, 'secondarySubtitleEnabled')) {
         secondarySubtitleEnabled = Boolean(msg.secondarySubtitleEnabled);
@@ -879,7 +702,7 @@ function init() {
         setPerfSink(perfStats);
     }
     STATE.faceRenderMode = 'svg';
-    initMiniFullscreenSync();
+    miniFullscreenSync.init();
     initFaceRenderer();
     initGlitchFx();
     setGlitchFxBaseColor(secondaryGlitchFxBaseColor);
