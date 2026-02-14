@@ -5,6 +5,7 @@ import { showDonationQr } from './donation-ui.js';
 import { clearInterruptionTimer } from './audio-input.js';
 import { suggestEmotionExpression } from './emotion-engine.js';
 import { createSubtitleController } from './subtitles.js';
+import { tryUnlockAmbientPlayback } from './ambient-audio.js';
 
 const DONATION_HINT_RE = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
@@ -442,6 +443,8 @@ async function playTTS(item) {
 
         audio.onplay = () => {
             markLocalSpeechStart();
+            // TTS audio is playing — piggyback to unlock ambient audio
+            tryUnlockAmbientPlayback();
         };
 
         audio.onerror = () => {

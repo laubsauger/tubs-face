@@ -122,8 +122,31 @@ function stripFormatting(text) {
     .trim();
 }
 
+/**
+ * If the LLM accidentally returned JSON when it should have returned plain text,
+ * try to extract the actual speech text from it.
+ */
+function rescueTextFromJson(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed.includes('"text"') && !trimmed.includes('"beats"')) return trimmed;
+  try {
+    const jsonBlock = extractJsonBlock(trimmed);
+    if (!jsonBlock) return trimmed;
+    const parsed = JSON.parse(jsonBlock);
+    const beats = Array.isArray(parsed?.beats) ? parsed.beats : [];
+    const texts = beats
+      .filter((b) => b?.text && (b?.action === 'speak' || !b?.action))
+      .map((b) => String(b.text).trim())
+      .filter(Boolean);
+    if (texts.length > 0) return texts.join(' ');
+  } catch {
+    // Not valid JSON, return as-is
+  }
+  return trimmed;
+}
+
 function clampOutput(text) {
-  const normalized = normalizeInput(text);
+  const normalized = normalizeInput(rescueTextFromJson(text));
   if (!normalized) return '';
   const sentenceCapped = limitSentenceCount(normalized, MAX_OUTPUT_SENTENCES);
   if (sentenceCapped.length <= OUTPUT_CHAR_LIMIT) return sentenceCapped;
@@ -345,11 +368,12 @@ function buildTwoHeadAwarenessInstruction() {
   return [
     'Two-head mode is active.',
     `Runtime: mode=${mode}, turnPolicy=${turnPolicy}.`,
-    'You are main Tubs. Tiny Tubs (your small side head) has his own voice and speaks through his own audio.',
-    'Tiny Tubs MUST chime in every turn — he always has something to say. Give him his own beats.',
+    'You are main Tubs. Tiny Tubs (your small side head) has his own voice and speaks through his own audio channel.',
+    'Tiny Tubs will chime in on his own — you do not need to speak for him or include his lines.',
     'Prefer letting Tiny Tubs speak for himself rather than narrating what he says or thinks.',
     'Occasional cross-references are fine, but default to giving him his own lines.',
-    'Do not mention implementation details (routing, windows, TTS voices, JSON).',
+    'Do not mention implementation details (routing, windows, TTS voices, JSON, beats).',
+    'YOUR output is plain text only — one emoji then your sentence. Do NOT output JSON.',
   ].join('\n');
 }
 
@@ -1503,32 +1527,6 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     fullText,
   });
 
-  // If dual-head mode is on but we fell through to single-head streaming,
-  // send a supplementary turn_script so Tiny Tubs still gets a beat.
-  let streamFallbackBeats = null;
-  if (shouldUseDualHeadDirectedMode() && fullText) {
-    const mainEmotion = rawEmotion || defaultDualHeadSpeakEmotion('main');
-    const smallBeat = {
-      actor: 'small',
-      action: 'speak',
-      text: buildFallbackSmallSpeakText(fullText),
-      emotion: defaultDualHeadSpeakEmotion('small'),
-      delayMs: 300,
-    };
-    streamFallbackBeats = [
-      { actor: 'main', action: 'speak', text: fullText, emotion: mainEmotion },
-      smallBeat,
-    ];
-    broadcast({
-      type: 'turn_script',
-      turnId,
-      beats: streamFallbackBeats,
-      donation: finalDonation,
-      fullText,
-    });
-    console.log(`[LLM:stream] Dual-head fallback: injected small beat for turn=${turnId}`);
-  }
-
   pushHistory('user', normalizedInput);
   pushHistory('model', fullText);
   assistantReplyCount += 1;
@@ -1546,7 +1544,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     donation: finalDonation,
     emotion: rawEmotion,
     latencyMs: Date.now() - startedAt,
-    beats: streamFallbackBeats,
+    beats: null,
   };
 }
 

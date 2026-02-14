@@ -5,9 +5,9 @@ const PULSE_INTERVAL_MS = 12000;
 const FADE_IN_MS = 2000;
 const HOLD_MS = 7000;
 const FADE_OUT_MS = 2000;
-const PEAK_GAIN = 0.11;
-const DUCKED_GAIN = 0.045;
-const BASE_ENVELOPE = 0.45;
+const PEAK_GAIN = 0.32;
+const DUCKED_GAIN = 0.12;
+const BASE_ENVELOPE = 0.6;
 const SLEEP_GAIN_FACTOR = 0.72;
 const STATE_POLL_MS = 400;
 const PAUSE_IDLE_DELAY_MS = 600;
@@ -178,9 +178,8 @@ function ensureAudioGraph() {
 
     audioEl = new Audio(AMBIENT_SRC);
     audioEl.loop = true;
-    audioEl.preload = 'metadata';
+    audioEl.preload = 'auto';
     audioEl.volume = 0;
-    audioEl.crossOrigin = 'anonymous';
     audioEl.addEventListener('loadedmetadata', () => diag('media-loadedmetadata', true));
     audioEl.addEventListener('canplay', () => diag('media-canplay', true));
     audioEl.addEventListener('playing', () => diag('media-playing', true));
@@ -348,20 +347,39 @@ function handleSpeechObserved(event) {
     diag('small-speech-observed', true);
 }
 
+function tryUnlockPlayback(reason = 'unknown') {
+    diag(`unlock-${reason}`, true);
+    // Resume AudioContext synchronously within gesture/event context
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
+    if (audioEl && audioEl.paused) {
+        audioEl.play().catch(() => {});
+    }
+    // Also run the full async recovery
+    void ensurePlaybackReady();
+    if (active) applyTargetGain(120);
+}
+
 function bindUnlockListeners() {
-    const tryUnlock = (event) => {
-        diag(`unlock-${event?.type || 'unknown'}`, true);
-        void ensurePlaybackReady();
-        if (active) applyTargetGain(120);
-    };
-    window.addEventListener('pointerdown', tryUnlock, { passive: true });
-    window.addEventListener('mousedown', tryUnlock, { passive: true });
-    window.addEventListener('touchstart', tryUnlock, { passive: true });
-    window.addEventListener('keydown', tryUnlock);
-    document.addEventListener('click', tryUnlock, true);
-    document.addEventListener('pointerdown', tryUnlock, true);
-    document.addEventListener('touchstart', tryUnlock, true);
-    document.addEventListener('keydown', tryUnlock, true);
+    const handler = (event) => tryUnlockPlayback(event?.type || 'gesture');
+    window.addEventListener('pointerdown', handler, { passive: true });
+    window.addEventListener('mousedown', handler, { passive: true });
+    window.addEventListener('touchstart', handler, { passive: true });
+    window.addEventListener('keydown', handler);
+    document.addEventListener('click', handler, true);
+    document.addEventListener('pointerdown', handler, true);
+    document.addEventListener('touchstart', handler, true);
+    document.addEventListener('keydown', handler, true);
+}
+
+/**
+ * Call this from any successful audio playback (e.g. TTS) to piggyback
+ * on the browser's audio-unlocked state and start ambient playback.
+ */
+export function tryUnlockAmbientPlayback() {
+    if (!initialized || !audioEl) return;
+    tryUnlockPlayback('external-audio');
 }
 
 export function initAmbientAudio() {

@@ -891,18 +891,29 @@ function handleRequest(req, res) {
         ? 'public, max-age=604800, immutable'
         : 'public, max-age=3600';
 
-    fs.readFile(fullPath, (err, data) => {
-      if (err) {
-        res.writeHead(500);
-        res.end(`Error loading ${safePath}`);
-      } else {
-        res.writeHead(200, {
-          'Content-Type': contentType,
-          'Cache-Control': cacheControl,
-        });
-        res.end(data);
-      }
-    });
+    // Stream large files (audio/video) for faster first-byte delivery
+    if (stats.size > 1_000_000 && (ext === '.mp3' || ext === '.wav' || ext === '.mp4')) {
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Cache-Control': cacheControl,
+        'Content-Length': stats.size,
+        'Accept-Ranges': 'none',
+      });
+      fs.createReadStream(fullPath).pipe(res);
+    } else {
+      fs.readFile(fullPath, (err, data) => {
+        if (err) {
+          res.writeHead(500);
+          res.end(`Error loading ${safePath}`);
+        } else {
+          res.writeHead(200, {
+            'Content-Type': contentType,
+            'Cache-Control': cacheControl,
+          });
+          res.end(data);
+        }
+      });
+    }
   });
 }
 
