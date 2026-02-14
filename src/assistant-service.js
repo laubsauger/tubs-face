@@ -128,20 +128,34 @@ function stripFormatting(text) {
  */
 function rescueTextFromJson(text) {
   const trimmed = String(text || '').trim();
+  // Quick check: does this look like it might contain JSON beats?
   if (!trimmed.includes('"text"') && !trimmed.includes('"beats"')) return trimmed;
+
+  // Try proper JSON parsing first
   try {
     const jsonBlock = extractJsonBlock(trimmed);
-    if (!jsonBlock) return trimmed;
-    const parsed = JSON.parse(jsonBlock);
-    const beats = Array.isArray(parsed?.beats) ? parsed.beats : [];
-    const texts = beats
-      .filter((b) => b?.text && (b?.action === 'speak' || !b?.action))
-      .map((b) => String(b.text).trim())
-      .filter(Boolean);
-    if (texts.length > 0) return texts.join(' ');
+    if (jsonBlock) {
+      const parsed = JSON.parse(jsonBlock);
+      const beats = Array.isArray(parsed?.beats) ? parsed.beats : [];
+      const texts = beats
+        .filter((b) => b?.text && (b?.action === 'speak' || !b?.action))
+        .map((b) => String(b.text).trim())
+        .filter(Boolean);
+      if (texts.length > 0) return texts.join(' ');
+    }
   } catch {
-    // Not valid JSON, return as-is
+    // JSON.parse failed — fall through to regex rescue
   }
+
+  // Regex fallback: extract "text": "..." values even from malformed JSON
+  const textMatches = [...trimmed.matchAll(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/g)];
+  if (textMatches.length > 0) {
+    const rescued = textMatches
+      .map((m) => m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ').trim())
+      .filter((t) => t.length > 2);
+    if (rescued.length > 0) return rescued.join(' ');
+  }
+
   return trimmed;
 }
 
