@@ -47,8 +47,8 @@ export const BLINK_OPEN_MS = 80;
 export const BLINK_TOTAL_MS = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
 
 export const SPEAK_CYCLE_MS = 320;
-export const SPEAK_MIN_SCALE = 0.85;
-export const SPEAK_MAX_SCALE = 1.22;
+export const SPEAK_MIN_SCALE = 0.75;
+export const SPEAK_MAX_SCALE = 1.05;
 
 export const GAZE_EYE_RANGE_X = 0.14;
 export const GAZE_EYE_RANGE_Y = 0.09;

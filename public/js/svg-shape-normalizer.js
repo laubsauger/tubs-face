@@ -585,17 +585,17 @@ function createFallbackProfiles() {
 
     const talk1 = {
         ...neutral,
-        mouth: createRoundedRectFeature({ x: 20.53, y: 24.6, width: 14.38, height: 2.8, rx: 1.17 }, MOUTH_POINTS),
+        mouth: createRoundedRectFeature({ x: 20.53, y: 25.0, width: 14.38, height: 2.0, rx: 1.0 }, MOUTH_POINTS),
     };
 
     const talk2 = {
         ...neutral,
-        mouth: createRoundedRectFeature({ x: 20.53, y: 24.0, width: 14.38, height: 4.8, rx: 1.95 }, MOUTH_POINTS),
+        mouth: createRoundedRectFeature({ x: 20.53, y: 24.8, width: 14.38, height: 3.2, rx: 1.6 }, MOUTH_POINTS),
     };
 
     const talk3 = {
         ...neutral,
-        mouth: createRoundedRectFeature({ x: 20.53, y: 23.3, width: 14.38, height: 6.5, rx: 1.95 }, MOUTH_POINTS),
+        mouth: createRoundedRectFeature({ x: 20.53, y: 24.45, width: 14.38, height: 4.2, rx: 1.95 }, MOUTH_POINTS),
     };
 
     const sleep = {

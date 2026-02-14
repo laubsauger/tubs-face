@@ -764,6 +764,8 @@ export function setFaceRendererExpression(expression) {
 }
 
 export function setFaceRendererSpeaking(active) {
+    // Toggle speaking class for CSS/glitch renderers (must happen before SVG guard)
+    if (face) face.classList.toggle('speaking', Boolean(active));
     if (activeRenderer !== 'svg') return;
     if (active) {
         startSpeakingCycle();

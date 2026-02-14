@@ -17,12 +17,10 @@ import {
     FEATURE_BOX_MAIN_BOOST,
     GAZE_LERP,
     GLITCH_DIAG,
-    GPU_UNIFORM_FLOATS,
     SPEAK_CYCLE_MS,
     SPEAK_MAX_SCALE,
     SPEAK_MIN_SCALE,
 } from './constants.js';
-import { WEBGPU_POST_SHADER, WEBGPU_SHADER } from './shaders.js';
 import {
     hexToHSL,
     hslToRGB,
@@ -39,6 +37,13 @@ import {
     renderFrameCanvas2D as renderFrameCanvas2DBackend,
     renderFrameWebGpu as renderFrameWebGpuBackend,
 } from './frame.js';
+import {
+    configureWebGpuCanvas as configureWebGpuCanvasData,
+    createWebGpuState as createWebGpuStateData,
+    initWebGpuRenderer as initWebGpuRendererData,
+    resetWebGpuResources as resetWebGpuResourcesData,
+    updateGpuInstanceBuffer as updateGpuInstanceBufferData,
+} from './webgpu.js';
 
 // ── Default config (ROBOT_FX) ──────────────
 
@@ -101,26 +106,7 @@ let lastGridDebug = null;
 
 // ── WebGPU state ──────────────────────────
 
-const gpuUniformData = new Float32Array(GPU_UNIFORM_FLOATS);
-const gpuPostUniformData = new Float32Array(GPU_UNIFORM_FLOATS);
-
-let gpuContext = null;
-let gpuDevice = null;
-let gpuPixelPipeline = null;
-let gpuPostPipeline = null;
-let gpuUniformBuffer = null;
-let gpuPostUniformBuffer = null;
-let gpuInstanceBuffer = null;
-let gpuPixelBindGroup = null;
-let gpuPostBindGroup = null;
-let gpuSampler = null;
-let gpuSceneTexture = null;
-let gpuSceneTextureView = null;
-let gpuSceneWidth = 0;
-let gpuSceneHeight = 0;
-let gpuInstanceCount = 0;
-let gpuFormat = 'bgra8unorm';
-const gpuSceneFormat = 'rgba8unorm';
+const gpu = createWebGpuStateData();
 
 // ── Utility ───────────────────────────────
 
@@ -218,7 +204,7 @@ function recreateCanvasElement() {
     ctx = null;
     tempCanvas = null;
     tempCtx = null;
-    gpuContext = null;
+    gpu.gpuContext = null;
 }
 
 function computeFacePosition() {
@@ -272,13 +258,8 @@ function sizeCanvas() {
         }
     }
 
-    if (rendererKind === 'webgpu' && gpuContext && gpuDevice) {
-        gpuContext.configure({
-            device: gpuDevice,
-            format: gpuFormat,
-            alphaMode: 'premultiplied',
-        });
-        createGpuSceneTarget();
+    if (rendererKind === 'webgpu' && gpu.gpuContext && gpu.gpuDevice) {
+        configureWebGpuCanvas();
     }
 
     computeFacePosition();
@@ -342,269 +323,19 @@ function recolorPixelGrid() {
 // ── WebGPU backend ────────────────────────
 
 function resetWebGpuResources() {
-    if (gpuSceneTexture) {
-        try { gpuSceneTexture.destroy(); } catch { }
-    }
-    if (gpuInstanceBuffer) {
-        try { gpuInstanceBuffer.destroy(); } catch { }
-    }
-    if (gpuUniformBuffer) {
-        try { gpuUniformBuffer.destroy(); } catch { }
-    }
-    if (gpuPostUniformBuffer) {
-        try { gpuPostUniformBuffer.destroy(); } catch { }
-    }
-    gpuContext = null;
-    gpuDevice = null;
-    gpuPixelPipeline = null;
-    gpuPostPipeline = null;
-    gpuUniformBuffer = null;
-    gpuPostUniformBuffer = null;
-    gpuInstanceBuffer = null;
-    gpuPixelBindGroup = null;
-    gpuPostBindGroup = null;
-    gpuSampler = null;
-    gpuSceneTexture = null;
-    gpuSceneTextureView = null;
-    gpuSceneWidth = 0;
-    gpuSceneHeight = 0;
-    gpuInstanceCount = 0;
-}
-
-function updateGpuPixelBindGroup() {
-    if (!gpuDevice || !gpuPixelPipeline || !gpuUniformBuffer || !gpuInstanceBuffer) return;
-    gpuPixelBindGroup = gpuDevice.createBindGroup({
-        layout: gpuPixelPipeline.getBindGroupLayout(0),
-        entries: [
-            { binding: 0, resource: { buffer: gpuUniformBuffer } },
-            { binding: 1, resource: { buffer: gpuInstanceBuffer } },
-        ],
-    });
-}
-
-function updateGpuPostBindGroup() {
-    if (!gpuDevice || !gpuPostPipeline || !gpuPostUniformBuffer || !gpuSampler || !gpuSceneTextureView) return;
-    gpuPostBindGroup = gpuDevice.createBindGroup({
-        layout: gpuPostPipeline.getBindGroupLayout(0),
-        entries: [
-            { binding: 0, resource: { buffer: gpuPostUniformBuffer } },
-            { binding: 1, resource: gpuSampler },
-            { binding: 2, resource: gpuSceneTextureView },
-        ],
-    });
-}
-
-function createGpuSceneTarget() {
-    if (!gpuDevice || !canvas?.width || !canvas?.height) return;
-    if (gpuSceneTexture && gpuSceneWidth === canvas.width && gpuSceneHeight === canvas.height) return;
-
-    if (gpuSceneTexture) {
-        try { gpuSceneTexture.destroy(); } catch { }
-    }
-
-    gpuSceneTexture = gpuDevice.createTexture({
-        size: { width: canvas.width, height: canvas.height, depthOrArrayLayers: 1 },
-        format: gpuSceneFormat,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    gpuSceneTextureView = gpuSceneTexture.createView();
-    gpuSceneWidth = canvas.width;
-    gpuSceneHeight = canvas.height;
-    updateGpuPostBindGroup();
+    resetWebGpuResourcesData(gpu);
 }
 
 function updateGpuInstanceBuffer() {
-    if (!gpuDevice) return;
-
-    const instanceCount = pixelGrid.length;
-    const minFloats = 8;
-    const floatCount = Math.max(minFloats, instanceCount * 8);
-    const packed = new Float32Array(floatCount);
-
-    for (let i = 0; i < instanceCount; i++) {
-        const p = pixelGrid[i];
-        const off = i * 8;
-        packed[off + 0] = p.x;
-        packed[off + 1] = p.y;
-        packed[off + 2] = p.hueOff;
-        packed[off + 3] = p.brightOff;
-        packed[off + 4] = shapeGroups[i] || 0;
-        const ovr = p.overrideHSL;
-        packed[off + 5] = ovr ? 1 : 0;
-        packed[off + 6] = ovr ? ((ovr.h % 360 + 360) % 360 / 360) : 0;
-        packed[off + 7] = ovr ? (ovr.s / 100) : 0;
-    }
-
-    if (gpuInstanceBuffer) {
-        try { gpuInstanceBuffer.destroy(); } catch { }
-    }
-
-    gpuInstanceBuffer = gpuDevice.createBuffer({
-        size: packed.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
-
-    gpuDevice.queue.writeBuffer(gpuInstanceBuffer, 0, packed.buffer, packed.byteOffset, packed.byteLength);
-    gpuInstanceCount = instanceCount;
-    updateGpuPixelBindGroup();
+    updateGpuInstanceBufferData(gpu, pixelGrid, shapeGroups);
 }
 
-async function createShaderModuleChecked(device, code, label = 'shader') {
-    const module = device.createShaderModule({ code, label });
-    if (typeof module.getCompilationInfo !== 'function') {
-        return module;
-    }
-
-    const info = await module.getCompilationInfo();
-    if (!info?.messages?.length) {
-        return module;
-    }
-
-    const errors = info.messages.filter((m) => m.type === 'error');
-    if (!errors.length) {
-        return module;
-    }
-
-    const first = errors[0];
-    throw new Error(`${label} WGSL error (${first.lineNum}:${first.linePos}) ${first.message}`);
+function configureWebGpuCanvas() {
+    configureWebGpuCanvasData(gpu, canvas);
 }
 
 async function initWebGpuRenderer() {
-    if (!canvas || !navigator.gpu) return false;
-
-    try {
-        const context = canvas.getContext('webgpu');
-        if (!context) return false;
-
-        const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-        if (!adapter) return false;
-
-        const device = await adapter.requestDevice();
-        const format = navigator.gpu.getPreferredCanvasFormat
-            ? navigator.gpu.getPreferredCanvasFormat()
-            : 'bgra8unorm';
-
-        const pixelShaderModule = await createShaderModuleChecked(device, WEBGPU_SHADER, 'glitch-pixel');
-        const postShaderModule = await createShaderModuleChecked(device, WEBGPU_POST_SHADER, 'glitch-post');
-
-        const pixelPipelineDescriptor = {
-            layout: 'auto',
-            vertex: {
-                module: pixelShaderModule,
-                entryPoint: 'vsMain',
-            },
-            fragment: {
-                module: pixelShaderModule,
-                entryPoint: 'fsMain',
-                targets: [{
-                    format: gpuSceneFormat,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                    },
-                }],
-            },
-            primitive: {
-                topology: 'triangle-list',
-                cullMode: 'none',
-            },
-            multisample: { count: 1 },
-        };
-        const pixelPipeline = typeof device.createRenderPipelineAsync === 'function'
-            ? await device.createRenderPipelineAsync(pixelPipelineDescriptor)
-            : device.createRenderPipeline(pixelPipelineDescriptor);
-
-        const postPipelineDescriptor = {
-            layout: 'auto',
-            vertex: {
-                module: postShaderModule,
-                entryPoint: 'vsPost',
-            },
-            fragment: {
-                module: postShaderModule,
-                entryPoint: 'fsPost',
-                targets: [{
-                    format,
-                    blend: {
-                        color: {
-                            srcFactor: 'src-alpha',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                        alpha: {
-                            srcFactor: 'one',
-                            dstFactor: 'one-minus-src-alpha',
-                            operation: 'add',
-                        },
-                    },
-                }],
-            },
-            primitive: {
-                topology: 'triangle-list',
-                cullMode: 'none',
-            },
-            multisample: { count: 1 },
-        };
-        const postPipeline = typeof device.createRenderPipelineAsync === 'function'
-            ? await device.createRenderPipelineAsync(postPipelineDescriptor)
-            : device.createRenderPipeline(postPipelineDescriptor);
-
-        const uniformBuffer = device.createBuffer({
-            size: GPU_UNIFORM_FLOATS * 4,
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
-        const postUniformBuffer = device.createBuffer({
-            size: GPU_UNIFORM_FLOATS * 4,
-            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        });
-
-        const placeholder = new Float32Array(8);
-        const instanceBuffer = device.createBuffer({
-            size: placeholder.byteLength,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
-        device.queue.writeBuffer(instanceBuffer, 0, placeholder.buffer, placeholder.byteOffset, placeholder.byteLength);
-        const sampler = device.createSampler({
-            magFilter: 'linear',
-            minFilter: 'linear',
-            mipmapFilter: 'nearest',
-            addressModeU: 'clamp-to-edge',
-            addressModeV: 'clamp-to-edge',
-        });
-
-        gpuContext = context;
-        gpuDevice = device;
-        gpuPixelPipeline = pixelPipeline;
-        gpuPostPipeline = postPipeline;
-        gpuUniformBuffer = uniformBuffer;
-        gpuPostUniformBuffer = postUniformBuffer;
-        gpuInstanceBuffer = instanceBuffer;
-        gpuSampler = sampler;
-        gpuInstanceCount = 0;
-        gpuFormat = format;
-
-        updateGpuPixelBindGroup();
-        createGpuSceneTarget();
-        updateGpuPostBindGroup();
-
-        device.lost.then((info) => {
-            console.warn('[GlitchFX] WebGPU device lost:', info?.message || info);
-        }).catch(() => { });
-
-        return true;
-    } catch (err) {
-        console.warn('[GlitchFX] WebGPU init failed, falling back to Canvas2D:', err);
-        resetWebGpuResources();
-        return false;
-    }
+    return initWebGpuRendererData(gpu, canvas);
 }
 
 function initCanvas2DRenderer() {
@@ -731,18 +462,18 @@ function computeFrameState(now) {
 
 function renderFrameWebGpu(frame) {
     return renderFrameWebGpuBackend(frame, {
-        gpuDevice,
-        gpuContext,
-        gpuPixelPipeline,
-        gpuPostPipeline,
-        gpuPixelBindGroup,
-        gpuPostBindGroup,
-        gpuSceneTextureView,
-        gpuInstanceCount,
-        gpuUniformBuffer,
-        gpuPostUniformBuffer,
-        gpuUniformData,
-        gpuPostUniformData,
+        gpuDevice: gpu.gpuDevice,
+        gpuContext: gpu.gpuContext,
+        gpuPixelPipeline: gpu.gpuPixelPipeline,
+        gpuPostPipeline: gpu.gpuPostPipeline,
+        gpuPixelBindGroup: gpu.gpuPixelBindGroup,
+        gpuPostBindGroup: gpu.gpuPostBindGroup,
+        gpuSceneTextureView: gpu.gpuSceneTextureView,
+        gpuInstanceCount: gpu.gpuInstanceCount,
+        gpuUniformBuffer: gpu.gpuUniformBuffer,
+        gpuPostUniformBuffer: gpu.gpuPostUniformBuffer,
+        gpuUniformData: gpu.gpuUniformData,
+        gpuPostUniformData: gpu.gpuPostUniformData,
         config,
         faceW,
         faceH,
