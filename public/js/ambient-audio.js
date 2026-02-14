@@ -1,12 +1,14 @@
 import { STATE } from './state.js';
 
 const AMBIENT_SRC = '/audio/tubs-robot-ambience-loop.mp3';
-const SILENT_GAP_MS = 15000;
+const PULSE_INTERVAL_MS = 12000;
 const FADE_IN_MS = 2000;
 const HOLD_MS = 7000;
 const FADE_OUT_MS = 2000;
-const PEAK_GAIN = 0.05;
-const DUCKED_GAIN = 0.018;
+const PEAK_GAIN = 0.11;
+const DUCKED_GAIN = 0.045;
+const BASE_ENVELOPE = 0.45;
+const SLEEP_GAIN_FACTOR = 0.72;
 const STATE_POLL_MS = 400;
 const PAUSE_IDLE_DELAY_MS = 600;
 
@@ -25,6 +27,7 @@ let statePollTimer = null;
 let fallbackFadeTimer = null;
 let pauseTimer = null;
 let lastAppliedTargetGain = -1;
+let lastPlaybackWarnAt = 0;
 
 function clamp01(value) {
     return Math.max(0, Math.min(1, Number(value) || 0));
@@ -32,6 +35,17 @@ function clamp01(value) {
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function warnPlayback(message, error) {
+    const now = Date.now();
+    if (now - lastPlaybackWarnAt < 5000) return;
+    lastPlaybackWarnAt = now;
+    if (error) {
+        console.warn(`[Ambient] ${message}`, error);
+        return;
+    }
+    console.warn(`[Ambient] ${message}`);
 }
 
 function clearFallbackFade() {
@@ -120,7 +134,8 @@ function isSpeechActive() {
 
 function computeTargetGain() {
     if (!active) return 0;
-    const peak = isSpeechActive() ? DUCKED_GAIN : PEAK_GAIN;
+    let peak = isSpeechActive() ? DUCKED_GAIN : PEAK_GAIN;
+    if (STATE.sleeping) peak *= SLEEP_GAIN_FACTOR;
     return envelope * peak;
 }
 
@@ -138,16 +153,16 @@ async function ensurePlaybackReady() {
     if (audioCtx && audioCtx.state === 'suspended') {
         try {
             await audioCtx.resume();
-        } catch {
-            // ignore resume errors (autoplay gate)
+        } catch (err) {
+            warnPlayback('AudioContext resume blocked (waiting for gesture).', err);
         }
     }
 
     if (audioEl.paused) {
         try {
             await audioEl.play();
-        } catch {
-            // autoplay may block until gesture
+        } catch (err) {
+            warnPlayback('Audio element play blocked (waiting for gesture).', err);
         }
     }
 }
@@ -169,14 +184,14 @@ function setEnvelope(nextEnvelope, durationMs) {
 
 async function runPulseLoop(myToken) {
     while (initialized && myToken === pulseToken) {
-        await sleep(SILENT_GAP_MS);
+        await sleep(PULSE_INTERVAL_MS);
         if (!initialized || myToken !== pulseToken || !active) return;
 
         setEnvelope(1, FADE_IN_MS);
         await sleep(FADE_IN_MS + HOLD_MS);
         if (!initialized || myToken !== pulseToken || !active) return;
 
-        setEnvelope(0, FADE_OUT_MS);
+        setEnvelope(BASE_ENVELOPE, FADE_OUT_MS);
         await sleep(FADE_OUT_MS);
     }
 }
@@ -192,7 +207,7 @@ function stopPulseLoop() {
 }
 
 function shouldBeActive() {
-    return STATE.ambientAudioEnabled !== false && !STATE.muted && !STATE.sleeping && !document.hidden;
+    return STATE.ambientAudioEnabled !== false && !STATE.muted && !document.hidden;
 }
 
 function syncActiveState() {
@@ -206,7 +221,7 @@ function syncActiveState() {
     if (active) {
         clearPauseTimer();
         void ensurePlaybackReady();
-        setEnvelope(0, 120);
+        setEnvelope(BASE_ENVELOPE, 300);
         startPulseLoop();
         return;
     }
@@ -227,16 +242,27 @@ function handleSpeechObserved(event) {
 
 function bindUnlockListeners() {
     const tryUnlock = () => {
-        if (!active) return;
         void ensurePlaybackReady();
+        if (active) applyTargetGain(120);
     };
     window.addEventListener('pointerdown', tryUnlock, { passive: true });
+    window.addEventListener('mousedown', tryUnlock, { passive: true });
+    window.addEventListener('touchstart', tryUnlock, { passive: true });
     window.addEventListener('keydown', tryUnlock);
 }
 
 export function initAmbientAudio() {
     if (initialized) return;
     initialized = true;
+
+    ensureAudioGraph();
+    if (audioEl) {
+        try {
+            audioEl.load();
+        } catch {
+            // no-op
+        }
+    }
 
     bindUnlockListeners();
     window.addEventListener('tubs:head-speech-observed', handleSpeechObserved);

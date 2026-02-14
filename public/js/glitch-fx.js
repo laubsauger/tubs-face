@@ -22,7 +22,7 @@ const DEFAULT_CONFIG = {
     pixel: { size: 21, gap: 7, edgeSoftness: 0, borderRadius: 0 },
     color: { base: '#a855f7', hueVariation: 8, brightnessVariation: 8, opacityMin: 0.5 },
     glow: { pixelGlow: 14, outerBloom: 0, bloomIntensity: 1, color: '#5900ff', falloffCurve: 2.8 },
-    brightnessPulse: { enabled: true, dim: 0.62, bright: 1, speed: 17 },
+    brightnessPulse: { enabled: true, dim: 0.82, bright: 1, speed: 5 },
     scanBeam: { enabled: true, speed: 10, lineWidth: 7, brightness: 0.65, glowStrength: 26, jitter: 1, color: '#a600ff' },
     chromatic: { enabled: true, offsetX: 0, offsetY: 4.5, intensity: 0.65, animate: true, animateSpeed: 7 },
     glitchSlice: {
@@ -61,9 +61,9 @@ const BLINK_HOLD_MS = 60;
 const BLINK_OPEN_MS = 80;
 const BLINK_TOTAL_MS = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
 
-const SPEAK_CYCLE_MS = 280;
-const SPEAK_MIN_SCALE = 0.78;
-const SPEAK_MAX_SCALE = 1.42;
+const SPEAK_CYCLE_MS = 320;
+const SPEAK_MIN_SCALE = 0.85;
+const SPEAK_MAX_SCALE = 1.22;
 
 const GAZE_EYE_RANGE_X = 0.14;
 const GAZE_EYE_RANGE_Y = 0.09;
@@ -639,69 +639,6 @@ function logGlitchDiag(reason, frame = null) {
     const now = performance.now();
     if (reason === 'frame' && now - diagLastLogAt < 1000) return;
     diagLastLogAt = now;
-
-    const cr = containerEl?.getBoundingClientRect?.();
-    const fr = faceEl?.getBoundingClientRect?.();
-    const vv = window.visualViewport || null;
-    const lookX = parseFloat(faceEl?.style.getPropertyValue('--face-look-x')) || 0;
-    const lookY = parseFloat(faceEl?.style.getPropertyValue('--face-look-y')) || 0;
-    const source = containerEl?.id || 'unknown';
-
-    console.log('[GlitchFX][diag]', {
-        reason,
-        source,
-        mode: rendererKind,
-        enabled: Boolean(STATE.glitchFxEnabled),
-        ready: rendererReady,
-        visual: glitchVisualActive,
-        dpr: window.devicePixelRatio || 1,
-        viewport: {
-            innerW: window.innerWidth,
-            innerH: window.innerHeight,
-            visualW: vv?.width || null,
-            visualH: vv?.height || null,
-            visualScale: vv?.scale || null,
-        },
-        container: {
-            left: cr?.left || 0,
-            top: cr?.top || 0,
-            width: cr?.width || 0,
-            height: cr?.height || 0,
-            cssW: containerCssW,
-            cssH: containerCssH,
-        },
-        face: {
-            left: fr?.left || 0,
-            top: fr?.top || 0,
-            width: fr?.width || 0,
-            height: fr?.height || 0,
-            baseFaceX,
-            baseFaceY,
-            lookX,
-            lookY,
-        },
-        canvas: {
-            pxW: canvas?.width || 0,
-            pxH: canvas?.height || 0,
-            cssW: canvas?.clientWidth || 0,
-            cssH: canvas?.clientHeight || 0,
-            sceneW: gpuSceneWidth || 0,
-            sceneH: gpuSceneHeight || 0,
-        },
-        frame: frame ? {
-            W: frame.W,
-            H: frame.H,
-            pw: frame.pw,
-            ph: frame.ph,
-            faceOX: frame.faceOX,
-            faceOY: frame.faceOY,
-            sz: frame.sz,
-        } : null,
-        grid: {
-            pixels: pixelGrid.length,
-            debug: lastGridDebug,
-        },
-    });
 }
 
 function updateEffectivePixelMetrics() {
@@ -1095,16 +1032,16 @@ function recolorPixelGrid() {
 
 function resetWebGpuResources() {
     if (gpuSceneTexture) {
-        try { gpuSceneTexture.destroy(); } catch {}
+        try { gpuSceneTexture.destroy(); } catch { }
     }
     if (gpuInstanceBuffer) {
-        try { gpuInstanceBuffer.destroy(); } catch {}
+        try { gpuInstanceBuffer.destroy(); } catch { }
     }
     if (gpuUniformBuffer) {
-        try { gpuUniformBuffer.destroy(); } catch {}
+        try { gpuUniformBuffer.destroy(); } catch { }
     }
     if (gpuPostUniformBuffer) {
-        try { gpuPostUniformBuffer.destroy(); } catch {}
+        try { gpuPostUniformBuffer.destroy(); } catch { }
     }
     gpuContext = null;
     gpuDevice = null;
@@ -1151,7 +1088,7 @@ function createGpuSceneTarget() {
     if (gpuSceneTexture && gpuSceneWidth === canvas.width && gpuSceneHeight === canvas.height) return;
 
     if (gpuSceneTexture) {
-        try { gpuSceneTexture.destroy(); } catch {}
+        try { gpuSceneTexture.destroy(); } catch { }
     }
 
     gpuSceneTexture = gpuDevice.createTexture({
@@ -1187,7 +1124,7 @@ function updateGpuInstanceBuffer() {
     }
 
     if (gpuInstanceBuffer) {
-        try { gpuInstanceBuffer.destroy(); } catch {}
+        try { gpuInstanceBuffer.destroy(); } catch { }
     }
 
     gpuInstanceBuffer = gpuDevice.createBuffer({
@@ -1348,7 +1285,7 @@ async function initWebGpuRenderer() {
 
         device.lost.then((info) => {
             console.warn('[GlitchFX] WebGPU device lost:', info?.message || info);
-        }).catch(() => {});
+        }).catch(() => { });
 
         return true;
     } catch (err) {
@@ -1479,7 +1416,7 @@ function computeFrameState(now) {
 
     const bp = config.brightnessPulse;
     const pulseMod = bp.enabled
-        ? bp.dim + (bp.bright - bp.dim) * (0.5 + 0.5 * Math.sin(t * bp.speed * 0.3))
+        ? bp.dim + (bp.bright - bp.dim) * Math.pow(0.5 + 0.5 * Math.sin(t * bp.speed * 0.3), 3)
         : 1;
 
     const sb = config.scanBeam;
@@ -2048,7 +1985,7 @@ export function initGlitchFx() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ glitchFxEnabled: toggle.checked }),
-            }).catch(() => {});
+            }).catch(() => { });
         });
     }
 

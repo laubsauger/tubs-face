@@ -524,7 +524,12 @@ function normalizeScriptBeat(beat) {
 
   const rawText = normalizeInput(beat.text || '');
   const parsed = splitTrailingEmotionEmoji(rawText);
-  const text = clampOutput(stripFormatting(parsed.text || stripEmojiClusters(rawText)));
+  // Strip donation markers before clamping so [[SHOW_QR]] doesn't get lost to sentence truncation.
+  // The marker is detected later by mergeDonationSignalFromBeats on the cleaned text,
+  // but we also check the raw text here and tag the beat.
+  const strippedText = stripFormatting(parsed.text || stripEmojiClusters(rawText));
+  const hadDonationMarker = DONATION_MARKER_RE.test(strippedText);
+  const text = clampOutput(stripDonationMarkers(strippedText));
   const emojiFromField = pickSupportedEmotionEmoji(beat.emoji || '');
   const emotion = buildEmotionFromEmoji(emojiFromField || parsed.emoji) || parsed.emotion || null;
 
@@ -539,6 +544,7 @@ function normalizeScriptBeat(beat) {
       text: text || '',
       emotion,
       delayMs: safeDelayMs,
+      _hadDonationMarker: hadDonationMarker,
     };
   }
 
@@ -549,6 +555,7 @@ function normalizeScriptBeat(beat) {
     text,
     emotion: emotion || defaultDualHeadSpeakEmotion(actor),
     delayMs: safeDelayMs,
+    _hadDonationMarker: hadDonationMarker,
   };
 }
 
@@ -692,6 +699,11 @@ function mergeDonationSignalFromBeats(beats) {
   let reason = 'none';
 
   for (const beat of beats) {
+    // Check if the marker was found before clamping stripped it
+    if (beat._hadDonationMarker) {
+      show = true;
+      reason = reason === 'none' ? 'marker' : reason;
+    }
     if (beat.action !== 'speak') {
       cleanedBeats.push(beat);
       continue;

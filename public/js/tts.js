@@ -214,8 +214,23 @@ export function enqueueSpeech(text, donation = null, emotion = null) {
 }
 
 export function enqueueTurnScript(beats = [], donation = null) {
+    // Check server-supplied donation signal first
+    let donationShown = false;
     if (donation?.show) {
         showDonationQr(donation);
+        donationShown = true;
+    }
+
+    // Fallback: scan beat texts for donation keywords (in case server missed it)
+    if (!donationShown && Array.isArray(beats)) {
+        const allText = beats
+            .filter(b => b?.action === 'speak' && b?.text)
+            .map(b => b.text)
+            .join(' ');
+        const inferred = inferDonationFromText(allText);
+        if (inferred?.show) {
+            showDonationQr(inferred);
+        }
     }
 
     if (!Array.isArray(beats) || beats.length === 0) return;
