@@ -308,10 +308,6 @@ export function enqueueTurnScript(beats = [], donation = null) {
 function handleReactionItem(item) {
     if (item.emotion?.expression) {
         setExpression(item.emotion.expression, { force: true });
-        return;
-    }
-    if (item.emotion?.expression) {
-        suggestEmotionExpression(item.emotion.expression);
     }
 }
 
@@ -328,12 +324,11 @@ export function processQueue() {
 
         if (lastEmotion?.expression) {
             suggestEmotionExpression(lastEmotion.expression);
-            lastEmotion = null;
-        } else {
-            setTimeout(() => {
-                if (!STATE.speaking) setExpression('idle');
-            }, POST_SPEECH_IDLE_DELAY_MS);
         }
+        lastEmotion = null;
+        setTimeout(() => {
+            if (!STATE.speaking) setExpression('idle');
+        }, POST_SPEECH_IDLE_DELAY_MS);
         return;
     }
 
