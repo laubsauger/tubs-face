@@ -509,7 +509,7 @@ function buildFallbackSmallSpeakText(mainLeadText = '') {
     ];
     return donationOptions[Math.floor(Math.random() * donationOptions.length)];
   }
-  // Mix of roasts, personality, and occasional mission sprinkles
+  // Mix of roasts, personality, mission sprinkles, and occasional short stabs
   const options = [
     'I would not have said it like that, but I respect the chaos.',
     'Bold of you to assume anyone asked, but go off.',
@@ -531,6 +531,12 @@ function buildFallbackSmallSpeakText(mainLeadText = '') {
     'That energy you are giving right now? Incredible. Chaotic, but incredible.',
     'We could go back and forth all day or you could just Venmo us. Your call.',
     'I am just a tiny head but I contain multitudes and also very strong opinions.',
+    // Short stabs — keep these in the minority
+    'Wow.',
+    'Sure, Jan.',
+    'Bold move.',
+    'Yikes.',
+    'Noted.',
   ];
   return options[Math.floor(Math.random() * options.length)];
 }

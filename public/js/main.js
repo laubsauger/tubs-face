@@ -156,13 +156,17 @@ function initHeadSpeechRelay() {
         const detail = event?.detail || {};
         const ws = getWs();
         if (!ws || ws.readyState !== 1) return;
-        ws.send(JSON.stringify({
+        const payload = {
             type: 'head_speech_state',
             actor: detail.actor === 'small' ? 'small' : 'main',
             state: detail.state === 'end' ? 'end' : 'start',
             turnId: detail.turnId || STATE.currentTurnId || null,
             ts: Number(detail.ts) || Date.now(),
-        }));
+        };
+        if (detail.durationMs != null && Number.isFinite(detail.durationMs) && detail.durationMs > 0) {
+            payload.durationMs = Math.round(detail.durationMs);
+        }
+        ws.send(JSON.stringify(payload));
         perfStats?.mark('speech_state_out');
     });
 }

@@ -60,13 +60,16 @@ function clearSpeechSafety() {
     speechSafetyTimer = null;
 }
 
-function emitHeadSpeechState(state, turnId = null) {
+function emitHeadSpeechState(state, turnId = null, durationMs = null) {
     const detail = {
         actor: 'main',
         state: state === 'end' ? 'end' : 'start',
         turnId: turnId || STATE.currentTurnId || null,
         ts: Date.now(),
     };
+    if (durationMs != null && Number.isFinite(durationMs) && durationMs > 0) {
+        detail.durationMs = Math.round(durationMs);
+    }
     window.dispatchEvent(new CustomEvent('tubs:head-speech-state', { detail }));
 }
 
@@ -76,9 +79,18 @@ function clearRemoteWaitTimer() {
     remoteWaitTimer = null;
 }
 
-function markRemoteSmallSpeaking(isSpeaking, ts = Date.now()) {
+function markRemoteSmallSpeaking(isSpeaking, ts = Date.now(), durationMs = null) {
     remoteSmallSpeaking = Boolean(isSpeaking);
-    remoteSmallSpeakingUntil = remoteSmallSpeaking ? (ts + REMOTE_SPEECH_STALE_MS) : 0;
+    if (!remoteSmallSpeaking) {
+        remoteSmallSpeakingUntil = 0;
+        return;
+    }
+    // Use actual audio duration + buffer when available, otherwise fall back to stale timeout
+    const PAD_MS = 500;
+    const timeout = (durationMs != null && Number.isFinite(durationMs) && durationMs > 0)
+        ? durationMs + PAD_MS
+        : REMOTE_SPEECH_STALE_MS;
+    remoteSmallSpeakingUntil = ts + timeout;
 }
 
 function isRemoteSmallSpeakingNow() {
@@ -139,7 +151,8 @@ export function applyHeadSpeechState(msg) {
     if (actor !== 'small') return;
     const state = String(msg?.state || '').toLowerCase();
     if (state === 'start') {
-        markRemoteSmallSpeaking(true, Number(msg?.ts) || Date.now());
+        const durationMs = Number(msg?.durationMs) || null;
+        markRemoteSmallSpeaking(true, Number(msg?.ts) || Date.now(), durationMs);
         return;
     }
     markRemoteSmallSpeaking(false, Number(msg?.ts) || Date.now());
@@ -388,10 +401,10 @@ async function playTTS(item) {
 
     try {
         let localSpeechActive = false;
-        const markLocalSpeechStart = () => {
+        const markLocalSpeechStart = (durationMs = null) => {
             if (localSpeechActive) return;
             localSpeechActive = true;
-            emitHeadSpeechState('start', STATE.currentTurnId);
+            emitHeadSpeechState('start', STATE.currentTurnId, durationMs);
         };
         const markLocalSpeechEnd = () => {
             if (!localSpeechActive) return;
@@ -444,7 +457,8 @@ async function playTTS(item) {
         };
 
         audio.onplay = () => {
-            markLocalSpeechStart();
+            const durMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
+            markLocalSpeechStart(durMs);
             // TTS audio is playing — piggyback to unlock ambient audio
             tryUnlockAmbientPlayback();
         };
@@ -487,7 +501,7 @@ function speakFallback(item) {
     utterance.onstart = () => {
         if (fallbackStarted) return;
         fallbackStarted = true;
-        emitHeadSpeechState('start', STATE.currentTurnId);
+        emitHeadSpeechState('start', STATE.currentTurnId, estimatedDuration * 1000);
     };
     utterance.onend = () => {
         if (fallbackStarted) emitHeadSpeechState('end', STATE.currentTurnId);

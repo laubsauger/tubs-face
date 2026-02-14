@@ -269,21 +269,25 @@ function clearRemoteBlinkTimer() {
     remoteBlinkTimer = null;
 }
 
-function sendHeadSpeechState(state) {
+function sendHeadSpeechState(state, durationMs = null) {
     if (!ws || ws.readyState !== 1) return;
-    ws.send(JSON.stringify({
+    const payload = {
         type: 'head_speech_state',
         actor: 'small',
         state: state === 'end' ? 'end' : 'start',
         turnId: currentTurnId || null,
         ts: Date.now(),
-    }));
+    };
+    if (durationMs != null && Number.isFinite(durationMs) && durationMs > 0) {
+        payload.durationMs = Math.round(durationMs);
+    }
+    ws.send(JSON.stringify(payload));
 }
 
-function markLocalSpeechStart() {
+function markLocalSpeechStart(durationMs = null) {
     if (localSpeechActive) return;
     localSpeechActive = true;
-    sendHeadSpeechState('start');
+    sendHeadSpeechState('start', durationMs);
 }
 
 function markLocalSpeechEnd() {
@@ -298,9 +302,18 @@ function clearMainSpeechWaitTimer() {
     mainSpeechWaitTimer = null;
 }
 
-function markMainHeadSpeaking(isSpeaking, ts = Date.now()) {
+function markMainHeadSpeaking(isSpeaking, ts = Date.now(), durationMs = null) {
     mainHeadSpeaking = Boolean(isSpeaking);
-    mainHeadSpeakingUntil = mainHeadSpeaking ? (ts + REMOTE_SPEECH_STALE_MS) : 0;
+    if (!mainHeadSpeaking) {
+        mainHeadSpeakingUntil = 0;
+        return;
+    }
+    // Use actual audio duration + buffer when available, otherwise fall back to stale timeout
+    const PAD_MS = 500;
+    const timeout = (durationMs != null && Number.isFinite(durationMs) && durationMs > 0)
+        ? durationMs + PAD_MS
+        : REMOTE_SPEECH_STALE_MS;
+    mainHeadSpeakingUntil = ts + timeout;
 }
 
 function isMainHeadSpeakingNow() {
@@ -655,7 +668,8 @@ async function playSpeakBeat(item) {
         };
 
         audio.onplay = () => {
-            markLocalSpeechStart();
+            const durMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
+            markLocalSpeechStart(durMs);
             if (secondarySubtitleEnabled) subtitles.start(item.text, audio);
         };
 
@@ -675,7 +689,7 @@ function fallbackSpeak(text) {
     const estimatedDuration = wordCount * 0.35;
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.onstart = () => {
-        markLocalSpeechStart();
+        markLocalSpeechStart(estimatedDuration * 1000);
         if (secondarySubtitleEnabled) subtitles.start(text, estimatedDuration);
     };
     utterance.onend = () => {
@@ -782,7 +796,8 @@ function handleMessage(msg) {
             if (actor !== 'main') return;
             const state = String(msg.state || '').toLowerCase();
             if (state === 'start') {
-                markMainHeadSpeaking(true, Number(msg.ts) || Date.now());
+                const durationMs = Number(msg.durationMs) || null;
+                markMainHeadSpeaking(true, Number(msg.ts) || Date.now(), durationMs);
                 return;
             }
             markMainHeadSpeaking(false, Number(msg.ts) || Date.now());

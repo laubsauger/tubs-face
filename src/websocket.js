@@ -77,14 +77,19 @@ function initWebSocket(server) {
           const actor = String(msg.actor || '').toLowerCase() === 'small' ? 'small' : 'main';
           const state = String(msg.state || '').toLowerCase() === 'end' ? 'end' : 'start';
           const turnId = msg.turnId ? String(msg.turnId) : null;
-          console.log(`[WS:speech] actor=${actor} state=${state} turn=${turnId || 'n/a'}`);
-          broadcast({
+          const durationMs = Number(msg.durationMs) || null;
+          console.log(`[WS:speech] actor=${actor} state=${state} turn=${turnId || 'n/a'} dur=${durationMs || '-'}ms`);
+          const payload = {
             type: 'head_speech_state',
             actor,
             state,
             turnId,
             ts: Date.now(),
-          });
+          };
+          if (durationMs != null && durationMs > 0) {
+            payload.durationMs = Math.round(durationMs);
+          }
+          broadcast(payload);
           return;
         }
 

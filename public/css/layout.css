@@ -22,8 +22,7 @@
 
 /* Zen Mode */
 .hidden-ui .panel,
-.hidden-ui .speech-bubble,
-.hidden-ui #donation-card {
+.hidden-ui .speech-bubble {
   opacity: 0 !important;
   pointer-events: none;
 }
