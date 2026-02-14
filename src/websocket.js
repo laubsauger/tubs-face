@@ -3,6 +3,8 @@ const { runtimeConfig, sessionStats } = require('./config');
 const { generateStreamingAssistantReply, generateProactiveReply, generateDualHeadProactiveReply, shouldUseDualHeadDirectedMode, clearAssistantContext } = require('./assistant-service');
 const crypto = require('crypto');
 const { logConversation, logTubsReply } = require('./logger');
+const { createTurnTimer } = require('./turn-timing');
+const { captureTurnTrace } = require('./langfuse');
 
 let clients = new Set();
 let latestFrame = null; // { data: base64String, ts: number }
@@ -219,18 +221,33 @@ function initWebSocket(server) {
 
           const turnId = crypto.randomBytes(6).toString('hex');
           const abortController = new AbortController();
+          const turnTimer = createTurnTimer({ side: 'backend', source: 'ws-incoming', turnId });
+          turnTimer.mark('Incoming message received');
           activeWsTurn = { turnId, abortController };
           broadcast({ type: 'turn_start', turnId });
+          turnTimer.mark('Turn started');
 
           void (async () => {
             try {
+              const markTurnContext = (meta) => {
+                turnTimer.mark(`Image attached: ${meta?.imageAttached ? 'yes' : 'no'}`);
+                turnTimer.mark(`History context: ${meta?.historyMessages || 0} msgs / ${meta?.historyChars || 0} chars`);
+                turnTimer.mark(`LLM mode: ${meta?.mode || 'text'}`);
+              };
               const reply = await generateStreamingAssistantReply(msg.text, {
                 broadcast,
                 turnId,
                 abortController,
                 frame: msg.frame || getLatestFrame(),
                 appearanceFrame: consumeAppearanceFrame(),
+                timingHooks: {
+                  onLlmStart: () => turnTimer.mark('LLM started'),
+                  onFirstToken: (source) => turnTimer.mark(`LLM first token (${source})`),
+                  onLlmDone: () => turnTimer.mark('LLM completed'),
+                  onContextMeta: (meta) => markTurnContext(meta),
+                },
               });
+              turnTimer.mark('Reply ready');
 
               sessionStats.tokensIn += reply.tokens.in || 0;
               sessionStats.tokensOut += reply.tokens.out || 0;
@@ -242,6 +259,14 @@ function initWebSocket(server) {
               }
 
               logTubsReply(reply);
+              captureTurnTrace({
+                turnId,
+                source: 'ws-incoming',
+                userText: msg.text,
+                reply,
+                telemetry: reply?.telemetry || null,
+                turnTimer,
+              });
               broadcast({
                 type: 'stats',
                 tokens: { in: reply.tokens.in || 0, out: reply.tokens.out || 0 },
@@ -254,7 +279,11 @@ function initWebSocket(server) {
                 model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
                 cost: reply.costUsd || 0,
               });
+              turnTimer.mark('Stats broadcast');
+              turnTimer.log({ title: '[Turn Timing]' });
             } catch (err) {
+              turnTimer.mark(`Error (${err?.message || 'unknown'})`);
+              turnTimer.log({ title: '[Turn Timing]' });
               console.error('[WS] Assistant generation failed:', err);
               broadcast({ type: 'error', text: 'Response generation failed' });
             } finally {

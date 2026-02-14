@@ -7,6 +7,7 @@ import { suggestEmotionExpression } from './emotion-engine.js';
 import { createSubtitleController } from './subtitles.js';
 import { tryUnlockAmbientPlayback } from './ambient-audio.js';
 import { inferDonationFromText, normalizeSpeechText } from './tts-text.js';
+import { logTurnTiming, markTurn } from './turn-timing.js';
 
 const INTER_UTTERANCE_PAUSE_MS = 220;
 const POST_SPEECH_IDLE_DELAY_MS = 350;
@@ -188,7 +189,7 @@ export function stopAllTTS() {
     setExpression('listening');
 }
 
-export function enqueueSpeech(text, donation = null, emotion = null) {
+export function enqueueSpeech(text, donation = null, emotion = null, turnId = null) {
     const normalizedText = normalizeSpeechText(text);
     if (!normalizedText) return '';
 
@@ -204,12 +205,13 @@ export function enqueueSpeech(text, donation = null, emotion = null) {
         text: normalizedText,
         donation: donationPayload,
         emotion: emotion || null,
+        turnId: turnId || STATE.currentTurnId || null,
     });
 
     return normalizedText;
 }
 
-export function enqueueTurnScript(beats = [], donation = null) {
+export function enqueueTurnScript(beats = [], donation = null, turnId = null) {
     // Check server-supplied donation signal first
     let donationShown = false;
     if (donation?.show) {
@@ -247,6 +249,7 @@ export function enqueueTurnScript(beats = [], donation = null) {
             pushQueueItem({
                 action: 'wait',
                 delayMs: Math.max(120, delayMs),
+                turnId: turnId || STATE.currentTurnId || null,
             }, false);
             continue;
         }
@@ -256,6 +259,7 @@ export function enqueueTurnScript(beats = [], donation = null) {
                 action: 'react',
                 emotion,
                 delayMs: Math.max(120, delayMs),
+                turnId: turnId || STATE.currentTurnId || null,
             }, false);
             continue;
         }
@@ -264,6 +268,7 @@ export function enqueueTurnScript(beats = [], donation = null) {
             pushQueueItem({
                 action: 'wait_remote',
                 actor: beat?.actor || 'small',
+                turnId: turnId || STATE.currentTurnId || null,
             }, false);
             continue;
         }
@@ -276,6 +281,7 @@ export function enqueueTurnScript(beats = [], donation = null) {
             text,
             donation: null,
             emotion,
+            turnId: turnId || STATE.currentTurnId || null,
         }, false);
     }
 
@@ -369,6 +375,11 @@ export function processQueue() {
         setExpression(item.emotion.expression, { force: true });
     }
 
+    const itemTurnId = item.turnId || STATE.currentTurnId || null;
+    if (item.action === 'speak' && itemTurnId) {
+        markTurn(itemTurnId, 'Audio queued');
+    }
+
     playTTS(item).catch(() => {
         clearSpeechSafety();
         STATE.speaking = false;
@@ -378,6 +389,7 @@ export function processQueue() {
 
 async function playTTS(item) {
     $('#stat-listen-state').textContent = 'Speaking...';
+    const turnId = item.turnId || STATE.currentTurnId || null;
 
     try {
         let localSpeechActive = false;
@@ -439,6 +451,11 @@ async function playTTS(item) {
         audio.onplay = () => {
             const durMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
             markLocalSpeechStart(durMs);
+            if (turnId) {
+                markTurn(turnId, 'First audio played');
+                markTurn(turnId, 'End-to-end response');
+                logTurnTiming(turnId);
+            }
             // TTS audio is playing — piggyback to unlock ambient audio
             tryUnlockAmbientPlayback();
         };
@@ -457,6 +474,9 @@ async function playTTS(item) {
             cleanup();
             stopSubtitles();
             stopSpeaking();
+            if (turnId) {
+                markTurn(turnId, 'Audio segment ended');
+            }
             setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
     } catch (e) {
@@ -477,11 +497,17 @@ function speakFallback(item) {
     startSubtitles(item.text, estimatedDuration);
 
     const utterance = new SpeechSynthesisUtterance(item.text);
+    const turnId = item.turnId || STATE.currentTurnId || null;
     let fallbackStarted = false;
     utterance.onstart = () => {
         if (fallbackStarted) return;
         fallbackStarted = true;
         emitHeadSpeechState('start', STATE.currentTurnId, estimatedDuration * 1000);
+        if (turnId) {
+            markTurn(turnId, 'First audio played (fallback)');
+            markTurn(turnId, 'End-to-end response');
+            logTurnTiming(turnId);
+        }
     };
     utterance.onend = () => {
         if (fallbackStarted) emitHeadSpeechState('end', STATE.currentTurnId);

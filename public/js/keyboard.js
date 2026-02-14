@@ -10,7 +10,7 @@ import { captureFrameBase64 } from './vision-capture.js';
 
 let keyInputBuffer = '';
 
-const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D', 'x', 'X']);
+const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D', 'x', 'X', 'm', 'M']);
 
 export function initKeyboard() {
     document.addEventListener('keydown', (e) => {
@@ -83,6 +83,13 @@ export function initKeyboard() {
             }
             if (e.key === 'x' || e.key === 'X') {
                 setFullscreenEnabled(!(document.fullscreenElement || document.webkitFullscreenElement)).catch(() => { });
+            }
+            if (e.key === 'm' || e.key === 'M') {
+                const toggle = document.getElementById('mute-toggle');
+                if (toggle) {
+                    toggle.checked = !toggle.checked;
+                    toggle.dispatchEvent(new Event('change'));
+                }
             }
             return;
         }

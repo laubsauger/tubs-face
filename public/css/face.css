@@ -1,7 +1,7 @@
 /* Face Container */
 #face {
   position: relative;
-  width: min(74vw, 900px);
+  width: min(80vw, 960px);
   height: auto;
   max-width: calc(100vw - 32px);
   max-height: calc(100vh - 120px);

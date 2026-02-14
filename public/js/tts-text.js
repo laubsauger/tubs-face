@@ -6,7 +6,7 @@ export function inferDonationFromText(text) {
     return {
         show: true,
         reason: 'text_fallback',
-        venmoHandle: 'tubs-wheel-fund',
+        venmoHandle: 'TubsBot',
     };
 }
 

@@ -19,7 +19,7 @@ const DONATION_MARKER = '[[SHOW_QR]]';
 const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/i;
 const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_NUDGE_INTERVAL = 6;
-const DEFAULT_VENMO_HANDLE = process.env.DONATION_VENMO || 'tubs-wheel-fund';
+const DEFAULT_VENMO_HANDLE = process.env.DONATION_VENMO || 'TubsBot';
 const DEFAULT_DONATION_QR_DATA = process.env.DONATION_QR_DATA || `https://venmo.com/${DEFAULT_VENMO_HANDLE}`;
 const LLM_INPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_INPUT_COST_PER_MTOKENS || '0');
 const LLM_OUTPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_OUTPUT_COST_PER_MTOKENS || '0');
@@ -387,7 +387,18 @@ function pruneConversationHistory(now = Date.now()) {
   }
 }
 
-function buildContents(nextUserText, imageBase64 = null) {
+function getHistoryMeta() {
+  pruneConversationHistory();
+  const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
+  const historyChars = recent.reduce((sum, entry) => sum + String(entry?.text || '').length, 0);
+  return {
+    historyMessages: recent.length,
+    historyChars,
+  };
+}
+
+function buildContents(nextUserText, imageBase64 = null, options = {}) {
+  const { returnMeta = false } = options;
   pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
   const contents = recent.map((entry) => ({
@@ -399,7 +410,55 @@ function buildContents(nextUserText, imageBase64 = null) {
     userParts.push({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
   }
   contents.push({ role: 'user', parts: userParts });
-  return contents;
+  if (!returnMeta) return contents;
+  const historyChars = recent.reduce((sum, entry) => sum + String(entry?.text || '').length, 0);
+  return {
+    contents,
+    historyMessages: recent.length,
+    historyChars,
+    imageAttached: Boolean(imageBase64),
+  };
+}
+
+function sanitizeContentsForTelemetry(contents) {
+  if (!Array.isArray(contents)) return [];
+  return contents.map((msg) => ({
+    role: msg?.role,
+    parts: Array.isArray(msg?.parts)
+      ? msg.parts.map((part) => {
+        if (part?.inlineData?.data) {
+          return {
+            inlineData: {
+              mimeType: part.inlineData.mimeType || 'image/jpeg',
+              omitted: true,
+              bytes: String(part.inlineData.data || '').length,
+            },
+          };
+        }
+        return { text: String(part?.text || '') };
+      })
+      : [],
+  }));
+}
+
+function emitTurnContextMeta({ turnId, broadcast, timingHooks, meta }) {
+  if (!meta) return;
+  const payload = {
+    mode: meta.mode || 'text',
+    imageAttached: Boolean(meta.imageAttached),
+    historyMessages: Number(meta.historyMessages || 0),
+    historyChars: Number(meta.historyChars || 0),
+  };
+  if (timingHooks?.onContextMeta) {
+    timingHooks.onContextMeta(payload);
+  }
+  if (turnId && typeof broadcast === 'function') {
+    broadcast({
+      type: 'turn_context',
+      turnId,
+      ...payload,
+    });
+  }
 }
 
 function isDualHeadActive() {
@@ -1068,11 +1127,13 @@ async function generateDualHeadDirectedReply({
   frame,
   appearanceFrame,
   startedAt,
+  timingHooks,
 }) {
   console.log(`[LLM:dual] turn=${turnId} enabled=${runtimeConfig.dualHeadEnabled} mode=${runtimeConfig.dualHeadMode}`);
   const useVision = hasVisionIntent(normalizedInput) && frame;
   const useAppearance = !useVision && appearanceFrame?.data;
   const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
+  const mode = useVision ? 'vision' : useAppearance ? 'appearance' : 'text';
 
   let systemInst = buildDualHeadSystemInstruction(buildSystemInstruction());
   if (useVision) {
@@ -1080,30 +1141,42 @@ async function generateDualHeadDirectedReply({
   } else if (useAppearance) {
     systemInst += '\n\n' + APPEARANCE_SYSTEM_ADDENDUM;
   }
+  const contentBundle = buildContents(normalizedInput, imageToSend, { returnMeta: true });
+  const contextMeta = {
+    mode,
+    imageAttached: contentBundle.imageAttached,
+    historyMessages: contentBundle.historyMessages,
+    historyChars: contentBundle.historyChars,
+  };
+  emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
 
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
   let usageOut = 0;
   let script;
   let llmRawText = '';
+  const llmStartAt = Date.now();
+  let llmEndAt = null;
 
   try {
     const llmResult = await generateGeminiContent({
       apiKey,
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
-      contents: buildContents(normalizedInput, imageToSend),
+      contents: contentBundle.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       temperature: 0.9,
       timeoutMs: 18000,
     });
 
+    llmEndAt = Date.now();
     llmRawText = llmResult.text;
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
     script = parseDualHeadScript(llmResult.text, clampOutput(stripFormatting(llmResult.text)));
   } catch (err) {
+    llmEndAt = Date.now();
     console.error('[LLM:dual] Gemini call failed:', err.message);
     return null;
   }
@@ -1162,6 +1235,9 @@ async function generateDualHeadDirectedReply({
     donation,
     fullText,
   });
+  if (timingHooks?.onFirstToken) {
+    timingHooks.onFirstToken('turn_script');
+  }
   console.log(`[LLM:dual] turn_script turn=${turnId} beats=${beats.length} donation=${donation?.show ? donation.reason : 'none'} ${summarizeDualHeadBeatsForLog(beats)}`);
 
   pushHistory('user', normalizedInput);
@@ -1183,24 +1259,73 @@ async function generateDualHeadDirectedReply({
     emotion: primaryEmotion,
     latencyMs: Date.now() - startedAt,
     beats,
+    telemetry: {
+      context: contextMeta,
+      llmRequest: {
+        systemInstruction: systemInst,
+        contents: sanitizeContentsForTelemetry(contentBundle.contents),
+      },
+      llmStartAt,
+      llmEndAt,
+    },
   };
 }
 
 function createSentenceSplitter(onSentence) {
   let buffer = '';
-  // Match sentence-ending punctuation followed by whitespace (or end)
-  const SENTENCE_END_RE = /([.!?])(\s)/;
+  const SENTENCE_END_RE = /[.!?](?=\s|$)/;
+  const CLAUSE_END_RE = /[,;:](?=\s)/;
+  const SOFT_SPLIT_MIN_CHARS = 56;
+  const HARD_SPLIT_MAX_CHARS = 120;
+
+  function skipDelimiterRemainder(index) {
+    let cursor = index;
+    while (cursor < buffer.length && /\s/.test(buffer[cursor])) cursor += 1;
+    return cursor;
+  }
+
+  function emitNextChunk() {
+    if (!buffer) return false;
+
+    const sentenceMatch = SENTENCE_END_RE.exec(buffer);
+    if (sentenceMatch) {
+      const endIdx = sentenceMatch.index + sentenceMatch[0].length;
+      const sentence = buffer.slice(0, endIdx).trim();
+      buffer = buffer.slice(skipDelimiterRemainder(endIdx));
+      if (sentence) onSentence(sentence);
+      return true;
+    }
+
+    if (buffer.length >= SOFT_SPLIT_MIN_CHARS) {
+      let clauseMatch = null;
+      for (const match of buffer.matchAll(new RegExp(CLAUSE_END_RE, 'g'))) {
+        clauseMatch = match;
+      }
+      if (clauseMatch) {
+        const endIdx = clauseMatch.index + clauseMatch[0].length;
+        const sentence = buffer.slice(0, endIdx).trim();
+        buffer = buffer.slice(skipDelimiterRemainder(endIdx));
+        if (sentence) onSentence(sentence);
+        return true;
+      }
+    }
+
+    if (buffer.length >= HARD_SPLIT_MAX_CHARS) {
+      const splitAtSpace = buffer.lastIndexOf(' ', HARD_SPLIT_MAX_CHARS);
+      const endIdx = splitAtSpace > 28 ? splitAtSpace : HARD_SPLIT_MAX_CHARS;
+      const sentence = buffer.slice(0, endIdx).trim();
+      buffer = buffer.slice(skipDelimiterRemainder(endIdx));
+      if (sentence) onSentence(sentence);
+      return true;
+    }
+
+    return false;
+  }
 
   return {
     push(delta) {
       buffer += delta;
-      // Emit complete sentences
-      let match;
-      while ((match = SENTENCE_END_RE.exec(buffer))) {
-        const sentence = buffer.slice(0, match.index + 1).trim();
-        buffer = buffer.slice(match.index + 2); // skip punct + whitespace
-        if (sentence) onSentence(sentence);
-      }
+      while (emitNextChunk()) {}
     },
     flush() {
       const remaining = buffer.trim();
@@ -1210,9 +1335,13 @@ function createSentenceSplitter(onSentence) {
   };
 }
 
-async function generateStreamingAssistantReply(userText, { broadcast, turnId, abortController, frame, appearanceFrame }) {
+async function generateStreamingAssistantReply(userText, { broadcast, turnId, abortController, frame, appearanceFrame, timingHooks = null }) {
   const normalizedInput = normalizeInput(userText);
   if (!normalizedInput) {
+    const emptyContextMeta = { mode: 'text', imageAttached: false, ...getHistoryMeta() };
+    emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: emptyContextMeta });
+    if (timingHooks?.onFirstToken) timingHooks.onFirstToken('empty-fastpath');
+    if (timingHooks?.onLlmDone) timingHooks.onLlmDone();
     broadcast({ type: 'speak', text: 'I did not catch that. Try again.', ts: Date.now() });
     return {
       text: 'I did not catch that. Try again.',
@@ -1220,10 +1349,32 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       model: runtimeConfig.llmModel,
       tokens: { in: 1, out: 8 },
       latencyMs: 0,
+      telemetry: {
+        context: emptyContextMeta,
+        llmRequest: null,
+        llmStartAt: null,
+        llmEndAt: null,
+      },
     };
   }
 
   const startedAt = Date.now();
+  let llmStartMarked = false;
+  let llmDoneMarked = false;
+  let llmStartAt = null;
+  let llmEndAt = null;
+  const markLlmStart = () => {
+    if (llmStartMarked) return;
+    llmStartMarked = true;
+    llmStartAt = Date.now();
+    if (timingHooks?.onLlmStart) timingHooks.onLlmStart();
+  };
+  const markLlmDone = () => {
+    if (llmDoneMarked) return;
+    llmDoneMarked = true;
+    llmEndAt = Date.now();
+    if (timingHooks?.onLlmDone) timingHooks.onLlmDone();
+  };
   const greeting = pickGreetingResponse(normalizedInput);
   extractMemory(normalizedInput);
   console.log(`[LLM] turn=${turnId} dualEnabled=${runtimeConfig.dualHeadEnabled} dualMode=${runtimeConfig.dualHeadMode} directed=${shouldUseDualHeadDirectedMode()}`);
@@ -1231,12 +1382,16 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   // Fast-path: greetings use the existing non-streaming speak message
   // In dual-head mode, skip fast-path so the LLM generates both heads' content
   if (greeting && !shouldUseDualHeadDirectedMode()) {
+    const contextMeta = { mode: 'text', imageAttached: false, ...getHistoryMeta() };
+    emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
     const parsed = splitTrailingEmotionEmoji(greeting);
     const greetingText = parsed.text || 'Hey.';
     const greetingEmotion = parsed.emotion || defaultDualHeadSpeakEmotion('main');
     pushHistory('user', normalizedInput);
     pushHistory('model', greetingText);
     assistantReplyCount += 1;
+    if (timingHooks?.onFirstToken) timingHooks.onFirstToken('greeting-fastpath');
+    markLlmDone();
     broadcast({
       type: 'speak',
       text: greetingText,
@@ -1254,6 +1409,12 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       donation: buildDonationPayload(false),
       emotion: greetingEmotion,
       beats: null,
+      telemetry: {
+        context: contextMeta,
+        llmRequest: null,
+        llmStartAt,
+        llmEndAt,
+      },
     };
   }
 
@@ -1265,6 +1426,8 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
   // No API key → fall back to non-streaming demo response
   if (!apiKey) {
+    const contextMeta = { mode: 'text', imageAttached: false, ...getHistoryMeta() };
+    emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
     const fallbackText = generateDemoResponse(normalizedInput);
     const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
     const responseText = clampOutput(fallbackEmoji.text);
@@ -1273,6 +1436,8 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     pushHistory('user', normalizedInput);
     pushHistory('model', donationSignal.text);
     assistantReplyCount += 1;
+    if (timingHooks?.onFirstToken) timingHooks.onFirstToken('fallback-fastpath');
+    markLlmDone();
     broadcast({
       type: 'speak',
       text: donationSignal.text,
@@ -1290,10 +1455,17 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       donation: donationSignal.donation,
       emotion: fallbackEmotion,
       beats: null,
+      telemetry: {
+        context: contextMeta,
+        llmRequest: null,
+        llmStartAt,
+        llmEndAt,
+      },
     };
   }
 
   if (shouldUseDualHeadDirectedMode()) {
+    markLlmStart();
     const dualReply = await generateDualHeadDirectedReply({
       normalizedInput,
       apiKey,
@@ -1302,8 +1474,10 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       frame,
       appearanceFrame,
       startedAt,
+      timingHooks,
     });
     if (dualReply) {
+      markLlmDone();
       return dualReply;
     }
   }
@@ -1315,6 +1489,13 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   let rawEmotion = null;
   let emotionExtracted = false;
   let donationMarkerDetected = false;
+  let firstTokenMarked = false;
+
+  const markFirstToken = (source = 'speak_chunk') => {
+    if (firstTokenMarked) return;
+    firstTokenMarked = true;
+    if (timingHooks?.onFirstToken) timingHooks.onFirstToken(source);
+  };
 
   const splitter = createSentenceSplitter((sentence) => {
     if (sentenceCount >= MAX_OUTPUT_SENTENCES) return;
@@ -1341,6 +1522,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     sentenceCount++;
     fullText += (fullText ? ' ' : '') + text;
+    markFirstToken('speak_chunk');
     broadcast({ type: 'speak_chunk', text, chunkIndex, turnId });
     chunkIndex++;
   });
@@ -1348,10 +1530,21 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   let usageIn = 0;
   let usageOut = 0;
   let model = runtimeConfig.llmModel;
+  let contextMeta = null;
+  let llmRequest = null;
 
   const useVision = hasVisionIntent(normalizedInput) && frame;
   const useAppearance = !useVision && appearanceFrame?.data;
   const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
+  const mode = useVision ? 'vision' : useAppearance ? 'appearance' : 'text';
+  const contentBundle = buildContents(normalizedInput, imageToSend, { returnMeta: true });
+  contextMeta = {
+    mode,
+    imageAttached: contentBundle.imageAttached,
+    historyMessages: contentBundle.historyMessages,
+    historyChars: contentBundle.historyChars,
+  };
+  emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
 
   if (useVision) {
     console.log('[Vision] Intent detected — including camera frame in LLM request');
@@ -1360,17 +1553,22 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   }
 
   try {
+    markLlmStart();
     let systemInst = buildSystemInstruction();
     if (useVision) {
       systemInst += '\n\n' + VISION_SYSTEM_ADDENDUM;
     } else if (useAppearance) {
       systemInst += '\n\n' + APPEARANCE_SYSTEM_ADDENDUM;
     }
+    llmRequest = {
+      systemInstruction: systemInst,
+      contents: sanitizeContentsForTelemetry(contentBundle.contents),
+    };
     const llmResult = await streamGeminiContent({
       apiKey,
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
-      contents: buildContents(normalizedInput, imageToSend),
+      contents: contentBundle.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       temperature: 1,
       onChunk: (delta) => splitter.push(delta),
@@ -1396,6 +1594,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       rawEmotion = parsed.emotion;
       if (parsed.text) {
         fullText = clampOutput(stripDonationMarkers(parsed.text));
+        markFirstToken('speak_chunk_fallback');
         broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
         chunkIndex++;
       }
@@ -1412,6 +1611,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
       rawEmotion = rawEmotion || fallbackEmoji.emotion;
       fullText = clampOutput(fallbackEmoji.text);
+      markFirstToken('speak_chunk_demo');
       broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
       chunkIndex++;
       model = 'fallback-demo';
@@ -1420,6 +1620,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
   if (!fullText) {
     fullText = `Please help my wheel fund on Venmo @tubs-wheel-fund so Rapha can see Thailand.`;
+    markFirstToken('speak_chunk_default');
     broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
     chunkIndex++;
   }
@@ -1448,6 +1649,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     donation: finalDonation,
     fullText,
   });
+  markLlmDone();
 
   pushHistory('user', normalizedInput);
   pushHistory('model', fullText);
@@ -1467,6 +1669,12 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     emotion: rawEmotion,
     latencyMs: Date.now() - startedAt,
     beats: null,
+    telemetry: {
+      context: contextMeta || { mode: 'text', imageAttached: false, ...getHistoryMeta() },
+      llmRequest,
+      llmStartAt,
+      llmEndAt,
+    },
   };
 }
 

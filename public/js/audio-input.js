@@ -6,6 +6,7 @@ import { stopAllTTS } from './tts.js';
 import { getWs } from './websocket.js';
 import { captureFrameBase64 } from './vision-capture.js';
 import { perfGauge, perfMark, perfTime } from './perf-hooks.js';
+import { abandonPendingTurn, attachTurnToPending, beginVadTurn, markPendingTurn } from './turn-timing.js';
 
 let myvad = null;
 let vadActive = false;
@@ -27,6 +28,7 @@ let maxChunkTimer = null;
 let chunkRecorder = null;
 let chunkRecorderChunks = [];
 let speechStartTime = 0;
+let activeVadTraceId = null;
 
 let mediaRecorder = null;
 let audioChunks = [];
@@ -145,6 +147,7 @@ export async function initVAD() {
 
                 console.log('Speech start detected');
                 perfMark('vad_speech_start');
+                activeVadTraceId = beginVadTurn();
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Listening...';
                 setExpression('listening');
@@ -173,7 +176,12 @@ export async function initVAD() {
                 }
                 console.log('Speech end detected');
                 perfMark('vad_speech_end');
-                processVadAudio(audio);
+                const traceId = activeVadTraceId;
+                if (traceId) {
+                    markPendingTurn(traceId, 'User stopped speaking');
+                }
+                activeVadTraceId = null;
+                processVadAudio(audio, traceId);
             },
             onVADMisfire: () => {
                 if (bargeInTimer) { clearTimeout(bargeInTimer); bargeInTimer = null; bargeInCount = 0; }
@@ -181,6 +189,11 @@ export async function initVAD() {
                 clearMaxChunkTimer();
                 console.log('VAD Misfire');
                 perfMark('vad_misfire');
+                if (activeVadTraceId) {
+                    markPendingTurn(activeVadTraceId, 'VAD misfire');
+                    abandonPendingTurn(activeVadTraceId, 'No turn (VAD misfire)');
+                    activeVadTraceId = null;
+                }
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Idle';
                 setExpression('idle');
@@ -284,7 +297,7 @@ function getBargeInThreshold() {
     return Math.max(BARGE_IN_RMS_FLOOR, (STATE.vadNoiseGate || 0.008) * BARGE_IN_GATE_MULTIPLIER);
 }
 
-async function processVadAudio(float32Array) {
+async function processVadAudio(float32Array, traceId = null) {
     const t0 = performance.now();
     const rms = computeRMS(float32Array);
     const gate = STATE.vadNoiseGate || 0;
@@ -292,6 +305,10 @@ async function processVadAudio(float32Array) {
 
     if (rms < gate) {
         console.log(`[VAD] Below noise gate (RMS ${rms.toFixed(4)} < ${gate}) — discarding`);
+        if (traceId) {
+            markPendingTurn(traceId, 'Below noise gate');
+            abandonPendingTurn(traceId, 'No turn (noise gate)');
+        }
         const statState = $('#stat-listen-state');
         if (statState) statState.textContent = 'Idle';
         setExpression('idle');
@@ -301,11 +318,11 @@ async function processVadAudio(float32Array) {
 
     console.log(`[VAD] RMS ${rms.toFixed(4)} — sending segment`);
     const wavBlob = audioBufferToWav(float32Array);
-    sendVoiceSegment(wavBlob);
+    sendVoiceSegment(wavBlob, traceId);
     perfTime('vad_process_ms', performance.now() - t0);
 }
 
-async function sendVoiceSegment(blob) {
+async function sendVoiceSegment(blob, traceId = null) {
     const t0 = performance.now();
     if (STATE.muted) return;
     if (!STATE.connected) {
@@ -327,22 +344,38 @@ async function sendVoiceSegment(blob) {
     if (statState) statState.textContent = 'Accumulating...';
 
     try {
+        if (traceId) {
+            markPendingTurn(traceId, 'Segment upload started');
+        }
         perfMark('voice_segment_http');
         const res = await fetch('/voice/segment?wakeWord=true', {
             method: 'POST',
             body: blob,
-            headers: { 'Content-Type': 'audio/webm' }
+            headers: { 'Content-Type': 'audio/wav' }
         });
 
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
+        if (traceId) {
+            markPendingTurn(traceId, 'Segment upload finished');
+            if (data?.turnId) {
+                attachTurnToPending(traceId, data.turnId);
+                markPendingTurn(traceId, 'Turn ID assigned');
+            }
+        }
 
         if (data.ignored) {
+            if (traceId) {
+                abandonPendingTurn(traceId, 'No turn (segment ignored)');
+            }
             console.log(`[Segment] Ignored: "${data.text}"`);
             if (statState) statState.textContent = 'Idle';
             if (!data.text || !data.wake) setExpression('idle');
         }
     } catch (err) {
+        if (traceId) {
+            abandonPendingTurn(traceId, 'No turn (segment upload failed)');
+        }
         console.error('[Audio] Segment send failed:', err);
     } finally {
         perfTime('voice_segment_http_ms', performance.now() - t0);
@@ -539,11 +572,16 @@ export function startRecording() {
     if (audioContext.state === 'suspended') audioContext.resume();
 
     audioChunks = [];
+    const traceId = beginVadTurn();
+    activeVadTraceId = traceId;
+    markPendingTurn(traceId, 'PTT recording started');
     mediaRecorder = new MediaRecorder(micStream);
     mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
     mediaRecorder.onstop = () => {
         const blob = new Blob(audioChunks, { type: 'audio/webm' });
-        sendVoice(blob);
+        markPendingTurn(traceId, 'User stopped speaking');
+        sendVoice(blob, false, traceId);
+        if (activeVadTraceId === traceId) activeVadTraceId = null;
     };
 
     mediaRecorder.start();
@@ -599,7 +637,7 @@ function startVisualize() {
     visualizeRafId = requestAnimationFrame(visualizeAudio);
 }
 
-async function sendVoice(blob, isVad = false) {
+async function sendVoice(blob, isVad = false, traceId = null) {
     const t0 = performance.now();
     if (STATE.muted) return;
     if (!STATE.connected) {
@@ -623,6 +661,9 @@ async function sendVoice(blob, isVad = false) {
 
     try {
         const url = isVad ? '/voice?wakeWord=true' : '/voice';
+        if (traceId) {
+            markPendingTurn(traceId, 'Voice upload started');
+        }
 
         perfMark('voice_http');
         const res = await fetch(url, {
@@ -636,6 +677,13 @@ async function sendVoice(blob, isVad = false) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const data = await res.json();
+        if (traceId) {
+            markPendingTurn(traceId, 'Voice upload finished');
+            if (data?.turnId) {
+                attachTurnToPending(traceId, data.turnId);
+                markPendingTurn(traceId, 'Turn ID assigned');
+            }
+        }
 
         if (data.text) {
             const wakeInfo = data.wake
@@ -651,11 +699,17 @@ async function sendVoice(blob, isVad = false) {
         }
 
         if (data.ignored) {
+            if (traceId) {
+                abandonPendingTurn(traceId, 'No turn (voice ignored)');
+            }
             $('#stat-listen-state').textContent = 'Idle';
             setExpression('idle');
         }
 
     } catch (err) {
+        if (traceId) {
+            abandonPendingTurn(traceId, 'No turn (voice upload failed)');
+        }
         console.error('[Audio] Send failed:', err);
         logChat('sys', '⚠️ Voice upload failed');
     } finally {

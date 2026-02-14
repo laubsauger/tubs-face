@@ -168,8 +168,11 @@ def transcribe():
         return jsonify({"error": "No audio file provided"}), 400
 
     audio_file = request.files['audio']
+    mime = (audio_file.mimetype or '').lower()
+    filename = (audio_file.filename or '').lower()
+    suffix = '.wav' if ('wav' in mime or filename.endswith('.wav')) else '.webm'
 
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as tmp:
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         audio_file.save(tmp.name)
         tmp_path = tmp.name
 

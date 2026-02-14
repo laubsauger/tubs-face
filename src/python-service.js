@@ -110,9 +110,19 @@ async function restartTranscriptionService(modelName, reason = 'runtime config u
   startTranscriptionService(resolvedModel);
 }
 
-function transcribeAudio(audioBuffer) {
+function normalizeAudioMimeType(value) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized.includes('audio/wav') || normalized.includes('audio/x-wav') || normalized.includes('audio/wave')) {
+    return 'audio/wav';
+  }
+  return 'audio/webm';
+}
+
+function transcribeAudio(audioBuffer, mimeType = 'audio/webm') {
   return new Promise((resolve, reject) => {
     const boundary = '---BOUNDARY';
+    const safeMimeType = normalizeAudioMimeType(mimeType);
+    const extension = safeMimeType === 'audio/wav' ? 'wav' : 'webm';
 
     const tryRequest = (retries = 10) => {
       const req = http.request({
@@ -149,8 +159,8 @@ function transcribeAudio(audioBuffer) {
       });
 
       req.write(`--${boundary}\r\n`);
-      req.write(`Content-Disposition: form-data; name="audio"; filename="audio.webm"\r\n`);
-      req.write(`Content-Type: audio/webm\r\n\r\n`);
+      req.write(`Content-Disposition: form-data; name="audio"; filename="audio.${extension}"\r\n`);
+      req.write(`Content-Type: ${safeMimeType}\r\n\r\n`);
       req.write(audioBuffer);
       req.write(`\r\n--${boundary}--\r\n`);
       req.end();

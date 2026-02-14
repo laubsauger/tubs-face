@@ -26,6 +26,8 @@ const { generateAssistantReply, generateStreamingAssistantReply } = require('./a
 const crypto = require('crypto');
 const { createOrder: createPayPalOrder, captureOrder: capturePayPalOrder } = require('./paypal-client');
 const { logConversation, logTubsReply } = require('./logger');
+const { createTurnTimer } = require('./turn-timing');
+const { captureTurnTrace } = require('./langfuse');
 
 const staticPath = path.join(__dirname, '../public');
 
@@ -46,17 +48,29 @@ function isMuted() {
 }
 
 function computeEndpointTimeout(text) {
-  if (!text) return 700;
+  if (!text) return 520;
   const words = text.trim().split(/\s+/);
-  if (/[.!?]\s*$/.test(text) && words.length > 3) return 400;
-  if (/[,]\s*$/.test(text) || /\b(and|but|so|because|or|then|that|which|when|while|if)\s*$/i.test(text)) return 1200;
-  if (words.length < 3) return 800;
-  return 700;
+  if (/[.!?]\s*$/.test(text) && words.length > 3) return 260;
+  if (/[,]\s*$/.test(text) || /\b(and|but|so|because|or|then|that|which|when|while|if)\s*$/i.test(text)) return 860;
+  if (words.length < 3) return 620;
+  if (words.length > 18) return 420;
+  return 340;
+}
+
+function markTurnContext(turnTimer, meta) {
+  if (!turnTimer || !meta) return;
+  turnTimer.mark(`Image attached: ${meta.imageAttached ? 'yes' : 'no'}`);
+  turnTimer.mark(`History context: ${meta.historyMessages || 0} msgs / ${meta.historyChars || 0} chars`);
+  turnTimer.mark(`LLM mode: ${meta.mode || 'text'}`);
 }
 
 function abortActiveTurn(turnId) {
   if (!activeTurn || activeTurn.turnId !== turnId) return false;
   console.log(`[Turn] Aborting turn ${turnId}`);
+  if (activeTurn.turnTimer) {
+    activeTurn.turnTimer.mark('Turn aborted');
+    activeTurn.turnTimer.log({ title: '[Turn Timing]' });
+  }
   if (activeTurn.abortController) activeTurn.abortController.abort();
   if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
   activeTurn = null;
@@ -156,6 +170,10 @@ function handleRequest(req, res) {
         const donation = normalizeManualDonation(payload?.donation);
 
         if (activeTurn) {
+          if (activeTurn.turnTimer) {
+            activeTurn.turnTimer.mark('Turn superseded by manual script');
+            activeTurn.turnTimer.log({ title: '[Turn Timing]' });
+          }
           if (activeTurn.abortController) activeTurn.abortController.abort();
           if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
           activeTurn = null;
@@ -204,9 +222,14 @@ function handleRequest(req, res) {
     let body = [];
     req.on('data', chunk => body.push(chunk));
     req.on('end', async () => {
+      const turnTimer = createTurnTimer({ side: 'backend', source: 'voice' });
+      turnTimer.mark('Voice request received');
       if (isMuted()) {
+        turnTimer.mark('Ignored (muted)');
         broadcast({ type: 'expression', expression: 'idle' });
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        turnTimer.mark('HTTP response sent');
+        turnTimer.log({ title: '[Turn Timing]' });
         res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted' }));
         return;
       }
@@ -217,7 +240,9 @@ function handleRequest(req, res) {
       broadcast({ type: 'thinking' });
 
       try {
-        const result = await transcribeAudio(audioBuffer);
+        turnTimer.mark('STT started');
+        const result = await transcribeAudio(audioBuffer, req.headers['content-type']);
+        turnTimer.mark('STT completed');
         const text = result.text;
         console.log(`[Transcribed] "${text}"`);
         let wake = null;
@@ -231,8 +256,11 @@ function handleRequest(req, res) {
           );
           if (!wake.detected && !inConversation) {
             console.log('[Voice] Wake word not detected and not in conversation, ignoring.');
+            turnTimer.mark('Ignored (wake word missing)');
             broadcast({ type: 'expression', expression: 'idle' });
             res.writeHead(200, { 'Content-Type': 'application/json' });
+            turnTimer.mark('HTTP response sent');
+            turnTimer.log({ title: '[Turn Timing]' });
             res.end(JSON.stringify({
               ok: true,
               ignored: true,
@@ -257,6 +285,7 @@ function handleRequest(req, res) {
 
         const turnId = crypto.randomBytes(6).toString('hex');
         broadcast({ type: 'turn_start', turnId });
+        turnTimer.mark('Turn started');
 
         const reply = await generateStreamingAssistantReply(text, {
           broadcast,
@@ -264,8 +293,23 @@ function handleRequest(req, res) {
           abortController: activeTurn?.abortController,
           frame: getLatestFrame(),
           appearanceFrame: consumeAppearanceFrame(),
+          timingHooks: {
+            onLlmStart: () => turnTimer.mark('LLM started'),
+            onFirstToken: (source) => turnTimer.mark(`LLM first token (${source})`),
+            onLlmDone: () => turnTimer.mark('LLM completed'),
+            onContextMeta: (meta) => markTurnContext(turnTimer, meta),
+          },
         });
+        turnTimer.mark('Reply ready');
         logTubsReply(reply);
+        captureTurnTrace({
+          turnId,
+          source: 'voice',
+          userText: text,
+          reply,
+          telemetry: reply?.telemetry || null,
+          turnTimer,
+        });
 
         sessionStats.messagesOut++;
         sessionStats.lastActivity = Date.now();
@@ -290,8 +334,11 @@ function handleRequest(req, res) {
         });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        turnTimer.mark('HTTP response sent');
+        turnTimer.log({ title: '[Turn Timing]' });
         res.end(JSON.stringify({
           ok: true,
+          turnId,
           text: text,
           wake: wakeWord && wake
             ? {
@@ -302,6 +349,8 @@ function handleRequest(req, res) {
         }));
 
       } catch (err) {
+        turnTimer.mark(`Error (${err?.message || 'unknown'})`);
+        turnTimer.log({ title: '[Turn Timing]' });
         console.error('[Voice] Transcription error:', err);
         broadcast({ type: 'error', text: 'Transcription failed' });
         if (!res.headersSent) {
@@ -331,7 +380,7 @@ function handleRequest(req, res) {
       console.log(`[Segment] Received ${audioBuffer.length} bytes`);
 
       try {
-        const result = await transcribeAudio(audioBuffer);
+        const result = await transcribeAudio(audioBuffer, req.headers['content-type']);
         const text = result.text?.trim();
         console.log(`[Segment] Transcribed: "${text}"`);
 
@@ -357,6 +406,8 @@ function handleRequest(req, res) {
         // Create or extend active turn
         if (!activeTurn) {
           const turnId = crypto.randomBytes(6).toString('hex');
+          const turnTimer = createTurnTimer({ side: 'backend', source: 'voice-segment', turnId });
+          turnTimer.mark('First segment received');
           activeTurn = {
             turnId,
             segments: [],
@@ -364,8 +415,10 @@ function handleRequest(req, res) {
             endpointTimer: null,
             state: 'accumulating',
             abortController: new AbortController(),
+            turnTimer,
           };
           broadcast({ type: 'turn_start', turnId: activeTurn.turnId });
+          activeTurn.turnTimer.mark('Turn started');
         }
 
         activeTurn.segments.push(text);
@@ -394,6 +447,7 @@ function handleRequest(req, res) {
           const turn = activeTurn;
           const turnText = turn.fullText;
           const turnId = turn.turnId;
+          turn.turnTimer?.mark('User stopped speaking (endpoint)');
 
           console.log(`[Segment] Endpoint fired — generating reply for: "${turnText}"`);
           logConversation('USER', turnText);
@@ -406,8 +460,23 @@ function handleRequest(req, res) {
             abortController: turn.abortController,
             frame: getLatestFrame(),
             appearanceFrame: consumeAppearanceFrame(),
+            timingHooks: {
+              onLlmStart: () => turn.turnTimer?.mark('LLM started'),
+              onFirstToken: (source) => turn.turnTimer?.mark(`LLM first token (${source})`),
+              onLlmDone: () => turn.turnTimer?.mark('LLM completed'),
+              onContextMeta: (meta) => markTurnContext(turn.turnTimer, meta),
+            },
           }).then((reply) => {
+            turn.turnTimer?.mark('Reply ready');
             logTubsReply(reply);
+            captureTurnTrace({
+              turnId,
+              source: 'voice-segment',
+              userText: turnText,
+              reply,
+              telemetry: reply?.telemetry || null,
+              turnTimer: turn.turnTimer,
+            });
             sessionStats.messagesOut++;
             sessionStats.lastActivity = Date.now();
             sessionStats.tokensIn += reply.tokens.in || 0;
@@ -427,7 +496,11 @@ function handleRequest(req, res) {
               model: reply.model || runtimeConfig.llmModel || runtimeConfig.model,
               cost: reply.costUsd || 0,
             });
+            turn.turnTimer?.mark('Stats broadcast');
+            turn.turnTimer?.log({ title: '[Turn Timing]' });
           }).catch((err) => {
+            turn.turnTimer?.mark(`Error (${err?.message || 'unknown'})`);
+            turn.turnTimer?.log({ title: '[Turn Timing]' });
             console.error('[Segment] Generation error:', err);
             broadcast({ type: 'error', text: 'Response generation failed' });
           }).finally(() => {

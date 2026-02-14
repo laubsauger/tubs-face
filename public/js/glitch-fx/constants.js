@@ -61,7 +61,7 @@ export const FEATURE_BOX_GLOBAL_SCALE_X = 0.92;
 export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.92;
 export const FEATURE_MOUTH_SCALE_X = 0.92;
 export const FEATURE_MOUTH_SCALE_Y = 0.9;
-export const FEATURE_BOX_MAIN_BOOST = 0.03;
+export const FEATURE_BOX_MAIN_BOOST = 0.07;
 export const GLITCH_DIAG = true;
 
 export const GPU_UNIFORM_FLOATS = 64; // 16-byte aligned blocks

@@ -14,6 +14,7 @@ import { buildLocalTurnTimeline } from './turn-script.js';
 import { clearFaceVisionReactionsForMute } from './face/results.js';
 import { perfMark } from './perf-hooks.js';
 import { detectDonationSignal, summarizeTurnScript } from './message-handler-utils.js';
+import { markTurn, onTurnStart } from './turn-timing.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const MUTED_ALLOWED_TYPES = new Set(['config', 'stats', 'ping', 'system', 'error', 'sleep', 'wake']);
@@ -310,7 +311,7 @@ export function handleMessage(msg) {
             // Emotion expression is passed through the TTS queue
             // and pulsed AFTER speech ends (not before/during)
             {
-                const spokenText = enqueueSpeech(msg.text, msg.donation, msg.emotion || null);
+                const spokenText = enqueueSpeech(msg.text, msg.donation, msg.emotion || null, msg.turnId || null);
                 const emojiTag = msg.emotion?.emoji ? `${msg.emotion.emoji} ` : '';
                 logChat('out', emojiTag + spokenText);
             }
@@ -326,12 +327,24 @@ export function handleMessage(msg) {
                 }
             }
             STATE.currentTurnId = msg.turnId;
+            onTurnStart(msg.turnId);
+            break;
+        case 'turn_context':
+            if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            if (msg.turnId) {
+                markTurn(msg.turnId, `Image attached: ${msg.imageAttached ? 'yes' : 'no'}`);
+                markTurn(msg.turnId, `History context: ${msg.historyMessages || 0} msgs / ${msg.historyChars || 0} chars`);
+                markTurn(msg.turnId, `LLM mode: ${msg.mode || 'text'}`);
+            }
             break;
         case 'speak_chunk':
             // Ignore stale chunks from aborted turns
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
             console.log(`[MSG] speak_chunk #${msg.chunkIndex}: "${msg.text}"`);
-            enqueueSpeech(msg.text, null, null);
+            if (msg.turnId && msg.chunkIndex === 0) {
+                markTurn(msg.turnId, 'LLM first token received');
+            }
+            enqueueSpeech(msg.text, null, null, msg.turnId || STATE.currentTurnId || null);
             if (msg.chunkIndex === 0) {
                 logChat('out', msg.text);
             } else {
@@ -343,6 +356,9 @@ export function handleMessage(msg) {
         case 'speak_end':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
             console.log(`[MSG] speak_end turnId=${msg.turnId}`);
+            if (msg.turnId) {
+                markTurn(msg.turnId, 'LLM response completed');
+            }
             if (msg.emotion?.impulse) {
                 pushEmotionImpulse(msg.emotion.impulse, 'spoken');
             }
@@ -364,13 +380,16 @@ export function handleMessage(msg) {
         case 'turn_script':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
             console.log(`[MSG] turn_script turnId=${msg.turnId} beats=${msg.beats?.length || 0}`);
+            if (msg.turnId) {
+                markTurn(msg.turnId, 'Turn script received');
+            }
             logChat('sys', `TURN ${msg.turnId || 'n/a'} ${summarizeTurnScript(msg.beats || [])}`);
             {
                 const timeline = buildLocalTurnTimeline(msg.beats || [], 'main', {
                     includeRemoteWait: STATE.dualHeadEnabled && STATE.dualHeadMode !== 'off',
                 });
                 if (timeline.length === 0) break;
-                enqueueTurnScript(timeline, msg.donation || null);
+                enqueueTurnScript(timeline, msg.donation || null, msg.turnId || STATE.currentTurnId || null);
                 for (const beat of timeline) {
                     if (beat?.action !== 'speak' || !beat?.text) continue;
                     const emojiTag = beat?.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
@@ -384,7 +403,7 @@ export function handleMessage(msg) {
             // Quick filler word while user is still speaking
             if (!STATE.speaking) {
                 console.log(`[MSG] backchannel: "${msg.text}"`);
-                enqueueSpeech(msg.text, null, null);
+                enqueueSpeech(msg.text, null, null, msg.turnId || null);
                 // Brief nod expression
                 setExpressionIfAllowed('smile');
                 setTimeout(() => setExpressionIfAllowed('listening'), 800);

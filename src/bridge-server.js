@@ -29,6 +29,7 @@ const { handleRequest } = require('./routes');
 const { initWebSocket } = require('./websocket');
 const { startTranscriptionService, stopTranscriptionService } = require('./python-service');
 const { runtimeConfig } = require('./config');
+const { shutdownLangfuse } = require('./langfuse');
 
 const PORT = process.env.PORT || 3000;
 
@@ -40,7 +41,10 @@ startTranscriptionService(runtimeConfig.sttModel);
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
-    stopTranscriptionService(2000).finally(() => process.exit(0));
+    Promise.allSettled([
+      stopTranscriptionService(2000),
+      shutdownLangfuse(2000),
+    ]).finally(() => process.exit(0));
   });
 }
 

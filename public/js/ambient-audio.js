@@ -1,13 +1,13 @@
 import { STATE } from './state.js';
 
 const AMBIENT_SRC = '/audio/tubs-robot-ambience-loop.mp3';
-const PULSE_INTERVAL_MS = 12000;
+const PULSE_INTERVAL_MS = 22000;
 const FADE_IN_MS = 2000;
-const HOLD_MS = 7000;
-const FADE_OUT_MS = 2000;
-const PEAK_GAIN = 0.32;
-const DUCKED_GAIN = 0.12;
-const BASE_ENVELOPE = 0.6;
+const HOLD_MS = 4000;
+const FADE_OUT_MS = 2500;
+const PEAK_GAIN = 0.42;
+const DUCKED_GAIN = 0.18;
+const BASE_ENVELOPE = 0.5;
 const SLEEP_GAIN_FACTOR = 0.72;
 const STATE_POLL_MS = 400;
 const PAUSE_IDLE_DELAY_MS = 600;
@@ -16,6 +16,7 @@ const PLAYBACK_RECOVERY_MS = 1200;
 const PLAY_PROMISE_TIMEOUT_MS = 1600;
 
 let initialized = false;
+let audioBooted = false;
 let audioEl = null;
 let audioCtx = null;
 let gainNode = null;
@@ -115,7 +116,7 @@ function diag(reason, force = false) {
     const now = Date.now();
     if (!force && now - lastDiagAt < DIAG_THROTTLE_MS) return;
     lastDiagAt = now;
-    console.log('[Ambient][diag]', snapshot(reason));
+    // console.log('[Ambient][diag]', snapshot(reason));
 }
 
 function clearFallbackFade() {
@@ -204,6 +205,14 @@ function ensureAudioGraph() {
         sourceNode.connect(gainNode);
         gainNode.connect(audioCtx.destination);
         usingWebAudio = true;
+        audioEl.volume = 1; // WebAudio graph handles volume; element must pass full signal
+        audioCtx.addEventListener('statechange', () => {
+            diag('ctx-statechange', true);
+            if (audioCtx.state === 'running') {
+                lastAppliedTargetGain = -1;
+                applyTargetGain(100);
+            }
+        });
         diag('audio-graph-ready', true);
     } catch {
         usingWebAudio = false;
@@ -306,6 +315,7 @@ function shouldBeActive() {
 }
 
 function syncActiveState() {
+    if (!audioBooted) return;
     const nextActive = shouldBeActive();
     if (nextActive === active) {
         if (active) {
@@ -351,11 +361,13 @@ function tryUnlockPlayback(reason = 'unknown') {
     diag(`unlock-${reason}`, true);
     // Resume AudioContext synchronously within gesture/event context
     if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+        audioCtx.resume().catch(() => { });
     }
     if (audioEl && audioEl.paused) {
-        audioEl.play().catch(() => {});
+        audioEl.play().catch(() => { });
     }
+    // Force gain re-application — values scheduled on a suspended context may be stale
+    lastAppliedTargetGain = -1;
     // Also run the full async recovery
     void ensurePlaybackReady();
     if (active) applyTargetGain(120);
@@ -382,10 +394,9 @@ export function tryUnlockAmbientPlayback() {
     tryUnlockPlayback('external-audio');
 }
 
-export function initAmbientAudio() {
-    if (initialized) return;
-    initialized = true;
-    diag('init:start', true);
+function bootAudio() {
+    if (audioBooted) return;
+    audioBooted = true;
 
     ensureAudioGraph();
     if (audioEl) {
@@ -393,16 +404,41 @@ export function initAmbientAudio() {
             audioEl.load();
             diag('audio-load-called', true);
         } catch {
-            // no-op
             diag('audio-load-failed', true);
         }
     }
 
+    // We're inside a user gesture — context should start running
+    if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
+    if (audioEl && audioEl.paused) {
+        audioEl.play().catch(() => {});
+    }
+
     bindUnlockListeners();
+    syncActiveState();
+    statePollTimer = setInterval(syncActiveState, STATE_POLL_MS);
+    diag('audio-booted', true);
+}
+
+export function initAmbientAudio() {
+    if (initialized) return;
+    initialized = true;
+
     window.addEventListener('tubs:head-speech-observed', handleSpeechObserved);
     document.addEventListener('visibilitychange', syncActiveState);
 
-    syncActiveState();
-    statePollTimer = setInterval(syncActiveState, STATE_POLL_MS);
-    diag('init:done', true);
+    // Defer audio creation to first user gesture — avoids suspended AudioContext warning
+    const onGesture = () => {
+        for (const t of ['click', 'keydown', 'pointerdown', 'touchstart']) {
+            document.removeEventListener(t, onGesture, true);
+        }
+        bootAudio();
+    };
+    for (const t of ['click', 'keydown', 'pointerdown', 'touchstart']) {
+        document.addEventListener(t, onGesture, true);
+    }
+
+    diag('init:waiting-for-gesture', true);
 }

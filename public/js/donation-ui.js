@@ -4,7 +4,7 @@ let hideTimer = null;
 
 function sanitizeHandle(handle) {
     const trimmed = String(handle || '').trim();
-    if (!trimmed) return '@tubs-wheel-fund';
+    if (!trimmed) return '@TubsBot';
     return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
 }
 
