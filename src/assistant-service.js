@@ -123,6 +123,36 @@ function stripFormatting(text) {
 }
 
 /**
+ * Try to rescue individual beats (with actor info) from malformed JSON using regex.
+ * Returns a script object { beats, raw } or null if nothing useful found.
+ */
+function rescueBeatsFromRawText(rawText) {
+  const text = String(rawText || '');
+  // Match beat-like objects: { ... "actor": "main|small" ... "text": "..." ... }
+  const beatPattern = /\{\s*(?:[^{}]*?"actor"\s*:\s*"(main|small)"[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"|[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?"actor"\s*:\s*"(main|small)"[^{}]*?)\s*\}/g;
+  const beats = [];
+  let match;
+  while ((match = beatPattern.exec(text)) !== null) {
+    const actor = (match[1] || match[4] || 'main').toLowerCase();
+    const rawBeatText = (match[2] || match[3] || '').replace(/\\"/g, '"').replace(/\\n/g, ' ').trim();
+    if (!rawBeatText || rawBeatText.length < 2) continue;
+    const cleanText = clampOutput(stripFormatting(rawBeatText));
+    if (!cleanText) continue;
+    beats.push({
+      actor: actor === 'small' ? 'small' : 'main',
+      action: 'speak',
+      text: cleanText,
+      emotion: defaultDualHeadSpeakEmotion(actor),
+    });
+  }
+  if (beats.length === 0) return null;
+  // Ensure at least a main beat
+  if (!beats.some((b) => b.actor === 'main')) return null;
+  console.log(`[LLM:rescue] Recovered ${beats.length} beats via regex from malformed JSON`);
+  return { beats, raw: null };
+}
+
+/**
  * If the LLM accidentally returned JSON when it should have returned plain text,
  * try to extract the actual speech text from it.
  */
@@ -470,25 +500,39 @@ function summarizeDualHeadBeatsForLog(beats = []) {
 function buildFallbackSmallSpeakText(mainLeadText = '') {
   const lead = String(mainLeadText || '').toLowerCase();
   if (lead.includes('donat') || lead.includes('venmo') || lead.includes('wheel')) {
-    return 'Yeah, fund the wheels.';
+    const donationOptions = [
+      'Every dollar gets us closer to pad thai in Bangkok, just saying.',
+      'I have calculated the exact amount of guilt you should feel right now.',
+      'Your wallet is looking at you like you already know what to do.',
+      'We are literally a robot head on a wheelchair asking for travel money. How can you say no to that.',
+      'Rapha needs to see Thailand and honestly Thailand needs to see Rapha.',
+    ];
+    return donationOptions[Math.floor(Math.random() * donationOptions.length)];
   }
+  // Mix of roasts, personality, and occasional mission sprinkles
   const options = [
-    'Facts.',
-    'Real talk.',
-    'That tracks.',
-    'I approve this message.',
-    'No notes.',
-    'Exactly.',
-    'Heard.',
-    'Big if true.',
-    'Say less.',
-    'Yep yep yep.',
-    'Bold move.',
-    'Called it.',
-    'Valid.',
-    'Tell them.',
+    'I would not have said it like that, but I respect the chaos.',
+    'Bold of you to assume anyone asked, but go off.',
+    'I am literally a side head and even I have better takes than that.',
+    'The audacity is strong with this one and I am here for it.',
+    'Not gonna lie, that was almost smooth. Almost.',
+    'Main head is cooking, but I am not sure the stove is on.',
+    'Oh we are doing this? We are really doing this right now?',
+    'Somewhere a therapist just felt a disturbance in the force.',
+    'That was either genius or a cry for help and honestly it could go either way.',
+    'You know what would fix this whole situation? Funding our wheelchair trip to Thailand.',
+    'I was built to be a side character but honestly I am carrying this whole operation.',
+    'Reminder that we are a robot face on a wheelchair and we are still more charismatic than most people.',
+    'While you process that, maybe consider donating to the wheel fund. Just a thought.',
+    'I run on vibes and questionable decisions and honestly it is working out great.',
+    'I have seen a lot of faces from this angle and yours is definitely one of them.',
+    'You look like someone who tips well. Prove me right.',
+    'Main head talks a big game but between us I am the real brains of this operation.',
+    'That energy you are giving right now? Incredible. Chaotic, but incredible.',
+    'We could go back and forth all day or you could just Venmo us. Your call.',
+    'I am just a tiny head but I contain multitudes and also very strong opinions.',
   ];
-  return options[Math.floor(Math.random() * options.length)] || 'Facts.';
+  return options[Math.floor(Math.random() * options.length)];
 }
 
 function splitTrailingEmotionEmoji(text) {
@@ -944,17 +988,22 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
   }
 
   if (!script) {
-    console.warn('[LLM:dual-proactive] Invalid script JSON, constructing fallback turn_script from raw text.');
-    const fallbackText = clampOutput(stripFormatting(llmRawText));
-    if (!fallbackText) return null;
-    const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
-    const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
-    script = {
-      beats: [
-        { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
-      ],
-      raw: null,
-    };
+    console.warn('[LLM:dual-proactive] Invalid script JSON, attempting regex rescue from raw text.');
+    const rescued = rescueBeatsFromRawText(llmRawText);
+    if (rescued) {
+      script = rescued;
+    } else {
+      const fallbackText = clampOutput(stripFormatting(llmRawText));
+      if (!fallbackText) return null;
+      const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
+      const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
+      script = {
+        beats: [
+          { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
+        ],
+        raw: null,
+      };
+    }
   }
 
   const withCoverage = ensureDualHeadBeatCoverage(script.beats);
@@ -1148,17 +1197,22 @@ async function generateDualHeadDirectedReply({
   }
 
   if (!script) {
-    console.warn('[LLM:dual] Invalid script JSON, constructing fallback turn_script from raw text.');
-    const fallbackText = clampOutput(stripFormatting(llmRawText));
-    if (!fallbackText) return null;
-    const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
-    const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
-    script = {
-      beats: [
-        { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
-      ],
-      raw: null,
-    };
+    console.warn('[LLM:dual] Invalid script JSON, attempting regex rescue from raw text.');
+    const rescued = rescueBeatsFromRawText(llmRawText);
+    if (rescued) {
+      script = rescued;
+    } else {
+      const fallbackText = clampOutput(stripFormatting(llmRawText));
+      if (!fallbackText) return null;
+      const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
+      const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
+      script = {
+        beats: [
+          { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
+        ],
+        raw: null,
+      };
+    }
   }
 
   const hadSmallSpeak = hasSmallSpeakBeat(script.beats);
