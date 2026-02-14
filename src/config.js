@@ -209,7 +209,7 @@ const DEFAULT_SECONDARY_SUBTITLE_ENABLED = normalizeBooleanConfig(process.env.SE
 const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SECONDARY_AUDIO_GAIN || 1.0);
 const DEFAULT_DUAL_HEAD_TURN_POLICY = normalizeDualHeadTurnPolicy(process.env.DUAL_HEAD_TURN_POLICY || 'llm_order');
 const DEFAULT_MUTED = normalizeBooleanConfig(process.env.MUTED || false, 'muted');
-const DEFAULT_AMBIENT_AUDIO_ENABLED = normalizeBooleanConfig(process.env.AMBIENT_AUDIO_ENABLED || true, 'ambientAudioEnabled');
+const DEFAULT_AMBIENT_AUDIO_ENABLED = normalizeBooleanConfig(process.env.AMBIENT_AUDIO_ENABLED ?? true, 'ambientAudioEnabled');
 
 const sessionStats = {
   messagesIn: 0,
