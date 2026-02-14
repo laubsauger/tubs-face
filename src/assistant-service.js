@@ -848,6 +848,118 @@ async function generateAssistantReply(userText) {
   };
 }
 
+async function generateDualHeadProactiveReply({ context, broadcast, turnId, startedAt }) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  console.log(`[LLM:dual-proactive] turn=${turnId} enabled=${runtimeConfig.dualHeadEnabled} mode=${runtimeConfig.dualHeadMode}`);
+
+  const proactiveAddendum =
+    'PROACTIVE: You are starting conversation unprompted. ' + context + '\n' +
+    'One punchy sentence from main. Small head can react or add a short quip.';
+
+  const systemInst = buildDualHeadSystemInstruction(buildSystemInstruction()) + '\n\n' + proactiveAddendum;
+
+  const contents = [];
+  pruneConversationHistory();
+  const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
+  for (const entry of recent) {
+    contents.push({ role: entry.role, parts: [{ text: entry.text }] });
+  }
+  contents.push({ role: 'user', parts: [{ text: '[silence]' }] });
+
+  let model = runtimeConfig.llmModel;
+  let usageIn = 0;
+  let usageOut = 0;
+  let script;
+  let llmRawText = '';
+
+  try {
+    const llmResult = await generateGeminiContent({
+      apiKey,
+      model: runtimeConfig.llmModel,
+      systemInstruction: systemInst,
+      contents,
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      temperature: 1,
+      timeoutMs: 18000,
+    });
+
+    llmRawText = llmResult.text;
+    model = llmResult.model || model;
+    usageIn = Number(llmResult.usage.promptTokenCount || 0);
+    usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
+    console.log(`[LLM:dual-proactive] Raw response (${llmRawText.length} chars): ${llmRawText}`);
+    script = parseDualHeadScript(llmResult.text, clampOutput(stripFormatting(llmResult.text)));
+  } catch (err) {
+    console.error('[LLM:dual-proactive] Gemini call failed:', err.message);
+    return null;
+  }
+
+  if (!script) {
+    console.warn('[LLM:dual-proactive] Invalid script JSON, falling back to single-head proactive.');
+    return null;
+  }
+
+  const withCoverage = ensureDualHeadBeatCoverage(script.beats);
+  const merged = mergeDonationSignalFromBeats(withCoverage);
+  let beats = merged.beats;
+  let donation = merged.donation;
+  let fullText = beats
+    .filter((beat) => beat.action === 'speak')
+    .map((beat) => beat.text)
+    .join(' ')
+    .trim();
+
+  const nudged = maybeInjectDonationNudge(fullText, donation.show);
+  if (nudged.forcedQr) {
+    donation = buildDonationPayload(true, 'periodic_nudge');
+    const nudgeText = `Venmo @${DEFAULT_VENMO_HANDLE}.`;
+    beats = [...beats, { actor: 'main', action: 'speak', text: nudgeText, emotion: defaultDualHeadSpeakEmotion('main') }];
+    fullText = `${fullText} ${nudgeText}`.trim();
+  }
+
+  fullText = clampOutput(fullText);
+  if (!fullText) {
+    const fallback = clampOutput(stripFormatting(llmRawText));
+    if (fallback) {
+      beats = [{ actor: 'main', action: 'speak', text: fallback, emotion: defaultDualHeadSpeakEmotion('main') }];
+      fullText = fallback;
+    } else {
+      return null;
+    }
+  }
+
+  broadcast({
+    type: 'turn_script',
+    turnId,
+    beats,
+    donation,
+    fullText,
+  });
+  console.log(`[LLM:dual-proactive] turn_script turn=${turnId} beats=${beats.length} donation=${donation?.show ? donation.reason : 'none'} ${summarizeDualHeadBeatsForLog(beats)}`);
+
+  pushHistory('model', fullText);
+  assistantReplyCount += 1;
+
+  const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion || null;
+  const tokensIn = usageIn || estimateTokens(context);
+  const tokensOut = usageOut || estimateTokens(fullText);
+  const costUsd = estimateCostUsd(tokensIn, tokensOut);
+
+  return {
+    text: fullText,
+    source: 'llm-dual-head-proactive',
+    model,
+    tokens: { in: tokensIn, out: tokensOut },
+    costUsd,
+    donation,
+    emotion: primaryEmotion,
+    latencyMs: Date.now() - startedAt,
+    beats,
+  };
+}
+
 async function generateProactiveReply(context) {
   const startedAt = Date.now();
 
@@ -1393,4 +1505,4 @@ function clearAssistantContext(reason = 'manual') {
   }
 }
 
-module.exports = { generateAssistantReply, generateStreamingAssistantReply, generateProactiveReply, clearAssistantContext };
+module.exports = { generateAssistantReply, generateStreamingAssistantReply, generateProactiveReply, generateDualHeadProactiveReply, shouldUseDualHeadDirectedMode, clearAssistantContext };

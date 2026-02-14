@@ -21,7 +21,7 @@ import { captureFrameBase64 } from '../vision-capture.js';
 import { perfGauge, perfMark, perfTime } from '../perf-hooks.js';
 
 const MATCH_THRESHOLD = 0.65;
-const MATCH_MARGIN = 0.08;       // best must beat second-best by this gap
+const MATCH_MARGIN = 0.01;       // best must beat second-best by this tiny gap (just pick the top one)
 const PRESENCE_TIMEOUT = 5000;
 const GAZE_SCALE_X = 1.1;        // horizontal gaze amplification
 const GAZE_SCALE_Y = 0.75;       // vertical gaze amplification

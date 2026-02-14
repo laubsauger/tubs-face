@@ -25,8 +25,7 @@
 .hidden-ui #waveform-container,
 .hidden-ui #ptt-indicator,
 .hidden-ui .speech-bubble,
-.hidden-ui #donation-card,
-.hidden-ui #subtitle {
+.hidden-ui #donation-card {
   opacity: 0 !important;
   pointer-events: none;
 }
