@@ -346,7 +346,8 @@ function buildTwoHeadAwarenessInstruction() {
     'Two-head mode is active.',
     `Runtime: mode=${mode}, turnPolicy=${turnPolicy}.`,
     'You are main Tubs. Tiny Tubs (your small side head) has his own voice and speaks through his own audio.',
-    'Prefer letting Tiny Tubs speak for himself via his own beats rather than narrating what he says or thinks.',
+    'Tiny Tubs MUST chime in every turn — he always has something to say. Give him his own beats.',
+    'Prefer letting Tiny Tubs speak for himself rather than narrating what he says or thinks.',
     'Occasional cross-references are fine, but default to giving him his own lines.',
     'Do not mention implementation details (routing, windows, TTS voices, JSON).',
   ].join('\n');
@@ -440,6 +441,14 @@ function buildFallbackSmallSpeakText(mainLeadText = '') {
     'I approve this message.',
     'No notes.',
     'Exactly.',
+    'Heard.',
+    'Big if true.',
+    'Say less.',
+    'Yep yep yep.',
+    'Bold move.',
+    'Called it.',
+    'Valid.',
+    'Tell them.',
   ];
   return options[Math.floor(Math.random() * options.length)] || 'Facts.';
 }
@@ -679,8 +688,8 @@ Rules:
 - 2 to 6 beats total.
 - Keep small beats short (2-10 words) and tonally distinct from main.
 - At least one main speak beat is required.
-- At least one small speak beat is required every turn.
-- Use natural turn order; small can speak first sometimes.
+- small MUST have at least one speak beat EVERY turn — no exceptions. Tiny Tubs is always part of the conversation.
+- Vary small's position: sometimes leading (speaks first), sometimes closing (last word), sometimes sandwiched between main beats.
 - Use a clearly different speaking style per actor:
   - main = full thought / mission-forward
   - small = side commentary, ad-lib, or reaction
@@ -897,8 +906,17 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
   }
 
   if (!script) {
-    console.warn('[LLM:dual-proactive] Invalid script JSON, falling back to single-head proactive.');
-    return null;
+    console.warn('[LLM:dual-proactive] Invalid script JSON, constructing fallback turn_script from raw text.');
+    const fallbackText = clampOutput(stripFormatting(llmRawText));
+    if (!fallbackText) return null;
+    const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
+    const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
+    script = {
+      beats: [
+        { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
+      ],
+      raw: null,
+    };
   }
 
   const withCoverage = ensureDualHeadBeatCoverage(script.beats);
@@ -1092,8 +1110,17 @@ async function generateDualHeadDirectedReply({
   }
 
   if (!script) {
-    console.warn('[LLM:dual] Invalid script JSON, falling back to single-head stream.');
-    return null;
+    console.warn('[LLM:dual] Invalid script JSON, constructing fallback turn_script from raw text.');
+    const fallbackText = clampOutput(stripFormatting(llmRawText));
+    if (!fallbackText) return null;
+    const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
+    const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
+    script = {
+      beats: [
+        { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
+      ],
+      raw: null,
+    };
   }
 
   const hadSmallSpeak = hasSmallSpeakBeat(script.beats);
@@ -1476,6 +1503,32 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     fullText,
   });
 
+  // If dual-head mode is on but we fell through to single-head streaming,
+  // send a supplementary turn_script so Tiny Tubs still gets a beat.
+  let streamFallbackBeats = null;
+  if (shouldUseDualHeadDirectedMode() && fullText) {
+    const mainEmotion = rawEmotion || defaultDualHeadSpeakEmotion('main');
+    const smallBeat = {
+      actor: 'small',
+      action: 'speak',
+      text: buildFallbackSmallSpeakText(fullText),
+      emotion: defaultDualHeadSpeakEmotion('small'),
+      delayMs: 300,
+    };
+    streamFallbackBeats = [
+      { actor: 'main', action: 'speak', text: fullText, emotion: mainEmotion },
+      smallBeat,
+    ];
+    broadcast({
+      type: 'turn_script',
+      turnId,
+      beats: streamFallbackBeats,
+      donation: finalDonation,
+      fullText,
+    });
+    console.log(`[LLM:stream] Dual-head fallback: injected small beat for turn=${turnId}`);
+  }
+
   pushHistory('user', normalizedInput);
   pushHistory('model', fullText);
   assistantReplyCount += 1;
@@ -1493,6 +1546,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     donation: finalDonation,
     emotion: rawEmotion,
     latencyMs: Date.now() - startedAt,
+    beats: streamFallbackBeats,
   };
 }
 

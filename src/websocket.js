@@ -1,6 +1,6 @@
 const { WebSocketServer } = require('ws');
 const { runtimeConfig, sessionStats } = require('./config');
-const { generateStreamingAssistantReply, generateProactiveReply, clearAssistantContext } = require('./assistant-service');
+const { generateStreamingAssistantReply, generateProactiveReply, generateDualHeadProactiveReply, shouldUseDualHeadDirectedMode, clearAssistantContext } = require('./assistant-service');
 const crypto = require('crypto');
 const { logConversation, logTubsReply } = require('./logger');
 
@@ -113,8 +113,36 @@ function initWebSocket(server) {
           }
           void (async () => {
             try {
-              const reply = await generateProactiveReply(msg.context || 'Someone is nearby');
-              if (!reply) return;
+              let reply = null;
+
+              // Try dual-head proactive when enabled
+              if (shouldUseDualHeadDirectedMode()) {
+                const turnId = crypto.randomBytes(6).toString('hex');
+                broadcast({ type: 'turn_start', turnId });
+                reply = await generateDualHeadProactiveReply({
+                  context: msg.context || 'Someone is nearby',
+                  broadcast,
+                  turnId,
+                  startedAt: Date.now(),
+                });
+                if (reply) {
+                  logConversation('TUBS:dual (proactive)', reply.text);
+                }
+              }
+
+              // Fallback to single-head proactive
+              if (!reply) {
+                reply = await generateProactiveReply(msg.context || 'Someone is nearby');
+                if (!reply) return;
+                broadcast({
+                  type: 'speak',
+                  text: reply.text,
+                  donation: reply.donation,
+                  emotion: reply.emotion || null,
+                  ts: Date.now(),
+                });
+                logConversation('TUBS:main (proactive)', reply.text);
+              }
 
               sessionStats.tokensIn += reply.tokens.in || 0;
               sessionStats.tokensOut += reply.tokens.out || 0;
@@ -122,15 +150,6 @@ function initWebSocket(server) {
               sessionStats.messagesOut++;
               sessionStats.lastActivity = Date.now();
               if (reply.model) sessionStats.model = reply.model;
-
-              broadcast({
-                type: 'speak',
-                text: reply.text,
-                donation: reply.donation,
-                emotion: reply.emotion || null,
-                ts: Date.now(),
-              });
-              logConversation('TUBS:main (proactive)', reply.text);
 
               // Enter conversation mode so user can respond without wake word
               const { touchConversation } = require('./routes');
