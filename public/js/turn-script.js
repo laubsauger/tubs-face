@@ -26,8 +26,9 @@ export function estimateBeatDurationMs(beat) {
     return REACTION_FALLBACK_MS;
 }
 
-export function buildLocalTurnTimeline(beats, localActor = 'main') {
+export function buildLocalTurnTimeline(beats, localActor = 'main', options = {}) {
     const actorKey = localActor === 'small' ? 'small' : 'main';
+    const includeRemoteWait = options?.includeRemoteWait !== false;
     const source = Array.isArray(beats) ? beats : [];
     const timeline = [];
 
@@ -46,7 +47,7 @@ export function buildLocalTurnTimeline(beats, localActor = 'main') {
             : estimateBeatDurationMs(beat);
 
         if (actor !== actorKey) {
-            if (action === 'speak') {
+            if (action === 'speak' && includeRemoteWait) {
                 timeline.push({
                     action: 'wait_remote',
                     actor,

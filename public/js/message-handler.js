@@ -388,7 +388,9 @@ export function handleMessage(msg) {
             console.log(`[MSG] turn_script turnId=${msg.turnId} beats=${msg.beats?.length || 0}`);
             logChat('sys', `TURN ${msg.turnId || 'n/a'} ${summarizeTurnScript(msg.beats || [])}`);
             {
-                const timeline = buildLocalTurnTimeline(msg.beats || [], 'main');
+                const timeline = buildLocalTurnTimeline(msg.beats || [], 'main', {
+                    includeRemoteWait: STATE.dualHeadEnabled && STATE.dualHeadMode !== 'off',
+                });
                 if (timeline.length === 0) break;
                 enqueueTurnScript(timeline, msg.donation || null);
                 for (const beat of timeline) {

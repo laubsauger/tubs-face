@@ -9,6 +9,7 @@
  *   GET  /          — Serve face UI (index.html)
  *   GET  /health    — Health check + connected client count
  *   POST /speak     — Send speech to face: { text }
+ *   POST /turn-script/manual — Inject manual turn_script beats for UI testbed
  *   POST /sleep     — Trigger sleep mode
  *   POST /wake      — Trigger wake mode
  *   POST /checkout/paypal/order   — Create PayPal order

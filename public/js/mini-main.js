@@ -64,6 +64,16 @@ let currentAudioGainNode = null;
 
 const REMOTE_BLINK_MIN_GAP_MS = 900;
 
+function shouldEnablePerfOverlay() {
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const perf = String(params.get('perf') || '').trim().toLowerCase();
+        return perf === '1' || perf === 'true' || perf === 'on';
+    } catch {
+        return false;
+    }
+}
+
 function readDualFullscreenIntent() {
     try {
         return localStorage.getItem(DUAL_FULLSCREEN_STORAGE_KEY) === '1';
@@ -547,9 +557,6 @@ function handleReactionBeat(item) {
     if (item.emotion?.expression) {
         setMiniExpression(item.emotion.expression);
     }
-    if (item.emotion?.emoji) {
-        pulseReaction(item.emotion.emoji);
-    }
     if (item.text) {
         if (secondarySubtitleEnabled) {
             subtitles.start(item.text, Math.max(450, item.delayMs || REACTION_PAUSE_MS) / 1000);
@@ -620,10 +627,6 @@ async function playSpeakBeat(item) {
     if (item.emotion?.expression) {
         setMiniExpression(item.emotion.expression);
     }
-    if (item.emotion?.emoji) {
-        pulseReaction(item.emotion.emoji);
-    }
-
     hideSubtitle();
     setFaceRendererSpeaking(true);
 
@@ -780,7 +783,9 @@ function handleMessage(msg) {
                 return;
             }
             console.log(`[MINI] turn_script turn=${msg.turnId || 'n/a'} raw=${summarizeTurnScript(msg.beats || [])}`);
-            const timeline = buildLocalTurnTimeline(msg.beats || [], 'small');
+            const timeline = buildLocalTurnTimeline(msg.beats || [], 'small', {
+                includeRemoteWait: dualHeadEnabled && dualHeadMode !== 'off',
+            });
             if (!timeline.length) {
                 console.log(`[MINI] turn_script produced empty local timeline turn=${msg.turnId || 'n/a'}`);
                 return;
@@ -869,8 +874,10 @@ function connectWs() {
 }
 
 function init() {
-    // perfStats = createPerfStats({ label: 'MINI PERF', anchor: 'top-right' });
-    // setPerfSink(perfStats);
+    if (shouldEnablePerfOverlay()) {
+        perfStats = createPerfStats({ label: 'MINI PERF', anchor: 'top-right' });
+        setPerfSink(perfStats);
+    }
     STATE.faceRenderMode = 'svg';
     initMiniFullscreenSync();
     initFaceRenderer();

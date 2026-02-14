@@ -92,18 +92,21 @@
   max-width: none;
 }
 
+#panel-tl,
 #panel-input {
-  max-height: calc(100vh - 44px);
+  max-height: calc((100vh - 64px) / 2);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(60, 70, 110, 0.38) transparent;
 }
 
+#panel-tl::-webkit-scrollbar,
 #panel-input::-webkit-scrollbar {
   width: 6px;
 }
 
+#panel-tl::-webkit-scrollbar-thumb,
 #panel-input::-webkit-scrollbar-thumb {
   background: rgba(60, 70, 110, 0.45);
   border-radius: 4px;

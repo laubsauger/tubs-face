@@ -22,6 +22,7 @@ import { onGazeTargetChanged } from './eye-tracking.js';
 import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
 import { initAmbientAudio } from './ambient-audio.js';
+import { initManualBeatsComposer } from './manual-beats.js';
 
 let miniWindowRef = null;
 let motionRelayInitialized = false;
@@ -29,6 +30,16 @@ let headSpeechRelayInitialized = false;
 let perfStats = null;
 const DUAL_FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
 const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
+
+function shouldEnablePerfOverlay() {
+    try {
+        const params = new URLSearchParams(window.location.search || '');
+        const perf = String(params.get('perf') || '').trim().toLowerCase();
+        return perf === '1' || perf === 'true' || perf === 'on';
+    } catch {
+        return false;
+    }
+}
 
 function postConfigPatch(patch) {
     return fetch('/config', {
@@ -208,7 +219,13 @@ function initDualHeadControls() {
         enabledToggle.addEventListener('change', () => {
             const enabled = enabledToggle.checked;
             STATE.dualHeadEnabled = enabled;
-            postConfigPatch({ dualHeadEnabled: enabled });
+            let configPatch = { dualHeadEnabled: enabled };
+            if (enabled && STATE.dualHeadMode === 'off') {
+                STATE.dualHeadMode = 'llm_directed';
+                if (modeSelect) modeSelect.value = 'llm_directed';
+                configPatch = { ...configPatch, dualHeadMode: 'llm_directed' };
+            }
+            postConfigPatch(configPatch);
             if (enabled) {
                 ensureMiniWindowOpen();
                 const fullscreenToggle = document.getElementById('fullscreen-toggle');
@@ -322,8 +339,10 @@ function initGlitchColorPickers() {
 }
 
 function init() {
-    // perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
-    // setPerfSink(perfStats);
+    if (shouldEnablePerfOverlay()) {
+        perfStats = createPerfStats({ label: 'MAIN PERF', anchor: 'top-right' });
+        setPerfSink(perfStats);
+    }
     STATE.wakeTime = Date.now();
     $('#stat-awake').textContent = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
     $('#stat-model').textContent = STATE.model;
@@ -349,6 +368,7 @@ function init() {
     });
     initVerbosityToggle();
     initVoiceSelector();
+    initManualBeatsComposer();
     initDualHeadControls();
     initKeyboard();
     initFaceRenderer();

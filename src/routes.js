@@ -36,6 +36,10 @@ let lastConversationAt = 0;
 
 // --- Turn accumulation state (Phase 2) ---
 let activeTurn = null;
+const MANUAL_TURN_MAX_BEATS = 48;
+const MANUAL_ACTORS = new Set(['main', 'small']);
+const MANUAL_ACTIONS = new Set(['speak', 'react', 'wait']);
+const MANUAL_EMOJI_CUES = new Set(['🙂', '😄', '😏', '🥺', '😢', '😤', '🤖', '🫶']);
 
 function isMuted() {
   return runtimeConfig.muted === true;
@@ -128,6 +132,64 @@ function handleRequest(req, res) {
         sessionStats.lastActivity = Date.now();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/turn-script/manual') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        if (isMuted()) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted' }));
+          return;
+        }
+
+        const payload = JSON.parse(body || '{}');
+        const beats = normalizeManualTurnBeats(payload);
+        const donation = normalizeManualDonation(payload?.donation);
+
+        if (activeTurn) {
+          if (activeTurn.abortController) activeTurn.abortController.abort();
+          if (activeTurn.endpointTimer) clearTimeout(activeTurn.endpointTimer);
+          activeTurn = null;
+        }
+        abortActiveWsTurn('manual_turn_script');
+
+        const turnId = crypto.randomBytes(6).toString('hex');
+        broadcast({ type: 'turn_start', turnId });
+        broadcast({
+          type: 'turn_script',
+          turnId,
+          beats,
+          donation,
+          ts: Date.now(),
+        });
+
+        const spokenText = beats
+          .filter((beat) => beat.action === 'speak' && beat.text)
+          .map((beat) => beat.text)
+          .join(' ')
+          .trim();
+        if (spokenText) {
+          logConversation('TUBS:manual', spokenText);
+        }
+
+        sessionStats.messagesOut++;
+        sessionStats.lastActivity = Date.now();
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          turnId,
+          beatCount: beats.length,
+        }));
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
@@ -915,6 +977,139 @@ function handleRequest(req, res) {
       });
     }
   });
+}
+
+function sanitizeManualText(value) {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toManualDelayMs(value) {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(120, Math.min(8000, Math.round(parsed)));
+}
+
+function normalizeManualEmotion(raw) {
+  let expression = '';
+  let emoji = '';
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    expression = sanitizeManualText(raw.expression).toLowerCase();
+    emoji = sanitizeManualText(raw.emoji);
+  } else if (typeof raw === 'string') {
+    expression = sanitizeManualText(raw).toLowerCase();
+  }
+
+  if (emoji && !MANUAL_EMOJI_CUES.has(emoji)) {
+    const err = new Error(`Unsupported emoji cue "${emoji}"`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  if (!expression && !emoji) return null;
+  const emotion = {};
+  if (expression) emotion.expression = expression;
+  if (emoji) emotion.emoji = emoji;
+  return emotion;
+}
+
+function normalizeManualBeat(rawBeat, index) {
+  if (!rawBeat || typeof rawBeat !== 'object' || Array.isArray(rawBeat)) {
+    const err = new Error(`Beat ${index} must be an object`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+
+  const actorRaw = sanitizeManualText(rawBeat.actor).toLowerCase();
+  const actor = MANUAL_ACTORS.has(actorRaw) ? actorRaw : 'main';
+
+  const actionRaw = sanitizeManualText(rawBeat.action).toLowerCase();
+  if (actionRaw && !MANUAL_ACTIONS.has(actionRaw)) {
+    const err = new Error(`Beat ${index} has unsupported action "${actionRaw}"`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  let action = actionRaw || 'speak';
+
+  const text = sanitizeManualText(rawBeat.text);
+  // Manual testbed convenience: text beats should speak unless explicitly wait.
+  if (action === 'react' && text) {
+    action = 'speak';
+  }
+  if (action === 'speak' && !text) {
+    const err = new Error(`Beat ${index} requires text for action "speak"`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+
+  const beat = { actor, action };
+  if (text) {
+    beat.text = text;
+  }
+
+  const delayMs = toManualDelayMs(rawBeat.delayMs);
+  if (delayMs != null) {
+    beat.delayMs = delayMs;
+  }
+
+  const emotionSource = (rawBeat.emotion && typeof rawBeat.emotion === 'object')
+    ? rawBeat.emotion
+    : typeof rawBeat.emotion === 'string'
+      ? rawBeat.emotion
+      : {
+        expression: rawBeat.expression,
+        emoji: rawBeat.emoji,
+      };
+  const emotion = normalizeManualEmotion(emotionSource);
+  if (emotion && action !== 'wait') {
+    beat.emotion = emotion;
+  }
+
+  return beat;
+}
+
+function normalizeManualTurnBeats(payload) {
+  const source = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.beats)
+      ? payload.beats
+      : Array.isArray(payload?.turn_script?.beats)
+        ? payload.turn_script.beats
+        : null;
+
+  if (!source) {
+    const err = new Error('Manual turn payload must include beats[]');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  if (source.length === 0) {
+    const err = new Error('Manual turn beats cannot be empty');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  if (source.length > MANUAL_TURN_MAX_BEATS) {
+    const err = new Error(`Manual turn supports up to ${MANUAL_TURN_MAX_BEATS} beats`);
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+
+  return source.map((beat, idx) => normalizeManualBeat(beat, idx));
+}
+
+function normalizeManualDonation(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (!raw.show) return null;
+  return {
+    show: true,
+    reason: sanitizeManualText(raw.reason) || 'manual',
+    venmoHandle: sanitizeManualText(raw.venmoHandle) || undefined,
+    qrData: sanitizeManualText(raw.qrData) || undefined,
+    qrImageUrl: sanitizeManualText(raw.qrImageUrl) || undefined,
+  };
 }
 
 function normalizeCurrencyCode(value) {

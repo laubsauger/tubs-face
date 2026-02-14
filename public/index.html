@@ -37,79 +37,7 @@
           <span class="stat-label">Model</span>
           <span class="stat-value" id="stat-model">—</span>
         </div>
-      </div>
-
-      <!-- Input Status (Moved from TR) -->
-      <div class="panel stagger-2 collapsed" id="panel-input">
-        <div class="panel-title">Input Status</div>
-        <div class="stat-row">
-          <span class="stat-label">Mic Active</span>
-          <span class="stat-value" id="stat-mic">Off</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Volume</span>
-          <span class="stat-value">
-            <div class="volume-bar-container">
-              <div class="volume-bar-fill" id="stat-vol"></div>
-            </div>
-          </span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Input Source</span>
-          <span class="stat-value" id="stat-input-src">—</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Last Heard</span>
-          <span class="stat-value" id="stat-last-heard">—</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">STT Confidence</span>
-          <span class="stat-value" id="stat-stt">—</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">State</span>
-          <span class="stat-value" id="stat-listen-state">Idle</span>
-        </div>
         <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
-          <span class="stat-label">Always On</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="vad-toggle">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Mute</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="mute-toggle">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Ambient</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="ambient-audio-toggle" checked>
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Noise Gate <span id="noise-gate-val">0.008</span></span>
-          <input type="range" id="noise-gate" min="0" max="0.06" step="0.001" value="0.008" class="mini-range">
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Camera</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="camera-toggle">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Fullscreen</span>
-          <label class="toggle-switch">
-            <input type="checkbox" id="fullscreen-toggle">
-            <span class="slider"></span>
-          </label>
-        </div>
-        <div class="stat-row">
           <span class="stat-label">Face Render</span>
           <div class="face-render-controls">
             <select id="face-render-mode" class="mini-select">
@@ -275,6 +203,154 @@
           <span class="stat-label">Sleep <span id="sleep-timeout-val">10s</span></span>
           <input type="range" id="sleep-timeout" min="5" max="600" step="5" value="10" class="mini-range">
         </div>
+        <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
+          <span class="stat-label">Manual Beats</span>
+          <button id="manual-beats-toggle" class="mini-btn" type="button">Open</button>
+        </div>
+        <div id="manual-beats-shell" class="manual-beats-shell">
+          <div class="manual-beats-row">
+            <span class="manual-mini-label">Mode</span>
+            <select id="manual-beats-mode" class="mini-select">
+              <option value="single">Single Beat</option>
+              <option value="script">Script JSON</option>
+            </select>
+          </div>
+          <div id="manual-single-fields" class="manual-fields-grid">
+            <div class="manual-beats-row">
+              <span class="manual-mini-label">Actor</span>
+              <select id="manual-beat-actor" class="mini-select">
+                <option value="main">Main</option>
+                <option value="small">Small</option>
+              </select>
+            </div>
+            <div class="manual-beats-row">
+              <span class="manual-mini-label">Action</span>
+              <select id="manual-beat-action" class="mini-select">
+                <option value="speak">Speak</option>
+                <option value="react">React</option>
+                <option value="wait">Wait</option>
+              </select>
+            </div>
+            <div class="manual-beats-row">
+              <span class="manual-mini-label">Expression</span>
+              <select id="manual-beat-expression" class="mini-select">
+                <option value="">None</option>
+                <option value="idle">Idle</option>
+                <option value="listening">Listening</option>
+                <option value="thinking">Thinking</option>
+                <option value="smile">Smile</option>
+                <option value="happy">Happy</option>
+                <option value="love">Love</option>
+                <option value="sad">Sad</option>
+                <option value="crying">Crying</option>
+                <option value="sleep">Sleep</option>
+              </select>
+            </div>
+            <div class="manual-beats-row">
+              <span class="manual-mini-label">Emoji</span>
+              <select id="manual-beat-emoji" class="mini-select">
+                <option value="">None</option>
+                <option value="🙂">🙂</option>
+                <option value="😄">😄</option>
+                <option value="😏">😏</option>
+                <option value="🥺">🥺</option>
+                <option value="😢">😢</option>
+                <option value="😤">😤</option>
+                <option value="🤖">🤖</option>
+                <option value="🫶">🫶</option>
+              </select>
+            </div>
+            <div class="manual-beats-row">
+              <span class="manual-mini-label">Delay ms</span>
+              <input id="manual-beat-delay" class="manual-mini-input" type="number" min="120" max="8000" step="10"
+                placeholder="auto">
+            </div>
+            <textarea id="manual-beat-text" class="manual-textarea"
+              placeholder="Type beat text. Example: Happy Valentine's Day from Tubs."></textarea>
+          </div>
+          <div id="manual-script-fields" class="manual-script-wrap">
+            <textarea id="manual-script-json" class="manual-textarea manual-script-textarea" spellcheck="false"
+              placeholder='{"beats":[{"actor":"main","action":"speak","text":"Happy Valentine&apos;s Day","emotion":{"expression":"love","emoji":"🫶"}}]}'></textarea>
+          </div>
+          <div class="manual-beats-actions">
+            <button id="manual-beats-send" class="mini-btn" type="button">Send</button>
+            <button id="manual-beats-template" class="mini-btn" type="button">Valentine</button>
+            <button id="manual-beats-clear" class="mini-btn" type="button">Clear</button>
+          </div>
+          <div id="manual-beats-status" class="manual-beats-status">Ready</div>
+        </div>
+      </div>
+
+      <!-- Input Status (Moved from TR) -->
+      <div class="panel stagger-2 collapsed" id="panel-input">
+        <div class="panel-title">Input Status</div>
+        <div class="stat-row">
+          <span class="stat-label">Mic Active</span>
+          <span class="stat-value" id="stat-mic">Off</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Volume</span>
+          <span class="stat-value">
+            <div class="volume-bar-container">
+              <div class="volume-bar-fill" id="stat-vol"></div>
+            </div>
+          </span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Input Source</span>
+          <span class="stat-value" id="stat-input-src">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Last Heard</span>
+          <span class="stat-value" id="stat-last-heard">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">STT Confidence</span>
+          <span class="stat-value" id="stat-stt">—</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">State</span>
+          <span class="stat-value" id="stat-listen-state">Idle</span>
+        </div>
+        <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
+          <span class="stat-label">Always On</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="vad-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Mute</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="mute-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Ambient</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="ambient-audio-toggle" checked>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Noise Gate <span id="noise-gate-val">0.008</span></span>
+          <input type="range" id="noise-gate" min="0" max="0.06" step="0.001" value="0.008" class="mini-range">
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Camera</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="camera-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Fullscreen</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="fullscreen-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
       </div>
 
     </div>
@@ -398,6 +474,7 @@
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.7/dist/bundle.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
 
   <!-- Single module entry point -->
   <script type="module" src="js/main.js"></script>

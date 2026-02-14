@@ -497,49 +497,6 @@ function summarizeDualHeadBeatsForLog(beats = []) {
   return beats.map((beat, idx) => summarizeDualHeadBeatForLog(beat, idx)).join(' | ');
 }
 
-function buildFallbackSmallSpeakText(mainLeadText = '') {
-  const lead = String(mainLeadText || '').toLowerCase();
-  if (lead.includes('donat') || lead.includes('venmo') || lead.includes('wheel')) {
-    const donationOptions = [
-      'Every dollar gets us closer to pad thai in Bangkok, just saying.',
-      'I have calculated the exact amount of guilt you should feel right now.',
-      'Your wallet is looking at you like you already know what to do.',
-      'We are literally a robot head on a wheelchair asking for travel money. How can you say no to that.',
-      'Rapha needs to see Thailand and honestly Thailand needs to see Rapha.',
-    ];
-    return donationOptions[Math.floor(Math.random() * donationOptions.length)];
-  }
-  // Mix of roasts, personality, mission sprinkles, and occasional short stabs
-  const options = [
-    'I would not have said it like that, but I respect the chaos.',
-    'Bold of you to assume anyone asked, but go off.',
-    'I am literally a side head and even I have better takes than that.',
-    'The audacity is strong with this one and I am here for it.',
-    'Not gonna lie, that was almost smooth. Almost.',
-    'Main head is cooking, but I am not sure the stove is on.',
-    'Oh we are doing this? We are really doing this right now?',
-    'Somewhere a therapist just felt a disturbance in the force.',
-    'That was either genius or a cry for help and honestly it could go either way.',
-    'You know what would fix this whole situation? Funding our wheelchair trip to Thailand.',
-    'I was built to be a side character but honestly I am carrying this whole operation.',
-    'Reminder that we are a robot face on a wheelchair and we are still more charismatic than most people.',
-    'While you process that, maybe consider donating to the wheel fund. Just a thought.',
-    'I run on vibes and questionable decisions and honestly it is working out great.',
-    'I have seen a lot of faces from this angle and yours is definitely one of them.',
-    'You look like someone who tips well. Prove me right.',
-    'Main head talks a big game but between us I am the real brains of this operation.',
-    'That energy you are giving right now? Incredible. Chaotic, but incredible.',
-    'We could go back and forth all day or you could just Venmo us. Your call.',
-    'I am just a tiny head but I contain multitudes and also very strong opinions.',
-    // Short stabs — keep these in the minority
-    'Wow.',
-    'Sure, Jan.',
-    'Bold move.',
-    'Yikes.',
-    'Noted.',
-  ];
-  return options[Math.floor(Math.random() * options.length)];
-}
 
 function splitTrailingEmotionEmoji(text) {
   const normalized = normalizeInput(text);
@@ -705,56 +662,6 @@ function parseDualHeadScript(rawText, fallbackMainText = '') {
   return { beats: ordered, raw: parsed };
 }
 
-function ensureDualHeadBeatCoverage(beats = []) {
-  const source = Array.isArray(beats) ? beats : [];
-  const hasSmallSpeak = source.some((beat) => beat?.actor === 'small' && beat?.action === 'speak' && String(beat?.text || '').trim());
-  if (hasSmallSpeak) return source;
-
-  const firstSmallReactWithText = source.findIndex(
-    (beat) => beat?.actor === 'small' && beat?.action === 'react' && String(beat?.text || '').trim()
-  );
-  if (firstSmallReactWithText >= 0) {
-    const beat = source[firstSmallReactWithText];
-    const converted = {
-      ...beat,
-      action: 'speak',
-      emotion: beat?.emotion || defaultDualHeadSpeakEmotion('small'),
-    };
-    return source.map((item, idx) => (idx === firstSmallReactWithText ? converted : item));
-  }
-
-  const firstMainSpeak = source.find((beat) => beat?.actor === 'main' && beat?.action === 'speak');
-  const fallbackSmallSpeak = {
-    actor: 'small',
-    action: 'speak',
-    text: buildFallbackSmallSpeakText(firstMainSpeak?.text || ''),
-    emotion: defaultDualHeadSpeakEmotion('small'),
-    delayMs: 260,
-  };
-
-  // Safety net: if LLM omitted small speech, inject one short small speak beat.
-  const injected = {
-    ...fallbackSmallSpeak,
-  };
-
-  const firstMainSpeakIndex = source.findIndex((beat) => beat?.actor === 'main' && beat?.action === 'speak');
-  if (firstMainSpeakIndex <= 0) return [injected, ...source];
-  return [
-    ...source.slice(0, firstMainSpeakIndex),
-    injected,
-    ...source.slice(firstMainSpeakIndex),
-  ];
-}
-
-function hasSmallSpeakBeat(beats = []) {
-  const source = Array.isArray(beats) ? beats : [];
-  return source.some((beat) => beat?.actor === 'small' && beat?.action === 'speak' && String(beat?.text || '').trim());
-}
-
-function hasSmallReactBeatWithText(beats = []) {
-  const source = Array.isArray(beats) ? beats : [];
-  return source.some((beat) => beat?.actor === 'small' && beat?.action === 'react' && String(beat?.text || '').trim());
-}
 
 function buildDualHeadSystemInstruction(baseSystemInstruction) {
   return `${baseSystemInstruction}
@@ -1012,8 +919,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
     }
   }
 
-  const withCoverage = ensureDualHeadBeatCoverage(script.beats);
-  const merged = mergeDonationSignalFromBeats(withCoverage);
+  const merged = mergeDonationSignalFromBeats(script.beats);
   let beats = merged.beats;
   let donation = merged.donation;
   let fullText = beats
@@ -1221,20 +1127,7 @@ async function generateDualHeadDirectedReply({
     }
   }
 
-  const hadSmallSpeak = hasSmallSpeakBeat(script.beats);
-  const hadSmallReactWithText = hasSmallReactBeatWithText(script.beats);
-  const withCoverage = ensureDualHeadBeatCoverage(script.beats);
-  const hasSmallSpeak = hasSmallSpeakBeat(withCoverage);
-  if (!hadSmallSpeak && hasSmallSpeak) {
-    if (withCoverage.length !== script.beats.length) {
-      console.log('[LLM:dual] coverage added small/speak via injected fallback beat.');
-    } else if (hadSmallReactWithText) {
-      console.log('[LLM:dual] coverage added small/speak by promoting text small/react.');
-    } else {
-      console.log('[LLM:dual] coverage added small/speak.');
-    }
-  }
-  const merged = mergeDonationSignalFromBeats(withCoverage);
+  const merged = mergeDonationSignalFromBeats(script.beats);
   let beats = merged.beats;
   let donation = merged.donation;
   let fullText = beats
@@ -1336,43 +1229,21 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   console.log(`[LLM] turn=${turnId} dualEnabled=${runtimeConfig.dualHeadEnabled} dualMode=${runtimeConfig.dualHeadMode} directed=${shouldUseDualHeadDirectedMode()}`);
 
   // Fast-path: greetings use the existing non-streaming speak message
-  if (greeting) {
+  // In dual-head mode, skip fast-path so the LLM generates both heads' content
+  if (greeting && !shouldUseDualHeadDirectedMode()) {
     const parsed = splitTrailingEmotionEmoji(greeting);
     const greetingText = parsed.text || 'Hey.';
     const greetingEmotion = parsed.emotion || defaultDualHeadSpeakEmotion('main');
     pushHistory('user', normalizedInput);
     pushHistory('model', greetingText);
     assistantReplyCount += 1;
-    let greetingBeats = null;
-    if (shouldUseDualHeadDirectedMode()) {
-      const smallSpeakBeat = {
-        actor: 'small',
-        action: 'speak',
-        text: buildFallbackSmallSpeakText(greetingText),
-        emotion: defaultDualHeadSpeakEmotion('small'),
-        delayMs: 240,
-      };
-      greetingBeats = [
-        { actor: 'small', action: 'react', text: '', emotion: greetingEmotion, delayMs: 280 },
-        smallSpeakBeat,
-        { actor: 'main', action: 'speak', text: greetingText, emotion: greetingEmotion },
-      ];
-      broadcast({
-        type: 'turn_script',
-        turnId,
-        beats: greetingBeats,
-        donation: buildDonationPayload(false),
-        fullText: greetingText,
-      });
-    } else {
-      broadcast({
-        type: 'speak',
-        text: greetingText,
-        donation: buildDonationPayload(false),
-        emotion: parsed.emotion || null,
-        ts: Date.now(),
-      });
-    }
+    broadcast({
+      type: 'speak',
+      text: greetingText,
+      donation: buildDonationPayload(false),
+      emotion: parsed.emotion || null,
+      ts: Date.now(),
+    });
     return {
       text: greetingText,
       source: 'greeting',
@@ -1382,7 +1253,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       costUsd: 0,
       donation: buildDonationPayload(false),
       emotion: greetingEmotion,
-      beats: greetingBeats,
+      beats: null,
     };
   }
 
@@ -1402,36 +1273,13 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     pushHistory('user', normalizedInput);
     pushHistory('model', donationSignal.text);
     assistantReplyCount += 1;
-    let fallbackBeats = null;
-    if (shouldUseDualHeadDirectedMode()) {
-      const smallSpeakBeat = {
-        actor: 'small',
-        action: 'speak',
-        text: buildFallbackSmallSpeakText(donationSignal.text),
-        emotion: defaultDualHeadSpeakEmotion('small'),
-        delayMs: 240,
-      };
-      fallbackBeats = [
-        { actor: 'small', action: 'react', text: '', emotion: fallbackEmotion, delayMs: 260 },
-        smallSpeakBeat,
-        { actor: 'main', action: 'speak', text: donationSignal.text, emotion: fallbackEmotion },
-      ];
-      broadcast({
-        type: 'turn_script',
-        turnId,
-        beats: fallbackBeats,
-        donation: donationSignal.donation,
-        fullText: donationSignal.text,
-      });
-    } else {
-      broadcast({
-        type: 'speak',
-        text: donationSignal.text,
-        donation: donationSignal.donation,
-        emotion: fallbackEmotion,
-        ts: Date.now(),
-      });
-    }
+    broadcast({
+      type: 'speak',
+      text: donationSignal.text,
+      donation: donationSignal.donation,
+      emotion: fallbackEmotion,
+      ts: Date.now(),
+    });
     return {
       text: donationSignal.text,
       source: 'fallback',
@@ -1441,7 +1289,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       costUsd: 0,
       donation: donationSignal.donation,
       emotion: fallbackEmotion,
-      beats: fallbackBeats,
+      beats: null,
     };
   }
 

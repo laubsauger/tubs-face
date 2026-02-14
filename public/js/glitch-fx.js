@@ -41,17 +41,17 @@ const DEFAULT_CONFIG = {
 
 const EXPRESSION_PROFILES = {
     idle: null,
-    'idle-flat': null,
+    'idle-flat': { mouthH: 0.65 },
     listening: { eyeH: 1.09, eyeW: 1.07 },
     thinking: { eyeH: 0.5, eyeW: 1.15, eyeDy: 5, mouthW: 0.56, mouthH: 1.4, mouthRound: true },
     smile: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
     happy: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
-    sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7 },
-    crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7 },
-    love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5 },
+    sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown' },
+    crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown', tears: true, tearColorHex: '#57bfff' },
+    love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5, eyeShape: 'heart', colorHex: '#ff4da1', mouthShape: 'smile-arc' },
     sleep: { eyeH: 0.12, eyeDy: 8, mouthW: 0.8, mouthH: 0.5 },
-    angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4 },
-    surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 1.8, mouthRound: true },
+    angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4, eyeSkew: -0.15 },
+    surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 2.2, mouthRound: true, mouthShape: 'round' },
 };
 
 // ── Animation constants ───────────────────
@@ -185,7 +185,9 @@ struct VSOut {
   @location(1) brightOff: f32,
   @location(2) worldPos: vec2f,
   @location(3) uv: vec2f,
-  @location(4) visible: f32
+  @location(4) visible: f32,
+  @location(5) group: f32,
+  @location(6) overrideColor: vec3f
 };
 
 fn hash12(p: vec2f) -> f32 {
@@ -246,11 +248,16 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
       y = centerY + (y - centerY) * (1.0 - u.shapeCenters.w);
       drawH = max(2.0, u.motion.y * (1.0 - u.shapeCenters.w * 0.85));
     }
-  } else {
+  } else if (group < 2.5) {
     x = x + u.gaze.z;
     y = y + u.gaze.w;
     let centerY = u.shapeCenters.z + u.face.y + u.gaze.w;
     y = centerY + (y - centerY) * u.motion.x;
+  } else {
+    // Tear decorators: follow eye gaze, no blink, oscillating flow
+    x = x + u.gaze.x;
+    y = y + u.gaze.y;
+    y = y + sin(u.canvas.w * 1.5 + a.y * 0.05) * u.motion.y * 0.3;
   }
 
   var visible = 1.0;
@@ -291,6 +298,8 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
   out.worldPos = vec2f(px, py);
   out.uv = corner;
   out.visible = visible;
+  out.group = group;
+  out.overrideColor = vec3f(b.y, b.z, b.w);
   return out;
 }
 
@@ -301,6 +310,11 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   }
 
   var hue = fract(u.color.x + in.hueOff / 360.0);
+  var sat = clamp(u.color.y, 0.0, 1.0);
+  if (in.overrideColor.x > 0.5) {
+    hue = fract(in.overrideColor.y);
+    sat = clamp(in.overrideColor.z, 0.0, 1.0);
+  }
   var light = (u.color.z * 100.0 + in.brightOff) * u.motion.w;
 
   if (u.scan.y > 0.0) {
@@ -311,7 +325,6 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   }
 
   let l = clamp(light / 100.0, 0.0, 1.0);
-  let sat = clamp(u.color.y, 0.0, 1.0);
   let base = hslToRgb(hue, sat, l);
   var color = base;
 
@@ -337,6 +350,11 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   color = color * u.color.w;
   var alpha = clamp(u.motion.z + (1.0 - u.motion.z) * u.motion.w, u.motion.z, 1.0);
   alpha = alpha * u.color.w;
+
+  // Tear opacity modulation for groups 3+
+  if (in.group > 2.5) {
+    alpha = alpha * (0.5 + 0.5 * sin(u.canvas.w * 2.0 + in.group * 3.14159));
+  }
 
   return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), clamp(alpha, 0.0, 1.0));
 }
@@ -600,6 +618,46 @@ function isInsideRoundedRect(px, py, rx, ry, rw, rh, rrx, rry) {
     return dx * dx + dy * dy <= 1;
 }
 
+function isInsideHeart(px, py, cx, cy, halfW, halfH) {
+    const nx = (px - cx) / halfW;
+    const ny = -(py - cy) / halfH; // flip Y so heart points up
+    const x2 = nx * nx;
+    const y2 = ny * ny;
+    const t = x2 + y2 - 1;
+    return t * t * t - x2 * y2 * ny < 0;
+}
+
+function isInsideArc(px, py, cx, cy, w, h, inverted) {
+    const nx = (px - cx) / (w * 0.5);
+    const rawNy = (py - cy) / (h * 0.5);
+    const ny = inverted ? -rawNy : rawNy;
+    // Ellipse center shifted up so only the bottom arc is visible
+    const ey = -0.65;
+    const dy = ny - ey;
+    const d2 = nx * nx + dy * dy;
+    const outerR2 = 1.35 * 1.35;
+    const innerR2 = 0.8 * 0.8;
+    return d2 <= outerR2 && d2 >= innerR2 && ny > ey;
+}
+
+function testShapeHit(px, py, tx, ty, sw, sh, srx, sry, hitTest) {
+    switch (hitTest) {
+        case 'heart':
+            return isInsideHeart(px, py, tx + sw / 2, ty + sh / 2, sw / 2, sh / 2);
+        case 'frown':
+            return isInsideArc(px, py, tx + sw / 2, ty + sh / 2, sw, sh, true);
+        case 'smile-arc':
+            return isInsideArc(px, py, tx + sw / 2, ty + sh / 2, sw, sh, false);
+        case 'round': {
+            const dnx = (px - (tx + sw / 2)) / (sw / 2);
+            const dny = (py - (ty + sh / 2)) / (sh / 2);
+            return dnx * dnx + dny * dny <= 1;
+        }
+        default:
+            return isInsideRoundedRect(px, py, tx, ty, sw, sh, srx, sry);
+    }
+}
+
 function clamp01(v) {
     if (v < 0) return 0;
     if (v > 1) return 1;
@@ -692,6 +750,25 @@ function getModifiedShapes() {
     if (profile.mouthRound) { m.rx = Math.min(m.w, m.h) / 2; m.ry = m.rx; }
     m.rx = Math.min(m.rx, m.w / 2);
     m.ry = Math.min(m.ry, m.h / 2);
+
+    // Tear shapes for crying — thin vertical rects below each eye
+    if (profile.tears) {
+        for (let i = 0; i < 2; i++) {
+            const eye = shapes[i];
+            const tearW = eye.w * 0.15;
+            const tearH = eye.h * 1.0;
+            const tearX = eye.x + eye.w / 2 - tearW / 2;
+            const tearY = eye.y + eye.h + 1;
+            shapes.push({
+                x: tearX,
+                y: tearY,
+                w: tearW,
+                h: tearH,
+                rx: tearW / 2,
+                ry: tearW / 2,
+            });
+        }
+    }
 
     return shapes;
 }
@@ -913,6 +990,8 @@ function buildPixelGrid() {
     if (!W || !H) return;
 
     const shapes = getModifiedShapes();
+    const expr = getActiveExpression();
+    const profile = EXPRESSION_PROFILES[expr] || null;
     const vb = config.svg.viewBox;
     const fitScale = Math.min(W / vb.w, H / vb.h);
     const globalScale = getFeatureGlobalScale();
@@ -952,6 +1031,22 @@ function buildPixelGrid() {
 
         shapeCenters.push({ cx: tx + sw / 2, cy: ty + sh / 2 });
 
+        // Determine hit-test type for this shape
+        let hitTest = 'rect';
+        if (profile) {
+            if (si <= 1 && profile.eyeShape) hitTest = profile.eyeShape;
+            if (si === 2 && profile.mouthShape) hitTest = profile.mouthShape;
+        }
+
+        // Color override for this shape
+        let shapeOverrideHSL = null;
+        if (profile) {
+            if (si <= 1 && profile.colorHex) shapeOverrideHSL = hexToHSL(profile.colorHex);
+            if (si >= 3 && profile.tearColorHex) shapeOverrideHSL = hexToHSL(profile.tearColorHex);
+        }
+        const baseH = shapeOverrideHSL ? shapeOverrideHSL.h : baseHSL.h;
+        const baseS = shapeOverrideHSL ? shapeOverrideHSL.s : baseHSL.s;
+
         const cols = Math.max(1, Math.floor(sw / stride));
         const rows = Math.max(1, Math.floor(sh / stride));
 
@@ -964,16 +1059,26 @@ function buildPixelGrid() {
                 const py = gridOffY + r * stride;
                 const cx = px + sz / 2;
                 const cy = py + sz / 2;
-                if (!isInsideRoundedRect(cx, cy, tx, ty, sw, sh, srx, sry)) continue;
+                if (!testShapeHit(cx, cy, tx, ty, sw, sh, srx, sry, hitTest)) continue;
+
+                // Eye skew for angry brows: shift Y based on X position
+                let finalY = py;
+                if (profile?.eyeSkew && si <= 1) {
+                    const eyeCenterX = tx + sw / 2;
+                    const normX = (cx - eyeCenterX) / (sw / 2);
+                    const skewDir = si === 0 ? -1 : 1;
+                    finalY += normX * skewDir * profile.eyeSkew * sh;
+                }
 
                 const hOff = (Math.random() - 0.5) * 2 * hueVar;
                 const bOff = (Math.random() - 0.5) * 2 * brightVar;
                 pixelGrid.push({
                     x: px,
-                    y: py,
+                    y: finalY,
                     hueOff: hOff,
                     brightOff: bOff,
-                    lut: getColorLUT(baseHSL.h + hOff, baseHSL.s),
+                    lut: getColorLUT(baseH + hOff, baseS),
+                    overrideHSL: shapeOverrideHSL,
                 });
                 shapeGroups.push(si);
             }
@@ -1024,7 +1129,9 @@ function buildPixelGrid() {
 function recolorPixelGrid() {
     colorLUTs.clear();
     for (let i = 0; i < pixelGrid.length; i++) {
-        pixelGrid[i].lut = getColorLUT(baseHSL.h + pixelGrid[i].hueOff, baseHSL.s);
+        const p = pixelGrid[i];
+        const base = p.overrideHSL || baseHSL;
+        p.lut = getColorLUT(base.h + p.hueOff, base.s);
     }
 }
 
@@ -1118,9 +1225,10 @@ function updateGpuInstanceBuffer() {
         packed[off + 2] = p.hueOff;
         packed[off + 3] = p.brightOff;
         packed[off + 4] = shapeGroups[i] || 0;
-        packed[off + 5] = 0;
-        packed[off + 6] = 0;
-        packed[off + 7] = 0;
+        const ovr = p.overrideHSL;
+        packed[off + 5] = ovr ? 1 : 0;
+        packed[off + 6] = ovr ? ((ovr.h % 360 + 360) % 360 / 360) : 0;
+        packed[off + 7] = ovr ? (ovr.s / 100) : 0;
     }
 
     if (gpuInstanceBuffer) {
@@ -1715,6 +1823,13 @@ function renderFrameCanvas2D(frame) {
             }
         }
 
+        // Tear decorators (groups 3+): follow eye gaze, animated flow
+        if (group >= 3) {
+            drawX += eyeGazeX;
+            drawY += eyeGazeY;
+            drawY += Math.sin(t * 1.5 + p.y * 0.05) * sz * 0.3;
+        }
+
         // Lightness with scan beam
         let l = (bsl + p.brightOff) * pulseMod;
         if (sb.enabled) {
@@ -1725,8 +1840,14 @@ function renderFrameCanvas2D(frame) {
         }
 
         const li = l < 0 ? 0 : l > 100 ? 100 : (l + 0.5) | 0;
+        if (group >= 3) {
+            ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 2 + (group - 3) * Math.PI);
+        }
         ctx.fillStyle = p.lut[li];
         ctx.fillRect(drawX, drawY, sz, drawSzY);
+        if (group >= 3) {
+            ctx.globalAlpha = 1;
+        }
     }
 
     // Pass 2: glow bloom

@@ -307,6 +307,10 @@ export function enqueueTurnScript(beats = [], donation = null) {
 
 function handleReactionItem(item) {
     if (item.emotion?.expression) {
+        setExpression(item.emotion.expression, { force: true });
+        return;
+    }
+    if (item.emotion?.expression) {
         suggestEmotionExpression(item.emotion.expression);
     }
 }
@@ -388,6 +392,9 @@ export function processQueue() {
     }
 
     lastEmotion = item.emotion || null;
+    if (item.emotion?.expression) {
+        setExpression(item.emotion.expression, { force: true });
+    }
 
     playTTS(item).catch(() => {
         clearSpeechSafety();
