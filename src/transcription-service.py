@@ -188,13 +188,16 @@ def transcribe():
 
 def _transcribe_mlx(tmp_path):
     t0 = time.time()
-    # Convert webm to 16kHz mono wav for whisper
-    wav_path = tmp_path.rsplit('.', 1)[0] + '.wav'
+    # For browser-segment WAV uploads we can transcribe directly.
+    # For other containers (e.g. webm) convert to a separate temp WAV first.
+    is_wav_input = tmp_path.lower().endswith('.wav')
+    wav_path = tmp_path if is_wav_input else tmp_path.rsplit('.', 1)[0] + '.stt.wav'
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", wav_path],
-            check=True, timeout=10, capture_output=True,
-        )
+        if not is_wav_input:
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", wav_path],
+                check=True, timeout=10, capture_output=True,
+            )
         with _gpu_lock:
             result = stt_model.transcribe(wav_path, language="en")
         elapsed = int((time.time() - t0) * 1000)
@@ -209,7 +212,7 @@ def _transcribe_mlx(tmp_path):
         print(f"[STT] MLX transcription error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
-        if os.path.exists(wav_path):
+        if not is_wav_input and os.path.exists(wav_path):
             os.remove(wav_path)
 
 

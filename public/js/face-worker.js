@@ -166,6 +166,10 @@ let embAlignedCanvas = null;
 let embAlignedCtx = null;
 const embFloat32 = new Float32Array(3 * 112 * 112);
 
+function create2DContext(canvas, { willReadFrequently = false } = {}) {
+  return canvas.getContext('2d', willReadFrequently ? { willReadFrequently: true } : undefined);
+}
+
 function nms(boxes, scores, threshold) {
   const indices = [];
   for (let i = 0; i < scores.length; i++) {
@@ -204,7 +208,7 @@ async function detectFaces(imageData, width, height) {
   // Resize to 640x640 with letterboxing (reuse pre-allocated canvases)
   if (!detPadCanvas) {
     detPadCanvas = new OffscreenCanvas(INPUT_SIZE, INPUT_SIZE);
-    detPadCtx = detPadCanvas.getContext('2d');
+    detPadCtx = create2DContext(detPadCanvas, { willReadFrequently: true });
   }
 
   const scale = Math.min(INPUT_SIZE / width, INPUT_SIZE / height);
@@ -215,7 +219,7 @@ async function detectFaces(imageData, width, height) {
 
   if (!detSrcCanvas || detSrcCanvas.width !== width || detSrcCanvas.height !== height) {
     detSrcCanvas = new OffscreenCanvas(width, height);
-    detSrcCtx = detSrcCanvas.getContext('2d');
+    detSrcCtx = create2DContext(detSrcCanvas);
   }
   detSrcCtx.putImageData(imageData, 0, 0);
 
@@ -450,13 +454,13 @@ async function extractEmbedding(imageData, width, height, landmarks) {
 
   if (!embSrcCanvas || embSrcCanvas.width !== width || embSrcCanvas.height !== height) {
     embSrcCanvas = new OffscreenCanvas(width, height);
-    embSrcCtx = embSrcCanvas.getContext('2d');
+    embSrcCtx = create2DContext(embSrcCanvas);
   }
   embSrcCtx.putImageData(imageData, 0, 0);
 
   if (!embAlignedCanvas) {
     embAlignedCanvas = new OffscreenCanvas(112, 112);
-    embAlignedCtx = embAlignedCanvas.getContext('2d');
+    embAlignedCtx = create2DContext(embAlignedCanvas, { willReadFrequently: true });
   }
 
   embAlignedCtx.clearRect(0, 0, 112, 112);

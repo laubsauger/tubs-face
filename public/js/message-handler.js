@@ -305,6 +305,9 @@ export function handleMessage(msg) {
     switch (msg.type) {
         case 'speak':
             console.log(`[MSG] Received speak (${msg.text?.length} chars):`, msg.text);
+            if (msg.text) {
+                console.log(`[MSG] tubs(main) speak: "${msg.text}"`);
+            }
             if (msg.emotion?.impulse) {
                 pushEmotionImpulse(msg.emotion.impulse, 'spoken');
             }
@@ -380,6 +383,14 @@ export function handleMessage(msg) {
         case 'turn_script':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
             console.log(`[MSG] turn_script turnId=${msg.turnId} beats=${msg.beats?.length || 0}`);
+            if (Array.isArray(msg.beats)) {
+                msg.beats.forEach((beat, idx) => {
+                    const actor = String(beat?.actor || 'main');
+                    const action = String(beat?.action || 'speak');
+                    const text = String(beat?.text || '');
+                    console.log(`[MSG] beat#${idx} ${actor}/${action}: "${text}"`);
+                });
+            }
             if (msg.turnId) {
                 markTurn(msg.turnId, 'Turn script received');
             }

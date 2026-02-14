@@ -20,8 +20,10 @@ async function generateGeminiContent({
   systemInstruction,
   contents,
   maxOutputTokens = 120,
-  temperature = 0.5,
+  temperature = 1,
   timeoutMs = 12000,
+  responseMimeType = null,
+  responseSchema = null,
 }) {
   if (!apiKey) {
     const err = new Error('Missing GEMINI_API_KEY');
@@ -42,10 +44,17 @@ async function generateGeminiContent({
       maxOutputTokens,
       temperature,
       thinkingConfig: {
-        thinkingBudget: 0,
+        // thinkingBudget: 0,
+        thinkingLevel: 'MINIMAL',
       },
     },
   };
+  if (responseMimeType) {
+    payload.generationConfig.responseMimeType = responseMimeType;
+  }
+  if (responseSchema && typeof responseSchema === 'object') {
+    payload.generationConfig.responseSchema = responseSchema;
+  }
 
   if (systemInstruction) {
     payload.systemInstruction = {
@@ -118,8 +127,8 @@ async function streamGeminiContent({
   model,
   systemInstruction,
   contents,
-  maxOutputTokens = 120,
-  temperature = 0.5,
+  maxOutputTokens = 256,
+  temperature = 1,
   timeoutMs = 20000,
   onChunk,
   abortSignal,
@@ -144,7 +153,8 @@ async function streamGeminiContent({
       maxOutputTokens,
       temperature,
       thinkingConfig: {
-        thinkingBudget: 0,
+        //thinkingBudget: 0,
+        thinkingLevel: 'MINIMAL',
       },
     },
   };

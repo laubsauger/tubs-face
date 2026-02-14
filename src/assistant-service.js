@@ -82,6 +82,28 @@ const DUAL_HEAD_DEFAULT_EMOJI_PROFILE_BY_ACTOR = Object.freeze({
   main: Object.freeze(['🙂', '😄', '🤖']),
   small: Object.freeze(['😏', '🙂', '😄']),
 });
+const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
+  type: 'OBJECT',
+  properties: {
+    beats: {
+      type: 'ARRAY',
+      minItems: 1,
+      maxItems: DUAL_HEAD_MAX_BEATS,
+      items: {
+        type: 'OBJECT',
+        properties: {
+          actor: { type: 'STRING', enum: ['main', 'small'] },
+          action: { type: 'STRING', enum: ['speak', 'react'] },
+          text: { type: 'STRING' },
+          emoji: { type: 'STRING', enum: ['🙂', '😄', '😏', '🥺', '😢', '😤', '🤖', '🫶'] },
+          delayMs: { type: 'NUMBER' },
+        },
+        required: ['actor', 'action', 'text', 'emoji'],
+      },
+    },
+  },
+  required: ['beats'],
+});
 const dualHeadLastFallbackEmojiByActor = {
   main: null,
   small: null,
@@ -128,26 +150,65 @@ function stripFormatting(text) {
  */
 function rescueBeatsFromRawText(rawText) {
   const text = String(rawText || '');
-  // Match beat-like objects: { ... "actor": "main|small" ... "text": "..." ... }
-  const beatPattern = /\{\s*(?:[^{}]*?"actor"\s*:\s*"(main|small)"[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"|[^{}]*?"text"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?"actor"\s*:\s*"(main|small)"[^{}]*?)\s*\}/g;
+  const decodeJsonString = (value) => String(value || '')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\"/g, '"')
+    .replace(/\\n/g, ' ')
+    .replace(/\\r/g, ' ')
+    .replace(/\\t/g, ' ')
+    .trim();
+
   const beats = [];
-  let match;
-  while ((match = beatPattern.exec(text)) !== null) {
-    const actor = (match[1] || match[4] || 'main').toLowerCase();
-    const rawBeatText = (match[2] || match[3] || '').replace(/\\"/g, '"').replace(/\\n/g, ' ').trim();
+  const actorRe = /"actor"\s*:\s*"(main|small)"/gi;
+  const actorMatches = [...text.matchAll(actorRe)];
+  for (let i = 0; i < actorMatches.length; i++) {
+    const actor = String(actorMatches[i][1] || 'main').toLowerCase() === 'small' ? 'small' : 'main';
+    const start = actorMatches[i].index || 0;
+    const nextStart = i + 1 < actorMatches.length ? (actorMatches[i + 1].index || text.length) : text.length;
+    const chunk = text.slice(start, Math.min(text.length, nextStart + 180));
+
+    const textMatch = chunk.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const actionMatch = chunk.match(/"action"\s*:\s*"(speak|react)"/i);
+    const emojiMatch = chunk.match(/"emoji"\s*:\s*"((?:[^"\\]|\\.)*)"/i);
+    const delayMatch = chunk.match(/"delayMs"\s*:\s*(\d{2,5})/i);
+
+    const rawBeatText = decodeJsonString(textMatch?.[1] || '');
     if (!rawBeatText || rawBeatText.length < 2) continue;
-    const cleanText = clampOutput(stripFormatting(rawBeatText));
+    const cleanText = clampOutput(stripFormatting(stripDonationMarkers(rawBeatText)));
     if (!cleanText) continue;
+
+    const action = String(actionMatch?.[1] || 'speak').toLowerCase() === 'react' ? 'react' : 'speak';
+    const emoji = decodeJsonString(emojiMatch?.[1] || '');
+    const emotion = buildEmotionFromEmoji(pickSupportedEmotionEmoji(emoji)) || defaultDualHeadSpeakEmotion(actor);
+    const parsedDelay = Number.parseInt(String(delayMatch?.[1] || ''), 10);
+    const delayMs = Number.isFinite(parsedDelay) ? Math.max(120, Math.min(2500, parsedDelay)) : undefined;
+
     beats.push({
-      actor: actor === 'small' ? 'small' : 'main',
-      action: 'speak',
+      actor,
+      action,
       text: cleanText,
-      emotion: defaultDualHeadSpeakEmotion(actor),
+      emotion,
+      delayMs,
     });
   }
+
+  if (beats.length === 0) {
+    const linePattern = /(?:^|\n)\s*(main|small)\s*[:\-]\s*(.+?)(?=\n|$)/gi;
+    let lineMatch;
+    while ((lineMatch = linePattern.exec(text)) !== null) {
+      const actor = String(lineMatch[1] || 'main').toLowerCase() === 'small' ? 'small' : 'main';
+      const cleanText = clampOutput(stripFormatting(decodeJsonString(lineMatch[2] || '')));
+      if (!cleanText) continue;
+      beats.push({
+        actor,
+        action: 'speak',
+        text: cleanText,
+        emotion: defaultDualHeadSpeakEmotion(actor),
+      });
+    }
+  }
+
   if (beats.length === 0) return null;
-  // Ensure at least a main beat
-  if (!beats.some((b) => b.actor === 'main')) return null;
   console.log(`[LLM:rescue] Recovered ${beats.length} beats via regex from malformed JSON`);
   return { beats, raw: null };
 }
@@ -684,7 +745,12 @@ function reorderDualHeadBeats(beats) {
   return beats;
 }
 
-function parseDualHeadScript(rawText, fallbackMainText = '') {
+function hasRequiredDualHeadCoverage(beats) {
+  if (!Array.isArray(beats) || !beats.length) return false;
+  return beats.some((beat) => beat.action === 'speak' && normalizeInput(beat.text || '').length > 0);
+}
+
+function parseDualHeadScript(rawText) {
   const jsonBlock = extractJsonBlock(rawText);
   if (!jsonBlock) return null;
 
@@ -702,22 +768,8 @@ function parseDualHeadScript(rawText, fallbackMainText = '') {
     if (normalized) beats.push(normalized);
   }
 
-  if (!beats.length) {
-    const fallback = clampOutput(stripFormatting(fallbackMainText));
-    if (!fallback) return null;
-    return {
-      beats: [{ actor: 'main', action: 'speak', text: fallback, emotion: defaultDualHeadSpeakEmotion('main') }],
-      raw: parsed,
-    };
-  }
-
+  if (!hasRequiredDualHeadCoverage(beats)) return null;
   const ordered = reorderDualHeadBeats(beats);
-  if (!ordered.some((beat) => beat.actor === 'main' && beat.action === 'speak')) {
-    const seed = ordered.find((beat) => beat.action === 'speak');
-    const fallback = clampOutput(stripFormatting(fallbackMainText)) || seed?.text || '';
-    if (!fallback) return null;
-    ordered.push({ actor: 'main', action: 'speak', text: fallback, emotion: defaultDualHeadSpeakEmotion('main') });
-  }
   return { beats: ordered, raw: parsed };
 }
 
@@ -739,10 +791,11 @@ Schema:
 }
 
 Rules:
-- 2 to 6 beats total.
+- 1 to 5 beats total.
 - small beats range from 1-word stabs ("Facts.") to full punchy sentences (up to 15 words). Mix it up — don't always go short.
-- At least one main speak beat is required.
-- small MUST have at least one speak beat EVERY turn — no exceptions. Tiny Tubs is always part of the conversation.
+- At least one speak beat is required.
+- Aim to include both actors speaking in most turns, but if only one actor speaking is the most natural output for this turn, that's allowed.
+- Keep each beat concise: 1 sentence max per beat.
 - Vary small's position: sometimes leading (speaks first), sometimes closing (last word), sometimes sandwiched between main beats.
 - Use a clearly different speaking style per actor:
   - main = full thought / mission-forward
@@ -752,6 +805,8 @@ Rules:
 - If using donation marker [[SHOW_QR]], include it in main text only.
 - Every speak beat must include an emoji in the \"emoji\" field so each head gets an emotion cue.
 - Put emojis in the \"emoji\" field, not in \"text\".
+- Output one JSON object only and end immediately after the closing brace.
+- No keys other than actor, action, text, emoji, delayMs.
 - Do not prefix dialogue with \"main:\" or \"small:\" in text; actor routing is done by JSON.
 - Ignore normal-mode output rules that require a single leading emoji.`;
 }
@@ -936,6 +991,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
   let usageOut = 0;
   let script;
   let llmRawText = '';
+  const dualMaxOutputTokens = Number(runtimeConfig.llmMaxOutputTokens || 256);
 
   try {
     const llmResult = await generateGeminiContent({
@@ -943,9 +999,11 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
       contents,
-      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-      temperature: 1,
+      maxOutputTokens: dualMaxOutputTokens,
+      temperature: 0.7,
       timeoutMs: 18000,
+      responseMimeType: 'application/json',
+      responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
     });
 
     llmRawText = llmResult.text;
@@ -953,7 +1011,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
     console.log(`[LLM:dual-proactive] Raw response (${llmRawText.length} chars): ${llmRawText}`);
-    script = parseDualHeadScript(llmResult.text, clampOutput(stripFormatting(llmResult.text)));
+    script = parseDualHeadScript(llmResult.text);
   } catch (err) {
     console.error('[LLM:dual-proactive] Gemini call failed:', err.message);
     return null;
@@ -963,19 +1021,16 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
     console.warn('[LLM:dual-proactive] Invalid script JSON, attempting regex rescue from raw text.');
     const rescued = rescueBeatsFromRawText(llmRawText);
     if (rescued) {
-      script = rescued;
-    } else {
-      const fallbackText = clampOutput(stripFormatting(llmRawText));
-      if (!fallbackText) return null;
-      const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
-      const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
-      script = {
-        beats: [
-          { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
-        ],
-        raw: null,
-      };
+      if (hasRequiredDualHeadCoverage(rescued.beats)) {
+        script = rescued;
+      } else {
+        console.warn('[LLM:dual-proactive] Rescue output missing playable speak beats.');
+      }
     }
+  }
+  if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
+    console.warn('[LLM:dual-proactive] No valid dual-head script returned by LLM.');
+    return null;
   }
 
   const merged = mergeDonationSignalFromBeats(script.beats);
@@ -997,13 +1052,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
 
   fullText = clampOutput(fullText);
   if (!fullText) {
-    const fallback = clampOutput(stripFormatting(llmRawText));
-    if (fallback) {
-      beats = [{ actor: 'main', action: 'speak', text: fallback, emotion: defaultDualHeadSpeakEmotion('main') }];
-      fullText = fallback;
-    } else {
-      return null;
-    }
+    return null;
   }
 
   broadcast({
@@ -1157,6 +1206,7 @@ async function generateDualHeadDirectedReply({
   let llmRawText = '';
   const llmStartAt = Date.now();
   let llmEndAt = null;
+  const dualMaxOutputTokens = Number(runtimeConfig.llmMaxOutputTokens || 256);
 
   try {
     const llmResult = await generateGeminiContent({
@@ -1164,17 +1214,20 @@ async function generateDualHeadDirectedReply({
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
       contents: contentBundle.contents,
-      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-      temperature: 0.9,
+      maxOutputTokens: dualMaxOutputTokens,
+      temperature: 0.7,
       timeoutMs: 18000,
+      responseMimeType: 'application/json',
+      responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
     });
 
     llmEndAt = Date.now();
     llmRawText = llmResult.text;
+    console.log(`[LLM:dual] Raw response (${llmRawText.length} chars): ${llmRawText}`);
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
-    script = parseDualHeadScript(llmResult.text, clampOutput(stripFormatting(llmResult.text)));
+    script = parseDualHeadScript(llmResult.text);
   } catch (err) {
     llmEndAt = Date.now();
     console.error('[LLM:dual] Gemini call failed:', err.message);
@@ -1185,19 +1238,16 @@ async function generateDualHeadDirectedReply({
     console.warn('[LLM:dual] Invalid script JSON, attempting regex rescue from raw text.');
     const rescued = rescueBeatsFromRawText(llmRawText);
     if (rescued) {
-      script = rescued;
-    } else {
-      const fallbackText = clampOutput(stripFormatting(llmRawText));
-      if (!fallbackText) return null;
-      const rawEmoji = splitTrailingEmotionEmoji(stripFormatting(llmRawText));
-      const mainEmotion = rawEmoji.emotion || defaultDualHeadSpeakEmotion('main');
-      script = {
-        beats: [
-          { actor: 'main', action: 'speak', text: fallbackText, emotion: mainEmotion },
-        ],
-        raw: null,
-      };
+      if (hasRequiredDualHeadCoverage(rescued.beats)) {
+        script = rescued;
+      } else {
+        console.warn('[LLM:dual] Rescue output missing playable speak beats.');
+      }
     }
+  }
+  if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
+    console.warn('[LLM:dual] No valid dual-head script returned by LLM.');
+    return null;
   }
 
   const merged = mergeDonationSignalFromBeats(script.beats);
@@ -1219,13 +1269,7 @@ async function generateDualHeadDirectedReply({
 
   fullText = clampOutput(fullText);
   if (!fullText) {
-    const fallback = clampOutput(stripFormatting(llmRawText));
-    if (fallback) {
-      beats = [{ actor: 'main', action: 'speak', text: fallback, emotion: defaultDualHeadSpeakEmotion('main') }];
-      fullText = fallback;
-    } else {
-      return null;
-    }
+    return null;
   }
 
   broadcast({
@@ -1325,7 +1369,7 @@ function createSentenceSplitter(onSentence) {
   return {
     push(delta) {
       buffer += delta;
-      while (emitNextChunk()) {}
+      while (emitNextChunk()) { }
     },
     flush() {
       const remaining = buffer.trim();
@@ -1480,6 +1524,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       markLlmDone();
       return dualReply;
     }
+    console.warn('[LLM:dual] Falling back to single-head streaming path (no valid dual script from one-shot LLM call).');
   }
 
   // Streaming LLM path
@@ -1574,6 +1619,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       onChunk: (delta) => splitter.push(delta),
       abortSignal: abortController?.signal,
     });
+    console.log(`[LLM:stream] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
 
     // Flush remaining buffer
     if (sentenceCount < MAX_OUTPUT_SENTENCES) {

@@ -34,9 +34,22 @@ let lastAppliedTargetGain = -1;
 let lastPlaybackWarnAt = 0;
 let lastDiagAt = 0;
 let lastRecoveryAt = 0;
+let miniRuntimeWarned = false;
 
 function clamp01(value) {
     return Math.max(0, Math.min(1, Number(value) || 0));
+}
+
+function isMiniRuntime() {
+    try {
+        const path = String(window.location?.pathname || '').toLowerCase();
+        if (path.endsWith('/mini.html') || path === '/mini.html') return true;
+        if (String(window.name || '').toLowerCase().includes('mini')) return true;
+        if (document.body?.classList?.contains('mini-window')) return true;
+    } catch {
+        // ignore
+    }
+    return false;
 }
 
 function sleep(ms) {
@@ -424,6 +437,13 @@ function bootAudio() {
 
 export function initAmbientAudio() {
     if (initialized) return;
+    if (isMiniRuntime()) {
+        if (!miniRuntimeWarned) {
+            miniRuntimeWarned = true;
+            console.log('[Ambient] Skipping ambient loop in mini window.');
+        }
+        return;
+    }
     initialized = true;
 
     window.addEventListener('tubs:head-speech-observed', handleSpeechObserved);
