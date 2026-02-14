@@ -38,12 +38,22 @@ import {
     renderFrameWebGpu as renderFrameWebGpuBackend,
 } from './frame.js';
 import {
+    ensureRendererBackendReady as ensureRendererBackendReadyData,
+    fallbackToCanvas2D as fallbackToCanvas2DData,
+    initializeRendererBackend as initializeRendererBackendData,
+} from './renderer-backend.js';
+import {
     configureWebGpuCanvas as configureWebGpuCanvasData,
     createWebGpuState as createWebGpuStateData,
     initWebGpuRenderer as initWebGpuRendererData,
     resetWebGpuResources as resetWebGpuResourcesData,
     updateGpuInstanceBuffer as updateGpuInstanceBufferData,
 } from './webgpu.js';
+import {
+    initCanvas2DRenderer as initCanvas2DRendererData,
+    recreateCanvasElement as recreateCanvasElementData,
+    sizeCanvasLayout as sizeCanvasLayoutData,
+} from './canvas2d.js';
 
 // ── Default config (ROBOT_FX) ──────────────
 
@@ -57,12 +67,14 @@ let tempCtx = null;
 let animFrameId = null;
 let resizeObserver = null;
 
-let rendererKind = 'canvas2d'; // webgpu | canvas2d
-let rendererReady = false;
-let rendererInitPromise = null;
+const rendererState = {
+    kind: 'canvas2d', // webgpu | canvas2d
+    ready: false,
+    initPromise: null,
+    backendError: '',
+};
 let glitchVisualActive = false;
 let backendStatusEl = null;
-let backendError = '';
 
 let pixelGrid = [];
 let shapeGroups = [];   // group index per pixel: 0=leftEye, 1=rightEye, 2=mouth
@@ -124,15 +136,15 @@ function setBackendStatus() {
         backendStatusEl.textContent = 'off';
         return;
     }
-    if (backendError) {
+    if (rendererState.backendError) {
         backendStatusEl.textContent = 'fail';
         return;
     }
-    if (!rendererReady) {
+    if (!rendererState.ready) {
         backendStatusEl.textContent = 'init';
         return;
     }
-    backendStatusEl.textContent = rendererKind;
+    backendStatusEl.textContent = rendererState.kind;
 }
 
 function setGlitchVisualActive(active) {
@@ -193,17 +205,13 @@ function getSpeakMouthScale(now) {
 // ── Canvas & layout sizing ────────────────
 
 function recreateCanvasElement() {
-    if (!canvas) return;
-    const next = document.createElement('canvas');
-    next.id = 'glitch-fx-canvas';
-    next.style.display = canvas.style.display || 'none';
-    if (canvas.parentElement) {
-        canvas.parentElement.replaceChild(next, canvas);
-    }
+    const next = recreateCanvasElementData(canvas);
+    if (!next) return;
     canvas = next;
     ctx = null;
     tempCanvas = null;
     tempCtx = null;
+    scanlinePattern = null;
     gpu.gpuContext = null;
 }
 
@@ -222,68 +230,29 @@ function computeFacePosition() {
 }
 
 function sizeCanvas() {
-    if (!containerEl || !canvas) return;
-    const cr = containerEl.getBoundingClientRect();
-    if (!cr.width || !cr.height) return;
-    containerCssW = cr.width;
-    containerCssH = cr.height;
+    const next = sizeCanvasLayoutData({
+        containerEl,
+        canvas,
+        config,
+        rendererKind: rendererState.kind,
+        ctx,
+        tempCanvas,
+        tempCtx,
+        scanlinePattern,
+        configureWebGpuCanvas,
+    });
+    if (!next) return;
 
-    const dpr = window.devicePixelRatio || 1;
-    cachedDpr = dpr;
-
-    const pw = Math.round(cr.width * dpr);
-    const ph = Math.round(cr.height * dpr);
-    const sizeChanged = canvas.width !== pw || canvas.height !== ph;
-
-    if (sizeChanged) {
-        canvas.width = pw;
-        canvas.height = ph;
-    }
-
-    cachedGlowFilter = `blur(${Math.round(config.glow.pixelGlow * dpr)}px)`;
-
-    if (rendererKind === 'canvas2d' && ctx) {
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        if (!tempCanvas) {
-            tempCanvas = document.createElement('canvas');
-            tempCtx = tempCanvas.getContext('2d');
-            if (tempCtx) tempCtx.imageSmoothingEnabled = false;
-        }
-        if (tempCanvas) {
-            tempCanvas.width = pw;
-            tempCanvas.height = ph;
-        }
-        if (sizeChanged) {
-            rebuildScanlinePattern();
-        }
-    }
-
-    if (rendererKind === 'webgpu' && gpu.gpuContext && gpu.gpuDevice) {
-        configureWebGpuCanvas();
-    }
+    containerCssW = next.containerCssW;
+    containerCssH = next.containerCssH;
+    cachedDpr = next.cachedDpr;
+    cachedGlowFilter = next.cachedGlowFilter;
+    tempCanvas = next.tempCanvas;
+    tempCtx = next.tempCtx;
+    scanlinePattern = next.scanlinePattern;
 
     computeFacePosition();
     logGlitchDiag('sizeCanvas');
-}
-
-function rebuildScanlinePattern() {
-    if (!ctx || !config.glitch.scanlines) {
-        scanlinePattern = null;
-        return;
-    }
-    const spacing = Math.max(1, Math.round(config.glitch.scanlineSpacing * cachedDpr));
-    const thickness = Math.max(1, Math.round(config.glitch.scanlineThickness * cachedDpr));
-    const pc = document.createElement('canvas');
-    pc.width = 4;
-    pc.height = spacing;
-    const pctx = pc.getContext('2d');
-    if (!pctx) {
-        scanlinePattern = null;
-        return;
-    }
-    pctx.fillStyle = '#000';
-    pctx.fillRect(0, 0, 4, thickness);
-    scanlinePattern = ctx.createPattern(pc, 'repeat');
 }
 
 // ── Pixel grid computation ────────────────
@@ -309,7 +278,7 @@ function buildPixelGrid() {
     lastBuiltExpression = next.lastBuiltExpression;
     lastSleepingState = next.lastSleepingState;
 
-    if (rendererKind === 'webgpu') {
+    if (rendererState.kind === 'webgpu') {
         updateGpuInstanceBuffer();
     }
 
@@ -339,97 +308,49 @@ async function initWebGpuRenderer() {
 }
 
 function initCanvas2DRenderer() {
-    if (!canvas) return false;
+    const next = initCanvas2DRendererData(canvas, config, cachedDpr);
+    if (!next.ok) return false;
 
-    ctx = canvas.getContext('2d', { alpha: true, desynchronized: true })
-        || canvas.getContext('2d');
-    if (!ctx) return false;
-
-    ctx.imageSmoothingEnabled = false;
-
-    tempCanvas = document.createElement('canvas');
-    tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) tempCtx.imageSmoothingEnabled = false;
-
-    rebuildScanlinePattern();
+    ctx = next.ctx;
+    tempCanvas = next.tempCanvas;
+    tempCtx = next.tempCtx;
+    scanlinePattern = next.scanlinePattern;
     return true;
 }
 
 function fallbackToCanvas2D(reason = 'fallback') {
-    console.warn(`[GlitchFX] Switching to Canvas2D (${reason})`);
-    resetWebGpuResources();
-    rendererKind = 'canvas2d';
-    rendererReady = false;
-    backendError = '';
-
-    if (!initCanvas2DRenderer()) {
-        backendError = 'no-renderer';
-        rendererReady = false;
-        setBackendStatus();
-        return false;
-    }
-
-    rendererReady = true;
-    sizeCanvas();
-    buildPixelGrid();
-    setBackendStatus();
-    return true;
+    return fallbackToCanvas2DData({
+        reason,
+        state: rendererState,
+        resetWebGpuResources,
+        initCanvas2DRenderer,
+        sizeCanvas,
+        buildPixelGrid,
+        setBackendStatus,
+    });
 }
 
 async function initializeRendererBackend() {
-    rendererReady = false;
-    backendError = '';
-    setBackendStatus();
-
-    const preferred = normalizeRenderer(config.renderer);
-    const shouldTryWebGpu = preferred === 'auto' || preferred === 'webgpu';
-
-    if (shouldTryWebGpu) {
-        const ok = await initWebGpuRenderer();
-        if (ok) {
-            rendererKind = 'webgpu';
-            rendererReady = true;
-            sizeCanvas();
-            buildPixelGrid();
-            setBackendStatus();
-            return;
-        }
-
-        // If context mode got locked by a failed WebGPU attempt, swap canvas.
-        recreateCanvasElement();
-    }
-
-    resetWebGpuResources();
-
-    if (!initCanvas2DRenderer()) {
-        console.error('[GlitchFX] Unable to initialize any renderer backend.');
-        rendererKind = 'canvas2d';
-        rendererReady = false;
-        backendError = 'no-renderer';
-        setGlitchVisualActive(false);
-        setBackendStatus();
-        return;
-    }
-
-    rendererKind = 'canvas2d';
-    rendererReady = true;
-    sizeCanvas();
-    buildPixelGrid();
-    setBackendStatus();
+    return initializeRendererBackendData({
+        state: rendererState,
+        preferredRenderer: normalizeRenderer(config.renderer),
+        initWebGpuRenderer,
+        recreateCanvasElement,
+        resetWebGpuResources,
+        initCanvas2DRenderer,
+        sizeCanvas,
+        buildPixelGrid,
+        setBackendStatus,
+        setGlitchVisualActive,
+    });
 }
 
 function ensureRendererBackendReady() {
-    if (rendererReady) return Promise.resolve(true);
-    if (!rendererInitPromise) {
-        rendererInitPromise = initializeRendererBackend().then(() => rendererReady).catch((err) => {
-            console.error('[GlitchFX] Renderer init error:', err);
-            rendererReady = false;
-            backendError = 'init-error';
-            setBackendStatus();
-            return false;
-        });
-    }
-    return rendererInitPromise;
+    return ensureRendererBackendReadyData({
+        state: rendererState,
+        initializeRendererBackend,
+        setBackendStatus,
+    });
 }
 
 // ── Frame state ───────────────────────────
@@ -512,7 +433,7 @@ function renderFrame(now) {
 
     animFrameId = requestAnimationFrame(renderFrame);
 
-    if (!rendererReady || !canvas) {
+    if (!rendererState.ready || !canvas) {
         setGlitchVisualActive(false);
         return;
     }
@@ -550,7 +471,7 @@ function renderFrame(now) {
     }
 
     let drawn = false;
-    if (rendererKind === 'webgpu') {
+    if (rendererState.kind === 'webgpu') {
         drawn = renderFrameWebGpu(frame);
         if (!drawn) {
             const fallbackOk = fallbackToCanvas2D('webgpu-frame-failed');
@@ -567,7 +488,7 @@ function renderFrame(now) {
 }
 
 function startRenderLoop() {
-    if (!STATE.glitchFxEnabled || animFrameId || !rendererReady) return;
+    if (!STATE.glitchFxEnabled || animFrameId || !rendererState.ready) return;
     computeFacePosition();
     sizeCanvas();
     buildPixelGrid();
@@ -582,7 +503,7 @@ export function enableGlitchFx() {
     STATE.glitchFxEnabled = true;
     setBackendStatus();
 
-    if (rendererReady) {
+    if (rendererState.ready) {
         startRenderLoop();
         return;
     }
@@ -607,7 +528,7 @@ export function disableGlitchFx() {
         animFrameId = null;
     }
 
-    if (rendererKind === 'canvas2d' && canvas && ctx) {
+    if (rendererState.kind === 'canvas2d' && canvas && ctx) {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.setTransform(cachedDpr, 0, 0, cachedDpr, 0, 0);
@@ -630,8 +551,8 @@ export function setGlitchFxConfig(newConfig) {
 
     const nextRenderer = normalizeRenderer(config.renderer);
     if (nextRenderer !== prevRenderer) {
-        rendererReady = false;
-        rendererInitPromise = null;
+        rendererState.ready = false;
+        rendererState.initPromise = null;
         setBackendStatus();
         void ensureRendererBackendReady().then((ok) => {
             if (!STATE.glitchFxEnabled) return;
@@ -644,7 +565,7 @@ export function setGlitchFxConfig(newConfig) {
         return;
     }
 
-    if (STATE.glitchFxEnabled && rendererReady) {
+    if (STATE.glitchFxEnabled && rendererState.ready) {
         sizeCanvas();
         buildPixelGrid();
     }
@@ -717,7 +638,7 @@ export function initGlitchFx() {
     startTime = performance.now();
 
     // Initialize renderer backend, then respect current state
-    rendererInitPromise = ensureRendererBackendReady();
+    rendererState.initPromise = ensureRendererBackendReady();
 
     if (STATE.glitchFxEnabled) {
         enableGlitchFx();
