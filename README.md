@@ -12,6 +12,36 @@ npm start          # Starts bridge server (port 3000) + Python STT/TTS (port 300
 
 Open `http://localhost:3000` in your browser.
 
+### Processing Modes
+
+- `npm run start:legacy` (default): current production stack.
+- `npm run start:realtime`: dedicated realtime stack path via `src/realtime-processing-service.py`.
+- `PROCESSING_MODE` is selected at server startup and exposed by `/health` + `/config`.
+- Realtime mode defaults:
+  - STT: `lightning-whisper-mlx` (`REALTIME_STT_BACKEND=mlx`)
+  - TTS: Kokoro (`REALTIME_TTS_BACKEND=kokoro`, voice from `KOKORO_VOICE` / `REALTIME_KOKORO_VOICE`)
+  - LLM: Ollama-compatible chat API (`REALTIME_LLM_PROVIDER=ollama`, `REALTIME_LLM_BASE_URL`)
+  - Required: `REALTIME_LLM_MODEL` must be set to an installed model from `ollama list`
+
+### LLM Benchmarking
+
+Use the benchmark harness to compare latency by input length and stack path:
+
+```bash
+npm run bench:llm -- \
+  --target ollama,realtime,assistant \
+  --models "hf.co/NexaAI/Qwen2-Audio-7B-GGUF:Q4_K_M,omniaudio-local:q4km" \
+  --runs 3 \
+  --warmup 1 \
+  --timeout_ms 90000 \
+  --out_json /tmp/llm-bench.json
+```
+
+Targets:
+- `ollama`: direct `POST /api/chat`
+- `realtime`: `POST /llm/generate` on realtime Python service
+- `assistant`: full assistant pipeline (`src/assistant/generate.js`) using configured provider
+
 ## Default Behavior
 
 The bot starts **asleep** and the camera auto-enables. When a face is detected, the bot wakes up, greets you with TTS, and its eyes begin tracking your face. If no one is visible for a while, it goes back to sleep.
@@ -144,7 +174,7 @@ LLM Assistant (Gemini API)
 | `/sleep` | POST | Put bot to sleep |
 | `/wake` | POST | Wake bot up |
 | `/config` | GET | Get current config |
-| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`, `minFaceBoxAreaRatio`) |
+| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`, `minFaceBoxAreaRatio`; `processingMode` is startup-only) |
 | `/checkout/paypal/order` | POST | Create PayPal order (optional checkout flow) |
 | `/checkout/paypal/capture` | POST | Capture PayPal order; emits confident donation signal on completion |
 | `/donations/confirm` | POST | Manual donation signal injection (`implied`/`confident`) |

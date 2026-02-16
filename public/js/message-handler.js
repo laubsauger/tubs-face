@@ -1,6 +1,6 @@
 import { STATE } from './state.js';
 import { $, loadingBar } from './dom.js';
-import { logChat } from './chat-log.js';
+import { clearChatDraft, commitChatDraft, logChat, upsertChatDraft } from './chat-log.js';
 import { setExpression } from './expressions.js';
 import { enqueueSpeech, stopAllTTS, enqueueTurnScript, applyHeadSpeechState } from './tts.js';
 import { hideDonationQr, showDonationQr } from './donation-ui.js';
@@ -15,6 +15,7 @@ import { clearFaceVisionReactionsForMute } from './face/results.js';
 import { perfMark } from './perf-hooks.js';
 import { detectDonationSignal, summarizeTurnScript } from './message-handler-utils.js';
 import { markTurn, onTurnStart } from './turn-timing.js';
+import { clearLiveUserTranscript, getLiveUserTranscriptText, showLiveUserTranscript } from './live-user-transcript.js';
 
 const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
 const MUTED_ALLOWED_TYPES = new Set(['config', 'stats', 'ping', 'system', 'error', 'sleep', 'wake']);
@@ -165,6 +166,13 @@ function setNoiseGate(value) {
     if (label) label.textContent = STATE.vadNoiseGate.toFixed(3);
 }
 
+function setTtsBackend(value) {
+    if (!value) return;
+    const normalized = String(value).trim().toLowerCase();
+    if (!['kokoro', 'system'].includes(normalized)) return;
+    STATE.ttsBackend = normalized;
+}
+
 function setKokoroVoice(value) {
     if (!value) return;
     STATE.kokoroVoice = value;
@@ -256,6 +264,7 @@ function applyConfig(msg) {
     setMinFaceBoxAreaRatio(msg.minFaceBoxAreaRatio);
     setRenderMode(msg.faceRenderMode);
     if (msg.renderQuality) setRenderQuality(msg.renderQuality);
+    if (msg.ttsBackend) setTtsBackend(msg.ttsBackend);
     if (msg.vadNoiseGate != null) setNoiseGate(msg.vadNoiseGate);
     if (msg.kokoroVoice) setKokoroVoice(msg.kokoroVoice);
     if (hasOwn('dualHeadEnabled')) setDualHeadEnabled(msg.dualHeadEnabled);
@@ -304,6 +313,7 @@ export function handleMessage(msg) {
 
     switch (msg.type) {
         case 'speak':
+            clearLiveUserTranscript();
             console.log(`[MSG] Received speak (${msg.text?.length} chars):`, msg.text);
             if (msg.text) {
                 console.log(`[MSG] tubs(main) speak: "${msg.text}"`);
@@ -330,6 +340,8 @@ export function handleMessage(msg) {
                 }
             }
             STATE.currentTurnId = msg.turnId;
+            clearChatDraft('in');
+            clearLiveUserTranscript();
             onTurnStart(msg.turnId);
             break;
         case 'turn_context':
@@ -341,6 +353,7 @@ export function handleMessage(msg) {
             }
             break;
         case 'speak_chunk':
+            clearLiveUserTranscript();
             // Ignore stale chunks from aborted turns
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
             console.log(`[MSG] speak_chunk #${msg.chunkIndex}: "${msg.text}"`);
@@ -432,7 +445,8 @@ export function handleMessage(msg) {
                     });
                 }
             }
-            logChat('in', msg.text);
+            upsertChatDraft('in', msg.text);
+            showLiveUserTranscript(msg.text, { draft: true });
             setExpressionIfAllowed('listening');
             resetProactiveTimer();
             break;
@@ -444,6 +458,10 @@ export function handleMessage(msg) {
             });
             break;
         case 'thinking':
+            commitChatDraft('in');
+            if (getLiveUserTranscriptText()) {
+                showLiveUserTranscript(getLiveUserTranscriptText(), { draft: false });
+            }
             setExpressionIfAllowed('thinking');
             loadingBar.classList.add('active');
             break;
@@ -454,15 +472,19 @@ export function handleMessage(msg) {
             logChat('sys', msg.text);
             break;
         case 'error':
+            clearChatDraft('in');
+            clearLiveUserTranscript();
             logChat('sys', `ERROR: ${msg.text}`);
             loadingBar.classList.remove('active');
             setExpression('idle', { force: true, skipHold: true });
             break;
         case 'sleep':
+            clearLiveUserTranscript();
             hideDonationQr();
             enterSleep({ sync: false });
             break;
         case 'wake':
+            clearLiveUserTranscript();
             exitSleep({ sync: false });
             break;
         case 'stats':
@@ -487,6 +509,7 @@ export function handleMessage(msg) {
             } else {
                 STATE.inConversation = false;
                 updateWaveformMode();
+                clearLiveUserTranscript();
             }
             break;
     }

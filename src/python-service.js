@@ -37,14 +37,14 @@ function startTranscriptionService(modelName = runtimeConfig.sttModel) {
     console.error('[Python] Failed to spawn process:', err);
   });
 
-  proc.on('close', (code) => {
+  proc.on('close', (code, signal) => {
     if (pythonProcess === proc) {
       pythonProcess = null;
     }
-    console.log(`[Python] Exited with code ${code}`);
+    console.log(`[Python] Exited with code ${code} signal=${signal || 'none'}`);
 
-    // Auto-restart on unexpected crash (code !== 0 or null means signal/crash)
-    if (code !== 0) {
+    // Auto-restart only on non-zero exit code without a shutdown signal.
+    if (code !== 0 && signal == null) {
       console.error(`\n${'='.repeat(60)}\n[CRASH] Python TTS/STT service died (exit code ${code})\n${'='.repeat(60)}\n`);
       setTimeout(() => {
         if (!pythonProcess) {

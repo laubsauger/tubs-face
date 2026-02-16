@@ -27,6 +27,7 @@ export const STATE = {
     minFaceBoxAreaRatio: 0.02,
     faceRenderMode: 'svg',
     renderQuality: 'high',
+    ttsBackend: 'kokoro',
     glitchFxEnabled: true,
     glitchFxBaseColor: '#a855f7',
     chatVerbosity: 'all',

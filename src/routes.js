@@ -20,7 +20,12 @@ const {
 } = require('./config');
 const { broadcast, getClients, getLatestFrame, consumeAppearanceFrame, abortActiveWsTurn } = require('./websocket');
 const { detectWakeWord, WAKE_MATCHER_VERSION } = require('./wake-word');
-const { transcribeAudio, restartTranscriptionService } = require('./python-service');
+const {
+  transcribeAudio,
+  restartTranscriptionService,
+  getProcessingMode,
+  getTtsProxyTarget,
+} = require('./processing/mode-manager');
 const { readFaceLib, writeFaceLib } = require('./face-library');
 const { generateAssistantReply, generateStreamingAssistantReply } = require('./assistant-service');
 const crypto = require('crypto');
@@ -118,6 +123,7 @@ function handleRequest(req, res) {
       status: 'ok',
       clients: getClients().size,
       uptime: Math.floor((Date.now() - sessionStats.uptime) / 1000),
+      processingMode: getProcessingMode(),
     }));
     return;
   }
@@ -362,6 +368,40 @@ function handleRequest(req, res) {
     return;
   }
 
+  // --- Preview-only voice transcription (live subtitle fallback) ---
+  if (req.method === 'POST' && url.pathname === '/voice/preview') {
+    let body = [];
+    req.on('data', chunk => body.push(chunk));
+    req.on('end', async () => {
+      if (isMuted()) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, ignored: true, reason: 'muted', text: '' }));
+        return;
+      }
+
+      const audioBuffer = Buffer.concat(body);
+      if (!audioBuffer.length) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, text: '' }));
+        return;
+      }
+
+      try {
+        const result = await transcribeAudio(audioBuffer, req.headers['content-type']);
+        const text = String(result?.text || '').trim();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true, text }));
+      } catch (err) {
+        console.error('[Voice:preview] Transcription error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      }
+    });
+    return;
+  }
+
   // --- Segment-based voice input (Phase 2: turn accumulation) ---
   if (req.method === 'POST' && url.pathname === '/voice/segment') {
     const wakeWord = url.searchParams.get('wakeWord') === 'true';
@@ -538,10 +578,11 @@ function handleRequest(req, res) {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', () => {
+      const ttsTarget = getTtsProxyTarget();
       const reqOptions = {
-        hostname: 'localhost',
-        port: 3001,
-        path: '/tts',
+        hostname: ttsTarget.hostname || 'localhost',
+        port: ttsTarget.port || 3001,
+        path: ttsTarget.path || '/tts',
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -899,6 +940,11 @@ function handleRequest(req, res) {
           err.code = 'BAD_CONFIG';
           throw err;
         }
+        if (Object.hasOwn(config, 'processingMode')) {
+          const err = new Error('processingMode is startup-only; restart with PROCESSING_MODE=legacy or PROCESSING_MODE=realtime');
+          err.code = 'BAD_CONFIG';
+          throw err;
+        }
 
         if (Object.hasOwn(config, 'sttModel')) {
           config.sttModel = normalizeSttModel(config.sttModel);
@@ -1079,9 +1125,8 @@ function normalizeManualEmotion(raw) {
   }
 
   if (emoji && !MANUAL_EMOJI_CUES.has(emoji)) {
-    const err = new Error(`Unsupported emoji cue "${emoji}"`);
-    err.code = 'BAD_CONFIG';
-    throw err;
+    console.warn(`[ManualBeats] Unsupported emoji cue "${emoji}" — dropping`);
+    emoji = '';
   }
   if (!expression && !emoji) return null;
   const emotion = {};

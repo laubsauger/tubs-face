@@ -5,11 +5,16 @@
   "main": "bridge-server.js",
   "scripts": {
     "postinstall": "bash scripts/setup-python.sh",
-    "start": "node src/bridge-server.js",
-    "kill": "pkill -f 'node src/bridge-server.js' && pkill -f 'transcription-service.py' || true",
-    "restart": "npm run kill && sleep 1 && npm start",
-    "dev": "node src/bridge-server.js",
-    "setup-python": "bash scripts/setup-python.sh"
+    "start": "npm run start:legacy",
+    "start:legacy": "PROCESSING_MODE=legacy node src/bridge-server.js",
+    "start:realtime": "PROCESSING_MODE=realtime node src/bridge-server.js",
+    "kill": "pkill -f 'node src/bridge-server.js' || true; pkill -f 'transcription-service.py' || true; pkill -f 'realtime-processing-service.py' || true",
+    "restart": "npm run restart:legacy",
+    "restart:legacy": "npm run kill && sleep 1 && npm run start:legacy",
+    "restart:realtime": "npm run kill && sleep 1 && npm run start:realtime",
+    "dev": "npm run start:legacy",
+    "setup-python": "bash scripts/setup-python.sh",
+    "bench:llm": "node scripts/benchmark-llm.js"
   },
   "dependencies": {
     "fs-extra": "^11.3.3",

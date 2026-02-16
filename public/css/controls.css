@@ -323,6 +323,27 @@
   color: var(--msg-sys);
 }
 
+.chat-msg.draft .content {
+  opacity: 0.9;
+}
+
+.chat-msg.draft .content::after {
+  content: '  ...';
+  opacity: 0.55;
+  animation: chatDraftPulse 1s ease-in-out infinite;
+}
+
+@keyframes chatDraftPulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 0.8;
+  }
+}
+
 /* Chat Log Resize Handle */
 #panel-bl-resize {
   position: absolute;

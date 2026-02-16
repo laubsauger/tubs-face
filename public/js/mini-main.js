@@ -42,6 +42,7 @@ let lastRemoteBlinkAt = 0;
 let dualHeadEnabled = false;
 let dualHeadMode = 'off';
 let secondaryVoice = 'jf_tebukuro';
+let ttsBackend = 'kokoro';
 let secondaryRenderQuality = 'balanced';
 let secondaryAudioGain = 1.0;
 let secondarySubtitleEnabled = false;
@@ -65,6 +66,10 @@ const miniFullscreenSync = createMiniFullscreenSync({
     messageType: MINI_FULLSCREEN_MESSAGE_TYPE,
 });
 const miniAudioGain = createMiniAudioGainController();
+
+function shouldUseBrowserTtsFallback() {
+    return String(ttsBackend || 'kokoro').trim().toLowerCase() === 'system';
+}
 
 function shouldEnablePerfOverlay() {
     try {
@@ -460,7 +465,11 @@ async function playSpeakBeat(item) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: item.text, voice: secondaryVoice })
         });
-        if (!res.ok) throw new Error(`TTS failed: ${res.status}`);
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            const suffix = detail ? `: ${detail.slice(0, 240)}` : '';
+            throw new Error(`TTS failed (${res.status})${suffix}`);
+        }
 
         const blob = await res.blob();
         if (blob.size < 100) throw new Error('TTS audio too small');
@@ -482,7 +491,7 @@ async function playSpeakBeat(item) {
         };
 
         audio.onerror = () => {
-            console.warn('[MINI] audio playback error, using speechSynthesis fallback');
+            console.warn('[MINI] audio playback error');
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
             miniAudioGain.disconnect();
@@ -490,7 +499,11 @@ async function playSpeakBeat(item) {
             setFaceRendererSpeaking(false);
             hideSubtitle();
             speaking = false;
-            fallbackSpeak(item.text);
+            if (shouldUseBrowserTtsFallback()) {
+                fallbackSpeak(item.text);
+                return;
+            }
+            setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
 
         audio.onplay = () => {
@@ -501,12 +514,16 @@ async function playSpeakBeat(item) {
 
         await audio.play();
     } catch (err) {
-        console.warn(`[MINI] tts/play failed (${err?.message || 'unknown'}), using speechSynthesis fallback`);
+        console.warn(`[MINI] tts/play failed (${err?.message || 'unknown'})`);
         markLocalSpeechEnd();
         setFaceRendererSpeaking(false);
         hideSubtitle();
         speaking = false;
-        fallbackSpeak(item.text);
+        if (shouldUseBrowserTtsFallback()) {
+            fallbackSpeak(item.text);
+            return;
+        }
+        setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
     }
 }
 
@@ -534,6 +551,9 @@ function fallbackSpeak(text) {
 }
 
 function applyConfig(msg) {
+    if (msg.ttsBackend) {
+        ttsBackend = String(msg.ttsBackend).trim().toLowerCase();
+    }
     if (Object.prototype.hasOwnProperty.call(msg, 'dualHeadEnabled')) {
         dualHeadEnabled = Boolean(msg.dualHeadEnabled);
     }

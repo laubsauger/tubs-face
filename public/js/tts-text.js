@@ -1,5 +1,12 @@
 const DONATION_HINT_RE = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|give|support)|give\s+(?:me\s+)?money|rapha|thailand|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
 const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/gi;
+const TTS_ACRONYM_KEEP = new Set(['AI', 'LLM', 'API', 'GPU', 'CPU', 'SDK', 'SQL', 'HTTP', 'HTTPS', 'USA', 'EU', 'UK']);
+
+function normalizeAllCapsWords(text) {
+    return String(text || '').replace(/\b[A-Z]{3,}\b/g, (word) => (
+        TTS_ACRONYM_KEEP.has(word) ? word : word.toLowerCase()
+    ));
+}
 
 export function inferDonationFromText(text) {
     if (!DONATION_HINT_RE.test(String(text || ''))) return null;
@@ -11,7 +18,7 @@ export function inferDonationFromText(text) {
 }
 
 export function normalizeSpeechText(text) {
-    return String(text ?? '')
+    return normalizeAllCapsWords(String(text ?? ''))
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
         .replace(DONATION_MARKER_RE, ' ')

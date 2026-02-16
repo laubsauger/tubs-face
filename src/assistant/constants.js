@@ -93,7 +93,7 @@ const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
           emoji: { type: 'STRING', enum: ['\u{1F642}', '\u{1F604}', '\u{1F60F}', '\u{1F97A}', '\u{1F622}', '\u{1F624}', '\u{1F916}', '\u{1FAF6}'] },
           delayMs: { type: 'NUMBER' },
         },
-        required: ['actor', 'action', 'text', 'emoji'],
+        required: ['actor', 'action', 'text'],
       },
     },
   },

@@ -3,6 +3,7 @@ import { $, chatLog } from './dom.js';
 
 const MAX_MESSAGES = 300;
 const TRIM_TO = 200;
+const draftNodes = new Map();
 
 let scrollRafPending = false;
 function scheduleScroll() {
@@ -29,10 +30,67 @@ function normalizeLogText(text) {
     return normalized;
 }
 
+function getPrefix(type) {
+    return type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
+}
+
+function updateLastHeard(ts) {
+    const lh = $('#stat-last-heard');
+    if (lh) lh.textContent = ts;
+}
+
 function isVisibleForVerbosity(type) {
     if (STATE.chatVerbosity === 'chat') return type !== 'sys';
     if (STATE.chatVerbosity === 'minimal') return type === 'in';
     return true;
+}
+
+function trimChatLogIfNeeded() {
+    if (chatLog.children.length <= MAX_MESSAGES) return;
+    while (chatLog.children.length > TRIM_TO) {
+        chatLog.removeChild(chatLog.firstChild);
+    }
+    for (const [type, node] of draftNodes.entries()) {
+        if (!node?.isConnected) {
+            draftNodes.delete(type);
+        }
+    }
+}
+
+function buildMessageNode(type, ts, safeText, { draft = false } = {}) {
+    const msg = document.createElement('div');
+    msg.className = `chat-msg ${type}`;
+    msg.dataset.type = type;
+    msg.dataset.rawText = safeText;
+    if (draft) {
+        msg.classList.add('draft');
+        msg.dataset.draft = '1';
+        msg.dataset.draftType = type;
+    }
+    if (!isVisibleForVerbosity(type)) msg.hidden = true;
+
+    const tsEl = document.createElement('span');
+    tsEl.className = 'ts';
+    tsEl.textContent = ts;
+
+    const contentEl = document.createElement('span');
+    contentEl.className = 'content';
+    contentEl.textContent = `${getPrefix(type)} ${safeText}`;
+
+    msg.appendChild(tsEl);
+    msg.appendChild(contentEl);
+    return msg;
+}
+
+function updateMessageNode(node, type, ts, safeText) {
+    if (!node) return;
+    node.dataset.rawText = safeText;
+    node.dataset.type = type;
+    const tsEl = node.querySelector('.ts');
+    if (tsEl) tsEl.textContent = ts;
+    const contentEl = node.querySelector('.content');
+    if (contentEl) contentEl.textContent = `${getPrefix(type)} ${safeText}`;
+    node.hidden = !isVisibleForVerbosity(type);
 }
 
 export function logChat(type, text) {
@@ -45,33 +103,60 @@ export function logChat(type, text) {
         const tc = $('#turn-counter');
         if (tc) tc.textContent = `${STATE.turns} turns`;
     }
-    const lh = $('#stat-last-heard');
-    if (lh) lh.textContent = ts;
+    updateLastHeard(ts);
 
-    const msg = document.createElement('div');
-    msg.className = `chat-msg ${type}`;
-    msg.dataset.type = type;
-    if (!isVisibleForVerbosity(type)) msg.hidden = true;
-    const prefix = type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
-
-    const tsEl = document.createElement('span');
-    tsEl.className = 'ts';
-    tsEl.textContent = ts;
-
-    const contentEl = document.createElement('span');
-    contentEl.className = 'content';
-    contentEl.textContent = `${prefix} ${safeText}`;
-
-    msg.appendChild(tsEl);
-    msg.appendChild(contentEl);
+    const msg = buildMessageNode(type, ts, safeText);
     chatLog.appendChild(msg);
     scheduleScroll();
+    trimChatLogIfNeeded();
+}
 
-    if (chatLog.children.length > MAX_MESSAGES) {
-        while (chatLog.children.length > TRIM_TO) {
-            chatLog.removeChild(chatLog.firstChild);
-        }
+export function upsertChatDraft(type, text) {
+    const safeText = normalizeLogText(text).trim();
+    if (!safeText) {
+        clearChatDraft(type);
+        return;
     }
+    const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    updateLastHeard(ts);
+
+    let draft = draftNodes.get(type);
+    if (!draft || !draft.isConnected) {
+        draft = buildMessageNode(type, ts, safeText, { draft: true });
+        chatLog.appendChild(draft);
+        draftNodes.set(type, draft);
+    } else {
+        updateMessageNode(draft, type, ts, safeText);
+    }
+
+    scheduleScroll();
+    trimChatLogIfNeeded();
+}
+
+export function commitChatDraft(type) {
+    const draft = draftNodes.get(type);
+    if (!draft || !draft.isConnected) {
+        draftNodes.delete(type);
+        return;
+    }
+    const safeText = String(draft.dataset.rawText || '').trim();
+    if (!safeText) {
+        draft.remove();
+        draftNodes.delete(type);
+        return;
+    }
+    draft.classList.remove('draft');
+    delete draft.dataset.draft;
+    delete draft.dataset.draftType;
+    draftNodes.delete(type);
+}
+
+export function clearChatDraft(type) {
+    const draft = draftNodes.get(type);
+    if (draft?.isConnected) {
+        draft.remove();
+    }
+    draftNodes.delete(type);
 }
 
 const VERBOSITY_CYCLE = ['all', 'chat', 'minimal'];

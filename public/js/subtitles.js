@@ -69,6 +69,24 @@ export function createSubtitleController(element, options = {}) {
             return { start: startWord, end: cumulative, words: seg };
         });
 
+        // Character-weighted timing: longer words get proportionally more duration
+        const allWords = segBounds.flatMap(s => s.words);
+        const weights = allWords.map(w => Math.max(w.length, 2));
+        const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+        // cumWeight[i] = sum of weights[0..i-1]
+        const cumWeight = [0];
+        for (let i = 0; i < weights.length; i++) cumWeight.push(cumWeight[i] + weights[i]);
+
+        function timeToWordIndex(t) {
+            const target = t * totalWeight;
+            let lo = 0, hi = allWords.length - 1;
+            while (lo < hi) {
+                const mid = (lo + hi + 1) >> 1;
+                if (cumWeight[mid] <= target) lo = mid; else hi = mid - 1;
+            }
+            return lo;
+        }
+
         let currentSegIdx = -1;
         let lastWordInSeg = -1;
 
@@ -114,7 +132,7 @@ export function createSubtitleController(element, options = {}) {
                 if (!subtitleAudioRef || subtitleAudioRef.ended) return;
 
                 const t = Math.min(subtitleAudioRef.currentTime / duration, 0.99);
-                const globalIdx = Math.min(Math.floor(t * totalWords), totalWords - 1);
+                const globalIdx = Math.min(timeToWordIndex(t), totalWords - 1);
                 if (globalIdx >= 0) updateHighlightTo(globalIdx);
 
                 subtitleRafId = requestAnimationFrame(tick);
@@ -125,22 +143,37 @@ export function createSubtitleController(element, options = {}) {
         }
 
         const duration = (typeof source === 'number' && source > 0) ? source : totalWords * 0.35;
-        const msPerWord = (duration * 0.85 * 1000) / totalWords;
-        let flatIdx = 0;
+        const totalDurationMs = duration * 0.85 * 1000;
+        const startTime = performance.now();
 
         currentSegIdx = 0;
         renderSegment(segBounds[0].words);
 
-        subtitleTimer = setInterval(() => {
-            if (flatIdx >= totalWords) {
+        function timerTick() {
+            const elapsed = performance.now() - startTime;
+            if (elapsed >= totalDurationMs) {
                 stop();
                 return;
             }
-            updateHighlightTo(flatIdx);
-            flatIdx += 1;
-        }, msPerWord);
+            const t = Math.min(elapsed / totalDurationMs, 0.99);
+            const globalIdx = Math.min(timeToWordIndex(t), totalWords - 1);
+            if (globalIdx >= 0) updateHighlightTo(globalIdx);
+            subtitleRafId = requestAnimationFrame(timerTick);
+        }
+        subtitleRafId = requestAnimationFrame(timerTick);
     }
 
-    return { start, stop };
+    function finish() {
+        if (subtitleRafId) { cancelAnimationFrame(subtitleRafId); subtitleRafId = null; }
+        subtitleAudioRef = null;
+        if (subtitleTimer) { clearInterval(subtitleTimer); subtitleTimer = null; }
+        if (!subtitleEl) return;
+        subtitleEl.querySelectorAll('.word').forEach(el => {
+            el.classList.remove('active');
+            el.classList.add('spoken');
+        });
+    }
+
+    return { start, stop, finish };
 }
 

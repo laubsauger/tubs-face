@@ -189,8 +189,19 @@ function normalizeDualHeadTurnPolicy(value) {
   return normalized;
 }
 
+function normalizeProcessingMode(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const allowed = new Set(['legacy', 'realtime']);
+  if (!allowed.has(normalized)) {
+    const err = new Error('processingMode must be one of: legacy, realtime');
+    err.code = 'BAD_CONFIG';
+    throw err;
+  }
+  return normalized;
+}
 
 /* --- 3. Resolved Configuration --- */
+const DEFAULT_PROCESSING_MODE = normalizeProcessingMode(process.env.PROCESSING_MODE || 'legacy');
 const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL || 'small';
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const DEFAULT_LLM_MAX_OUTPUT_TOKENS = normalizeLlmMaxOutputTokens(process.env.GEMINI_MAX_OUTPUT_TOKENS || 256);
@@ -200,7 +211,7 @@ const DEFAULT_FACE_RENDER_MODE = normalizeFaceRenderMode(process.env.FACE_RENDER
 const DEFAULT_RENDER_QUALITY = normalizeRenderQuality(process.env.RENDER_QUALITY || 'high', 'renderQuality');
 const DEFAULT_TTS_BACKEND = normalizeTtsBackend(process.env.TTS_BACKEND || 'kokoro');
 const DEFAULT_STT_BACKEND = normalizeSttBackend(process.env.STT_BACKEND || 'mlx');
-const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'hm_omega');
+const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'am_puck');
 const DEFAULT_DUAL_HEAD_ENABLED = normalizeBooleanConfig(process.env.DUAL_HEAD_ENABLED || false, 'dualHeadEnabled');
 const DEFAULT_DUAL_HEAD_MODE = normalizeDualHeadMode(process.env.DUAL_HEAD_MODE || 'off');
 const DEFAULT_SECONDARY_VOICE = normalizeKokoroVoice(process.env.SECONDARY_VOICE || 'jf_tebukuro');
@@ -223,6 +234,7 @@ const sessionStats = {
 };
 
 const runtimeConfig = {
+  processingMode: DEFAULT_PROCESSING_MODE,
   sleepTimeout: 10000,
   model: 'Tubs Bot v1',
   prompt: 'Default personality',
@@ -259,10 +271,12 @@ module.exports = {
   normalizeSttModel,
   normalizeLlmModel,
   normalizeLlmMaxOutputTokens,
+  normalizeProcessingMode,
   normalizeDonationSignalMode,
   normalizeMinFaceBoxAreaRatio,
   normalizeFaceRenderMode,
   normalizeRenderQuality,
+  DEFAULT_PROCESSING_MODE,
   DEFAULT_STT_MODEL,
   DEFAULT_LLM_MODEL,
   DEFAULT_LLM_MAX_OUTPUT_TOKENS,

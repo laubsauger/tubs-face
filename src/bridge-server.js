@@ -27,7 +27,7 @@ loadEnvFile();
 
 const { handleRequest } = require('./routes');
 const { initWebSocket } = require('./websocket');
-const { startTranscriptionService, stopTranscriptionService } = require('./python-service');
+const { startProcessingStack, stopProcessingStack, getProcessingMode } = require('./processing/mode-manager');
 const { runtimeConfig } = require('./config');
 const { shutdownLangfuse } = require('./langfuse');
 
@@ -37,12 +37,12 @@ const server = http.createServer(handleRequest);
 
 initWebSocket(server);
 
-startTranscriptionService(runtimeConfig.sttModel);
+startProcessingStack({ sttModel: runtimeConfig.sttModel });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
     Promise.allSettled([
-      stopTranscriptionService(2000),
+      stopProcessingStack(2000),
       shutdownLangfuse(2000),
     ]).finally(() => process.exit(0));
   });
@@ -53,5 +53,6 @@ server.listen(PORT, () => {
   console.log(`  ─────────────────────────`);
   console.log(`  HTTP:      http://localhost:${PORT}`);
   console.log(`  WebSocket: ws://localhost:${PORT}`);
+  console.log(`  Mode:      ${getProcessingMode()}`);
   console.log(`  Health:    http://localhost:${PORT}/health\n`);
 });

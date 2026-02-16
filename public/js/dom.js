@@ -9,3 +9,4 @@ export const pttIndicator = $('#ptt-indicator');
 export const waveformContainer = $('#waveform-container');
 export const chatLog = $('#chat-log');
 export const subtitleEl = $('#subtitle');
+export const liveUserTranscriptEl = $('#live-user-transcript');

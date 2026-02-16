@@ -14,6 +14,7 @@ const {
   clampOutput,
   estimateTokens,
   estimateCostUsd,
+  rescueTextFromJson,
 } = require('./text');
 const {
   splitTrailingEmotionEmoji,
@@ -50,8 +51,163 @@ const {
 } = require('./dual-head');
 const { runtimeConfig } = require('../config');
 const { pickGreetingResponse } = require('../persona');
-const { generateGeminiContent, streamGeminiContent } = require('../gemini-client');
-const { generateDemoResponse } = require('../demo-response');
+const {
+  getLlmProviderId,
+  getLlmAuthState,
+  generateLlmContent,
+  streamLlmContent,
+} = require('../llm/provider');
+
+function resolveLlmAuthState({ allowWarning = true } = {}) {
+  const authState = getLlmAuthState();
+  if (!authState?.ready && allowWarning && !getHasWarnedMissingApiKey()) {
+    setHasWarnedMissingApiKey(true);
+    if (authState?.warningMessage) {
+      console.warn(authState.warningMessage);
+    } else {
+      console.warn(`[LLM] ${getLlmProviderId()} provider credentials missing. Conversational requests will fail.`);
+    }
+  }
+  return authState;
+}
+
+function requireLlmAuth(authState, phase = 'auth') {
+  if (authState?.ready) return;
+  const err = new Error(authState?.warningMessage || `[LLM:${phase}] provider credentials/config missing`);
+  err.code = 'LLM_AUTH_MISSING';
+  throw err;
+}
+
+function rethrowLlmFailure(error, phase = 'request') {
+  const provider = getLlmProviderId();
+  const detail = error?.message || String(error || 'unknown error');
+  const err = new Error(`[LLM:${phase}] ${provider} failure: ${detail}`);
+  err.code = 'LLM_FAILURE';
+  err.cause = error;
+  throw err;
+}
+
+const PERSONA_DRIFT_PHRASE_RE = /\b(certainly|however|it's important to remember|do you have any other questions|any other questions or topics you'd like to discuss|let me know if you|in conclusion)\b/i;
+const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|additionally|furthermore|moreover)\b/i;
+const PERSONA_MARKER_RE = /\b(tubs|rapha|wheel|wheels|venmo|thailand|robot|plastic tubs?)\b/i;
+const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+function isPersonaDrift(text) {
+  const normalized = normalizeInput(text).toLowerCase();
+  if (!normalized) return false;
+  if (PERSONA_DRIFT_PHRASE_RE.test(normalized)) return true;
+  if (PERSONA_DRIFT_FORMAL_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) return true;
+  if (normalized.length > 110 && !normalized.includes('?')) return true;
+  if (normalized.length > 90 && !PERSONA_MARKER_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) return true;
+  return false;
+}
+
+function isMostlyAsciiEnglish(text) {
+  const normalized = normalizeInput(text);
+  if (!normalized) return true;
+  const letters = normalized.match(/[A-Za-z]/g) || [];
+  const asciiFriendly = normalized.match(/[A-Za-z0-9\s.,!?'"()\-:;]/g) || [];
+  if (letters.length === 0) return false;
+  return asciiFriendly.length / normalized.length >= 0.85;
+}
+
+function isLanguageDrift(text, userInput) {
+  if (!isMostlyAsciiEnglish(userInput)) return false;
+  return CJK_RE.test(String(text || ''));
+}
+
+function stripOuterQuotes(text) {
+  const normalized = normalizeInput(text);
+  return normalized
+    .replace(/^["'`]+/, '')
+    .replace(/["'`]+$/, '')
+    .trim();
+}
+
+async function maybeRepairPersonaDrift({
+  draftText,
+  userInput,
+  authState,
+  maxOutputTokens,
+  phase,
+}) {
+  const normalizedDraft = normalizeInput(draftText);
+  const driftDetected = Boolean(
+    normalizedDraft
+    && (
+      isPersonaDrift(normalizedDraft)
+      || isLanguageDrift(normalizedDraft, userInput)
+    )
+  );
+  if (!normalizedDraft || !driftDetected) {
+    return {
+      text: normalizedDraft,
+      model: null,
+      usageIn: 0,
+      usageOut: 0,
+      repaired: false,
+    };
+  }
+
+  console.warn(`[LLM:${phase}] Persona drift detected; requesting strict rewrite.`);
+  const strictSystemInstruction = [
+    buildSystemInstruction(),
+    'STRICT STYLE OVERRIDE:',
+    '- Rewrite in Tubs voice: playful, slightly unhinged, never corporate.',
+    '- 1-2 sentences max, concise and punchy.',
+    '- End with a hook or question.',
+    '- Never use these phrases: "certainly", "however", "it\'s important to remember", "do you have any other questions".',
+    '- Return only the rewritten reply text.',
+  ].join('\n');
+
+  const rewritePrompt = [
+    `User said: "${normalizeInput(userInput)}"`,
+    `Draft reply (too generic): "${normalizedDraft}"`,
+    'Rewrite the draft so it sounds unmistakably like Tubs.',
+  ].join('\n');
+
+  const llmResult = await generateLlmContent({
+    auth: authState?.auth || null,
+    model: runtimeConfig.llmModel,
+    systemInstruction: strictSystemInstruction,
+    contents: [{ role: 'user', parts: [{ text: rewritePrompt }] }],
+    maxOutputTokens: Math.min(220, Number(maxOutputTokens || runtimeConfig.llmMaxOutputTokens || 256)),
+    temperature: 0.95,
+    timeoutMs: 15000,
+  });
+
+  let rewritten = stripOuterQuotes(stripFormatting(llmResult.text));
+  if (!rewritten) {
+    const err = new Error(`[LLM:${phase}] Persona rewrite returned empty text`);
+    err.code = 'PERSONA_QUALITY_GATE_FAILED';
+    throw err;
+  }
+
+  if (!splitTrailingEmotionEmoji(rewritten).emotion) {
+    rewritten = `😏 ${rewritten}`;
+  }
+  if (isLanguageDrift(rewritten, userInput)) {
+    const err = new Error(`[LLM:${phase}] Persona rewrite language drifted from user language`);
+    err.code = 'PERSONA_QUALITY_GATE_FAILED';
+    throw err;
+  }
+  const rewrittenPlain = splitTrailingEmotionEmoji(rewritten).text;
+  if (isPersonaDrift(rewrittenPlain)) {
+    const err = new Error(`[LLM:${phase}] Persona rewrite failed quality gate`);
+    err.code = 'PERSONA_QUALITY_GATE_FAILED';
+    throw err;
+  }
+  rewritten = clampOutput(rewritten);
+
+  return {
+    text: rewritten,
+    model: llmResult.model || null,
+    usageIn: Number(llmResult.usage?.promptTokenCount || 0),
+    usageOut: Number(llmResult.usage?.candidatesTokenCount || 0),
+    repaired: true,
+  };
+}
 
 async function generateAssistantReply(userText) {
   const normalizedInput = normalizeInput(userText);
@@ -87,56 +243,59 @@ async function generateAssistantReply(userText) {
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey && !getHasWarnedMissingApiKey()) {
-    setHasWarnedMissingApiKey(true);
-    console.warn('[LLM] GEMINI_API_KEY missing. Falling back to demo responses.');
-  }
+  const authState = resolveLlmAuthState();
+  requireLlmAuth(authState, 'reply-auth');
 
   let responseText = '';
   let rawEmotion = null;
   let preclampDonation = null;
-  let source = 'llm';
+  const source = 'llm';
   let model = runtimeConfig.llmModel;
   let usageIn = 0;
   let usageOut = 0;
 
-  if (apiKey) {
-    try {
-      const llmResult = await generateGeminiContent({
-        apiKey,
-        model: runtimeConfig.llmModel,
-        systemInstruction: buildSystemInstruction(),
-        contents: buildContents(normalizedInput),
-        maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-        temperature: 1,
-      });
-      console.log(`[LLM] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
-      const cleanedText = stripFormatting(llmResult.text);
-      const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
-      rawEmotion = rawEmoji.emotion;
-      preclampDonation = extractDonationSignal(rawEmoji.text);
-      responseText = clampOutput(preclampDonation.text);
-      console.log(`[LLM] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
-      model = llmResult.model || model;
-      usageIn = Number(llmResult.usage.promptTokenCount || 0);
-      usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
-    } catch (err) {
-      console.error('[LLM] Gemini call failed:', err.message);
-      source = 'fallback';
-      model = 'fallback-demo';
+  try {
+    const llmResult = await generateLlmContent({
+      auth: authState.auth || null,
+      model: runtimeConfig.llmModel,
+      systemInstruction: buildSystemInstruction(),
+      contents: buildContents(normalizedInput),
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      temperature: 1,
+    });
+    console.log(`[LLM] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
+    let cleanedText = stripFormatting(llmResult.text);
+    const repaired = await maybeRepairPersonaDrift({
+      draftText: cleanedText,
+      userInput: normalizedInput,
+      authState,
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      phase: 'reply',
+    });
+    if (repaired.repaired) {
+      cleanedText = repaired.text;
+      if (repaired.model) model = repaired.model;
+      usageIn += repaired.usageIn;
+      usageOut += repaired.usageOut;
+      console.log(`[LLM] Rewritten (${cleanedText.length} chars): ${cleanedText}`);
     }
-  } else {
-    source = 'fallback';
-    model = 'fallback-demo';
+    const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
+    rawEmotion = rawEmoji.emotion;
+    preclampDonation = extractDonationSignal(rawEmoji.text);
+    responseText = clampOutput(preclampDonation.text);
+    console.log(`[LLM] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
+    model = llmResult.model || model;
+    usageIn += Number(llmResult.usage.promptTokenCount || 0);
+    usageOut += Number(llmResult.usage.candidatesTokenCount || 0);
+  } catch (err) {
+    console.error(`[LLM] ${getLlmProviderId()} call failed:`, err.message);
+    rethrowLlmFailure(err, 'reply');
   }
 
   if (!responseText) {
-    const fallbackText = generateDemoResponse(normalizedInput);
-    const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
-    rawEmotion = rawEmotion || fallbackEmoji.emotion;
-    preclampDonation = extractDonationSignal(fallbackEmoji.text);
-    responseText = clampOutput(preclampDonation.text);
+    const err = new Error('[LLM:reply] Empty response');
+    err.code = 'LLM_EMPTY_RESPONSE';
+    throw err;
   }
 
   const emotion = rawEmotion;
@@ -177,8 +336,8 @@ async function generateAssistantReply(userText) {
 }
 
 async function generateDualHeadProactiveReply({ context, broadcast, turnId, startedAt }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  const authState = resolveLlmAuthState();
+  if (!authState?.ready) return null;
 
   console.log(`[LLM:dual-proactive] turn=${turnId} enabled=${runtimeConfig.dualHeadEnabled} mode=${runtimeConfig.dualHeadMode}`);
 
@@ -197,13 +356,13 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
   const dualMaxOutputTokens = Number(runtimeConfig.llmMaxOutputTokens || 256);
 
   try {
-    const llmResult = await generateGeminiContent({
-      apiKey,
+    const llmResult = await generateLlmContent({
+      auth: authState.auth || null,
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
       contents,
       maxOutputTokens: dualMaxOutputTokens,
-      temperature: 0.7,
+      temperature: 0.45,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
@@ -216,7 +375,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
     console.log(`[LLM:dual-proactive] Raw response (${llmRawText.length} chars): ${llmRawText}`);
     script = parseDualHeadScript(llmResult.text);
   } catch (err) {
-    console.error('[LLM:dual-proactive] Gemini call failed:', err.message);
+    console.error(`[LLM:dual-proactive] ${getLlmProviderId()} call failed:`, err.message);
     return null;
   }
 
@@ -291,8 +450,8 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
 async function generateProactiveReply(context) {
   const startedAt = Date.now();
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const authState = resolveLlmAuthState();
+  if (!authState?.ready) {
     return null;
   }
 
@@ -310,8 +469,8 @@ async function generateProactiveReply(context) {
   let usageOut = 0;
 
   try {
-    const llmResult = await generateGeminiContent({
-      apiKey,
+    const llmResult = await generateLlmContent({
+      auth: authState.auth || null,
       model: runtimeConfig.llmModel,
       systemInstruction: proactiveInstruction,
       contents,
@@ -319,7 +478,21 @@ async function generateProactiveReply(context) {
       temperature: 1,
     });
     console.log(`[LLM:proactive] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
-    const cleanedText = stripFormatting(llmResult.text);
+    let cleanedText = stripFormatting(llmResult.text);
+    const repaired = await maybeRepairPersonaDrift({
+      draftText: cleanedText,
+      userInput: context,
+      authState,
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      phase: 'proactive',
+    });
+    if (repaired.repaired) {
+      cleanedText = repaired.text;
+      usageIn += repaired.usageIn;
+      usageOut += repaired.usageOut;
+      if (repaired.model) model = repaired.model;
+      console.log(`[LLM:proactive] Rewritten (${cleanedText.length} chars): ${cleanedText}`);
+    }
     const rawEmoji = splitTrailingEmotionEmoji(cleanedText);
     rawEmotion = rawEmoji.emotion;
     const preclampSignal = extractDonationSignal(rawEmoji.text);
@@ -327,8 +500,8 @@ async function generateProactiveReply(context) {
     responseText = clampOutput(preclampSignal.text);
     console.log(`[LLM:proactive] After clampOutput (${responseText.length} chars, emoji=${rawEmoji.emoji || 'none'}): ${responseText}`);
     model = llmResult.model || model;
-    usageIn = Number(llmResult.usage.promptTokenCount || 0);
-    usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
+    usageIn += Number(llmResult.usage.promptTokenCount || 0);
+    usageOut += Number(llmResult.usage.candidatesTokenCount || 0);
   } catch (err) {
     console.error('[LLM] Proactive generation failed:', err.message);
     return null;
@@ -364,7 +537,7 @@ async function generateProactiveReply(context) {
 
 async function generateDualHeadDirectedReply({
   normalizedInput,
-  apiKey,
+  auth,
   turnId,
   broadcast,
   frame,
@@ -397,19 +570,20 @@ async function generateDualHeadDirectedReply({
   let usageIn = 0;
   let usageOut = 0;
   let script;
+  let degradedScript = false;
   let llmRawText = '';
   const llmStartAt = Date.now();
   let llmEndAt = null;
   const dualMaxOutputTokens = Number(runtimeConfig.llmMaxOutputTokens || 256);
 
   try {
-    const llmResult = await generateGeminiContent({
-      apiKey,
+    const llmResult = await generateLlmContent({
+      auth: auth || null,
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
       contents: contentBundle.contents,
       maxOutputTokens: dualMaxOutputTokens,
-      temperature: 0.7,
+      temperature: 0.45,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
@@ -424,8 +598,8 @@ async function generateDualHeadDirectedReply({
     script = parseDualHeadScript(llmResult.text);
   } catch (err) {
     llmEndAt = Date.now();
-    console.error('[LLM:dual] Gemini call failed:', err.message);
-    return null;
+    console.error(`[LLM:dual] ${getLlmProviderId()} call failed:`, err.message);
+    throw err;
   }
 
   if (!script) {
@@ -440,8 +614,31 @@ async function generateDualHeadDirectedReply({
     }
   }
   if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
-    console.warn('[LLM:dual] No valid dual-head script returned by LLM.');
-    return null;
+    const rescuedText = clampOutput(stripDonationMarkers(stripFormatting(rescueTextFromJson(llmRawText))));
+    if (rescuedText) {
+      degradedScript = true;
+      script = {
+        beats: [
+          {
+            actor: 'main',
+            action: 'speak',
+            text: rescuedText,
+            emotion: defaultDualHeadSpeakEmotion('main'),
+          },
+        ],
+      };
+      console.warn('[LLM:dual] Invalid script from model; degrading to single-beat turn_script (no extra LLM call).');
+      if (typeof broadcast === 'function') {
+        broadcast({
+          type: 'system',
+          text: '[LLM:dual] Invalid turn_script from model; degraded to one main beat (no retry).',
+        });
+      }
+    } else {
+      const err = new Error('[LLM:dual] No valid dual-head script returned by LLM.');
+      err.code = 'DUAL_HEAD_SCRIPT_INVALID';
+      throw err;
+    }
   }
 
   const merged = mergeDonationSignalFromBeats(script.beats);
@@ -463,7 +660,9 @@ async function generateDualHeadDirectedReply({
 
   fullText = clampOutput(fullText);
   if (!fullText) {
-    return null;
+    const err = new Error('[LLM:dual] Dual-head script produced empty text output.');
+    err.code = 'DUAL_HEAD_EMPTY_OUTPUT';
+    throw err;
   }
 
   broadcast({
@@ -489,7 +688,7 @@ async function generateDualHeadDirectedReply({
 
   return {
     text: fullText,
-    source: 'llm-dual-head',
+    source: degradedScript ? 'llm-dual-head-degraded' : 'llm-dual-head',
     model,
     tokens: { in: tokensIn, out: tokensOut },
     costUsd,
@@ -656,57 +855,16 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey && !getHasWarnedMissingApiKey()) {
-    setHasWarnedMissingApiKey(true);
-    console.warn('[LLM] GEMINI_API_KEY missing. Falling back to demo responses.');
-  }
-
-  // No API key -> fall back to non-streaming demo response
-  if (!apiKey) {
-    const contextMeta = { mode: 'text', imageAttached: false, ...getHistoryMeta() };
-    emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
-    const fallbackText = generateDemoResponse(normalizedInput);
-    const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
-    const responseText = clampOutput(fallbackEmoji.text);
-    const donationSignal = extractDonationSignal(responseText);
-    const fallbackEmotion = fallbackEmoji.emotion || defaultDualHeadSpeakEmotion('main');
-    pushHistory('user', normalizedInput);
-    pushHistory('model', donationSignal.text);
-    incrementAssistantReplyCount();
-    if (timingHooks?.onFirstToken) timingHooks.onFirstToken('fallback-fastpath');
-    markLlmDone();
-    broadcast({
-      type: 'speak',
-      text: donationSignal.text,
-      donation: donationSignal.donation,
-      emotion: fallbackEmotion,
-      ts: Date.now(),
-    });
-    return {
-      text: donationSignal.text,
-      source: 'fallback',
-      model: 'fallback-demo',
-      tokens: { in: estimateTokens(normalizedInput), out: estimateTokens(donationSignal.text) },
-      latencyMs: Date.now() - startedAt,
-      costUsd: 0,
-      donation: donationSignal.donation,
-      emotion: fallbackEmotion,
-      beats: null,
-      telemetry: {
-        context: contextMeta,
-        llmRequest: null,
-        llmStartAt,
-        llmEndAt,
-      },
-    };
-  }
+  const authState = resolveLlmAuthState();
+  requireLlmAuth(authState, 'stream-auth');
+  const providerId = getLlmProviderId();
+  const shouldBufferBeforeBroadcast = providerId === 'realtime';
 
   if (shouldUseDualHeadDirectedMode()) {
     markLlmStart();
     const dualReply = await generateDualHeadDirectedReply({
       normalizedInput,
-      apiKey,
+      auth: authState.auth || null,
       turnId,
       broadcast,
       frame,
@@ -714,11 +872,8 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       startedAt,
       timingHooks,
     });
-    if (dualReply) {
-      markLlmDone();
-      return dualReply;
-    }
-    console.warn('[LLM:dual] Falling back to single-head streaming path (no valid dual script from one-shot LLM call).');
+    markLlmDone();
+    return dualReply;
   }
 
   // Streaming LLM path
@@ -766,6 +921,8 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
   let usageIn = 0;
   let usageOut = 0;
+  let rewriteUsageIn = 0;
+  let rewriteUsageOut = 0;
   let model = runtimeConfig.llmModel;
   let contextMeta = null;
   let llmRequest = null;
@@ -801,35 +958,58 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       systemInstruction: systemInst,
       contents: sanitizeContentsForTelemetry(contentBundle.contents),
     };
-    const llmResult = await streamGeminiContent({
-      apiKey,
+    const llmResult = await streamLlmContent({
+      auth: authState.auth || null,
       model: runtimeConfig.llmModel,
       systemInstruction: systemInst,
       contents: contentBundle.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       temperature: 1,
-      onChunk: (delta) => splitter.push(delta),
+      onChunk: shouldBufferBeforeBroadcast ? undefined : (delta) => splitter.push(delta),
       abortSignal: abortController?.signal,
     });
     console.log(`[LLM:stream] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
 
-    // Flush remaining buffer
+    let finalText = llmResult.text;
+    if (shouldBufferBeforeBroadcast) {
+      const repaired = await maybeRepairPersonaDrift({
+        draftText: finalText,
+        userInput: normalizedInput,
+        authState,
+        maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+        phase: 'stream',
+      });
+      if (repaired.repaired) {
+        finalText = repaired.text;
+        rewriteUsageIn += repaired.usageIn;
+        rewriteUsageOut += repaired.usageOut;
+        if (repaired.model) model = repaired.model;
+        console.log(`[LLM:stream] Rewritten (${finalText.length} chars): ${finalText}`);
+      }
+      finalText = clampOutput(finalText);
+      splitter.push(finalText);
+    }
+
+    // Flush remaining buffer.
     if (sentenceCount < MAX_OUTPUT_SENTENCES) {
       splitter.flush();
     }
 
     model = llmResult.model || model;
-    usageIn = Number(llmResult.usage.promptTokenCount || 0);
-    usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
+    usageIn = Number(llmResult.usage.promptTokenCount || 0) + rewriteUsageIn;
+    usageOut = Number(llmResult.usage.candidatesTokenCount || 0) + rewriteUsageOut;
 
-    // If no chunks were emitted (e.g. very short response), extract emotion from full text
-    if (!emotionExtracted && llmResult.text) {
-      const rawResText = llmResult.text;
+    // If no chunks were emitted (e.g. very short response), emit the whole text once.
+    // Important: do not gate this on emotion extraction state, or we can duplicate output.
+    const rawFallbackText = shouldBufferBeforeBroadcast ? finalText : llmResult.text;
+    if (chunkIndex === 0 && rawFallbackText) {
+      const rawResText = rawFallbackText;
       if (rawResText.includes(DONATION_MARKER) || DONATION_MARKER_RE.test(rawResText)) {
         donationMarkerDetected = true;
       }
       const parsed = splitTrailingEmotionEmoji(stripFormatting(rawResText));
       rawEmotion = parsed.emotion;
+      emotionExtracted = Boolean(parsed.emotion);
       if (parsed.text) {
         fullText = clampOutput(stripDonationMarkers(parsed.text));
         markFirstToken('speak_chunk_fallback');
@@ -842,24 +1022,14 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       console.log(`[LLM:stream] Aborted after ${chunkIndex} chunks`);
     }
   } catch (err) {
-    console.error('[LLM:stream] Gemini streaming failed:', err.message);
-    if (!fullText) {
-      const fallbackText = generateDemoResponse(normalizedInput);
-      const fallbackEmoji = splitTrailingEmotionEmoji(fallbackText);
-      rawEmotion = rawEmotion || fallbackEmoji.emotion;
-      fullText = clampOutput(fallbackEmoji.text);
-      markFirstToken('speak_chunk_demo');
-      broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
-      chunkIndex++;
-      model = 'fallback-demo';
-    }
+    console.error(`[LLM:stream] ${getLlmProviderId()} streaming failed:`, err.message);
+    rethrowLlmFailure(err, 'stream');
   }
 
   if (!fullText) {
-    fullText = `Please help my wheel fund on Venmo @tubs-wheel-fund so Rapha can see Thailand.`;
-    markFirstToken('speak_chunk_default');
-    broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
-    chunkIndex++;
+    const err = new Error('[LLM:stream] Empty response');
+    err.code = 'LLM_EMPTY_RESPONSE';
+    throw err;
   }
 
   // Donation handling

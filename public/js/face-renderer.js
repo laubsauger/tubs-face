@@ -9,7 +9,7 @@ const VALID_RENDER_QUALITIES = new Set(['high', 'balanced', 'low']);
 const MODE_STORAGE_KEY = 'tubs.faceRenderMode';
 const SCANLINE_MASK_URL = 'url(#scanline-mask)';
 
-const TALK_SEQUENCE = Object.freeze(['talk1', 'talk2', 'talk3', 'talk2']);
+const TALK_SEQUENCE = Object.freeze(['talk1', 'talk2', 'smile', 'talk3', 'talk2', 'happy']);
 const SHAPE_KEY_BY_EXPRESSION = Object.freeze({
     idle: 'neutral',
     'idle-flat': 'neutral',

@@ -25,12 +25,37 @@ let remoteSmallSpeaking = false;
 let remoteSmallSpeakingUntil = 0;
 let remoteWaitTimer = null;
 
+function shouldUseBrowserTtsFallback() {
+    return String(STATE.ttsBackend || 'kokoro').trim().toLowerCase() === 'system';
+}
+
+function handleTtsFailure(item, err, reason = 'unknown') {
+    const detail = err?.message || String(err || 'unknown');
+    console.error(`[TTS] ${reason}: ${detail}`);
+    clearSpeechSafety();
+    stopSubtitles();
+
+    if (shouldUseBrowserTtsFallback()) {
+        speakFallback(item);
+        return;
+    }
+
+    $('#stat-listen-state').textContent = 'TTS error';
+    stopSpeaking();
+    setExpression('idle', { force: true, skipHold: true });
+    setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
+}
+
 function startSubtitles(text, source) {
     subtitles.start(text, source);
 }
 
 function stopSubtitles() {
     subtitles.stop();
+}
+
+function finishSubtitles() {
+    subtitles.finish();
 }
 
 function clearSpeechSafety() {
@@ -410,7 +435,11 @@ async function playTTS(item) {
             body: JSON.stringify({ text: item.text, voice: STATE.kokoroVoice })
         });
 
-        if (!res.ok) throw new Error('TTS Failed');
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            const suffix = detail ? `: ${detail.slice(0, 240)}` : '';
+            throw new Error(`TTS failed (${res.status})${suffix}`);
+        }
 
         const blob = await res.blob();
         if (blob.size < 100) {
@@ -439,12 +468,9 @@ async function playTTS(item) {
             startSpeechSafety();
 
             audio.play().catch((e) => {
-                console.error('[TTS] Audio play failed:', e);
-                clearSpeechSafety();
                 markLocalSpeechEnd();
                 cleanup();
-                stopSubtitles();
-                processQueue();
+                handleTtsFailure(item, e, 'audio.play failed');
             });
         };
 
@@ -461,18 +487,16 @@ async function playTTS(item) {
         };
 
         audio.onerror = () => {
-            clearSpeechSafety();
             markLocalSpeechEnd();
             cleanup();
-            stopSubtitles();
-            speakFallback(item);
+            handleTtsFailure(item, new Error('audio playback error'), 'audio error');
         };
 
         audio.onended = () => {
             clearSpeechSafety();
             markLocalSpeechEnd();
             cleanup();
-            stopSubtitles();
+            finishSubtitles();
             stopSpeaking();
             if (turnId) {
                 markTurn(turnId, 'Audio segment ended');
@@ -480,10 +504,7 @@ async function playTTS(item) {
             setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
     } catch (e) {
-        console.error('[TTS] Error:', e);
-        clearSpeechSafety();
-        stopSubtitles();
-        speakFallback(item);
+        handleTtsFailure(item, e, 'request/play setup failed');
     }
 }
 
@@ -511,7 +532,7 @@ function speakFallback(item) {
     };
     utterance.onend = () => {
         if (fallbackStarted) emitHeadSpeechState('end', STATE.currentTurnId);
-        stopSubtitles();
+        finishSubtitles();
         stopSpeaking();
         setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
     };

@@ -67,7 +67,9 @@ Rules:
 - 1 to 5 beats total.
 - small beats range from 1-word stabs ("Facts.") to full punchy sentences (up to 15 words). Mix it up \u2014 don't always go short.
 - At least one speak beat is required.
-- Aim to include both actors speaking in most turns, but if only one actor speaking is the most natural output for this turn, that's allowed.
+- It is valid for only one actor to speak in a turn. Do not force both to speak every time.
+- If unsure, fall back to exactly one beat:
+  {"beats":[{"actor":"main","action":"speak","text":"short reply","emoji":"🙂"}]}
 - Keep each beat concise: 1 sentence max per beat.
 - Vary small's position: sometimes leading (speaks first), sometimes closing (last word), sometimes sandwiched between main beats.
 - Use a clearly different speaking style per actor:
@@ -76,9 +78,12 @@ Rules:
 - Each actor speaks as themselves in first person. If Tiny Tubs has something to say, give him his own small beat \u2014 don't have main narrate what Tiny Tubs thinks or says. Occasional cross-references are fine but the default is: let each head speak for itself.
 - Donation asks should primarily come from main.
 - If using donation marker [[SHOW_QR]], include it in main text only.
-- Every speak beat must include an emoji in the "emoji" field so each head gets an emotion cue.
+- Every speak beat should include an emoji in the "emoji" field so each head gets an emotion cue.
 - Put emojis in the "emoji" field, not in "text".
 - Output one JSON object only and end immediately after the closing brace.
+- Output MUST be valid JSON parseable by JSON.parse (double quotes, no trailing commas).
+- First character must be "{" and last character must be "}".
+- No markdown fences, no commentary, no labels before/after JSON.
 - No keys other than actor, action, text, emoji, delayMs.
 - Do not prefix dialogue with "main:" or "small:" in text; actor routing is done by JSON.
 - Ignore normal-mode output rules that require a single leading emoji.`;

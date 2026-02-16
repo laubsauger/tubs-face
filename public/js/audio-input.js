@@ -7,6 +7,7 @@ import { getWs } from './websocket.js';
 import { captureFrameBase64 } from './vision-capture.js';
 import { perfGauge, perfMark, perfTime } from './perf-hooks.js';
 import { abandonPendingTurn, attachTurnToPending, beginVadTurn, markPendingTurn } from './turn-timing.js';
+import { clearLiveUserTranscript, showLiveUserTranscript } from './live-user-transcript.js';
 
 let myvad = null;
 let vadActive = false;
@@ -37,12 +38,69 @@ let analyser = null;
 let micStream = null;
 let micReady = false;
 let visualizeRafId = null;
-const ECHO_COOLDOWN_MS = 1500; // ignore mic input briefly after TTS ends
+const ECHO_COOLDOWN_MS = 125; // ultra-short echo guard after TTS ends
+const ASSISTANT_AUDIO_MIN_BLOCK_MS = 250;
+let assistantSpeechUntil = 0;
+let speechObserversBound = false;
 
 // Barge-in requires noticeably louder speech than the normal noise gate
 // to filter out background chatter and distant voices
 const BARGE_IN_RMS_FLOOR = 0.03; // absolute minimum RMS for barge-in
 const BARGE_IN_GATE_MULTIPLIER = 4; // barge-in threshold = noise gate × this
+const LiveSpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+let liveSpeechRecognition = null;
+let liveSpeechEnabled = false;
+let liveSpeechShouldRun = false;
+let liveSpeechFinalText = '';
+let lastLiveSpeechCombined = '';
+const MIN_TRANSCRIBE_BLOB_BYTES = 2048;
+const LIVE_PREVIEW_INTERVAL_MS = 700;
+const LIVE_PREVIEW_MIN_BYTES = 1800;
+let livePreviewEnabled = false;
+let livePreviewTimer = null;
+let livePreviewRequestInFlight = false;
+let livePreviewPendingBlob = null;
+let livePreviewSessionId = 0;
+
+function noteAssistantSpeechWindow({ state, ts, durationMs }) {
+    const stateKey = String(state || '').toLowerCase() === 'end' ? 'end' : 'start';
+    const startedAt = Number.isFinite(Number(ts)) ? Number(ts) : Date.now();
+    const parsedDuration = Number(durationMs);
+
+    if (stateKey === 'start') {
+        const durationBlock = Number.isFinite(parsedDuration) && parsedDuration > 0
+            ? parsedDuration + ECHO_COOLDOWN_MS
+            : ASSISTANT_AUDIO_MIN_BLOCK_MS + ECHO_COOLDOWN_MS;
+        assistantSpeechUntil = Math.max(assistantSpeechUntil, startedAt + durationBlock);
+        return;
+    }
+
+    assistantSpeechUntil = Math.max(assistantSpeechUntil, startedAt + ECHO_COOLDOWN_MS);
+}
+
+function bindSpeechObservers() {
+    if (speechObserversBound) return;
+    speechObserversBound = true;
+
+    const onSpeechState = (event) => {
+        const detail = event?.detail || {};
+        noteAssistantSpeechWindow({
+            state: detail.state,
+            ts: detail.ts,
+            durationMs: detail.durationMs,
+        });
+    };
+
+    window.addEventListener('tubs:head-speech-state', onSpeechState);
+    window.addEventListener('tubs:head-speech-observed', onSpeechState);
+}
+
+function isAssistantAudioActive(now = Date.now()) {
+    if (STATE.speaking) return true;
+    if (now < assistantSpeechUntil) return true;
+    if (now - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) return true;
+    return false;
+}
 
 export function isVadActive() {
     return vadActive;
@@ -60,7 +118,14 @@ export async function initMicrophone() {
 
     try {
         logChat('sys', 'Requesting microphone access...');
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        bindSpeechObservers();
+        micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                echoCancellation: true,
+                noiseSuppression: true,
+                autoGainControl: true,
+            },
+        });
         audioContext = new AudioContext();
         const source = audioContext.createMediaStreamSource(micStream);
         analyser = audioContext.createAnalyser();
@@ -91,6 +156,167 @@ export async function initMicrophone() {
     }
 }
 
+function initLiveSpeechRecognition() {
+    if (!LiveSpeechRecognition || liveSpeechRecognition) return;
+
+    try {
+        const rec = new LiveSpeechRecognition();
+        rec.lang = 'en-US';
+        rec.continuous = true;
+        rec.interimResults = true;
+        rec.maxAlternatives = 1;
+
+        rec.onresult = (event) => {
+            if (!liveSpeechShouldRun) return;
+            if (isAssistantAudioActive()) return;
+            if (livePreviewEnabled) {
+                setLivePreviewEnabled(false);
+            }
+
+            let interimText = '';
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const result = event.results[i];
+                const candidate = result?.[0]?.transcript ? String(result[0].transcript).trim() : '';
+                if (!candidate) continue;
+                if (result.isFinal) {
+                    liveSpeechFinalText = `${liveSpeechFinalText} ${candidate}`.trim();
+                } else {
+                    interimText = `${interimText} ${candidate}`.trim();
+                }
+            }
+
+            const combined = `${liveSpeechFinalText} ${interimText}`.trim();
+            if (!combined || combined === lastLiveSpeechCombined) return;
+            lastLiveSpeechCombined = combined;
+            showLiveUserTranscript(combined, { draft: true });
+        };
+
+        rec.onerror = (event) => {
+            const err = String(event?.error || '').toLowerCase();
+            if (err === 'not-allowed' || err === 'service-not-allowed') {
+                liveSpeechEnabled = false;
+                setLivePreviewEnabled(true);
+                return;
+            }
+            // Recoverable errors are ignored; onend handler will restart if needed.
+        };
+
+        rec.onend = () => {
+            if (!liveSpeechShouldRun || !liveSpeechEnabled) return;
+            try {
+                rec.start();
+            } catch {
+                // ignore rapid restart race
+            }
+        };
+
+        liveSpeechRecognition = rec;
+        liveSpeechEnabled = true;
+    } catch (err) {
+        liveSpeechRecognition = null;
+        liveSpeechEnabled = false;
+    }
+}
+
+async function sendLivePreviewBlob(blob, sessionId) {
+    if (!blob || blob.size < LIVE_PREVIEW_MIN_BYTES) return;
+    if (isAssistantAudioActive()) return;
+    if (livePreviewRequestInFlight) {
+        livePreviewPendingBlob = blob;
+        return;
+    }
+
+    livePreviewRequestInFlight = true;
+    try {
+        const res = await fetch('/voice/preview', {
+            method: 'POST',
+            body: blob,
+            headers: {
+                'Content-Type': blob.type || 'audio/webm',
+            },
+        });
+        if (!res.ok) return;
+
+        const data = await res.json();
+        if (!liveSpeechShouldRun || livePreviewSessionId !== sessionId) return;
+        const text = String(data?.text || '').trim();
+        if (!text || text === lastLiveSpeechCombined) return;
+        lastLiveSpeechCombined = text;
+        showLiveUserTranscript(text, { draft: true });
+    } catch {
+        // best-effort fallback; keep UI responsive if preview request fails
+    } finally {
+        livePreviewRequestInFlight = false;
+        const pending = livePreviewPendingBlob;
+        livePreviewPendingBlob = null;
+        if (pending && liveSpeechShouldRun && livePreviewSessionId === sessionId) {
+            void sendLivePreviewBlob(pending, sessionId);
+        }
+    }
+}
+
+function setLivePreviewEnabled(enabled) {
+    const next = Boolean(enabled);
+    if (next === livePreviewEnabled) return;
+    livePreviewEnabled = next;
+
+    if (!livePreviewEnabled) {
+        if (livePreviewTimer) {
+            clearInterval(livePreviewTimer);
+            livePreviewTimer = null;
+        }
+        livePreviewSessionId += 1;
+        livePreviewRequestInFlight = false;
+        livePreviewPendingBlob = null;
+        return;
+    }
+
+    livePreviewSessionId += 1;
+    const sessionId = livePreviewSessionId;
+    livePreviewRequestInFlight = false;
+    livePreviewPendingBlob = null;
+    if (livePreviewTimer) {
+        clearInterval(livePreviewTimer);
+    }
+    livePreviewTimer = setInterval(() => {
+        if (!liveSpeechShouldRun || !livePreviewEnabled) return;
+        if (!chunkRecorderChunks.length) return;
+        const previewBlob = new Blob(chunkRecorderChunks, { type: 'audio/webm' });
+        void sendLivePreviewBlob(previewBlob, sessionId);
+    }, LIVE_PREVIEW_INTERVAL_MS);
+}
+
+function startLiveSpeechTranscript() {
+    if (isAssistantAudioActive()) return;
+    initLiveSpeechRecognition();
+    liveSpeechShouldRun = true;
+    liveSpeechFinalText = '';
+    lastLiveSpeechCombined = '';
+    clearLiveUserTranscript();
+    setLivePreviewEnabled(true);
+    if (!liveSpeechEnabled || !liveSpeechRecognition) return;
+    try {
+        liveSpeechRecognition.start();
+    } catch {
+        // ignore re-entrancy
+    }
+}
+
+function stopLiveSpeechTranscript({ keepVisible = true } = {}) {
+    liveSpeechShouldRun = false;
+    setLivePreviewEnabled(false);
+    if (liveSpeechRecognition) {
+        try {
+            liveSpeechRecognition.stop();
+        } catch {
+            // ignore stop race
+        }
+    }
+    if (!keepVisible) {
+        clearLiveUserTranscript();
+    }
+}
+
 export async function initVAD() {
     if (myvad) {
         console.log('[VAD] Already initialized, skipping.');
@@ -104,10 +330,14 @@ export async function initVAD() {
             ort.env.logLevel = 'error';
         }
 
+        bindSpeechObservers();
         myvad = await vad.MicVAD.new({
             onSpeechStart: () => {
                 if (!vadActive || STATE.sleeping) return;
-                if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) return;
+                if (isAssistantAudioActive()) {
+                    console.log('[VAD] Ignoring speech start — assistant audio active (echo guard)');
+                    return;
+                }
 
                 // Barge-in: user starts speaking while Tubs is talking.
                 // Requires sustained LOUD speech to confirm — background chatter
@@ -151,6 +381,7 @@ export async function initVAD() {
                 const statState = $('#stat-listen-state');
                 if (statState) statState.textContent = 'Listening...';
                 setExpression('listening');
+                startLiveSpeechTranscript();
                 startInterruptionTimer();
                 startMaxChunkTimer();
             },
@@ -158,19 +389,16 @@ export async function initVAD() {
                 if (interrupted) {
                     console.log('Ignoring VAD speech end (already interrupted)');
                     interrupted = false;
+                    stopLiveSpeechTranscript();
                     clearMaxChunkTimer();
                     return;
                 }
+                stopLiveSpeechTranscript();
                 clearInterruptionTimer();
                 clearMaxChunkTimer();
                 if (!vadActive || STATE.sleeping) return;
-                // Don't process audio while Tubs is speaking — it's likely echo
-                if (STATE.speaking) {
-                    console.log('[VAD] Ignoring speech end — Tubs is speaking (likely echo)');
-                    return;
-                }
-                if (Date.now() - STATE.speakingEndedAt < ECHO_COOLDOWN_MS) {
-                    console.log('[VAD] Ignoring speech end — echo cooldown');
+                if (isAssistantAudioActive()) {
+                    console.log('[VAD] Ignoring speech end — assistant audio active (echo guard)');
                     setExpression('idle');
                     return;
                 }
@@ -185,6 +413,7 @@ export async function initVAD() {
             },
             onVADMisfire: () => {
                 if (bargeInTimer) { clearTimeout(bargeInTimer); bargeInTimer = null; bargeInCount = 0; }
+                stopLiveSpeechTranscript({ keepVisible: false });
                 clearInterruptionTimer();
                 clearMaxChunkTimer();
                 console.log('VAD Misfire');
@@ -236,6 +465,7 @@ function applyVadToggleState(enabled, { silent = false } = {}) {
     }
 
     if (!silent) logChat('sys', 'Always On: DISABLED');
+    stopLiveSpeechTranscript({ keepVisible: false });
     pttIndicator.textContent = 'Hold Space to Talk';
     waveformContainer.classList.remove('active');
     $('#stat-listen-state').textContent = 'Idle';
@@ -252,6 +482,7 @@ export function setInputMuted(muted) {
     if (!nextMuted) return;
 
     setAlwaysOnEnabled(false, { silent: true });
+    stopLiveSpeechTranscript({ keepVisible: false });
     clearInterruptionTimer();
     clearMaxChunkTimer();
     interrupted = false;
@@ -312,6 +543,7 @@ async function processVadAudio(float32Array, traceId = null) {
         const statState = $('#stat-listen-state');
         if (statState) statState.textContent = 'Idle';
         setExpression('idle');
+        clearLiveUserTranscript();
         perfTime('vad_process_ms', performance.now() - t0);
         return;
     }
@@ -327,6 +559,13 @@ async function sendVoiceSegment(blob, traceId = null) {
     if (STATE.muted) return;
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
+        return;
+    }
+    if (isAssistantAudioActive()) {
+        if (traceId) {
+            abandonPendingTurn(traceId, 'No turn (assistant echo guard)');
+        }
+        console.log('[Audio] Skipping segment upload — assistant audio active (echo guard)');
         return;
     }
 
@@ -369,6 +608,7 @@ async function sendVoiceSegment(blob, traceId = null) {
                 abandonPendingTurn(traceId, 'No turn (segment ignored)');
             }
             console.log(`[Segment] Ignored: "${data.text}"`);
+            clearLiveUserTranscript();
             if (statState) statState.textContent = 'Idle';
             if (!data.text || !data.wake) setExpression('idle');
         }
@@ -376,6 +616,7 @@ async function sendVoiceSegment(blob, traceId = null) {
         if (traceId) {
             abandonPendingTurn(traceId, 'No turn (segment upload failed)');
         }
+        clearLiveUserTranscript();
         console.error('[Audio] Segment send failed:', err);
     } finally {
         perfTime('voice_segment_http_ms', performance.now() - t0);
@@ -436,6 +677,10 @@ function startInterruptionTimer() {
             interruptionRecorder.onstop = () => {
                 if (interrupted) {
                     const blob = new Blob(interruptionChunks, { type: 'audio/webm' });
+                    if (blob.size < MIN_TRANSCRIBE_BLOB_BYTES) {
+                        console.log(`[VAD] Interruption blob too small (${blob.size} bytes) — skipping upload`);
+                        return;
+                    }
                     console.log('[VAD] Interruption triggered! Sending audio...');
                     sendVoice(blob, true);
 
@@ -452,7 +697,7 @@ function startInterruptionTimer() {
     }
 
     interruptionTimer = setTimeout(() => {
-        if (!vadActive || STATE.speaking) {
+        if (!vadActive || isAssistantAudioActive()) {
             // Tubs is talking — don't interrupt ourselves
             clearInterruptionTimer();
             return;
@@ -499,14 +744,14 @@ function startMaxChunkTimer() {
             chunkRecorder.ondataavailable = (e) => {
                 if (e.data.size > 0) chunkRecorderChunks.push(e.data);
             };
-            chunkRecorder.start();
+            chunkRecorder.start(250);
         } catch (e) {
             console.error('[VAD] Failed to start chunk recorder:', e);
         }
     }
 
     maxChunkTimer = setTimeout(() => {
-        if (!vadActive || STATE.speaking || STATE.sleeping) {
+        if (!vadActive || isAssistantAudioActive() || STATE.sleeping) {
             clearMaxChunkTimer();
             return;
         }
@@ -520,6 +765,11 @@ function startMaxChunkTimer() {
             recorder.onstop = () => {
                 if (chunkRecorderChunks.length > 0) {
                     const blob = new Blob(chunkRecorderChunks, { type: 'audio/webm' });
+                    if (blob.size < MIN_TRANSCRIBE_BLOB_BYTES) {
+                        console.log(`[VAD] Force-flush blob too small (${blob.size} bytes) — skipping upload`);
+                        chunkRecorderChunks = [];
+                        return;
+                    }
                     console.log(`[VAD] Force-flushed ${Math.round(blob.size / 1024)}KB of audio`);
                     sendVoice(blob, true);
                 }
@@ -585,6 +835,7 @@ export function startRecording() {
     };
 
     mediaRecorder.start();
+    startLiveSpeechTranscript();
     STATE.recording = true;
     pttIndicator.textContent = '● Recording';
     pttIndicator.classList.remove('mic-ready');
@@ -599,6 +850,7 @@ export function startRecording() {
 
 export function stopRecording() {
     if (!STATE.recording) return;
+    stopLiveSpeechTranscript();
     STATE.recording = false;
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
@@ -640,8 +892,22 @@ function startVisualize() {
 async function sendVoice(blob, isVad = false, traceId = null) {
     const t0 = performance.now();
     if (STATE.muted) return;
+    if (!blob || blob.size < MIN_TRANSCRIBE_BLOB_BYTES) {
+        if (traceId) {
+            abandonPendingTurn(traceId, 'No turn (audio too short)');
+        }
+        console.log(`[Audio] Skipping tiny voice upload (${blob?.size || 0} bytes)`);
+        return;
+    }
     if (!STATE.connected) {
         logChat('sys', 'Not connected — voice not sent');
+        return;
+    }
+    if (isAssistantAudioActive()) {
+        if (traceId) {
+            abandonPendingTurn(traceId, 'No turn (assistant echo guard)');
+        }
+        console.log('[Audio] Skipping voice upload — assistant audio active (echo guard)');
         return;
     }
 
@@ -702,6 +968,7 @@ async function sendVoice(blob, isVad = false, traceId = null) {
             if (traceId) {
                 abandonPendingTurn(traceId, 'No turn (voice ignored)');
             }
+            clearLiveUserTranscript();
             $('#stat-listen-state').textContent = 'Idle';
             setExpression('idle');
         }
@@ -710,6 +977,7 @@ async function sendVoice(blob, isVad = false, traceId = null) {
         if (traceId) {
             abandonPendingTurn(traceId, 'No turn (voice upload failed)');
         }
+        clearLiveUserTranscript();
         console.error('[Audio] Send failed:', err);
         logChat('sys', '⚠️ Voice upload failed');
     } finally {

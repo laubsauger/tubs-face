@@ -30,3 +30,4 @@ release
 thumbnails/
 venv
 mlx_models
+.openwebui-data

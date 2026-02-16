@@ -153,11 +153,13 @@ export function onBlink(listener) {
 
 export function startSpeaking() {
     face.classList.add('speaking');
+    face.classList.toggle('speaking-smile', Math.random() < 0.42);
     setFaceRendererSpeaking(true);
 }
 
 export function stopSpeaking() {
     face.classList.remove('speaking');
+    face.classList.remove('speaking-smile');
     setFaceRendererSpeaking(false);
 }
 

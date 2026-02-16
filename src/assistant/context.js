@@ -235,6 +235,10 @@ function buildSystemInstruction() {
   }
 
   promptSections.push(
+    'Language policy: respond in natural spoken English by default. Only switch language if the user explicitly asks for another language.'
+  );
+
+  promptSections.push(
     [
       'Face emoji: start every reply with exactly one emoji from this set, then a space, then text.',
       'Example: "\u{1F60F} You really thought you could walk past me?"',
