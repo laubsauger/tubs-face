@@ -319,6 +319,22 @@
   color: var(--msg-out);
 }
 
+.chat-msg.out.actor-small .content {
+  color: var(--purple);
+}
+
+.chat-msg.out.actor-small .ts::after {
+  content: ' tiny';
+  margin-left: 4px;
+  padding: 1px 4px;
+  border: 1px solid rgba(179, 136, 255, 0.55);
+  border-radius: 999px;
+  color: #cfb7ff;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .chat-msg.sys .content {
   color: var(--msg-sys);
 }

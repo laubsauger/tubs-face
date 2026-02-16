@@ -22,6 +22,7 @@ Open `http://localhost:3000` in your browser.
   - TTS: Kokoro (`REALTIME_TTS_BACKEND=kokoro`, voice from `KOKORO_VOICE` / `REALTIME_KOKORO_VOICE`)
   - LLM: Ollama-compatible chat API (`REALTIME_LLM_PROVIDER=ollama`, `REALTIME_LLM_BASE_URL`)
   - Required: `REALTIME_LLM_MODEL` must be set to an installed model from `ollama list`
+  - Optional: `DUAL_HEAD_LLM_MODEL` for dedicated dual-head script generation (recommended when your main conversational model is weak at strict JSON)
 
 ### LLM Benchmarking
 

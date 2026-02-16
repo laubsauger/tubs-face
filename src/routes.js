@@ -418,13 +418,25 @@ function handleRequest(req, res) {
 
       const audioBuffer = Buffer.concat(body);
       console.log(`[Segment] Received ${audioBuffer.length} bytes`);
+      const startedWithoutActiveTurn = !activeTurn;
+      const provisionalTurnId = startedWithoutActiveTurn ? crypto.randomBytes(6).toString('hex') : null;
+      const provisionalTurnTimer = startedWithoutActiveTurn
+        ? createTurnTimer({ side: 'backend', source: 'voice-segment', turnId: provisionalTurnId })
+        : null;
+      if (provisionalTurnTimer) {
+        provisionalTurnTimer.mark('First segment received');
+      }
 
       try {
+        (activeTurn?.turnTimer || provisionalTurnTimer)?.mark('STT started');
         const result = await transcribeAudio(audioBuffer, req.headers['content-type']);
+        (activeTurn?.turnTimer || provisionalTurnTimer)?.mark('STT completed');
         const text = result.text?.trim();
         console.log(`[Segment] Transcribed: "${text}"`);
 
         if (!text || FILLER_RE.test(text)) {
+          provisionalTurnTimer?.mark('Ignored (empty/filler)');
+          provisionalTurnTimer?.log({ title: '[Turn Timing]' });
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, ignored: true, text }));
           return;
@@ -436,6 +448,8 @@ function handleRequest(req, res) {
           const wake = detectWakeWord(text);
           if (!wake.detected && !inConversation) {
             console.log('[Segment] Wake word not detected, not in conversation — ignoring.');
+            provisionalTurnTimer?.mark('Ignored (wake word missing)');
+            provisionalTurnTimer?.log({ title: '[Turn Timing]' });
             broadcast({ type: 'expression', expression: 'idle' });
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true, ignored: true, text, wake }));
@@ -445,9 +459,11 @@ function handleRequest(req, res) {
 
         // Create or extend active turn
         if (!activeTurn) {
-          const turnId = crypto.randomBytes(6).toString('hex');
-          const turnTimer = createTurnTimer({ side: 'backend', source: 'voice-segment', turnId });
-          turnTimer.mark('First segment received');
+          const turnId = provisionalTurnId || crypto.randomBytes(6).toString('hex');
+          const turnTimer = provisionalTurnTimer || createTurnTimer({ side: 'backend', source: 'voice-segment', turnId });
+          if (!provisionalTurnTimer) {
+            turnTimer.mark('First segment received');
+          }
           activeTurn = {
             turnId,
             segments: [],
@@ -789,6 +805,23 @@ function handleRequest(req, res) {
         res.end(JSON.stringify({ error: e.message }));
       }
     });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/greetings') {
+    const greetingsPath = path.join(__dirname, 'persona/greetings.json');
+    try {
+      if (fs.existsSync(greetingsPath)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        fs.createReadStream(greetingsPath).pipe(res);
+      } else {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Greetings not found' }));
+      }
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: e.message }));
+    }
     return;
   }
 

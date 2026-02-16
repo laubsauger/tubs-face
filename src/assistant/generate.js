@@ -14,7 +14,6 @@ const {
   clampOutput,
   estimateTokens,
   estimateCostUsd,
-  rescueTextFromJson,
 } = require('./text');
 const {
   splitTrailingEmotionEmoji,
@@ -42,7 +41,6 @@ const {
 } = require('./context');
 const {
   shouldUseDualHeadDirectedMode,
-  buildDualHeadSystemInstruction,
   parseDualHeadScript,
   rescueBeatsFromRawText,
   hasRequiredDualHeadCoverage,
@@ -92,6 +90,12 @@ const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|addition
 const PERSONA_MARKER_RE = /\b(tubs|rapha|wheel|wheels|venmo|thailand|robot|plastic tubs?)\b/i;
 const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
 const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+const DUAL_HEAD_LLM_MODEL = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim();
+const DUAL_HEAD_TEMPERATURE = (() => {
+  const parsed = Number.parseFloat(String(process.env.DUAL_HEAD_TEMPERATURE || '').trim());
+  if (!Number.isFinite(parsed)) return 0.25;
+  return Math.max(0, Math.min(1.2, parsed));
+})();
 
 function isPersonaDrift(text) {
   const normalized = normalizeInput(text).toLowerCase();
@@ -123,6 +127,10 @@ function stripOuterQuotes(text) {
     .replace(/^["'`]+/, '')
     .replace(/["'`]+$/, '')
     .trim();
+}
+
+function resolveDualHeadModel() {
+  return DUAL_HEAD_LLM_MODEL || runtimeConfig.llmModel;
 }
 
 async function maybeRepairPersonaDrift({
@@ -345,10 +353,11 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
     'PROACTIVE: You are starting conversation unprompted. ' + context + '\n' +
     'One punchy sentence from main. Small head should chime in with something creative \u2014 a roast, a jab, an unhinged observation. Tiny Tubs has no filter.';
 
-  const systemInst = buildDualHeadSystemInstruction(buildSystemInstruction()) + '\n\n' + proactiveAddendum;
+  const systemInst = buildSystemInstruction('dual-script') + '\n\n' + proactiveAddendum;
   const contents = buildProactiveContents();
 
-  let model = runtimeConfig.llmModel;
+  const dualModel = resolveDualHeadModel();
+  let model = dualModel;
   let usageIn = 0;
   let usageOut = 0;
   let script;
@@ -358,11 +367,11 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
   try {
     const llmResult = await generateLlmContent({
       auth: authState.auth || null,
-      model: runtimeConfig.llmModel,
+      model: dualModel,
       systemInstruction: systemInst,
       contents,
       maxOutputTokens: dualMaxOutputTokens,
-      temperature: 0.45,
+      temperature: DUAL_HEAD_TEMPERATURE,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
@@ -551,7 +560,7 @@ async function generateDualHeadDirectedReply({
   const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
   const mode = useVision ? 'vision' : useAppearance ? 'appearance' : 'text';
 
-  let systemInst = buildDualHeadSystemInstruction(buildSystemInstruction());
+  let systemInst = buildSystemInstruction('dual-script');
   if (useVision) {
     systemInst += '\n\n' + VISION_SYSTEM_ADDENDUM;
   } else if (useAppearance) {
@@ -566,11 +575,11 @@ async function generateDualHeadDirectedReply({
   };
   emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
 
-  let model = runtimeConfig.llmModel;
+  const dualModel = resolveDualHeadModel();
+  let model = dualModel;
   let usageIn = 0;
   let usageOut = 0;
   let script;
-  let degradedScript = false;
   let llmRawText = '';
   const llmStartAt = Date.now();
   let llmEndAt = null;
@@ -579,11 +588,11 @@ async function generateDualHeadDirectedReply({
   try {
     const llmResult = await generateLlmContent({
       auth: auth || null,
-      model: runtimeConfig.llmModel,
+      model: dualModel,
       systemInstruction: systemInst,
       contents: contentBundle.contents,
       maxOutputTokens: dualMaxOutputTokens,
-      temperature: 0.45,
+      temperature: DUAL_HEAD_TEMPERATURE,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
@@ -614,31 +623,17 @@ async function generateDualHeadDirectedReply({
     }
   }
   if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
-    const rescuedText = clampOutput(stripDonationMarkers(stripFormatting(rescueTextFromJson(llmRawText))));
-    if (rescuedText) {
-      degradedScript = true;
-      script = {
-        beats: [
-          {
-            actor: 'main',
-            action: 'speak',
-            text: rescuedText,
-            emotion: defaultDualHeadSpeakEmotion('main'),
-          },
-        ],
-      };
-      console.warn('[LLM:dual] Invalid script from model; degrading to single-beat turn_script (no extra LLM call).');
-      if (typeof broadcast === 'function') {
-        broadcast({
-          type: 'system',
-          text: '[LLM:dual] Invalid turn_script from model; degraded to one main beat (no retry).',
-        });
-      }
-    } else {
-      const err = new Error('[LLM:dual] No valid dual-head script returned by LLM.');
-      err.code = 'DUAL_HEAD_SCRIPT_INVALID';
-      throw err;
+    const preview = normalizeInput(stripFormatting(String(llmRawText || ''))).slice(0, 180);
+    const err = new Error('[LLM:dual] No valid dual-head script returned by LLM.');
+    err.code = 'DUAL_HEAD_SCRIPT_INVALID';
+    err.rawPreview = preview;
+    if (typeof broadcast === 'function') {
+      broadcast({
+        type: 'system',
+        text: `[LLM:dual] Invalid turn_script from model; strict fail (no fallback). Preview: "${preview || '[empty]'}"`,
+      });
     }
+    throw err;
   }
 
   const merged = mergeDonationSignalFromBeats(script.beats);
@@ -688,7 +683,7 @@ async function generateDualHeadDirectedReply({
 
   return {
     text: fullText,
-    source: degradedScript ? 'llm-dual-head-degraded' : 'llm-dual-head',
+    source: 'llm-dual-head',
     model,
     tokens: { in: tokensIn, out: tokensOut },
     costUsd,

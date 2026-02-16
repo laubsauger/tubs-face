@@ -46,7 +46,8 @@ function normalizeText(input) {
 }
 
 function loadSystemPrompt() {
-  return readTextFile(systemPromptPath, DEFAULT_SYSTEM_PROMPT);
+  const mdPath = path.join(personaDir, 'system-prompt.md');
+  return readTextFile(mdPath, DEFAULT_SYSTEM_PROMPT);
 }
 
 function loadGreetingConfig() {

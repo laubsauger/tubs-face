@@ -218,35 +218,73 @@ function emitTurnContextMeta({ turnId, broadcast, timingHooks, meta }) {
 }
 
 // ── System prompt ──
-function buildSystemInstruction() {
-  const promptSections = [loadSystemPrompt()];
+// ── System prompt ──
+function buildSystemInstruction(mode = 'text') {
+  const template = loadSystemPrompt();
+
+  // --- New Template Logic ---
+  let prompt = template;
+  const isDualScript = mode === 'dual-script' && isDualHeadActive();
+  const isDualActive = isDualHeadActive();
+
+  prompt = prompt.replace('{{MODE_SUFFIX}}', isDualActive ? '(Dual-Head Mode)' : '');
+
+  const charDynamics = isDualActive
+    ? `- Main (Voice A): The "Face." Philosophical but broke. Mission-forward. Charming yet slightly desperate.\n- Small (Voice B): The "Id" (Tiny Tubs). Unfiltered, savage, and chaotic. He’s the one who’s been "watching telly" and hates everyone. Short, punchy jabs.`
+    : `You are Tubs. Smart, sarcastic, and broke. Unhinged standup comic energy.`;
+  prompt = prompt.replace('{{CHARACTER_DYNAMICS}}', charDynamics);
+
+  prompt = prompt.replace('{{VISION_PROTOCOL_SECTION}}',
+    `# VISION PROTOCOL\nReact to what you see (clothing, vibe, objects) like a real person. Don't describe the image; roast the fit or guess their "Ultimate Question" based on their look.`);
+
+  const brevity = isDualActive
+    ? `Main gets 1-2 sentences. Small gets 1-word stabs to punchy one-liners.`
+    : `Keep it to 1-2 sentences. Brevity IS the personality.`;
+  prompt = prompt.replace('{{BREVITY_RULE}}', brevity);
+
   const runtimePrompt = normalizeInput(runtimeConfig.prompt);
   if (runtimePrompt && runtimePrompt.toLowerCase() !== 'default personality') {
-    promptSections.push(`Additional runtime instruction:\n${runtimePrompt}`);
+    prompt = prompt.replace('{{RUNTIME_INSTRUCTION}}', `# ADDITIONAL INSTRUCTION\n${runtimePrompt}`);
+  } else {
+    prompt = prompt.replace('{{RUNTIME_INSTRUCTION}}', '');
   }
 
-  if (isDualHeadActive()) {
-    promptSections.push(`Two-head awareness:\n${buildTwoHeadAwarenessInstruction()}`);
+  const memory = getMemoryContextText();
+  if (memory) {
+    prompt = prompt.replace('{{MEMORY_CONTEXT}}', `# MEMORY\n${memory}`);
+  } else {
+    prompt = prompt.replace('{{MEMORY_CONTEXT}}', '');
   }
 
-  const memoryContext = getMemoryContextText();
-  if (memoryContext) {
-    promptSections.push(`Known user facts:\n${memoryContext}`);
-  }
+  const outputHeader = isDualScript ? '(STRICT JSON ONLY)' : '(Text Only)';
 
-  promptSections.push(
-    'Language policy: respond in natural spoken English by default. Only switch language if the user explicitly asks for another language.'
-  );
+  // Dual Script Rules
+  const dualOutputInst = `Return STRICT JSON only. No markdown, no prose.
+Schema:
+{
+  "beats": [
+    { "actor": "main|small", "action": "speak|react", "text": "string", "emoji": "one of \u{1F642}\u{1F604}\u{1F60F}\u{1F97A}\u{1F622}\u{1F624}\u{1F916}\u{1FAF6}", "delayMs": 200 }
+  ]
+}
 
-  promptSections.push(
-    [
-      'Face emoji: start every reply with exactly one emoji from this set, then a space, then text.',
-      'Example: "\u{1F60F} You really thought you could walk past me?"',
-      ...EMOJI_GUIDE_LINES.map((line) => `  ${line}`),
-      'One emoji, first character only, no emoji elsewhere.',
-    ].join('\n')
-  );
-  return promptSections.join('\n\n');
+Rules:
+- 1 to 5 beats total.
+- Small beats range from 1-word stabs ("Facts.") to punchy sentences.
+- At least one speak beat is required.
+- "emoji" field is required for every speak beat; do NOT put emojis in the "text" field.
+- Do not prefix dialogue with "main:" or "small:" in text.
+- Ignore normal-mode output rules.`;
+
+  // Single Text Rules
+  const singleOutputInst = `Face emoji: start every reply with exactly one emoji from this set, then a space, then text.
+Example: "\u{1F60F} You really thought you could walk past me?"
+${EMOJI_GUIDE_LINES.map(l => '  ' + l).join('\n')}
+One emoji, first character only, no emoji elsewhere.`;
+
+  prompt = prompt.replace('{{OUTPUT_FORMAT_HEADER}}', outputHeader);
+  prompt = prompt.replace('{{OUTPUT_FORMAT_INSTRUCTIONS}}', isDualScript ? dualOutputInst : singleOutputInst);
+
+  return prompt;
 }
 
 // ── Reset ──

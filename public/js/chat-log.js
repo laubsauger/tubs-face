@@ -30,6 +30,13 @@ function normalizeLogText(text) {
     return normalized;
 }
 
+function normalizeActor(actor) {
+    const normalized = String(actor || '').trim().toLowerCase();
+    if (normalized === 'small') return 'small';
+    if (normalized === 'main') return 'main';
+    return '';
+}
+
 function getPrefix(type) {
     return type === 'in' ? '◂' : type === 'out' ? '▸' : '◆';
 }
@@ -57,11 +64,16 @@ function trimChatLogIfNeeded() {
     }
 }
 
-function buildMessageNode(type, ts, safeText, { draft = false } = {}) {
+function buildMessageNode(type, ts, safeText, { draft = false, actor = '' } = {}) {
     const msg = document.createElement('div');
     msg.className = `chat-msg ${type}`;
     msg.dataset.type = type;
     msg.dataset.rawText = safeText;
+    const actorKey = normalizeActor(actor);
+    if (actorKey) {
+        msg.dataset.actor = actorKey;
+        msg.classList.add(`actor-${actorKey}`);
+    }
     if (draft) {
         msg.classList.add('draft');
         msg.dataset.draft = '1';
@@ -82,10 +94,18 @@ function buildMessageNode(type, ts, safeText, { draft = false } = {}) {
     return msg;
 }
 
-function updateMessageNode(node, type, ts, safeText) {
+function updateMessageNode(node, type, ts, safeText, { actor = '' } = {}) {
     if (!node) return;
     node.dataset.rawText = safeText;
     node.dataset.type = type;
+    const actorKey = normalizeActor(actor);
+    if (actorKey) {
+        node.dataset.actor = actorKey;
+        node.classList.add(`actor-${actorKey}`);
+    } else {
+        delete node.dataset.actor;
+        node.classList.remove('actor-main', 'actor-small');
+    }
     const tsEl = node.querySelector('.ts');
     if (tsEl) tsEl.textContent = ts;
     const contentEl = node.querySelector('.content');
@@ -93,7 +113,7 @@ function updateMessageNode(node, type, ts, safeText) {
     node.hidden = !isVisibleForVerbosity(type);
 }
 
-export function logChat(type, text) {
+export function logChat(type, text, options = {}) {
     const ts = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const safeText = normalizeLogText(text);
 
@@ -105,7 +125,7 @@ export function logChat(type, text) {
     }
     updateLastHeard(ts);
 
-    const msg = buildMessageNode(type, ts, safeText);
+    const msg = buildMessageNode(type, ts, safeText, options);
     chatLog.appendChild(msg);
     scheduleScroll();
     trimChatLogIfNeeded();

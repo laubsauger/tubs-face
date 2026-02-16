@@ -414,10 +414,15 @@ export function handleMessage(msg) {
                 });
                 if (timeline.length === 0) break;
                 enqueueTurnScript(timeline, msg.donation || null, msg.turnId || STATE.currentTurnId || null);
-                for (const beat of timeline) {
-                    if (beat?.action !== 'speak' || !beat?.text) continue;
+                const sourceBeats = Array.isArray(msg.beats) && msg.beats.length > 0 ? msg.beats : timeline;
+                for (const beat of sourceBeats) {
+                    const action = String(beat?.action || 'speak').toLowerCase();
+                    if (action !== 'speak') continue;
+                    const text = String(beat?.text || '').trim();
+                    if (!text) continue;
+                    const actor = String(beat?.actor || 'main').toLowerCase() === 'small' ? 'small' : 'main';
                     const emojiTag = beat?.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
-                    logChat('out', emojiTag + beat.text);
+                    logChat('out', `${emojiTag}${text}`, { actor });
                 }
                 STATE.totalMessages++;
                 resetProactiveTimer();

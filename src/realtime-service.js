@@ -17,7 +17,7 @@ function buildRealtimeChildEnv({ sttModel } = {}) {
     runtimeConfig.ttsBackend || process.env.REALTIME_TTS_BACKEND || process.env.TTS_BACKEND || 'kokoro'
   ).trim().toLowerCase();
   const resolvedKokoroVoice = String(
-    runtimeConfig.kokoroVoice || process.env.REALTIME_KOKORO_VOICE || process.env.KOKORO_VOICE || 'am_puck'
+    runtimeConfig.kokoroVoice || process.env.REALTIME_KOKORO_VOICE || process.env.KOKORO_VOICE || 'hm_omega'
   ).trim().toLowerCase();
 
   return {
