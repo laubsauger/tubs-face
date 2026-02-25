@@ -23,7 +23,14 @@ STT_BACKEND = os.environ.get("REALTIME_STT_BACKEND", os.environ.get("STT_BACKEND
 TTS_BACKEND = os.environ.get("REALTIME_TTS_BACKEND", os.environ.get("TTS_BACKEND", "kokoro")).strip().lower()
 KOKORO_VOICE = os.environ.get("REALTIME_KOKORO_VOICE", os.environ.get("KOKORO_VOICE", "hm_omega"))
 LLM_PROVIDER = os.environ.get("REALTIME_LLM_PROVIDER", "ollama").strip().lower()
-LLM_BASE_URL = os.environ.get("REALTIME_LLM_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+def get_ollama_base_url():
+    url = os.environ.get("REALTIME_LLM_BASE_URL", "").strip()
+    if url: return url.rstrip("/")
+    host = os.environ.get("OLLAMA_HOST", "").strip()
+    if host: return (host if host.startswith("http") else "http://" + host).rstrip("/")
+    return "http://127.0.0.1:11434"
+
+LLM_BASE_URL = get_ollama_base_url()
 OPENAI_BASE_URL = os.environ.get("REALTIME_OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MIN_STT_AUDIO_BYTES = int(os.environ.get("REALTIME_MIN_STT_AUDIO_BYTES", "2048"))

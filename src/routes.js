@@ -596,7 +596,7 @@ function handleRequest(req, res) {
     req.on('end', () => {
       const ttsTarget = getTtsProxyTarget();
       const reqOptions = {
-        hostname: ttsTarget.hostname || 'localhost',
+        hostname: ttsTarget.hostname || '127.0.0.1',
         port: ttsTarget.port || 3001,
         path: ttsTarget.path || '/tts',
         method: 'POST',

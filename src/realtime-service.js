@@ -162,7 +162,7 @@ function transcribeAudioRealtime(audioBuffer, mimeType = 'audio/webm') {
 
     const tryRequest = (retries = 10) => {
       const req = http.request({
-        hostname: 'localhost',
+        hostname: '127.0.0.1',
         port: DEFAULT_PORT,
         path: '/transcribe',
         method: 'POST',
@@ -208,7 +208,7 @@ function transcribeAudioRealtime(audioBuffer, mimeType = 'audio/webm') {
 
 function getRealtimeTtsProxyTarget() {
   return {
-    hostname: 'localhost',
+    hostname: '127.0.0.1',
     port: DEFAULT_PORT,
     path: '/tts',
   };

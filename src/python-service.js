@@ -126,7 +126,7 @@ function transcribeAudio(audioBuffer, mimeType = 'audio/webm') {
 
     const tryRequest = (retries = 10) => {
       const req = http.request({
-        hostname: 'localhost',
+        hostname: '127.0.0.1',
         port: 3001,
         path: '/transcribe',
         method: 'POST',

@@ -852,8 +852,6 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
   const authState = resolveLlmAuthState();
   requireLlmAuth(authState, 'stream-auth');
-  const providerId = getLlmProviderId();
-  const shouldBufferBeforeBroadcast = providerId === 'realtime';
 
   if (shouldUseDualHeadDirectedMode()) {
     markLlmStart();
@@ -960,30 +958,12 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       contents: contentBundle.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       temperature: 1,
-      onChunk: shouldBufferBeforeBroadcast ? undefined : (delta) => splitter.push(delta),
+      onChunk: (delta) => splitter.push(delta),
       abortSignal: abortController?.signal,
     });
     console.log(`[LLM:stream] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
 
     let finalText = llmResult.text;
-    if (shouldBufferBeforeBroadcast) {
-      const repaired = await maybeRepairPersonaDrift({
-        draftText: finalText,
-        userInput: normalizedInput,
-        authState,
-        maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
-        phase: 'stream',
-      });
-      if (repaired.repaired) {
-        finalText = repaired.text;
-        rewriteUsageIn += repaired.usageIn;
-        rewriteUsageOut += repaired.usageOut;
-        if (repaired.model) model = repaired.model;
-        console.log(`[LLM:stream] Rewritten (${finalText.length} chars): ${finalText}`);
-      }
-      finalText = clampOutput(finalText);
-      splitter.push(finalText);
-    }
 
     // Flush remaining buffer.
     if (sentenceCount < MAX_OUTPUT_SENTENCES) {
@@ -996,7 +976,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     // If no chunks were emitted (e.g. very short response), emit the whole text once.
     // Important: do not gate this on emotion extraction state, or we can duplicate output.
-    const rawFallbackText = shouldBufferBeforeBroadcast ? finalText : llmResult.text;
+    const rawFallbackText = llmResult.text;
     if (chunkIndex === 0 && rawFallbackText) {
       const rawResText = rawFallbackText;
       if (rawResText.includes(DONATION_MARKER) || DONATION_MARKER_RE.test(rawResText)) {

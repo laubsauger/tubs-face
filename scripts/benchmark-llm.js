@@ -288,7 +288,8 @@ async function main() {
   const timeoutMs = Math.max(1000, Number.parseInt(String(args.timeout_ms || '45000'), 10) || 45000);
   const maxTokens = Math.max(32, Number.parseInt(String(args.max_tokens || '256'), 10) || 256);
   const temperature = Number.isFinite(Number(args.temperature)) ? Number(args.temperature) : 0.2;
-  const ollamaBaseUrl = String(args.ollama_url || process.env.REALTIME_LLM_BASE_URL || 'http://127.0.0.1:11434').replace(/\/$/, '');
+  const systemHost = process.env.OLLAMA_HOST ? (process.env.OLLAMA_HOST.startsWith('http') ? process.env.OLLAMA_HOST : `http://${process.env.OLLAMA_HOST}`) : null;
+  const ollamaBaseUrl = String(args.ollama_url || process.env.REALTIME_LLM_BASE_URL || systemHost || 'http://127.0.0.1:11434').replace(/\/$/, '');
   const realtimeBaseUrl = String(args.realtime_url || `http://127.0.0.1:${process.env.REALTIME_PROCESSING_PORT || 3002}`).replace(/\/$/, '');
   const modeArg = String(args.target || 'all').trim().toLowerCase();
   const allTargets = ['ollama', 'realtime', 'assistant'];
