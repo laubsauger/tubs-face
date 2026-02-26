@@ -38,7 +38,9 @@ const {
   sanitizeContentsForTelemetry,
   emitTurnContextMeta,
   buildSystemInstruction,
+  rememberFact,
 } = require('./context');
+const { generateGeminiContent } = require('../gemini-client');
 const {
   shouldUseDualHeadDirectedMode,
   parseDualHeadScript,
@@ -560,16 +562,40 @@ async function generateDualHeadDirectedReply({
   const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
   const mode = useVision ? 'vision' : useAppearance ? 'appearance' : 'text';
 
+  // Spawn parallel Gemini vision task
+  if (imageToSend) {
+    const prompt = useVision
+      ? "Describe the user's appearance, clothing, objects, and setting based on this image. Be brutal, honest, and very succinct. Do not address them."
+      : "Describe the user's expression, posture, and visible surroundings. Be very succinct.";
+
+    console.log(`[Vision] Spawning background Gemini process for image description...`);
+    generateGeminiContent({
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      contents: [
+        { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageToSend } }] }
+      ],
+      maxOutputTokens: 100,
+    }).then(res => {
+      if (res && res.text) {
+        console.log(`[Vision] Background description ready: ${res.text}`);
+        rememberFact('visual_context', 'Visual Context', res.text);
+      }
+    }).catch(err => {
+      console.error(`[Vision] Background description failed: ${err.message}`);
+    });
+  }
+
   let systemInst = buildSystemInstruction('dual-script');
   if (useVision) {
     systemInst += '\n\n' + VISION_SYSTEM_ADDENDUM;
   } else if (useAppearance) {
     systemInst += '\n\n' + APPEARANCE_SYSTEM_ADDENDUM;
   }
-  const contentBundle = buildContents(normalizedInput, imageToSend, { returnMeta: true });
+  const contentBundle = buildContents(normalizedInput, null, { returnMeta: true });
   const contextMeta = {
     mode,
-    imageAttached: contentBundle.imageAttached,
+    imageAttached: !!imageToSend,
     historyMessages: contentBundle.historyMessages,
     historyChars: contentBundle.historyChars,
   };
@@ -884,6 +910,57 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     if (timingHooks?.onFirstToken) timingHooks.onFirstToken(source);
   };
 
+  const { WebSocket } = require('ws');
+  const { getTtsProxyTarget } = require('../processing/mode-manager');
+  const proxyTarget = getTtsProxyTarget();
+  let ttsWs = null;
+  let ttsWsReady = false;
+  let pendingTtsSentences = 0;
+  let llmDoneEventFired = false;
+
+  const useTtsStreaming = runtimeConfig.ttsStreamingEnabled;
+
+  function checkCloseWs() {
+    if (llmDoneEventFired && pendingTtsSentences === 0 && ttsWs && ttsWs.readyState === WebSocket.OPEN) {
+      ttsWs.close();
+    }
+  }
+
+  if (useTtsStreaming) {
+    try {
+      ttsWs = new WebSocket(`ws://${proxyTarget.hostname}:${proxyTarget.port}/tts/stream`);
+      ttsWs.on('open', () => { ttsWsReady = true; });
+      ttsWs.on('message', (data) => {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.error) {
+            console.error('[TTS WS] Error:', msg.error);
+            return;
+          }
+          if (msg.chunk && msg.audio) {
+            broadcast({
+              type: 'audio_chunk',
+              audio: msg.audio,
+              text: msg.text,
+              turnId,
+              chunkIndex: 0,
+            });
+          }
+          if (msg.done) {
+            pendingTtsSentences--;
+            checkCloseWs();
+          }
+        } catch (e) { }
+      });
+      ttsWs.on('error', (e) => {
+        console.warn('[TTS WS] Error:', e.message);
+        ttsWsReady = false;
+      });
+    } catch (e) {
+      console.warn('[TTS WS] Failed to create socket:', e.message);
+    }
+  }
+
   const splitter = createSentenceSplitter((sentence) => {
     if (sentenceCount >= MAX_OUTPUT_SENTENCES) return;
 
@@ -907,8 +984,15 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     sentenceCount++;
     fullText += (fullText ? ' ' : '') + text;
-    markFirstToken('speak_chunk');
-    broadcast({ type: 'speak_chunk', text, chunkIndex, turnId });
+
+    if (ttsWsReady && ttsWs.readyState === WebSocket.OPEN) {
+      markFirstToken('audio_chunk');
+      pendingTtsSentences++;
+      ttsWs.send(JSON.stringify({ text, voice: runtimeConfig.kokoroVoice }));
+    } else {
+      markFirstToken('speak_chunk');
+      broadcast({ type: 'speak_chunk', text, chunkIndex, turnId });
+    }
     chunkIndex++;
   });
 
@@ -924,24 +1008,53 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   const useAppearance = !useVision && appearanceFrame?.data;
   const imageToSend = useVision ? frame : useAppearance ? appearanceFrame.data : null;
   const mode = useVision ? 'vision' : useAppearance ? 'appearance' : 'text';
-  const contentBundle = buildContents(normalizedInput, imageToSend, { returnMeta: true });
+
+  // Spawn parallel Gemini vision task
+  if (imageToSend) {
+    const prompt = useVision
+      ? "Describe the user's appearance, clothing, objects, and setting based on this image. Be brutal, honest, and very succinct. Do not address them."
+      : "Describe the user's expression, posture, and visible surroundings. Be very succinct.";
+
+    console.log(`[Vision] Spawning background Gemini process for image description...`);
+    generateGeminiContent({
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      contents: [
+        { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageToSend } }] }
+      ],
+      maxOutputTokens: 100,
+    }).then(res => {
+      if (res && res.text) {
+        console.log(`[Vision] Background description ready: ${res.text}`);
+        rememberFact('visual_context', 'Visual Context', res.text);
+      }
+    }).catch(err => {
+      console.error(`[Vision] Background description failed: ${err.message}`);
+    });
+  }
+
+  // Build contents without the image for the main LLM call
+  // This ensures text-only models like ollama don't fail, 
+  // while we still rely on the injected background memory for vision.
+  const contentBundle = buildContents(normalizedInput, null, { returnMeta: true });
   contextMeta = {
     mode,
-    imageAttached: contentBundle.imageAttached,
+    imageAttached: !!imageToSend,
     historyMessages: contentBundle.historyMessages,
     historyChars: contentBundle.historyChars,
   };
   emitTurnContextMeta({ turnId, broadcast, timingHooks, meta: contextMeta });
 
   if (useVision) {
-    console.log('[Vision] Intent detected \u2014 including camera frame in LLM request');
+    console.log('[Vision] Intent detected \u2014 processing frame in parallel background task');
   } else if (useAppearance) {
-    console.log(`[Vision] Appearance frame available (faces: ${(appearanceFrame.faces || []).join(', ') || 'unknown'}) \u2014 including in LLM request`);
+    console.log(`[Vision] Appearance frame available (faces: ${(appearanceFrame.faces || []).join(', ') || 'unknown'}) \u2014 processing in parallel background task`);
   }
 
   try {
     markLlmStart();
     let systemInst = buildSystemInstruction();
+    // Keep the addendum so the main prompt knows to look in context for visual cues
     if (useVision) {
       systemInst += '\n\n' + VISION_SYSTEM_ADDENDUM;
     } else if (useAppearance) {
@@ -970,6 +1083,9 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       splitter.flush();
     }
 
+    llmDoneEventFired = true;
+    checkCloseWs();
+
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0) + rewriteUsageIn;
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0) + rewriteUsageOut;
@@ -987,8 +1103,15 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       emotionExtracted = Boolean(parsed.emotion);
       if (parsed.text) {
         fullText = clampOutput(stripDonationMarkers(parsed.text));
-        markFirstToken('speak_chunk_fallback');
-        broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
+
+        if (ttsWsReady && ttsWs.readyState === WebSocket.OPEN) {
+          markFirstToken('audio_chunk_fallback');
+          pendingTtsSentences++;
+          ttsWs.send(JSON.stringify({ text: fullText, voice: runtimeConfig.kokoroVoice }));
+        } else {
+          markFirstToken('speak_chunk_fallback');
+          broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
+        }
         chunkIndex++;
       }
     }

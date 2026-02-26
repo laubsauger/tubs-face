@@ -10,8 +10,10 @@ import subprocess
 import threading
 import numpy as np
 from flask import Flask, request, jsonify, Response
+from flask_sock import Sock
 
 app = Flask(__name__)
+sock = Sock(app)
 
 # Metal/MLX is not thread-safe — serialize all GPU operations
 _gpu_lock = threading.Lock()
@@ -48,7 +50,21 @@ else:
         raise
 
 # --- TTS Setup ---
-if TTS_BACKEND == "kokoro":
+if TTS_BACKEND == "vibevoice":
+    from vibevoice import VibeVoiceStreamingForConditionalGenerationInference, VibeVoiceStreamingProcessor
+    print("[TTS] Loading VibeVoice-0.5B-Realtime...")
+    try:
+        processor = VibeVoiceStreamingProcessor.from_pretrained("microsoft/VibeVoice-Realtime-0.5B")
+        tts_model_instance = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
+            "microsoft/VibeVoice-Realtime-0.5B",
+            device_map="auto"
+        )
+        tts_model = (tts_model_instance, processor)
+        print("[TTS] VibeVoice loaded successfully.")
+    except Exception as e:
+        print(f"[TTS] Error loading VibeVoice: {e}")
+        raise
+elif TTS_BACKEND == "kokoro":
     from mlx_audio.tts.utils import load_model as load_tts_model
 
     print(f"[TTS] Loading Kokoro (voice={KOKORO_VOICE})...")
@@ -98,11 +114,38 @@ def tts():
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    if TTS_BACKEND == "kokoro":
+    if TTS_BACKEND == "vibevoice":
+        return _tts_vibevoice(text)
+    elif TTS_BACKEND == "kokoro":
         return _tts_kokoro(text, voice)
     else:
         return _tts_system(text)
 
+def _tts_vibevoice(text):
+    t0 = time.time()
+    try:
+        m, p = tts_model
+        
+        # Load the default voice prompt locally.
+        import torch
+        prefilled_outputs = torch.load("demo/voices/sp-Spk1_man.pt", map_location=m.device if hasattr(m, 'device') else 'cpu', weights_only=False)
+        
+        inputs = p.process_input_with_cached_prompt(text=text, cached_prompt=prefilled_outputs, padding=True, return_tensors="pt", return_attention_mask=True)
+        if hasattr(m, "device"):
+            inputs = {k: v.to(m.device) for k,v in inputs.items() if hasattr(v, "to")}
+        
+        with _gpu_lock:
+            audio_tensor = m.generate(**inputs, tokenizer=p.tokenizer, all_prefilled_outputs=prefilled_outputs)[0]
+            
+        audio_np = audio_tensor.cpu().view(-1).numpy()
+        wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+        elapsed = int((time.time() - t0) * 1000)
+        print(f"[TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms (VibeVoice)")
+        return Response(wav_bytes, mimetype="audio/wav")
+
+    except Exception as e:
+        print(f"[TTS] VibeVoice error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 def _tts_kokoro(text, voice):
     t0 = time.time()
@@ -161,6 +204,71 @@ def _tts_system(text):
         if os.path.exists(wav_path):
             os.remove(wav_path)
 
+@sock.route('/tts/stream')
+def tts_stream(ws):
+    import json
+    import base64
+    import traceback
+    
+    voice = KOKORO_VOICE
+    while True:
+        raw = ws.receive()
+        if not raw: break
+        try:
+            data = json.loads(raw)
+            text = str(data.get("text") or "").strip()
+            voice = str(data.get("voice") or voice).strip().lower()
+            if not text:
+                continue
+                
+            if TTS_BACKEND == "vibevoice":
+                m, p = tts_model
+                
+                import torch
+                prefilled_outputs = torch.load("demo/voices/sp-Spk1_man.pt", map_location=m.device if hasattr(m, 'device') else 'cpu', weights_only=False)
+                inputs = p.process_input_with_cached_prompt(text=text, cached_prompt=prefilled_outputs, padding=True, return_tensors="pt", return_attention_mask=True)
+                
+                if hasattr(m, "device"):
+                    inputs = {k: v.to(m.device) for k,v in inputs.items() if hasattr(v, "to")}
+                from vibevoice.modular.streamer import AudioStreamer
+                streamer = AudioStreamer(batch_size=1, timeout=12.0)
+                
+                def generate_task():
+                    try:
+                        m.generate(**inputs, streamer=streamer, tokenizer=p.tokenizer, all_prefilled_outputs=prefilled_outputs)
+                    except Exception as e:
+                        print(f"[VibeVoice] stream error: {e}")
+                        streamer.end()
+                threading.Thread(target=generate_task, daemon=True).start()
+                
+                for audio_batch in streamer:
+                    audio_tensor = audio_batch[0].cpu().view(-1)
+                    audio_np = audio_tensor.numpy()
+                    wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+                    ws.send(json.dumps({
+                        "text": text,
+                        "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                        "chunk": True
+                    }))
+                ws.send(json.dumps({"text": text, "done": True}))
+                
+            elif TTS_BACKEND == "kokoro":
+                for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
+                    audio_np = np.array(result.audio)
+                    wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+                    ws.send(json.dumps({
+                        "text": text,
+                        "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                        "chunk": True
+                    }))
+                ws.send(json.dumps({"text": text, "done": True}))
+            else:
+                ws.send(json.dumps({"error": "Streaming not supported by " + TTS_BACKEND}))
+                
+        except Exception as err:
+            print("[TTS Stream] Error:", err)
+            traceback.print_exc()
+            ws.send(json.dumps({"error": str(err)}))
 
 @app.route('/transcribe', methods=['POST'])
 def transcribe():

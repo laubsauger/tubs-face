@@ -314,4 +314,5 @@ module.exports = {
   emitTurnContextMeta,
   buildSystemInstruction,
   clearAssistantContext,
+  rememberFact,
 };

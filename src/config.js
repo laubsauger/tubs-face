@@ -117,9 +117,9 @@ function normalizeRenderQuality(value, fieldName = 'renderQuality') {
 
 function normalizeTtsBackend(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  const allowed = new Set(['kokoro', 'system']);
+  const allowed = new Set(['kokoro', 'system', 'vibevoice']);
   if (!allowed.has(normalized)) {
-    const err = new Error('ttsBackend must be one of: kokoro, system');
+    const err = new Error('ttsBackend must be one of: kokoro, system, vibevoice');
     err.code = 'BAD_CONFIG';
     throw err;
   }
@@ -209,7 +209,7 @@ const DEFAULT_DONATION_SIGNAL_MODE = normalizeDonationSignalMode(process.env.DON
 const DEFAULT_MIN_FACE_BOX_AREA_RATIO = normalizeMinFaceBoxAreaRatio(process.env.MIN_FACE_BOX_AREA_RATIO || 0.02);
 const DEFAULT_FACE_RENDER_MODE = normalizeFaceRenderMode(process.env.FACE_RENDER_MODE || 'svg');
 const DEFAULT_RENDER_QUALITY = normalizeRenderQuality(process.env.RENDER_QUALITY || 'high', 'renderQuality');
-const DEFAULT_TTS_BACKEND = normalizeTtsBackend(process.env.TTS_BACKEND || 'kokoro');
+const DEFAULT_TTS_BACKEND = normalizeTtsBackend(process.env.TTS_BACKEND || 'vibevoice');
 const DEFAULT_STT_BACKEND = normalizeSttBackend(process.env.STT_BACKEND || 'mlx');
 const DEFAULT_KOKORO_VOICE = normalizeKokoroVoice(process.env.KOKORO_VOICE || 'hm_omega');
 const DEFAULT_DUAL_HEAD_ENABLED = normalizeBooleanConfig(process.env.DUAL_HEAD_ENABLED || false, 'dualHeadEnabled');
@@ -221,6 +221,7 @@ const DEFAULT_SECONDARY_AUDIO_GAIN = normalizeSecondaryAudioGain(process.env.SEC
 const DEFAULT_DUAL_HEAD_TURN_POLICY = normalizeDualHeadTurnPolicy(process.env.DUAL_HEAD_TURN_POLICY || 'llm_order');
 const DEFAULT_MUTED = normalizeBooleanConfig(process.env.MUTED || false, 'muted');
 const DEFAULT_AMBIENT_AUDIO_ENABLED = normalizeBooleanConfig(process.env.AMBIENT_AUDIO_ENABLED ?? true, 'ambientAudioEnabled');
+const DEFAULT_TTS_STREAMING_ENABLED = normalizeBooleanConfig(process.env.TTS_STREAMING_ENABLED ?? true, 'ttsStreamingEnabled');
 
 const sessionStats = {
   messagesIn: 0,
@@ -260,6 +261,7 @@ const runtimeConfig = {
   glitchFxEnabled: true,
   glitchFxBaseColor: '#a855f7',
   secondaryGlitchFxBaseColor: '#22d3ee',
+  ttsStreamingEnabled: DEFAULT_TTS_STREAMING_ENABLED,
 };
 
 
@@ -296,6 +298,7 @@ module.exports = {
   DEFAULT_DUAL_HEAD_TURN_POLICY,
   DEFAULT_MUTED,
   DEFAULT_AMBIENT_AUDIO_ENABLED,
+  DEFAULT_TTS_STREAMING_ENABLED,
   normalizeTtsBackend,
   normalizeSttBackend,
   normalizeKokoroVoice,

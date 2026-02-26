@@ -2,7 +2,7 @@ import { STATE } from './state.js';
 import { $, loadingBar } from './dom.js';
 import { clearChatDraft, commitChatDraft, logChat, upsertChatDraft } from './chat-log.js';
 import { setExpression } from './expressions.js';
-import { enqueueSpeech, stopAllTTS, enqueueTurnScript, applyHeadSpeechState } from './tts.js';
+import { enqueueSpeech, stopAllTTS, enqueueTurnScript, applyHeadSpeechState, handleIncomingAudioChunk } from './tts.js';
 import { hideDonationQr, showDonationQr } from './donation-ui.js';
 import { enterSleep, exitSleep } from './sleep.js';
 import { pushEmotionImpulse } from './emotion-engine.js';
@@ -352,6 +352,27 @@ export function handleMessage(msg) {
                 markTurn(msg.turnId, `LLM mode: ${msg.mode || 'text'}`);
             }
             break;
+        case 'audio_chunk':
+            if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            if (msg.chunkIndex === 0 && msg.turnId) {
+                markTurn(msg.turnId, 'First streaming audio chunk received');
+                logChat('out', msg.text);
+            } else if (msg.chunkIndex > 0) {
+                logChat('out', msg.text);
+            }
+            if (msg.emotion?.impulse) {
+                pushEmotionImpulse(msg.emotion.impulse, 'spoken');
+            }
+            if (msg.donation?.show) {
+                showDonationQr(msg.donation);
+            }
+            if (msg.audio) {
+                handleIncomingAudioChunk(msg.audio, msg.text, msg.turnId);
+            }
+            STATE.totalMessages++;
+            resetProactiveTimer();
+            break;
+
         case 'speak_chunk':
             clearLiveUserTranscript();
             // Ignore stale chunks from aborted turns

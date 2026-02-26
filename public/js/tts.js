@@ -25,6 +25,10 @@ let remoteSmallSpeaking = false;
 let remoteSmallSpeakingUntil = 0;
 let remoteWaitTimer = null;
 
+let streamingAudioCtx = null;
+let streamingNextStartTime = 0;
+let streamingActiveNodes = 0;
+
 function shouldUseBrowserTtsFallback() {
     return String(STATE.ttsBackend || 'kokoro').trim().toLowerCase() === 'system';
 }
@@ -543,4 +547,61 @@ function speakFallback(item) {
         processQueue();
     };
     speechSynthesis.speak(utterance);
+}
+
+export function handleIncomingAudioChunk(audioBase64, text, turnId) {
+    if (!streamingAudioCtx) {
+        streamingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (streamingAudioCtx.state === 'suspended') {
+        streamingAudioCtx.resume();
+    }
+
+    // Update listen state and DOM
+    $('#stat-listen-state').textContent = 'Speaking (Stream)...';
+    loadingBar.classList.remove('active');
+
+    // Try to decode base64
+    const binaryStr = atob(audioBase64);
+    const buf = new ArrayBuffer(binaryStr.length);
+    const view = new Uint8Array(buf);
+    for (let i = 0; i < binaryStr.length; i++) {
+        view[i] = binaryStr.charCodeAt(i);
+    }
+
+    streamingAudioCtx.decodeAudioData(buf).then(audioBuffer => {
+        const source = streamingAudioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(streamingAudioCtx.destination);
+
+        const now = streamingAudioCtx.currentTime;
+        if (streamingNextStartTime < now) {
+            streamingNextStartTime = now;
+        }
+
+        // If this is the first active node playing, fire startSpeaking
+        if (streamingActiveNodes === 0) {
+            startSpeaking();
+            emitHeadSpeechState('start', turnId);
+            if (text) startSubtitles(text, 1.0);
+        }
+
+        streamingActiveNodes++;
+        const startTime = streamingNextStartTime;
+        source.start(startTime);
+        streamingNextStartTime += audioBuffer.duration;
+
+        source.onended = () => {
+            streamingActiveNodes--;
+            if (streamingActiveNodes <= 0) {
+                streamingActiveNodes = 0;
+                stopSpeaking();
+                emitHeadSpeechState('end', turnId);
+                finishSubtitles();
+                $('#stat-listen-state').textContent = 'Idle';
+            }
+        };
+    }).catch(err => {
+        console.error('[TTS Stream] decodeAudioData error:', err);
+    });
 }
