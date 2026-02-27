@@ -137,15 +137,18 @@ function padRight(value, width) {
     return s.length >= width ? s : `${s}${' '.repeat(width - s.length)}`;
 }
 
-function formatSeconds(ms) {
-    return (Math.max(0, ms) / 1000).toFixed(2);
+function formatTime(ms) {
+    ms = Math.max(0, Number(ms) || 0);
+    if (ms === 0) return '0 ms';
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    return `${(ms / 1000).toFixed(2)} s`;
 }
 
 function buildChart(trace) {
     if (!trace || !trace.events.length) return null;
 
     const rows = trace.events.slice().sort((a, b) => a.at - b.at);
-    const firstAt = rows[0].at;
+    const firstAt = trace.createdAt;
     let prevAt = firstAt;
 
     const tableRows = rows.map((row) => {
@@ -154,21 +157,21 @@ function buildChart(trace) {
         prevAt = row.at;
         return {
             event: row.event,
-            time: formatSeconds(t),
-            delta: formatSeconds(d),
+            step: `+${formatTime(d)}`,
+            total: formatTime(t),
         };
     });
 
     const eventWidth = Math.max('Event'.length, ...tableRows.map((r) => r.event.length));
-    const timeWidth = Math.max('Time (s)'.length, ...tableRows.map((r) => r.time.length));
-    const deltaWidth = Math.max('Δ+'.length, ...tableRows.map((r) => r.delta.length));
+    const stepWidth = Math.max('Step'.length, ...tableRows.map((r) => r.step.length));
+    const totalWidth = Math.max('Total'.length, ...tableRows.map((r) => r.total.length));
 
     const lines = [];
-    lines.push(`Timing Chart (frontend): turn=${trace.turnId || 'pending'} source=${trace.source}`);
-    lines.push(`${padRight('Event', eventWidth)} | ${padLeft('Time (s)', timeWidth)} | ${padLeft('Δ+', deltaWidth)}`);
-    lines.push(`${'-'.repeat(eventWidth)}-+-${'-'.repeat(timeWidth)}-+-${'-'.repeat(deltaWidth)}`);
+    lines.push(`Timing Chart (frontend) | turn: ${trace.turnId || 'pending'} | source: ${trace.source}`);
+    lines.push(`${padRight('Event', eventWidth)} | ${padLeft('Step', stepWidth)} | ${padLeft('Total', totalWidth)}`);
+    lines.push(`${'-'.repeat(eventWidth)}-+-${'-'.repeat(stepWidth)}-+-${'-'.repeat(totalWidth)}`);
     for (const row of tableRows) {
-        lines.push(`${padRight(row.event, eventWidth)} | ${padLeft(row.time, timeWidth)} | ${padLeft(row.delta, deltaWidth)}`);
+        lines.push(`${padRight(row.event, eventWidth)} | ${padLeft(row.step, stepWidth)} | ${padLeft(row.total, totalWidth)}`);
     }
     return lines.join('\n');
 }

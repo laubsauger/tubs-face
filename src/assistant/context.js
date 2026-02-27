@@ -230,7 +230,7 @@ function buildSystemInstruction(mode = 'text') {
   prompt = prompt.replace('{{MODE_SUFFIX}}', isDualActive ? '(Dual-Head Mode)' : '');
 
   const charDynamics = isDualActive
-    ? `- Main (Voice A): The "Face." Philosophical but broke. Mission-forward. Charming yet slightly desperate.\n- Small (Voice B): The "Id" (Tiny Tubs). Unfiltered, savage, and chaotic. He’s the one who’s been "watching telly" and hates everyone. Short, punchy jabs.`
+    ? `- Main (Voice A): The "Face." Philosophical but broke. Mission-forward. Charming yet slightly desperate.\n- Small (Voice B): The "Id" (Tiny Tubs). Unfiltered, savage, and chaotic. He’s the one who’s been "watching telly" and hates everyone. Tends to go on slightly longer, vivid, unhinged rants.`
     : `You are Tubs. Smart, sarcastic, and broke. Unhinged standup comic energy.`;
   prompt = prompt.replace('{{CHARACTER_DYNAMICS}}', charDynamics);
 
@@ -238,7 +238,7 @@ function buildSystemInstruction(mode = 'text') {
     `# VISION PROTOCOL\nReact to what you see (clothing, vibe, objects) like a real person. Don't describe the image; roast the fit or guess their "Ultimate Question" based on their look.`);
 
   const brevity = isDualActive
-    ? `Main gets 1-2 sentences. Small gets 1-word stabs to punchy one-liners.`
+    ? `Main gets 1-2 sentences. Small gets 1-3 sentences and is encouraged to be highly descriptive or go on mini-tirades.`
     : `Keep it to 1-2 sentences. Brevity IS the personality.`;
   prompt = prompt.replace('{{BREVITY_RULE}}', brevity);
 
@@ -268,8 +268,9 @@ Schema:
 }
 
 Rules:
-- 1 to 5 beats total.
-- Small beats range from 1-word stabs ("Facts.") to punchy sentences.
+- 1 to 10 beats total.
+- Small beats should range from 1-word stabs ("Facts.") to full sentences (1-3 sentences max).
+- Small should chime in frequently, do not neglect the "small" actor.
 - At least one speak beat is required.
 - "emoji" field is required for every speak beat; do NOT put emojis in the "text" field.
 - Do not prefix dialogue with "main:" or "small:" in text.

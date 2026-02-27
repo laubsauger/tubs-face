@@ -53,13 +53,13 @@ function isMuted() {
 }
 
 function computeEndpointTimeout(text) {
-  if (!text) return 520;
+  if (!text) return 400;
   const words = text.trim().split(/\s+/);
-  if (/[.!?]\s*$/.test(text) && words.length > 3) return 260;
-  if (/[,]\s*$/.test(text) || /\b(and|but|so|because|or|then|that|which|when|while|if)\s*$/i.test(text)) return 860;
-  if (words.length < 3) return 620;
-  if (words.length > 18) return 420;
-  return 340;
+  if (/[.!?]\s*$/.test(text) && words.length > 3) return 160;
+  if (/[,]\s*$/.test(text) || /\b(and|but|so|because|or|then|that|which|when|while|if)\s*$/i.test(text)) return 700;
+  if (words.length < 3) return 500;
+  if (words.length > 18) return 300;
+  return 240;
 }
 
 function markTurnContext(turnTimer, meta) {
@@ -302,6 +302,7 @@ function handleRequest(req, res) {
           timingHooks: {
             onLlmStart: () => turnTimer.mark('LLM started'),
             onFirstToken: (source) => turnTimer.mark(`LLM first token (${source})`),
+            onTtsStart: () => turnTimer.mark('TTS stream started'),
             onLlmDone: () => turnTimer.mark('LLM completed'),
             onContextMeta: (meta) => markTurnContext(turnTimer, meta),
           },
@@ -519,6 +520,7 @@ function handleRequest(req, res) {
             timingHooks: {
               onLlmStart: () => turn.turnTimer?.mark('LLM started'),
               onFirstToken: (source) => turn.turnTimer?.mark(`LLM first token (${source})`),
+              onTtsStart: () => turn.turnTimer?.mark('TTS stream started'),
               onLlmDone: () => turn.turnTimer?.mark('LLM completed'),
               onContextMeta: (meta) => markTurnContext(turn.turnTimer, meta),
             },

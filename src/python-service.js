@@ -7,9 +7,24 @@ let pythonProcess = null;
 const pythonPath = path.join(__dirname, '../venv/bin/python');
 
 function startTranscriptionService(modelName = runtimeConfig.sttModel) {
-  const resolvedModel = normalizeSttModel(modelName);
+  const resolvedModel = normalizeSttModel(
+    process.env.WHISPER_MODEL ||
+    modelName ||
+    runtimeConfig.sttModel ||
+    'small'
+  );
+  const resolvedTtsBackend = String(process.env.TTS_BACKEND || runtimeConfig.ttsBackend || 'kokoro').trim().toLowerCase();
+  const resolvedSttBackend = String(process.env.STT_BACKEND || runtimeConfig.sttBackend || 'mlx').trim().toLowerCase();
   runtimeConfig.sttModel = resolvedModel;
-  console.log(`[Bridge] Spawning Python service (Whisper=${resolvedModel})...`);
+  console.log(
+    '[Bridge] Spawning Python service (Whisper=' +
+      resolvedModel +
+      ', sttBackend=' +
+      resolvedSttBackend +
+      ', ttsBackend=' +
+      resolvedTtsBackend +
+      ')...'
+  );
 
   const proc = spawn(
     pythonPath,
@@ -18,8 +33,8 @@ function startTranscriptionService(modelName = runtimeConfig.sttModel) {
       env: {
         ...process.env,
         WHISPER_MODEL: resolvedModel,
-        TTS_BACKEND: runtimeConfig.ttsBackend || 'kokoro',
-        STT_BACKEND: runtimeConfig.sttBackend || 'mlx',
+        TTS_BACKEND: resolvedTtsBackend,
+        STT_BACKEND: resolvedSttBackend,
       },
     }
   );

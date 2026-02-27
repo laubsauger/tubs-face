@@ -87,6 +87,17 @@ function rethrowLlmFailure(error, phase = 'request') {
   throw err;
 }
 
+function emitStreamDebug(broadcast, turnId, stage, payload = {}) {
+  if (typeof broadcast !== 'function') return;
+  broadcast({
+    type: 'stream_debug',
+    turnId: turnId || null,
+    stage,
+    ts: Date.now(),
+    ...payload,
+  });
+}
+
 const PERSONA_DRIFT_PHRASE_RE = /\b(certainly|however|it's important to remember|do you have any other questions|any other questions or topics you'd like to discuss|let me know if you|in conclusion)\b/i;
 const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|additionally|furthermore|moreover)\b/i;
 const PERSONA_MARKER_RE = /\b(tubs|rapha|wheel|wheels|venmo|thailand|robot|plastic tubs?)\b/i;
@@ -372,7 +383,7 @@ async function generateDualHeadProactiveReply({ context, broadcast, turnId, star
       model: dualModel,
       systemInstruction: systemInst,
       contents,
-      maxOutputTokens: dualMaxOutputTokens,
+      maxOutputTokens: Math.max(512, dualMaxOutputTokens),
       temperature: DUAL_HEAD_TEMPERATURE,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
@@ -617,7 +628,7 @@ async function generateDualHeadDirectedReply({
       model: dualModel,
       systemInstruction: systemInst,
       contents: contentBundle.contents,
-      maxOutputTokens: dualMaxOutputTokens,
+      maxOutputTokens: Math.max(512, dualMaxOutputTokens),
       temperature: DUAL_HEAD_TEMPERATURE,
       timeoutMs: 18000,
       responseMimeType: 'application/json',
@@ -903,6 +914,8 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
   let emotionExtracted = false;
   let donationMarkerDetected = false;
   let firstTokenMarked = false;
+  let llmDeltaCount = 0;
+  let llmDeltaChars = 0;
 
   const markFirstToken = (source = 'speak_chunk') => {
     if (firstTokenMarked) return;
@@ -922,14 +935,19 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
   function checkCloseWs() {
     if (llmDoneEventFired && pendingTtsSentences === 0 && ttsWs && ttsWs.readyState === WebSocket.OPEN) {
+      emitStreamDebug(broadcast, turnId, 'tts_ws_closing', { reason: 'llm_done_no_pending' });
       ttsWs.close();
     }
   }
 
   if (useTtsStreaming) {
     try {
+      emitStreamDebug(broadcast, turnId, 'tts_ws_connecting', { target: `${proxyTarget.hostname}:${proxyTarget.port}` });
       ttsWs = new WebSocket(`ws://${proxyTarget.hostname}:${proxyTarget.port}/tts/stream`);
-      ttsWs.on('open', () => { ttsWsReady = true; });
+      ttsWs.on('open', () => {
+        ttsWsReady = true;
+        emitStreamDebug(broadcast, turnId, 'tts_ws_open');
+      });
       ttsWs.on('message', (data) => {
         try {
           const msg = JSON.parse(data.toString());
@@ -938,6 +956,11 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
             return;
           }
           if (msg.chunk && msg.audio) {
+            emitStreamDebug(broadcast, turnId, 'tts_audio_chunk_in', {
+              textChars: String(msg.text || '').length,
+              audioBytes: Math.round((String(msg.audio || '').length * 3) / 4),
+              pendingTtsSentences,
+            });
             broadcast({
               type: 'audio_chunk',
               audio: msg.audio,
@@ -948,6 +971,7 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
           }
           if (msg.done) {
             pendingTtsSentences--;
+            emitStreamDebug(broadcast, turnId, 'tts_sentence_done', { pendingTtsSentences });
             checkCloseWs();
           }
         } catch (e) { }
@@ -955,9 +979,15 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       ttsWs.on('error', (e) => {
         console.warn('[TTS WS] Error:', e.message);
         ttsWsReady = false;
+        emitStreamDebug(broadcast, turnId, 'tts_ws_error', { error: e.message || 'unknown' });
+      });
+      ttsWs.on('close', () => {
+        ttsWsReady = false;
+        emitStreamDebug(broadcast, turnId, 'tts_ws_closed');
       });
     } catch (e) {
       console.warn('[TTS WS] Failed to create socket:', e.message);
+      emitStreamDebug(broadcast, turnId, 'tts_ws_create_error', { error: e.message || 'unknown' });
     }
   }
 
@@ -984,13 +1014,33 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     sentenceCount++;
     fullText += (fullText ? ' ' : '') + text;
+    emitStreamDebug(broadcast, turnId, 'sentence_ready', {
+      sentenceCount,
+      textChars: text.length,
+      chunkIndex,
+    });
 
     if (ttsWsReady && ttsWs.readyState === WebSocket.OPEN) {
+      if (pendingTtsSentences === 0) {
+        if (timingHooks?.onFirstToken) timingHooks.onFirstToken('audio_chunk');
+      }
       markFirstToken('audio_chunk');
       pendingTtsSentences++;
+      emitStreamDebug(broadcast, turnId, 'tts_sentence_sent', {
+        textChars: text.length,
+        pendingTtsSentences,
+      });
+      if (timingHooks?.onTtsStart) {
+        timingHooks.onTtsStart();
+      }
       ttsWs.send(JSON.stringify({ text, voice: runtimeConfig.kokoroVoice }));
     } else {
       markFirstToken('speak_chunk');
+      emitStreamDebug(broadcast, turnId, 'speak_chunk_emit', {
+        chunkIndex,
+        textChars: text.length,
+        reason: useTtsStreaming ? 'tts_ws_unavailable' : 'tts_streaming_disabled',
+      });
       broadcast({ type: 'speak_chunk', text, chunkIndex, turnId });
     }
     chunkIndex++;
@@ -1064,6 +1114,10 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       systemInstruction: systemInst,
       contents: sanitizeContentsForTelemetry(contentBundle.contents),
     };
+    emitStreamDebug(broadcast, turnId, 'llm_stream_start', {
+      model: runtimeConfig.llmModel,
+      ttsStreaming: useTtsStreaming,
+    });
     const llmResult = await streamLlmContent({
       auth: authState.auth || null,
       model: runtimeConfig.llmModel,
@@ -1071,7 +1125,16 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
       contents: contentBundle.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       temperature: 1,
-      onChunk: (delta) => splitter.push(delta),
+      onChunk: (delta) => {
+        llmDeltaCount += 1;
+        llmDeltaChars += String(delta || '').length;
+        emitStreamDebug(broadcast, turnId, 'llm_delta', {
+          chunkIndex: llmDeltaCount,
+          deltaChars: String(delta || '').length,
+          bufferChars: llmDeltaChars,
+        });
+        splitter.push(delta);
+      },
       abortSignal: abortController?.signal,
     });
     console.log(`[LLM:stream] Raw response (${llmResult.text.length} chars): ${llmResult.text}`);
@@ -1084,6 +1147,11 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
     }
 
     llmDoneEventFired = true;
+    emitStreamDebug(broadcast, turnId, 'llm_stream_done', {
+      llmDeltaCount,
+      llmDeltaChars,
+      fullTextChars: llmResult.text.length,
+    });
     checkCloseWs();
 
     model = llmResult.model || model;
@@ -1107,9 +1175,19 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
         if (ttsWsReady && ttsWs.readyState === WebSocket.OPEN) {
           markFirstToken('audio_chunk_fallback');
           pendingTtsSentences++;
+          emitStreamDebug(broadcast, turnId, 'tts_sentence_sent', {
+            textChars: fullText.length,
+            pendingTtsSentences,
+            reason: 'fallback_full_text',
+          });
           ttsWs.send(JSON.stringify({ text: fullText, voice: runtimeConfig.kokoroVoice }));
         } else {
           markFirstToken('speak_chunk_fallback');
+          emitStreamDebug(broadcast, turnId, 'speak_chunk_emit', {
+            chunkIndex,
+            textChars: fullText.length,
+            reason: 'fallback_full_text',
+          });
           broadcast({ type: 'speak_chunk', text: fullText, chunkIndex, turnId });
         }
         chunkIndex++;
@@ -1118,8 +1196,17 @@ async function generateStreamingAssistantReply(userText, { broadcast, turnId, ab
 
     if (llmResult.aborted) {
       console.log(`[LLM:stream] Aborted after ${chunkIndex} chunks`);
+      emitStreamDebug(broadcast, turnId, 'llm_stream_aborted', {
+        llmDeltaCount,
+        llmDeltaChars,
+      });
     }
   } catch (err) {
+    emitStreamDebug(broadcast, turnId, 'llm_stream_error', {
+      error: err?.message || String(err || 'unknown'),
+      llmDeltaCount,
+      llmDeltaChars,
+    });
     console.error(`[LLM:stream] ${getLlmProviderId()} streaming failed:`, err.message);
     rethrowLlmFailure(err, 'stream');
   }

@@ -421,6 +421,25 @@
         <span class="stat-label">Session Cost</span>
         <span class="stat-value" id="stat-cost">$0.00</span>
       </div>
+      <div class="stat-row stream-debug-controls">
+        <span class="stat-label">Stream Debug</span>
+        <div class="stream-debug-control-row">
+          <label class="toggle-switch">
+            <input type="checkbox" id="stream-debug-enabled" checked>
+            <span class="slider"></span>
+          </label>
+          <button id="stream-debug-clear" class="mini-btn" type="button">Clear</button>
+        </div>
+      </div>
+      <div id="stream-debug-root">
+        <div class="stat-row"><span class="stat-label">Turn</span><span class="stat-value" id="stat-stream-turn">—</span></div>
+        <div class="stat-row"><span class="stat-label">LLM Δ/chars</span><span class="stat-value" id="stat-stream-llm">0/0</span></div>
+        <div class="stat-row"><span class="stat-label">Sentences</span><span class="stat-value" id="stat-stream-sentences">0</span></div>
+        <div class="stat-row"><span class="stat-label">TTS send/chars</span><span class="stat-value" id="stat-stream-tts-out">0/0</span></div>
+        <div class="stat-row"><span class="stat-label">Audio in</span><span class="stat-value" id="stat-stream-audio-in">0/0KB</span></div>
+        <div class="stat-row"><span class="stat-label">Audio played</span><span class="stat-value" id="stat-stream-audio-play">0/0.00s</span></div>
+        <div id="stream-debug-log" aria-live="polite"></div>
+      </div>
     </div>
 
     <!-- Camera PIP -->

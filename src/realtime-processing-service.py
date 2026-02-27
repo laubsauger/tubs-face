@@ -96,7 +96,7 @@ def ensure_tts_model():
         )
         tts_model = (model, processor)
         print("[Realtime TTS] VibeVoice ready")
-    elif TTS_BACKEND == "kokoro":
+    elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         from mlx_audio.tts.utils import load_model as load_tts_model
         print(f"[Realtime TTS] Loading Kokoro (voice={KOKORO_VOICE})")
         tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
@@ -285,7 +285,156 @@ def openai_generate(model, messages, temperature, max_output_tokens):
     return content, usage, str(data.get("model") or model)
 
 
-def llm_generate(payload):
+def _extract_openai_stream_delta(chunk):
+    choices = chunk.get("choices") or []
+    if not choices:
+        return ""
+    delta = (choices[0] or {}).get("delta") or {}
+    content = delta.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                text_parts.append(text)
+        return "".join(text_parts)
+    return ""
+
+
+def ollama_stream_generate(model, messages, temperature, max_output_tokens, response_mime_type="", response_schema=None):
+    options = {"temperature": temperature}
+    if max_output_tokens:
+        options["num_predict"] = int(max_output_tokens)
+    payload = {
+        "model": model,
+        "messages": messages,
+        "stream": True,
+        "options": options,
+    }
+    if isinstance(response_schema, dict) and response_schema:
+        payload["format"] = response_schema
+    elif response_mime_type == "application/json":
+        payload["format"] = "json"
+
+    request_obj = urllib.request.Request(
+        url=f"{LLM_BASE_URL}/api/chat",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request_obj, timeout=90) as response:
+            resolved_model = model
+            usage = {"promptTokenCount": 0, "candidatesTokenCount": 0}
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except Exception:
+                    continue
+
+                if data.get("model"):
+                    resolved_model = str(data.get("model") or resolved_model)
+
+                delta = str(((data.get("message") or {}).get("content") or ""))
+                if delta:
+                    yield {"delta": delta}
+
+                if data.get("done"):
+                    usage = {
+                        "promptTokenCount": int(data.get("prompt_eval_count") or 0),
+                        "candidatesTokenCount": int(data.get("eval_count") or 0),
+                    }
+                    yield {"done": True, "usage": usage, "model": resolved_model}
+                    return
+
+            yield {"done": True, "usage": usage, "model": resolved_model}
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        detail = body[:400]
+        if err.code == 404 and "not found" in body.lower():
+            available = ollama_list_models()
+            if available:
+                preview = ", ".join(available[:8])
+                detail = f"{detail} | available models: {preview}"
+            else:
+                detail = f"{detail} | no local models found from /api/tags"
+        raise RuntimeError(f"Ollama stream error ({err.code}): {detail}")
+
+
+def openai_stream_generate(model, messages, temperature, max_output_tokens):
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is required when REALTIME_LLM_PROVIDER=openai")
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    if max_output_tokens:
+        payload["max_tokens"] = int(max_output_tokens)
+
+    request_obj = urllib.request.Request(
+        url=f"{OPENAI_BASE_URL}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request_obj, timeout=90) as response:
+            resolved_model = model
+            usage = {"promptTokenCount": 0, "candidatesTokenCount": 0}
+
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+
+                data_text = line[5:].strip()
+                if not data_text:
+                    continue
+                if data_text == "[DONE]":
+                    break
+
+                try:
+                    chunk = json.loads(data_text)
+                except Exception:
+                    continue
+
+                if chunk.get("model"):
+                    resolved_model = str(chunk.get("model") or resolved_model)
+
+                usage_raw = chunk.get("usage") or {}
+                if usage_raw:
+                    usage = {
+                        "promptTokenCount": int(usage_raw.get("prompt_tokens") or usage.get("promptTokenCount") or 0),
+                        "candidatesTokenCount": int(usage_raw.get("completion_tokens") or usage.get("candidatesTokenCount") or 0),
+                    }
+
+                delta = _extract_openai_stream_delta(chunk)
+                if delta:
+                    yield {"delta": delta}
+
+            yield {"done": True, "usage": usage, "model": resolved_model}
+    except urllib.error.HTTPError as err:
+        body = err.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI stream error ({err.code}): {body[:400]}")
+
+
+def resolve_llm_request(payload):
     model = str(payload.get("model") or "llama3.1:8b")
     system_instruction = payload.get("systemInstruction") or ""
     contents = payload.get("contents") or []
@@ -303,29 +452,74 @@ def llm_generate(payload):
     messages = build_messages(system_instruction, contents)
     if not messages:
         messages = [{"role": "user", "content": "Say hello in one short sentence."}]
+
+    return {
+        "model": model,
+        "system_instruction": system_instruction,
+        "temperature": temperature,
+        "max_output_tokens": max_output_tokens,
+        "provider": provider,
+        "response_mime_type": response_mime_type,
+        "response_schema": response_schema,
+        "messages": messages,
+    }
+
+
+def llm_generate(payload):
+    req = resolve_llm_request(payload)
     print(
-        f"[Realtime LLM] provider={provider} model={model} messages={len(messages)} "
-        f"systemChars={len(system_instruction.strip())} format={'schema' if response_schema else response_mime_type or 'text'}"
+        f"[Realtime LLM] provider={req['provider']} model={req['model']} messages={len(req['messages'])} "
+        f"systemChars={len(req['system_instruction'].strip())} format={'schema' if req['response_schema'] else req['response_mime_type'] or 'text'}"
     )
 
-    if provider == "openai":
-        text, usage, resolved_model = openai_generate(model, messages, temperature, max_output_tokens)
+    if req["provider"] == "openai":
+        text, usage, resolved_model = openai_generate(
+            req["model"],
+            req["messages"],
+            req["temperature"],
+            req["max_output_tokens"],
+        )
     else:
         text, usage, resolved_model = ollama_generate(
-            model,
-            messages,
-            temperature,
-            max_output_tokens,
-            response_mime_type=response_mime_type,
-            response_schema=response_schema,
+            req["model"],
+            req["messages"],
+            req["temperature"],
+            req["max_output_tokens"],
+            response_mime_type=req["response_mime_type"],
+            response_schema=req["response_schema"],
         )
 
     return {
         "text": text,
         "usage": usage,
         "model": resolved_model,
-        "provider": provider,
+        "provider": req["provider"],
     }
+
+
+def llm_stream(payload):
+    req = resolve_llm_request(payload)
+    print(
+        f"[Realtime LLM:stream] provider={req['provider']} model={req['model']} messages={len(req['messages'])} "
+        f"systemChars={len(req['system_instruction'].strip())} format={'schema' if req['response_schema'] else req['response_mime_type'] or 'text'}"
+    )
+    if req["provider"] == "openai":
+        yield from openai_stream_generate(
+            req["model"],
+            req["messages"],
+            req["temperature"],
+            req["max_output_tokens"],
+        )
+        return
+
+    yield from ollama_stream_generate(
+        req["model"],
+        req["messages"],
+        req["temperature"],
+        req["max_output_tokens"],
+        response_mime_type=req["response_mime_type"],
+        response_schema=req["response_schema"],
+    )
 
 
 @app.route("/health", methods=["GET"])
@@ -429,7 +623,7 @@ def tts():
 
     if TTS_BACKEND == "vibevoice":
         return _tts_vibevoice(text)
-    elif TTS_BACKEND == "kokoro":
+    elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         return _tts_kokoro(text, voice)
     else:
         return _tts_system(text)
@@ -572,7 +766,7 @@ def tts_stream(ws):
                 
                 ws.send(json.dumps({"text": text, "done": True}))
 
-            elif TTS_BACKEND == "kokoro":
+            elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder
                 for result in m.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
                     audio_np = np.array(result.audio)
@@ -606,27 +800,31 @@ def llm_generate_route():
 def llm_stream_route():
     payload = request.json or {}
     try:
-        result = llm_generate(payload)
-        text = str(result.get("text") or "")
-        usage = result.get("usage") or {}
-        model = result.get("model")
-
-        try:
-            chunk_size = int(payload.get("streamChunkSize") or 96)
-        except Exception:
-            chunk_size = 96
-        chunk_size = max(24, min(320, chunk_size))
-
         def generate():
-            if text:
-                for idx in range(0, len(text), chunk_size):
-                    delta = text[idx:idx + chunk_size]
-                    yield json.dumps({"delta": delta}) + "\n"
-            yield json.dumps({
-                "done": True,
-                "usage": usage,
-                "model": model,
-            }) + "\n"
+            done_sent = False
+            usage = {}
+            model = None
+            try:
+                for event in llm_stream(payload):
+                    if not isinstance(event, dict):
+                        continue
+                    if event.get("usage"):
+                        usage = event.get("usage") or usage
+                    if event.get("model"):
+                        model = event.get("model")
+                    if event.get("done"):
+                        done_sent = True
+                    yield json.dumps(event) + "\n"
+            except Exception as err:
+                yield json.dumps({"error": str(err), "done": True}) + "\n"
+                return
+
+            if not done_sent:
+                yield json.dumps({
+                    "done": True,
+                    "usage": usage,
+                    "model": model,
+                }) + "\n"
 
         return Response(generate(), mimetype="application/x-ndjson")
     except Exception as err:

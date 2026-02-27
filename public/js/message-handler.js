@@ -15,9 +15,10 @@ import { clearFaceVisionReactionsForMute } from './face/results.js';
 import { perfMark } from './perf-hooks.js';
 import { detectDonationSignal, summarizeTurnScript } from './message-handler-utils.js';
 import { markTurn, onTurnStart } from './turn-timing.js';
+import { pushStreamDebugEvent, resetStreamDebug } from './stream-debug.js';
 import { clearLiveUserTranscript, getLiveUserTranscriptText, showLiveUserTranscript } from './live-user-transcript.js';
 
-const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config']);
+const NON_ACTIVITY_TYPES = new Set(['ping', 'stats', 'config', 'stream_debug']);
 const MUTED_ALLOWED_TYPES = new Set(['config', 'stats', 'ping', 'system', 'error', 'sleep', 'wake']);
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
 const DONATION_SIGNAL_MODES = new Set(['both', 'implied', 'confident', 'off']);
@@ -343,6 +344,8 @@ export function handleMessage(msg) {
             clearChatDraft('in');
             clearLiveUserTranscript();
             onTurnStart(msg.turnId);
+            resetStreamDebug(msg.turnId || null);
+            pushStreamDebugEvent('turn_start', { turnId: msg.turnId || null, ts: Date.now() });
             break;
         case 'turn_context':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
@@ -367,6 +370,13 @@ export function handleMessage(msg) {
                 showDonationQr(msg.donation);
             }
             if (msg.audio) {
+                pushStreamDebugEvent('audio_chunk_ws_in', {
+                    turnId: msg.turnId || null,
+                    chunkIndex: msg.chunkIndex,
+                    textChars: (msg.text || '').length,
+                    audioBytes: Math.round(((msg.audio || '').length * 3) / 4),
+                    ts: Date.now(),
+                });
                 handleIncomingAudioChunk(msg.audio, msg.text, msg.turnId);
             }
             STATE.totalMessages++;
@@ -381,6 +391,12 @@ export function handleMessage(msg) {
             if (msg.turnId && msg.chunkIndex === 0) {
                 markTurn(msg.turnId, 'LLM first token received');
             }
+            pushStreamDebugEvent('speak_chunk_ws_in', {
+                turnId: msg.turnId || STATE.currentTurnId || null,
+                chunkIndex: msg.chunkIndex,
+                textChars: (msg.text || '').length,
+                ts: Date.now(),
+            });
             enqueueSpeech(msg.text, null, null, msg.turnId || STATE.currentTurnId || null);
             if (msg.chunkIndex === 0) {
                 logChat('out', msg.text);
@@ -515,6 +531,9 @@ export function handleMessage(msg) {
             break;
         case 'stats':
             applyStats(msg);
+            break;
+        case 'stream_debug':
+            pushStreamDebugEvent(msg.stage || 'stream_debug', { ...msg, ts: msg.ts || Date.now() });
             break;
         case 'config':
             applyConfig(msg);

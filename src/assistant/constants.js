@@ -72,7 +72,7 @@ const EMOJI_GUIDE_LINES = [
 ];
 const DUAL_HEAD_ACTORS = new Set(['main', 'small']);
 const DUAL_HEAD_ACTIONS = new Set(['speak', 'react']);
-const DUAL_HEAD_MAX_BEATS = 7;
+const DUAL_HEAD_MAX_BEATS = 15;
 const DUAL_HEAD_DEFAULT_EMOJI_PROFILE_BY_ACTOR = Object.freeze({
   main: Object.freeze(['\u{1F642}', '\u{1F604}', '\u{1F916}']),
   small: Object.freeze(['\u{1F60F}', '\u{1F642}', '\u{1F604}']),

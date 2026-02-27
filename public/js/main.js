@@ -23,6 +23,7 @@ import { createPerfStats } from './perf-stats.js';
 import { setPerfSink } from './perf-hooks.js';
 import { initAmbientAudio } from './ambient-audio.js';
 import { initManualBeatsComposer } from './manual-beats.js';
+import { initStreamDebugUi } from './stream-debug.js';
 
 let miniWindowRef = null;
 let motionRelayInitialized = false;
@@ -369,6 +370,7 @@ function init() {
     initVerbosityToggle();
     initVoiceSelector();
     initManualBeatsComposer();
+    initStreamDebugUi();
     initDualHeadControls();
     initKeyboard();
     initFaceRenderer();

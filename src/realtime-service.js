@@ -9,15 +9,21 @@ const pythonPath = path.join(__dirname, '../venv/bin/python');
 let realtimeProcess = null;
 
 function buildRealtimeChildEnv({ sttModel } = {}) {
-  const resolvedModel = normalizeSttModel(sttModel || runtimeConfig.sttModel || process.env.REALTIME_STT_MODEL || process.env.WHISPER_MODEL || 'small');
+  const resolvedModel = normalizeSttModel(
+    process.env.REALTIME_STT_MODEL ||
+    process.env.WHISPER_MODEL ||
+    sttModel ||
+    runtimeConfig.sttModel ||
+    'small'
+  );
   const resolvedSttBackend = String(
-    runtimeConfig.sttBackend || process.env.REALTIME_STT_BACKEND || process.env.STT_BACKEND || 'mlx'
+    process.env.REALTIME_STT_BACKEND || process.env.STT_BACKEND || runtimeConfig.sttBackend || 'mlx'
   ).trim().toLowerCase();
   const resolvedTtsBackend = String(
-    runtimeConfig.ttsBackend || process.env.REALTIME_TTS_BACKEND || process.env.TTS_BACKEND || 'kokoro'
+    process.env.REALTIME_TTS_BACKEND || process.env.TTS_BACKEND || runtimeConfig.ttsBackend || 'kokoro'
   ).trim().toLowerCase();
   const resolvedKokoroVoice = String(
-    runtimeConfig.kokoroVoice || process.env.REALTIME_KOKORO_VOICE || process.env.KOKORO_VOICE || 'hm_omega'
+    process.env.REALTIME_KOKORO_VOICE || process.env.KOKORO_VOICE || runtimeConfig.kokoroVoice || 'hm_omega'
   ).trim().toLowerCase();
 
   return {
