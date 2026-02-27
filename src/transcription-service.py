@@ -253,14 +253,16 @@ def tts_stream(ws):
                 ws.send(json.dumps({"text": text, "done": True}))
                 
             elif TTS_BACKEND == "kokoro":
-                for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                    audio_np = np.array(result.audio)
-                    wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                    ws.send(json.dumps({
-                        "text": text,
-                        "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                        "chunk": True
-                    }))
+                # MLX/Kokoro is not thread-safe: serialize generator use to prevent native crashes.
+                with _gpu_lock:
+                    for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
+                        audio_np = np.array(result.audio)
+                        wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+                        ws.send(json.dumps({
+                            "text": text,
+                            "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                            "chunk": True
+                        }))
                 ws.send(json.dumps({"text": text, "done": True}))
             else:
                 ws.send(json.dumps({"error": "Streaming not supported by " + TTS_BACKEND}))

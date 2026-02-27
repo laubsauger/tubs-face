@@ -401,6 +401,7 @@ function processQueue() {
         speaking = false;
         setFaceRendererSpeaking(false);
         setMiniExpression('idle');
+        // Only hide subtitle when queue is truly empty — not between beats.
         hideSubtitle();
         return;
     }
@@ -455,7 +456,8 @@ async function playSpeakBeat(item) {
     if (item.emotion?.expression) {
         setMiniExpression(item.emotion.expression);
     }
-    hideSubtitle();
+    // Don't prematurely hideSubtitle here — let the previous subtitle
+    // finish naturally so there's no blank flash between beats.
     setFaceRendererSpeaking(true);
 
     try {
@@ -479,13 +481,32 @@ async function playSpeakBeat(item) {
         miniAudioGain.apply(audio, secondaryAudioGain);
         currentAudio = audio;
 
+        // Start subtitles as early as possible — canplaythrough guarantees
+        // audio.duration is available, so the synced word-highlight mode works.
+        audio.oncanplaythrough = () => {
+            if (secondarySubtitleEnabled && !audio._subtitleStarted) {
+                audio._subtitleStarted = true;
+                subtitles.start(item.text, audio);
+            }
+        };
+
+        audio.onplay = () => {
+            const durMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
+            markLocalSpeechStart(durMs);
+            // Fallback: if canplaythrough didn't fire, start subtitles now.
+            if (secondarySubtitleEnabled && !audio._subtitleStarted) {
+                audio._subtitleStarted = true;
+                subtitles.start(item.text, audio);
+            }
+        };
+
         audio.onended = () => {
             URL.revokeObjectURL(audioUrl);
             if (currentAudio === audio) currentAudio = null;
             miniAudioGain.disconnect();
             markLocalSpeechEnd();
             setFaceRendererSpeaking(false);
-            hideSubtitle();
+            // Let subtitles finish then hide; processQueue will hide if a non-speak beat follows.
             speaking = false;
             setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
         };
@@ -504,12 +525,6 @@ async function playSpeakBeat(item) {
                 return;
             }
             setTimeout(() => processQueue(), INTER_UTTERANCE_PAUSE_MS);
-        };
-
-        audio.onplay = () => {
-            const durMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
-            markLocalSpeechStart(durMs);
-            if (secondarySubtitleEnabled) subtitles.start(item.text, audio);
         };
 
         await audio.play();
