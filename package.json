@@ -2,23 +2,38 @@
   "name": "tubs-bot",
   "version": "1.0.0",
   "description": "Tubs Bot — Animated Chatbot Face Interface",
-  "main": "bridge-server.js",
+  "type": "module",
+  "main": "dist/server/index.js",
   "scripts": {
     "postinstall": "bash scripts/setup-python.sh",
-    "start": "npm run start:legacy",
-    "start:legacy": "PROCESSING_MODE=legacy node src/bridge-server.js",
-    "start:realtime": "PROCESSING_MODE=realtime node src/bridge-server.js",
-    "kill": "pkill -f 'node src/bridge-server.js' || true; pkill -f 'transcription-service.py' || true; pkill -f 'realtime-processing-service.py' || true",
-    "restart": "npm run restart:legacy",
-    "restart:legacy": "npm run kill && sleep 1 && npm run start:legacy",
-    "restart:realtime": "npm run kill && sleep 1 && npm run start:realtime",
-    "dev": "npm run start:legacy",
+    "start": "node dist/server/index.js",
+    "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "tsx watch src/server/index.ts",
+    "dev:client": "vite",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p tsconfig.node.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "vitest run",
     "setup-python": "bash scripts/setup-python.sh",
-    "bench:llm": "node scripts/benchmark-llm.js"
+    "bench:llm": "tsx src/scripts/benchmark-llm.ts"
   },
   "dependencies": {
     "fs-extra": "^11.3.3",
     "langfuse": "^3.38.6",
+    "onnxruntime-web": "^1.24.3",
     "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/ws": "^8.5.14",
+    "@typescript-eslint/eslint-plugin": "^8.26.0",
+    "@typescript-eslint/parser": "^8.26.0",
+    "concurrently": "^9.1.2",
+    "eslint": "^9.22.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^6.2.1",
+    "vitest": "^3.0.8"
   }
 }
