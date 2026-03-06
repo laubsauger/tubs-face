@@ -26,7 +26,6 @@ Three-layer system: **Browser frontend** → **Node.js bridge server** → **Pyt
 - Spawns the Python transcription service as a child process
 - Proxies `/tts` requests to Python on port 3001
 - Implements wake-word detection for voice input (30+ fuzzy variants of "hey tubs")
-- Contains `generateDemoResponse()` — placeholder for real LLM integration
 - HTTP API: `/health`, `/stats`, `/speak`, `/voice`, `/tts`, `/sleep`, `/wake`, `/config`
 
 ### Python Service (`src/transcription-service.py`)
@@ -34,6 +33,20 @@ Three-layer system: **Browser frontend** → **Node.js bridge server** → **Pyt
 - STT via `faster-whisper` (Whisper model, CPU, int8)
 - TTS via macOS `say` command + `afconvert` to WAV (macOS-only)
 - Endpoints: `/transcribe` (POST multipart audio), `/tts` (POST JSON), `/health`
+
+### LLM Layer (`src/llm/`)
+- `provider.js` — abstraction that resolves to Gemini or Realtime provider (via `LLM_PROVIDER` env var)
+- `providers/gemini.js` — Gemini API via `src/gemini-client.js` (supports streaming)
+- `providers/realtime.js` — Gemini Realtime/Live API
+- Requires `GEMINI_API_KEY` env var
+
+### Assistant Layer (`src/assistant/`)
+- `generate.js` — main LLM response generation (single-head mode)
+- `dual-head.js` — structured dual-head mode (scripted multi-beat responses with actor/action schema)
+- `context.js` — conversation context/history management
+- `emotion.js` — emotion extraction from LLM output
+- `donation.js` — donation signal handling (Venmo/PayPal)
+- `constants.js`, `text.js` — shared constants and text utilities
 
 ### Frontend (`public/`)
 - Single-page vanilla JS app (`js/main.js`, `css/style.css`, `index.html`)
@@ -51,6 +64,9 @@ Messages are JSON with a `type` field. Key types:
 - Client→Server: `incoming` (user text)
 - Bidirectional: `ping` (latency, every 5s)
 
-## Key Integration Point
-
-To connect a real LLM, replace `generateDemoResponse(input)` in `src/bridge-server.js` with an actual API call. The `/voice` endpoint currently: transcribes audio → calls this function → broadcasts the response as a `speak` message.
+### Other Server Modules
+- `src/config.js` — runtime config
+- `src/langfuse.js` — Langfuse observability integration
+- `src/processing/` — processing mode management
+- `src/persona/` + `src/persona.js` — persona/system prompt management
+- `src/face-library.js` + `data/face-library.json` — face identity storage

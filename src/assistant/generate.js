@@ -621,9 +621,18 @@ async function generateDualHeadDirectedReply({
   const llmStartAt = Date.now();
   let llmEndAt = null;
   const dualMaxOutputTokens = Number(runtimeConfig.llmMaxOutputTokens || 256);
+  let dualFirstTokenMarked = false;
+  let dualDeltaCount = 0;
+  let dualDeltaChars = 0;
+
+  const markDualFirstToken = (source = 'turn_script_delta') => {
+    if (dualFirstTokenMarked) return;
+    dualFirstTokenMarked = true;
+    if (timingHooks?.onFirstToken) timingHooks.onFirstToken(source);
+  };
 
   try {
-    const llmResult = await generateLlmContent({
+    const llmResult = await streamLlmContent({
       auth: auth || null,
       model: dualModel,
       systemInstruction: systemInst,
@@ -633,15 +642,26 @@ async function generateDualHeadDirectedReply({
       timeoutMs: 18000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
+      onChunk: (delta) => {
+        const chunk = String(delta || '');
+        if (!chunk) return;
+        dualDeltaCount += 1;
+        dualDeltaChars += chunk.length;
+        markDualFirstToken('turn_script_delta');
+      },
     });
 
     llmEndAt = Date.now();
     llmRawText = llmResult.text;
+    if (llmRawText) {
+      markDualFirstToken('turn_script');
+    }
     console.log(`[LLM:dual] Raw response (${llmRawText.length} chars): ${llmRawText}`);
+    console.log(`[LLM:dual] stream stats: deltas=${dualDeltaCount} chars=${dualDeltaChars}`);
     model = llmResult.model || model;
     usageIn = Number(llmResult.usage.promptTokenCount || 0);
     usageOut = Number(llmResult.usage.candidatesTokenCount || 0);
-    script = parseDualHeadScript(llmResult.text);
+    script = parseDualHeadScript(llmRawText);
   } catch (err) {
     llmEndAt = Date.now();
     console.error(`[LLM:dual] ${getLlmProviderId()} call failed:`, err.message);
@@ -704,10 +724,7 @@ async function generateDualHeadDirectedReply({
     donation,
     fullText,
   });
-  if (timingHooks?.onFirstToken) {
-    timingHooks.onFirstToken('turn_script');
-  }
-  console.log(`[LLM:dual] turn_script turn=${turnId} beats=${beats.length} donation=${donation?.show ? donation.reason : 'none'} ${summarizeDualHeadBeatsForLog(beats)}`);
+  console.log(`[LLM:dual] turn_script turn=${turnId} beats=${beats.length} donation=${donation?.show ? donation.reason : 'none'} ${summarizeDualHeadBeatsForLog(beats, { userInput: normalizedInput })}`);
 
   pushHistory('user', normalizedInput);
   pushHistory('model', fullText);

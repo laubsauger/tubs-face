@@ -130,6 +130,12 @@ function tick(nowMs) {
     const dt = Math.max(8, nowMs - lastTickMs);
     lastTickMs = nowMs;
 
+    // Skip mood drift and expression pulses while FX editor is open
+    if (STATE.editorMode) {
+        rafId = requestAnimationFrame(tick);
+        return;
+    }
+
     const now = Date.now();
     if (now > holdUntil) {
         const drift = STATE.sleeping ? 0.11 : 0.045;

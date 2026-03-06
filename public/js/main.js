@@ -24,6 +24,7 @@ import { setPerfSink } from './perf-hooks.js';
 import { initAmbientAudio } from './ambient-audio.js';
 import { initManualBeatsComposer } from './manual-beats.js';
 import { initStreamDebugUi } from './stream-debug.js';
+import { initFxEditor } from './fx-editor.js';
 
 let miniWindowRef = null;
 let motionRelayInitialized = false;
@@ -376,6 +377,7 @@ function init() {
     initFaceRenderer();
     initGlitchFx();
     initGlitchColorPickers();
+    initFxEditor();
     faceManager.init();
     initEmotionEngine();
     initProactive(getWs);

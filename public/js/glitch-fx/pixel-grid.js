@@ -17,13 +17,75 @@ function getColorLUT(colorLUTs, h, s) {
 }
 
 export function getActiveExpression() {
+    if (STATE.editorMode) return STATE.expression || 'idle';
     if (STATE.sleeping) return 'sleep';
     return STATE.expression || 'idle';
 }
 
+// Resolve a profile that may be a multi-stage definition to a single snapshot.
+// Multi-stage format: { stages: [{ t, profile }, ...], durationMs, easing }
+// If the profile has stages, lerp between them based on a global transition timer.
+let stageTransitionStart = 0;
+let stageTransitionExpr = '';
+
+function resolveProfileStages(rawProfile, expr) {
+    if (!rawProfile || !rawProfile.stages || !Array.isArray(rawProfile.stages)) {
+        return rawProfile;
+    }
+    const { stages, durationMs = 400 } = rawProfile;
+    if (stages.length === 0) return null;
+    if (stages.length === 1) return stages[0].profile || null;
+
+    // Track expression transitions to drive the stage timer
+    const now = performance.now();
+    if (expr !== stageTransitionExpr) {
+        stageTransitionExpr = expr;
+        stageTransitionStart = now;
+    }
+
+    const elapsed = now - stageTransitionStart;
+    let t = Math.min(1, elapsed / Math.max(1, durationMs));
+
+    // Find the two bounding stages
+    let prev = stages[0];
+    let next = stages[stages.length - 1];
+    for (let i = 0; i < stages.length - 1; i++) {
+        if (t >= stages[i].t && t <= stages[i + 1].t) {
+            prev = stages[i];
+            next = stages[i + 1];
+            break;
+        }
+    }
+
+    const segRange = Math.max(0.001, next.t - prev.t);
+    const segT = Math.min(1, Math.max(0, (t - prev.t) / segRange));
+
+    // Lerp numeric values between prev and next profiles
+    const pProfile = prev.profile || {};
+    const nProfile = next.profile || {};
+    const merged = {};
+    const allKeys = new Set([...Object.keys(pProfile), ...Object.keys(nProfile)]);
+    for (const key of allKeys) {
+        const pv = pProfile[key];
+        const nv = nProfile[key];
+        if (typeof pv === 'number' && typeof nv === 'number') {
+            merged[key] = pv + (nv - pv) * segT;
+        } else if (typeof nv === 'number') {
+            merged[key] = nv;
+        } else if (typeof pv === 'number') {
+            merged[key] = pv;
+        } else {
+            // Non-numeric: use the next value once we pass the midpoint
+            merged[key] = segT >= 0.5 ? (nv ?? pv) : (pv ?? nv);
+        }
+    }
+    return merged;
+}
+
 export function getModifiedShapes(config) {
     const expr = getActiveExpression();
-    const profile = EXPRESSION_PROFILES[expr] || null;
+    const rawProfile = EXPRESSION_PROFILES[expr] || null;
+    const profile = resolveProfileStages(rawProfile, expr);
     const base = config.svg.shapes;
     const shapes = base.map((s) => ({ ...s }));
     if (!profile) return shapes;

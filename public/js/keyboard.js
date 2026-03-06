@@ -7,14 +7,23 @@ import { getWs } from './websocket.js';
 import { faceManager } from './face/index.js';
 import { setFullscreenEnabled } from './fullscreen.js';
 import { captureFrameBase64 } from './vision-capture.js';
+import { toggleEditor, isEditorOpen } from './fx-editor.js';
 
 let keyInputBuffer = '';
 
-const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D', 'x', 'X', 'm', 'M']);
+const SHORTCUT_KEYS = new Set(['z', 'Z', 's', 'S', 'c', 'C', 'f', 'F', 'd', 'D', 'x', 'X', 'm', 'M', 'e', 'E']);
 
 export function initKeyboard() {
     document.addEventListener('keydown', (e) => {
         const inInput = document.activeElement && document.activeElement.tagName === 'INPUT';
+
+        // When FX editor is open, only allow E or Escape to close it
+        if (isEditorOpen()) {
+            if (!inInput && (e.key === 'e' || e.key === 'E' || e.code === 'Escape')) {
+                toggleEditor();
+            }
+            return;
+        }
 
         if (e.code === 'Space' && !e.repeat && document.activeElement === document.body) {
             e.preventDefault();
@@ -90,6 +99,9 @@ export function initKeyboard() {
                     toggle.checked = !toggle.checked;
                     toggle.dispatchEvent(new Event('change'));
                 }
+            }
+            if (e.key === 'e' || e.key === 'E') {
+                toggleEditor();
             }
             return;
         }

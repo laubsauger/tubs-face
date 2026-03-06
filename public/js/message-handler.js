@@ -27,6 +27,23 @@ const DONATION_JOY_DURATION_MS = 1800;
 let donationJoyUntil = 0;
 let donationJoyResetTimer = null;
 let conversationExpireTimer = null;
+let liveTranscriptHideTimer = null;
+const LIVE_TRANSCRIPT_HIDE_DELAY_MS = 1500;
+
+function clearLiveTranscriptHideTimer() {
+    if (!liveTranscriptHideTimer) return;
+    clearTimeout(liveTranscriptHideTimer);
+    liveTranscriptHideTimer = null;
+}
+
+function scheduleLiveTranscriptHide(delayMs = LIVE_TRANSCRIPT_HIDE_DELAY_MS) {
+    clearLiveTranscriptHideTimer();
+    if (!getLiveUserTranscriptText()) return;
+    liveTranscriptHideTimer = setTimeout(() => {
+        liveTranscriptHideTimer = null;
+        clearLiveUserTranscript();
+    }, Math.max(0, Number(delayMs) || LIVE_TRANSCRIPT_HIDE_DELAY_MS));
+}
 
 function isDonationJoyActive(now = Date.now()) {
     return now < donationJoyUntil;
@@ -314,6 +331,7 @@ export function handleMessage(msg) {
 
     switch (msg.type) {
         case 'speak':
+            clearLiveTranscriptHideTimer();
             clearLiveUserTranscript();
             console.log(`[MSG] Received speak (${msg.text?.length} chars):`, msg.text);
             if (msg.text) {
@@ -333,6 +351,7 @@ export function handleMessage(msg) {
             resetProactiveTimer();
             break;
         case 'turn_start':
+            clearLiveTranscriptHideTimer();
             // New turn — flush any speech still queued from the previous turn
             if (STATE.currentTurnId && STATE.currentTurnId !== msg.turnId) {
                 if (STATE.speaking || STATE.ttsQueue?.length > 0) {
@@ -357,6 +376,8 @@ export function handleMessage(msg) {
             break;
         case 'audio_chunk':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            clearLiveTranscriptHideTimer();
+            clearLiveUserTranscript();
             if (msg.chunkIndex === 0 && msg.turnId) {
                 markTurn(msg.turnId, 'First streaming audio chunk received');
                 logChat('out', msg.text);
@@ -384,6 +405,7 @@ export function handleMessage(msg) {
             break;
 
         case 'speak_chunk':
+            clearLiveTranscriptHideTimer();
             clearLiveUserTranscript();
             // Ignore stale chunks from aborted turns
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
@@ -408,6 +430,8 @@ export function handleMessage(msg) {
             break;
         case 'speak_end':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            clearLiveTranscriptHideTimer();
+            clearLiveUserTranscript();
             console.log(`[MSG] speak_end turnId=${msg.turnId}`);
             if (msg.turnId) {
                 markTurn(msg.turnId, 'LLM response completed');
@@ -432,6 +456,8 @@ export function handleMessage(msg) {
             break;
         case 'turn_script':
             if (msg.turnId && msg.turnId !== STATE.currentTurnId) break;
+            clearLiveTranscriptHideTimer();
+            clearLiveUserTranscript();
             console.log(`[MSG] turn_script turnId=${msg.turnId} beats=${msg.beats?.length || 0}`);
             if (Array.isArray(msg.beats)) {
                 msg.beats.forEach((beat, idx) => {
@@ -476,6 +502,7 @@ export function handleMessage(msg) {
             }
             break;
         case 'incoming':
+            clearLiveTranscriptHideTimer();
             console.log(`[MSG] incoming: "${msg.text}"`);
             {
                 const donationSignal = detectDonationSignal(msg.text);
@@ -504,6 +531,7 @@ export function handleMessage(msg) {
             if (getLiveUserTranscriptText()) {
                 showLiveUserTranscript(getLiveUserTranscriptText(), { draft: false });
             }
+            scheduleLiveTranscriptHide();
             setExpressionIfAllowed('thinking');
             loadingBar.classList.add('active');
             break;
@@ -514,6 +542,7 @@ export function handleMessage(msg) {
             logChat('sys', msg.text);
             break;
         case 'error':
+            clearLiveTranscriptHideTimer();
             clearChatDraft('in');
             clearLiveUserTranscript();
             logChat('sys', `ERROR: ${msg.text}`);
@@ -521,11 +550,13 @@ export function handleMessage(msg) {
             setExpression('idle', { force: true, skipHold: true });
             break;
         case 'sleep':
+            clearLiveTranscriptHideTimer();
             clearLiveUserTranscript();
             hideDonationQr();
             enterSleep({ sync: false });
             break;
         case 'wake':
+            clearLiveTranscriptHideTimer();
             clearLiveUserTranscript();
             exitSleep({ sync: false });
             break;
@@ -554,6 +585,7 @@ export function handleMessage(msg) {
             } else {
                 STATE.inConversation = false;
                 updateWaveformMode();
+                clearLiveTranscriptHideTimer();
                 clearLiveUserTranscript();
             }
             break;

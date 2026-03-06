@@ -67,6 +67,10 @@
           <span id="glitch-fx-backend" class="mini-pill">init</span>
         </div>
         <div class="stat-row">
+          <span class="stat-label">FX Editor</span>
+          <button id="open-fx-editor" class="mini-btn">Edit</button>
+        </div>
+        <div class="stat-row">
           <span class="stat-label">Glitch Color</span>
           <input type="color" id="glitch-fx-color" value="#a855f7" class="mini-color">
         </div>
@@ -144,6 +148,13 @@
               <option value="zm_yunyang">Yunyang ZH (M)</option>
             </optgroup>
           </select>
+        </div>
+        <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
+          <span class="stat-label">Insight View</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="insight-view-toggle">
+            <span class="slider"></span>
+          </label>
         </div>
         <div class="stat-row" style="margin-top: 5px; padding-top: 5px; border-top: 1px solid rgba(60,70,110,0.2);">
           <span class="stat-label">Two Heads</span>
@@ -432,12 +443,18 @@
         </div>
       </div>
       <div id="stream-debug-root">
-        <div class="stat-row"><span class="stat-label">Turn</span><span class="stat-value" id="stat-stream-turn">—</span></div>
-        <div class="stat-row"><span class="stat-label">LLM Δ/chars</span><span class="stat-value" id="stat-stream-llm">0/0</span></div>
-        <div class="stat-row"><span class="stat-label">Sentences</span><span class="stat-value" id="stat-stream-sentences">0</span></div>
-        <div class="stat-row"><span class="stat-label">TTS send/chars</span><span class="stat-value" id="stat-stream-tts-out">0/0</span></div>
-        <div class="stat-row"><span class="stat-label">Audio in</span><span class="stat-value" id="stat-stream-audio-in">0/0KB</span></div>
-        <div class="stat-row"><span class="stat-label">Audio played</span><span class="stat-value" id="stat-stream-audio-play">0/0.00s</span></div>
+        <div class="stat-row"><span class="stat-label">Turn</span><span class="stat-value"
+            id="stat-stream-turn">—</span></div>
+        <div class="stat-row"><span class="stat-label">LLM Δ/chars</span><span class="stat-value"
+            id="stat-stream-llm">0/0</span></div>
+        <div class="stat-row"><span class="stat-label">Sentences</span><span class="stat-value"
+            id="stat-stream-sentences">0</span></div>
+        <div class="stat-row"><span class="stat-label">TTS send/chars</span><span class="stat-value"
+            id="stat-stream-tts-out">0/0</span></div>
+        <div class="stat-row"><span class="stat-label">Audio in</span><span class="stat-value"
+            id="stat-stream-audio-in">0/0KB</span></div>
+        <div class="stat-row"><span class="stat-label">Audio played</span><span class="stat-value"
+            id="stat-stream-audio-play">0/0.00s</span></div>
         <div id="stream-debug-log" aria-live="polite"></div>
       </div>
     </div>
@@ -488,6 +505,48 @@
       </div>
     </div>
 
+    <!-- Insight View Overlay -->
+    <div id="insight-overlay" class="hidden">
+      <div id="insight-overlay-header">Insight View <span id="insight-overlay-close">✕</span></div>
+      <div id="insight-overlay-body" aria-live="polite"></div>
+    </div>
+
+  </div>
+
+  <!-- FX Editor Overlay (outside #grid so it covers everything) -->
+  <div id="fx-editor-overlay">
+    <div class="fx-editor-header">
+      <h2>Glitch FX Editor</h2>
+      <div class="fx-editor-header-actions">
+        <select id="fx-editor-preset" class="fx-editor-btn">
+          <option value="">Presets...</option>
+          <option value="default">Default</option>
+          <option value="cyberpunk">Cyberpunk Heavy</option>
+          <option value="minimal">Minimal Clean</option>
+          <option value="warm">Warm</option>
+        </select>
+        <button id="fx-editor-export" class="fx-editor-btn">Export</button>
+        <button id="fx-editor-import" class="fx-editor-btn">Import</button>
+        <button id="fx-editor-reset" class="fx-editor-btn">Reset</button>
+        <button id="fx-editor-close" class="fx-editor-btn close-btn">Close (E)</button>
+      </div>
+    </div>
+    <div class="fx-editor-tabs">
+      <button class="fx-editor-tab active" data-tab="glitch">Glitch FX</button>
+      <button class="fx-editor-tab" data-tab="expression">Expressions</button>
+    </div>
+    <div class="fx-editor-body">
+      <div class="fx-editor-controls" id="fx-editor-controls"></div>
+      <div class="fx-editor-preview" id="fx-editor-preview">
+        <div class="fx-editor-preview-actions">
+          <button class="fx-editor-btn" id="fx-preview-blink">Blink</button>
+          <button class="fx-editor-btn" id="fx-preview-speak">Speak</button>
+          <div class="fx-gaze-pad" id="fx-gaze-pad">
+            <div class="fx-gaze-dot" id="fx-gaze-dot"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- CDN deps (regular scripts, set globals) -->

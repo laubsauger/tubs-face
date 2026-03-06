@@ -47,4 +47,6 @@ export const STATE = {
     vadNoiseGate: 0.008,
     // Streaming turn tracking
     currentTurnId: null,
+    // FX Editor mode — pauses idle behavior, emotion engine, VAD
+    editorMode: false,
 };

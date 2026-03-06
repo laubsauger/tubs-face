@@ -188,17 +188,27 @@ function rescueBeatsFromRawText(rawText) {
 }
 
 function summarizeDualHeadBeatForLog(beat, index) {
-  const actor = String(beat?.actor || 'main');
+  const actor = String(beat?.actor || 'main').toUpperCase().padEnd(5, ' ');
   const action = String(beat?.action || 'speak');
+  const actionStr = action === 'speak' ? '' : ` [${action}]`;
   const emoji = beat?.emotion?.emoji || '-';
-  const text = clampOutput(String(beat?.text || '').replace(/\s+/g, ' ').trim());
-  const preview = text ? (text.length > 64 ? `${text.slice(0, 64)}...` : text) : '';
-  return `${index}:${actor}/${action}/${emoji}${preview ? ` "${preview}"` : ''}`;
+  const text = String(beat?.text || '').replace(/\s+/g, ' ').trim();
+  return `[${actor}]${actionStr} ${emoji} : ${text}`;
 }
 
-function summarizeDualHeadBeatsForLog(beats = []) {
-  if (!Array.isArray(beats) || beats.length === 0) return '[none]';
-  return beats.map((beat, idx) => summarizeDualHeadBeatForLog(beat, idx)).join(' | ');
+function summarizeDualHeadBeatsForLog(beats = [], options = {}) {
+  const normalizedUserInput = normalizeInput(options?.userInput || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const truncatedUserInput = normalizedUserInput.length > 240
+    ? `${normalizedUserInput.slice(0, 240)}...`
+    : normalizedUserInput;
+  const userLine = truncatedUserInput ? `\n  <- USER  : ${truncatedUserInput}` : '';
+
+  if (!Array.isArray(beats) || beats.length === 0) {
+    return `${userLine}\n  -> [none]`;
+  }
+  return `${userLine}\n${beats.map((beat, idx) => `  -> ${summarizeDualHeadBeatForLog(beat, idx)}`).join('\n')}`;
 }
 
 function mergeDonationSignalFromBeats(beats) {

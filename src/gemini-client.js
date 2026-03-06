@@ -130,6 +130,8 @@ async function streamGeminiContent({
   maxOutputTokens = 256,
   temperature = 1,
   timeoutMs = 20000,
+  responseMimeType = null,
+  responseSchema = null,
   onChunk,
   abortSignal,
 }) {
@@ -158,6 +160,12 @@ async function streamGeminiContent({
       },
     },
   };
+  if (responseMimeType) {
+    payload.generationConfig.responseMimeType = responseMimeType;
+  }
+  if (responseSchema && typeof responseSchema === 'object') {
+    payload.generationConfig.responseSchema = responseSchema;
+  }
 
   if (systemInstruction) {
     payload.systemInstruction = {

@@ -541,6 +541,10 @@ export function setGlitchFxBaseColor(hex) {
     recolorPixelGrid();
 }
 
+export function getGlitchFxConfig() {
+    return structuredClone(config);
+}
+
 export function setGlitchFxConfig(newConfig) {
     const prevRenderer = normalizeRenderer(config.renderer);
 

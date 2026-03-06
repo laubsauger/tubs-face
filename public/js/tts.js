@@ -17,6 +17,8 @@ const REMOTE_SPEECH_STALE_MS = 20000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_MAX_MS = 45000;
 const SPEECH_SAFETY_MAX_MS = 60000;
+const STREAMING_GAP_GRACE_MS = 280;
+const STREAMING_SUBTITLE_HOLD_SEC = 12;
 
 const subtitles = createSubtitleController(subtitleEl);
 let speechSafetyTimer = null;
@@ -29,6 +31,10 @@ let remoteWaitTimer = null;
 let streamingAudioCtx = null;
 let streamingNextStartTime = 0;
 let streamingActiveNodes = 0;
+let streamingSessionActive = false;
+let streamingSessionTurnId = null;
+let streamingSubtitleText = '';
+let streamingFinalizeTimer = null;
 
 function shouldUseBrowserTtsFallback() {
     return String(STATE.ttsBackend || 'kokoro').trim().toLowerCase() === 'system';
@@ -86,6 +92,67 @@ function clearRemoteWaitTimer() {
     if (!remoteWaitTimer) return;
     clearTimeout(remoteWaitTimer);
     remoteWaitTimer = null;
+}
+
+function clearStreamingFinalizeTimer() {
+    if (!streamingFinalizeTimer) return;
+    clearTimeout(streamingFinalizeTimer);
+    streamingFinalizeTimer = null;
+}
+
+function beginStreamingSession(turnId = null) {
+    if (streamingSessionActive) return;
+    streamingSessionActive = true;
+    streamingSessionTurnId = turnId || STATE.currentTurnId || null;
+    startSpeaking();
+    emitHeadSpeechState('start', streamingSessionTurnId);
+    if (streamingSessionTurnId) {
+        markTurn(streamingSessionTurnId, 'First audio played');
+        markTurn(streamingSessionTurnId, 'End-to-end response');
+        logTurnTiming(streamingSessionTurnId);
+    }
+}
+
+function endStreamingSession(turnId = null) {
+    clearStreamingFinalizeTimer();
+    if (!streamingSessionActive) {
+        streamingActiveNodes = 0;
+        streamingNextStartTime = 0;
+        streamingSubtitleText = '';
+        streamingSessionTurnId = null;
+        return;
+    }
+
+    const effectiveTurnId = turnId || streamingSessionTurnId || STATE.currentTurnId || null;
+    streamingSessionActive = false;
+    streamingActiveNodes = 0;
+    streamingNextStartTime = 0;
+    stopSpeaking();
+    emitHeadSpeechState('end', effectiveTurnId);
+    finishSubtitles();
+    streamingSubtitleText = '';
+    if (effectiveTurnId) {
+        markTurn(effectiveTurnId, 'Audio segment ended');
+    }
+    streamingSessionTurnId = null;
+    $('#stat-listen-state').textContent = 'Idle';
+}
+
+function scheduleStreamingSessionEnd(turnId = null) {
+    clearStreamingFinalizeTimer();
+    streamingFinalizeTimer = setTimeout(() => {
+        streamingFinalizeTimer = null;
+        if (streamingActiveNodes > 0) return;
+        endStreamingSession(turnId);
+    }, STREAMING_GAP_GRACE_MS);
+}
+
+function updateStreamingSubtitle(text) {
+    const normalized = normalizeSpeechText(text);
+    if (!normalized) return;
+    if (normalized === streamingSubtitleText) return;
+    streamingSubtitleText = normalized;
+    startSubtitles(normalized, STREAMING_SUBTITLE_HOLD_SEC);
 }
 
 function markRemoteSmallSpeaking(isSpeaking, ts = Date.now(), durationMs = null) {
@@ -207,8 +274,15 @@ export function stopAllTTS() {
 
     clearSpeechSafety();
     clearRemoteWaitTimer();
+    clearStreamingFinalizeTimer();
+    const hadStreamingSession = streamingSessionActive;
+    streamingActiveNodes = 0;
+    streamingNextStartTime = 0;
+    streamingSubtitleText = '';
+    streamingSessionActive = false;
+    streamingSessionTurnId = null;
     stopSubtitles();
-    if (STATE.speaking) {
+    if (STATE.speaking || hadStreamingSession) {
         emitHeadSpeechState('end');
     }
     STATE.speaking = false;
@@ -551,6 +625,7 @@ function speakFallback(item) {
 }
 
 export function handleIncomingAudioChunk(audioBase64, text, turnId) {
+    clearStreamingFinalizeTimer();
     if (!streamingAudioCtx) {
         streamingAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     }
@@ -571,9 +646,10 @@ export function handleIncomingAudioChunk(audioBase64, text, turnId) {
     }
 
     streamingAudioCtx.decodeAudioData(buf).then(audioBuffer => {
+        const effectiveTurnId = turnId || STATE.currentTurnId || null;
         const audioBytes = Math.round(((audioBase64 || '').length * 3) / 4);
         pushStreamDebugEvent('audio_chunk_decoded', {
-            turnId: turnId || STATE.currentTurnId || null,
+            turnId: effectiveTurnId,
             audioBytes,
             audioDurationSec: audioBuffer.duration,
             textChars: (text || '').length,
@@ -588,17 +664,14 @@ export function handleIncomingAudioChunk(audioBase64, text, turnId) {
             streamingNextStartTime = now;
         }
 
-        // If this is the first active node playing, fire startSpeaking
-        if (streamingActiveNodes === 0) {
-            startSpeaking();
-            emitHeadSpeechState('start', turnId);
-            if (turnId) {
-                markTurn(turnId, 'First audio played');
-                markTurn(turnId, 'End-to-end response');
-                logTurnTiming(turnId);
-            }
-            if (text) startSubtitles(text, 1.0);
+        if (streamingSessionActive && streamingSessionTurnId && effectiveTurnId && streamingSessionTurnId !== effectiveTurnId) {
+            endStreamingSession(streamingSessionTurnId);
         }
+
+        if (!streamingSessionActive) {
+            beginStreamingSession(effectiveTurnId);
+        }
+        updateStreamingSubtitle(text);
 
         streamingActiveNodes++;
         const startTime = streamingNextStartTime;
@@ -607,20 +680,14 @@ export function handleIncomingAudioChunk(audioBase64, text, turnId) {
 
         source.onended = () => {
             pushStreamDebugEvent('audio_chunk_played', {
-                turnId: turnId || STATE.currentTurnId || null,
+                turnId: effectiveTurnId,
                 audioDurationSec: audioBuffer.duration,
                 ts: Date.now(),
             });
             streamingActiveNodes--;
             if (streamingActiveNodes <= 0) {
                 streamingActiveNodes = 0;
-                stopSpeaking();
-                emitHeadSpeechState('end', turnId);
-                finishSubtitles();
-                if (turnId) {
-                    markTurn(turnId, 'Audio segment ended');
-                }
-                $('#stat-listen-state').textContent = 'Idle';
+                scheduleStreamingSessionEnd(effectiveTurnId);
             }
         };
     }).catch(err => {
@@ -630,5 +697,8 @@ export function handleIncomingAudioChunk(audioBase64, text, turnId) {
             ts: Date.now(),
         });
         console.error('[TTS Stream] decodeAudioData error:', err);
+        if (streamingActiveNodes <= 0) {
+            scheduleStreamingSessionEnd(turnId || STATE.currentTurnId || null);
+        }
     });
 }

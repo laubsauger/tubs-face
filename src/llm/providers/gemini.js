@@ -41,6 +41,8 @@ async function streamContent(args) {
     maxOutputTokens: args.maxOutputTokens,
     temperature: args.temperature,
     timeoutMs: args.timeoutMs,
+    responseMimeType: args.responseMimeType,
+    responseSchema: args.responseSchema,
     onChunk: args.onChunk,
     abortSignal: args.abortSignal,
   });

@@ -26,7 +26,7 @@ export const DEFAULT_CONFIG = {
     },
 };
 
-export const EXPRESSION_PROFILES = {
+export let EXPRESSION_PROFILES = {
     idle: null,
     'idle-flat': { mouthH: 0.65 },
     listening: { eyeH: 1.09, eyeW: 1.07 },
@@ -40,6 +40,14 @@ export const EXPRESSION_PROFILES = {
     angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4, eyeSkew: -0.15 },
     surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 2.2, mouthRound: true, mouthShape: 'round' },
 };
+
+export function updateExpressionProfile(name, profile) {
+    EXPRESSION_PROFILES[name] = profile;
+}
+
+export function setExpressionProfiles(profiles) {
+    EXPRESSION_PROFILES = profiles;
+}
 
 export const BLINK_CLOSE_MS = 80;
 export const BLINK_HOLD_MS = 60;
