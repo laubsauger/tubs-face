@@ -10,7 +10,7 @@ This document describes the active persona and runtime behavior for the Tubs fac
 
 ## Runtime Configuration
 
-The bridge server keeps mutable runtime config in `src/config.js` and exposes it over `/config`.
+The TypeScript server keeps mutable runtime config in `src/server/config/runtime.ts` and exposes it over `/config`.
 
 Default runtime config:
 
@@ -23,7 +23,7 @@ Default runtime config:
   "llmModel": "gemini-2.5-flash",
   "llmMaxOutputTokens": 256,
   "donationSignalMode": "both",
-  "faceRenderMode": "svg",
+  "faceRenderMode": "glitch",
   "dualHeadEnabled": false,
   "dualHeadMode": "off",
   "secondaryVoice": "am_puck",
@@ -68,9 +68,8 @@ Default runtime config:
 
 ## Bridge API Surface
 
-Implemented in `src/bridge-server.js`:
+Implemented on the TypeScript server path:
 
-- `GET /` serve UI
 - `GET /health` health + connected clients
 - `GET /stats` session stats
 - `POST /speak` inject speech text to UI
@@ -88,11 +87,11 @@ Implemented in `src/bridge-server.js`:
 
 ## Adding / Changing Agents
 
-1. Update `runtimeConfig` in `src/config.js` (or send `POST /config`).
+1. Update `runtimeConfig` in `src/server/config/runtime.ts` (or send `POST /config`).
 2. Edit persona behavior in:
    - `src/persona/system-prompt.txt`
    - `src/persona/greetings.json`
    - `.env` (`DONATION_VENMO`, `DONATION_QR_DATA`, optional Gemini pricing for cost estimates)
 3. If voice/TTS behavior changes, update both:
-   - `public/js/audio-input.js`
+   - `src/client/audio/voice-runtime.ts`
    - `src/transcription-service.py`

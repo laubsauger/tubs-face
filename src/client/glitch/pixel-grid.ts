@@ -1,3 +1,4 @@
+import type { ExpressionName } from '../../shared/contracts/config.js';
 import type { AppState } from '../state/app-state.js';
 import type { GlitchConfig } from './constants.js';
 import {
@@ -49,7 +50,7 @@ export function buildPixelGrid(
   const shapeGroups: number[] = [];
   const shapeCenters: ShapeCenter[] = [];
 
-  const expression = state.sleeping ? 'sleep' : state.currentExpression || 'idle';
+  const expression: ExpressionName = state.sleeping ? 'sleep' : state.currentExpression;
   const profile = EXPRESSION_PROFILES[expression] ?? null;
   const shapes = getModifiedShapes(expression, config);
   const vb = config.svg.viewBox;
@@ -159,7 +160,7 @@ export function recolorPixelGrid(
   }
 }
 
-function getModifiedShapes(expression: string, config: GlitchConfig): GlitchConfig['svg']['shapes'] {
+function getModifiedShapes(expression: ExpressionName, config: GlitchConfig): GlitchConfig['svg']['shapes'] {
   const profile = EXPRESSION_PROFILES[expression] ?? null;
   const shapes = config.svg.shapes.map((shape) => ({ ...shape }));
   if (!profile) return shapes;

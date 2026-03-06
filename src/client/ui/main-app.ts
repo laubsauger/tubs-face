@@ -34,6 +34,8 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
   const renderQuality = config?.renderQuality ?? 'high';
   const glitchRenderer = config?.glitchRenderer ?? 'auto';
   const glitchBaseColor = config?.glitchFxBaseColor ?? state.fxBaseColorDraft;
+  const glitchPixelSize = config?.glitchPixelSize ?? 21;
+  const glitchPixelGap = config?.glitchPixelGap ?? 7;
   const glitchScanlines = config?.glitchScanlines ?? true;
   const glitchScanlineIntensity = config?.glitchScanlineIntensity ?? 0.41;
   const glitchScanlineSpacing = config?.glitchScanlineSpacing ?? 5;
@@ -44,6 +46,41 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
   const glitchFlickerSpeed = config?.glitchFlickerSpeed ?? 11;
   const glitchFlickerDepth = config?.glitchFlickerDepth ?? 0.02;
   const glitchGlowStrength = config?.glitchGlowStrength ?? 14;
+  const glitchColorHueVariation = config?.glitchColorHueVariation ?? 8;
+  const glitchColorBrightnessVariation = config?.glitchColorBrightnessVariation ?? 8;
+  const glitchColorOpacityMin = config?.glitchColorOpacityMin ?? 0.5;
+  const glitchShapeLeftEyeX = config?.glitchShapeLeftEyeX ?? 0;
+  const glitchShapeLeftEyeY = config?.glitchShapeLeftEyeY ?? 0;
+  const glitchShapeLeftEyeW = config?.glitchShapeLeftEyeW ?? 14.59;
+  const glitchShapeLeftEyeH = config?.glitchShapeLeftEyeH ?? 22.47;
+  const glitchShapeLeftEyeRx = config?.glitchShapeLeftEyeRx ?? 5.94;
+  const glitchShapeLeftEyeRy = config?.glitchShapeLeftEyeRy ?? 5.94;
+  const glitchShapeRightEyeX = config?.glitchShapeRightEyeX ?? 40.85;
+  const glitchShapeRightEyeY = config?.glitchShapeRightEyeY ?? 0;
+  const glitchShapeRightEyeW = config?.glitchShapeRightEyeW ?? 14.59;
+  const glitchShapeRightEyeH = config?.glitchShapeRightEyeH ?? 22.47;
+  const glitchShapeRightEyeRx = config?.glitchShapeRightEyeRx ?? 5.94;
+  const glitchShapeRightEyeRy = config?.glitchShapeRightEyeRy ?? 5.94;
+  const glitchShapeMouthX = config?.glitchShapeMouthX ?? 20.53;
+  const glitchShapeMouthY = config?.glitchShapeMouthY ?? 23.86;
+  const glitchShapeMouthW = config?.glitchShapeMouthW ?? 14.38;
+  const glitchShapeMouthH = config?.glitchShapeMouthH ?? 6.44;
+  const glitchShapeMouthRx = config?.glitchShapeMouthRx ?? 1.95;
+  const glitchShapeMouthRy = config?.glitchShapeMouthRy ?? 1.95;
+  const selectedExpression = state.fxExpressionSelected;
+  const selectedProfile = config?.glitchExpressionProfiles?.[selectedExpression] ?? null;
+  const profileEyeH = selectedProfile?.eyeH ?? 1;
+  const profileEyeW = selectedProfile?.eyeW ?? 1;
+  const profileEyeDy = selectedProfile?.eyeDy ?? 0;
+  const profileEyeSkew = selectedProfile?.eyeSkew ?? 0;
+  const profileMouthW = selectedProfile?.mouthW ?? 1;
+  const profileMouthH = selectedProfile?.mouthH ?? 1;
+  const profileMouthRound = selectedProfile?.mouthRound ?? false;
+  const profileTears = selectedProfile?.tears ?? false;
+  const profileEyeShape = selectedProfile?.eyeShape ?? 'rect';
+  const profileMouthShape = selectedProfile?.mouthShape ?? 'rect';
+  const profileColorHex = selectedProfile?.colorHex ?? '#a855f7';
+  const profileTearColorHex = selectedProfile?.tearColorHex ?? '#57bfff';
   const glitchBrightnessPulseEnabled = config?.glitchBrightnessPulseEnabled ?? true;
   const glitchBrightnessPulseDim = config?.glitchBrightnessPulseDim ?? 0.88;
   const glitchBrightnessPulseBright = config?.glitchBrightnessPulseBright ?? 1;
@@ -323,6 +360,74 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
                   <button id="glitch-reset-button" class="button button-secondary" type="button">Reset</button>
                   <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
                 </div>
+              </div>
+              <div class="fx-editor-group">
+                <h3>Expression Profiles</h3>
+                <div class="face-action-row">
+                  <label class="manual-field">
+                    <span>Expression</span>
+                    <select id="fx-expression-select" class="mini-select">
+                      ${renderExpressionOption('idle', selectedExpression)}
+                      ${renderExpressionOption('idle-flat', selectedExpression)}
+                      ${renderExpressionOption('listening', selectedExpression)}
+                      ${renderExpressionOption('thinking', selectedExpression)}
+                      ${renderExpressionOption('speaking', selectedExpression)}
+                      ${renderExpressionOption('smile', selectedExpression)}
+                      ${renderExpressionOption('happy', selectedExpression)}
+                      ${renderExpressionOption('love', selectedExpression)}
+                      ${renderExpressionOption('sad', selectedExpression)}
+                      ${renderExpressionOption('crying', selectedExpression)}
+                      ${renderExpressionOption('sleep', selectedExpression)}
+                      ${renderExpressionOption('angry', selectedExpression)}
+                      ${renderExpressionOption('surprised', selectedExpression)}
+                    </select>
+                  </label>
+                  <button id="fx-expression-reset" class="button button-secondary" type="button">Reset Profile</button>
+                </div>
+                ${renderFxSlider('Eye Height', 'eyeH', profileEyeH, 0.05, 2, 0.01, 'expression-range')}
+                ${renderFxSlider('Eye Width', 'eyeW', profileEyeW, 0.3, 2, 0.01, 'expression-range')}
+                ${renderFxSlider('Eye Offset Y', 'eyeDy', profileEyeDy, -10, 15, 0.5, 'expression-range')}
+                ${renderFxSlider('Eye Skew', 'eyeSkew', profileEyeSkew, -0.5, 0.5, 0.01, 'expression-range')}
+                ${renderFxSlider('Mouth Width', 'mouthW', profileMouthW, 0.1, 2, 0.01, 'expression-range')}
+                ${renderFxSlider('Mouth Height', 'mouthH', profileMouthH, 0.1, 4, 0.01, 'expression-range')}
+                ${renderFxToggle('Mouth Round', 'mouthRound', profileMouthRound, 'expression-toggle')}
+                ${renderFxToggle('Tears', 'tears', profileTears, 'expression-toggle')}
+                ${renderFxSelect('Eye Shape', 'eyeShape', profileEyeShape, ['rect', 'heart'], 'expression-select')}
+                ${renderFxSelect('Mouth Shape', 'mouthShape', profileMouthShape, ['rect', 'frown', 'smile-arc', 'round'], 'expression-select')}
+                ${renderFxColor('Color Override', 'colorHex', profileColorHex, 'expression-color')}
+                ${renderFxColor('Tear Color', 'tearColorHex', profileTearColorHex, 'expression-color')}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Pixel Grid</h3>
+                ${renderFxSlider('Pixel Size', 'glitchPixelSize', glitchPixelSize, 2, 60, 1)}
+                ${renderFxSlider('Pixel Gap', 'glitchPixelGap', glitchPixelGap, 0, 30, 1)}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Base Shapes</h3>
+                ${renderFxSlider('Left Eye X', 'glitchShapeLeftEyeX', glitchShapeLeftEyeX, -10, 60, 0.1)}
+                ${renderFxSlider('Left Eye Y', 'glitchShapeLeftEyeY', glitchShapeLeftEyeY, -10, 40, 0.1)}
+                ${renderFxSlider('Left Eye W', 'glitchShapeLeftEyeW', glitchShapeLeftEyeW, 1, 30, 0.1)}
+                ${renderFxSlider('Left Eye H', 'glitchShapeLeftEyeH', glitchShapeLeftEyeH, 1, 40, 0.1)}
+                ${renderFxSlider('Left Eye Rx', 'glitchShapeLeftEyeRx', glitchShapeLeftEyeRx, 0, 15, 0.1)}
+                ${renderFxSlider('Left Eye Ry', 'glitchShapeLeftEyeRy', glitchShapeLeftEyeRy, 0, 15, 0.1)}
+                ${renderFxSlider('Right Eye X', 'glitchShapeRightEyeX', glitchShapeRightEyeX, 0, 60, 0.1)}
+                ${renderFxSlider('Right Eye Y', 'glitchShapeRightEyeY', glitchShapeRightEyeY, -10, 40, 0.1)}
+                ${renderFxSlider('Right Eye W', 'glitchShapeRightEyeW', glitchShapeRightEyeW, 1, 30, 0.1)}
+                ${renderFxSlider('Right Eye H', 'glitchShapeRightEyeH', glitchShapeRightEyeH, 1, 40, 0.1)}
+                ${renderFxSlider('Right Eye Rx', 'glitchShapeRightEyeRx', glitchShapeRightEyeRx, 0, 15, 0.1)}
+                ${renderFxSlider('Right Eye Ry', 'glitchShapeRightEyeRy', glitchShapeRightEyeRy, 0, 15, 0.1)}
+                ${renderFxSlider('Mouth X', 'glitchShapeMouthX', glitchShapeMouthX, 0, 60, 0.1)}
+                ${renderFxSlider('Mouth Y', 'glitchShapeMouthY', glitchShapeMouthY, 0, 40, 0.1)}
+                ${renderFxSlider('Mouth W', 'glitchShapeMouthW', glitchShapeMouthW, 1, 30, 0.1)}
+                ${renderFxSlider('Mouth H', 'glitchShapeMouthH', glitchShapeMouthH, 1, 20, 0.1)}
+                ${renderFxSlider('Mouth Rx', 'glitchShapeMouthRx', glitchShapeMouthRx, 0, 15, 0.1)}
+                ${renderFxSlider('Mouth Ry', 'glitchShapeMouthRy', glitchShapeMouthRy, 0, 15, 0.1)}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Color</h3>
+                ${renderFxSlider('Hue Variation', 'glitchColorHueVariation', glitchColorHueVariation, 0, 60, 1)}
+                ${renderFxSlider('Brightness Var', 'glitchColorBrightnessVariation', glitchColorBrightnessVariation, 0, 40, 1)}
+                ${renderFxSlider('Opacity Min', 'glitchColorOpacityMin', glitchColorOpacityMin, 0, 1, 0.05)}
               </div>
               <div class="fx-editor-group">
                 <h3>Scanlines & Flicker</h3>
@@ -612,23 +717,72 @@ function renderFxSlider(
   min: number,
   max: number,
   step: number,
+  datasetType: 'config-range' | 'expression-range' = 'config-range',
 ): string {
+  const datasetAttribute = datasetType === 'expression-range'
+    ? 'data-fx-expression-range'
+    : 'data-fx-config-range';
   return `
     <label class="fx-slider-row">
       <span>${escapeHtml(label)}</span>
-      <input data-fx-config-range="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
+      <input ${datasetAttribute}="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
       <strong>${value.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 3)}</strong>
     </label>
   `;
 }
 
-function renderFxToggle(label: string, key: string, checked: boolean): string {
+function renderFxToggle(
+  label: string,
+  key: string,
+  checked: boolean,
+  datasetType: 'config-toggle' | 'expression-toggle' = 'config-toggle',
+): string {
+  const datasetAttribute = datasetType === 'expression-toggle'
+    ? 'data-fx-expression-toggle'
+    : 'data-fx-config-toggle';
   return `
     <label class="voice-toggle fx-toggle-row">
-      <input data-fx-config-toggle="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
+      <input ${datasetAttribute}="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
       <span>${escapeHtml(label)}</span>
     </label>
   `;
+}
+
+function renderFxSelect(
+  label: string,
+  key: string,
+  value: string,
+  options: string[],
+  datasetType: 'expression-select',
+): string {
+  const datasetAttribute = datasetType === 'expression-select' ? 'data-fx-expression-select' : '';
+  return `
+    <label class="manual-field">
+      <span>${escapeHtml(label)}</span>
+      <select ${datasetAttribute}="${escapeAttribute(key)}" class="mini-select">
+        ${options.map((option) => `<option value="${escapeAttribute(option)}" ${value === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+      </select>
+    </label>
+  `;
+}
+
+function renderFxColor(
+  label: string,
+  key: string,
+  value: `#${string}`,
+  datasetType: 'expression-color',
+): string {
+  const datasetAttribute = datasetType === 'expression-color' ? 'data-fx-expression-color' : '';
+  return `
+    <label class="manual-field">
+      <span>${escapeHtml(label)}</span>
+      <input ${datasetAttribute}="${escapeAttribute(key)}" class="fx-color-input" type="color" value="${escapeAttribute(value)}" />
+    </label>
+  `;
+}
+
+function renderExpressionOption(name: string, selected: string): string {
+  return `<option value="${escapeAttribute(name)}" ${name === selected ? 'selected' : ''}>${escapeHtml(name)}</option>`;
 }
 
 function renderFaceMeta(face: AppState['faceLastFaces'][number]): string {

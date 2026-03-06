@@ -126,6 +126,7 @@ export interface AppState {
   manualStatusKind: 'idle' | 'ok' | 'error' | 'busy';
   manualSending: boolean;
   fxEditorOpen: boolean;
+  fxExpressionSelected: ExpressionName;
   fxBaseColorDraft: `#${string}`;
   chatEntries: ChatEntry[];
   liveTranscriptText: string;
@@ -216,6 +217,7 @@ export function createAppStore(serverUrl: string): AppStore {
     manualStatusKind: 'idle',
     manualSending: false,
     fxEditorOpen: false,
+    fxExpressionSelected: 'idle',
     fxBaseColorDraft: '#a855f7',
     chatEntries: [],
     liveTranscriptText: '',

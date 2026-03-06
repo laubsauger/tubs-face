@@ -7,6 +7,9 @@ import type {
   DonationSignalMode,
   DualHeadMode,
   DualHeadTurnPolicy,
+  ExpressionName,
+  ExpressionProfile,
+  ExpressionProfileMap,
   FaceRenderMode,
   GlitchRenderer,
   KokoroVoice,
@@ -18,6 +21,7 @@ import type {
   TtsBackend,
 } from '../../shared/contracts/config.js';
 import {
+  DEFAULT_EXPRESSION_PROFILES,
   DONATION_SIGNAL_MODES,
   DUAL_HEAD_MODES,
   DUAL_HEAD_TURN_POLICIES,
@@ -61,7 +65,10 @@ export const runtimeConfig: RuntimeConfig = {
   ambientAudioEnabled: parseBoolean(process.env.AMBIENT_AUDIO_ENABLED, true),
   glitchFxEnabled: true,
   glitchFxBaseColor: normalizeHexColor(process.env.GLITCH_FX_BASE_COLOR, '#a855f7'),
+  glitchExpressionProfiles: structuredClone(DEFAULT_EXPRESSION_PROFILES),
   glitchRenderer: DEFAULT_GLITCH_RENDERER,
+  glitchPixelSize: parseFloatInRange(process.env.GLITCH_PIXEL_SIZE, 21, 2, 60),
+  glitchPixelGap: parseFloatInRange(process.env.GLITCH_PIXEL_GAP, 7, 0, 30),
   glitchScanlines: parseBoolean(process.env.GLITCH_SCANLINES, true),
   glitchScanlineIntensity: parseFloatInRange(process.env.GLITCH_SCANLINE_INTENSITY, 0.41, 0, 1),
   glitchScanlineSpacing: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPACING, 5, 1, 20),
@@ -72,6 +79,27 @@ export const runtimeConfig: RuntimeConfig = {
   glitchFlickerSpeed: parseIntegerInRange(process.env.GLITCH_FLICKER_SPEED, 11, 1, 30),
   glitchFlickerDepth: parseFloatInRange(process.env.GLITCH_FLICKER_DEPTH, 0.02, 0, 0.2),
   glitchGlowStrength: parseFloatInRange(process.env.GLITCH_GLOW_STRENGTH, 14, 0, 60),
+  glitchColorHueVariation: parseFloatInRange(process.env.GLITCH_COLOR_HUE_VARIATION, 8, 0, 60),
+  glitchColorBrightnessVariation: parseFloatInRange(process.env.GLITCH_COLOR_BRIGHTNESS_VARIATION, 8, 0, 40),
+  glitchColorOpacityMin: parseFloatInRange(process.env.GLITCH_COLOR_OPACITY_MIN, 0.5, 0, 1),
+  glitchShapeLeftEyeX: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_X, 0, -10, 60),
+  glitchShapeLeftEyeY: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_Y, 0, -10, 40),
+  glitchShapeLeftEyeW: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_W, 14.59, 1, 30),
+  glitchShapeLeftEyeH: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_H, 22.47, 1, 40),
+  glitchShapeLeftEyeRx: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_RX, 5.94, 0, 15),
+  glitchShapeLeftEyeRy: parseFloatInRange(process.env.GLITCH_SHAPE_LEFT_EYE_RY, 5.94, 0, 15),
+  glitchShapeRightEyeX: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_X, 40.85, 0, 60),
+  glitchShapeRightEyeY: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_Y, 0, -10, 40),
+  glitchShapeRightEyeW: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_W, 14.59, 1, 30),
+  glitchShapeRightEyeH: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_H, 22.47, 1, 40),
+  glitchShapeRightEyeRx: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_RX, 5.94, 0, 15),
+  glitchShapeRightEyeRy: parseFloatInRange(process.env.GLITCH_SHAPE_RIGHT_EYE_RY, 5.94, 0, 15),
+  glitchShapeMouthX: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_X, 20.53, 0, 60),
+  glitchShapeMouthY: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_Y, 23.86, 0, 40),
+  glitchShapeMouthW: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_W, 14.38, 1, 30),
+  glitchShapeMouthH: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_H, 6.44, 1, 20),
+  glitchShapeMouthRx: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_RX, 1.95, 0, 15),
+  glitchShapeMouthRy: parseFloatInRange(process.env.GLITCH_SHAPE_MOUTH_RY, 1.95, 0, 15),
   glitchBrightnessPulseEnabled: parseBoolean(process.env.GLITCH_BRIGHTNESS_PULSE_ENABLED, true),
   glitchBrightnessPulseDim: parseFloatInRange(process.env.GLITCH_BRIGHTNESS_PULSE_DIM, 0.88, 0.3, 1),
   glitchBrightnessPulseBright: parseFloatInRange(process.env.GLITCH_BRIGHTNESS_PULSE_BRIGHT, 1, 0.5, 1.5),
@@ -199,8 +227,20 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   if (patch.glitchFxBaseColor !== undefined) {
     runtimeConfig.glitchFxBaseColor = normalizeHexColor(patch.glitchFxBaseColor, runtimeConfig.glitchFxBaseColor);
   }
+  if (patch.glitchExpressionProfiles !== undefined) {
+    runtimeConfig.glitchExpressionProfiles = normalizeExpressionProfiles(
+      patch.glitchExpressionProfiles,
+      runtimeConfig.glitchExpressionProfiles,
+    );
+  }
   if (patch.glitchRenderer !== undefined) {
     runtimeConfig.glitchRenderer = expectOne(GLITCH_RENDERERS, patch.glitchRenderer, 'glitchRenderer');
+  }
+  if (patch.glitchPixelSize !== undefined) {
+    runtimeConfig.glitchPixelSize = parseFloatInRange(patch.glitchPixelSize, runtimeConfig.glitchPixelSize, 2, 60);
+  }
+  if (patch.glitchPixelGap !== undefined) {
+    runtimeConfig.glitchPixelGap = parseFloatInRange(patch.glitchPixelGap, runtimeConfig.glitchPixelGap, 0, 30);
   }
   if (patch.glitchScanlines !== undefined) runtimeConfig.glitchScanlines = Boolean(patch.glitchScanlines);
   if (patch.glitchScanlineIntensity !== undefined) {
@@ -252,6 +292,84 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   }
   if (patch.glitchGlowStrength !== undefined) {
     runtimeConfig.glitchGlowStrength = parseFloatInRange(patch.glitchGlowStrength, runtimeConfig.glitchGlowStrength, 0, 60);
+  }
+  if (patch.glitchColorHueVariation !== undefined) {
+    runtimeConfig.glitchColorHueVariation = parseFloatInRange(
+      patch.glitchColorHueVariation,
+      runtimeConfig.glitchColorHueVariation,
+      0,
+      60,
+    );
+  }
+  if (patch.glitchColorBrightnessVariation !== undefined) {
+    runtimeConfig.glitchColorBrightnessVariation = parseFloatInRange(
+      patch.glitchColorBrightnessVariation,
+      runtimeConfig.glitchColorBrightnessVariation,
+      0,
+      40,
+    );
+  }
+  if (patch.glitchColorOpacityMin !== undefined) {
+    runtimeConfig.glitchColorOpacityMin = parseFloatInRange(
+      patch.glitchColorOpacityMin,
+      runtimeConfig.glitchColorOpacityMin,
+      0,
+      1,
+    );
+  }
+  if (patch.glitchShapeLeftEyeX !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeX = parseFloatInRange(patch.glitchShapeLeftEyeX, runtimeConfig.glitchShapeLeftEyeX, -10, 60);
+  }
+  if (patch.glitchShapeLeftEyeY !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeY = parseFloatInRange(patch.glitchShapeLeftEyeY, runtimeConfig.glitchShapeLeftEyeY, -10, 40);
+  }
+  if (patch.glitchShapeLeftEyeW !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeW = parseFloatInRange(patch.glitchShapeLeftEyeW, runtimeConfig.glitchShapeLeftEyeW, 1, 30);
+  }
+  if (patch.glitchShapeLeftEyeH !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeH = parseFloatInRange(patch.glitchShapeLeftEyeH, runtimeConfig.glitchShapeLeftEyeH, 1, 40);
+  }
+  if (patch.glitchShapeLeftEyeRx !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeRx = parseFloatInRange(patch.glitchShapeLeftEyeRx, runtimeConfig.glitchShapeLeftEyeRx, 0, 15);
+  }
+  if (patch.glitchShapeLeftEyeRy !== undefined) {
+    runtimeConfig.glitchShapeLeftEyeRy = parseFloatInRange(patch.glitchShapeLeftEyeRy, runtimeConfig.glitchShapeLeftEyeRy, 0, 15);
+  }
+  if (patch.glitchShapeRightEyeX !== undefined) {
+    runtimeConfig.glitchShapeRightEyeX = parseFloatInRange(patch.glitchShapeRightEyeX, runtimeConfig.glitchShapeRightEyeX, 0, 60);
+  }
+  if (patch.glitchShapeRightEyeY !== undefined) {
+    runtimeConfig.glitchShapeRightEyeY = parseFloatInRange(patch.glitchShapeRightEyeY, runtimeConfig.glitchShapeRightEyeY, -10, 40);
+  }
+  if (patch.glitchShapeRightEyeW !== undefined) {
+    runtimeConfig.glitchShapeRightEyeW = parseFloatInRange(patch.glitchShapeRightEyeW, runtimeConfig.glitchShapeRightEyeW, 1, 30);
+  }
+  if (patch.glitchShapeRightEyeH !== undefined) {
+    runtimeConfig.glitchShapeRightEyeH = parseFloatInRange(patch.glitchShapeRightEyeH, runtimeConfig.glitchShapeRightEyeH, 1, 40);
+  }
+  if (patch.glitchShapeRightEyeRx !== undefined) {
+    runtimeConfig.glitchShapeRightEyeRx = parseFloatInRange(patch.glitchShapeRightEyeRx, runtimeConfig.glitchShapeRightEyeRx, 0, 15);
+  }
+  if (patch.glitchShapeRightEyeRy !== undefined) {
+    runtimeConfig.glitchShapeRightEyeRy = parseFloatInRange(patch.glitchShapeRightEyeRy, runtimeConfig.glitchShapeRightEyeRy, 0, 15);
+  }
+  if (patch.glitchShapeMouthX !== undefined) {
+    runtimeConfig.glitchShapeMouthX = parseFloatInRange(patch.glitchShapeMouthX, runtimeConfig.glitchShapeMouthX, 0, 60);
+  }
+  if (patch.glitchShapeMouthY !== undefined) {
+    runtimeConfig.glitchShapeMouthY = parseFloatInRange(patch.glitchShapeMouthY, runtimeConfig.glitchShapeMouthY, 0, 40);
+  }
+  if (patch.glitchShapeMouthW !== undefined) {
+    runtimeConfig.glitchShapeMouthW = parseFloatInRange(patch.glitchShapeMouthW, runtimeConfig.glitchShapeMouthW, 1, 30);
+  }
+  if (patch.glitchShapeMouthH !== undefined) {
+    runtimeConfig.glitchShapeMouthH = parseFloatInRange(patch.glitchShapeMouthH, runtimeConfig.glitchShapeMouthH, 1, 20);
+  }
+  if (patch.glitchShapeMouthRx !== undefined) {
+    runtimeConfig.glitchShapeMouthRx = parseFloatInRange(patch.glitchShapeMouthRx, runtimeConfig.glitchShapeMouthRx, 0, 15);
+  }
+  if (patch.glitchShapeMouthRy !== undefined) {
+    runtimeConfig.glitchShapeMouthRy = parseFloatInRange(patch.glitchShapeMouthRy, runtimeConfig.glitchShapeMouthRy, 0, 15);
   }
   if (patch.glitchBrightnessPulseEnabled !== undefined) {
     runtimeConfig.glitchBrightnessPulseEnabled = Boolean(patch.glitchBrightnessPulseEnabled);
@@ -451,6 +569,65 @@ function normalizeHexColor(value: unknown, fallback: `#${string}`): `#${string}`
     return fallback;
   }
   return normalized as `#${string}`;
+}
+
+function normalizeExpressionProfiles(
+  value: unknown,
+  fallback: ExpressionProfileMap,
+): ExpressionProfileMap {
+  if (typeof value !== 'object' || value === null) {
+    return structuredClone(fallback);
+  }
+
+  const next = structuredClone(fallback);
+  const input = value as Record<string, unknown>;
+  for (const name of Object.keys(DEFAULT_EXPRESSION_PROFILES) as ExpressionName[]) {
+    if (!(name in input)) {
+      continue;
+    }
+    next[name] = normalizeExpressionProfile(input[name], fallback[name], name);
+  }
+  return next;
+}
+
+function normalizeExpressionProfile(
+  value: unknown,
+  fallback: ExpressionProfile | null,
+  name: ExpressionName,
+): ExpressionProfile | null {
+  if (value == null) {
+    return name === 'idle' ? null : {};
+  }
+  if (typeof value !== 'object') {
+    return fallback;
+  }
+
+  const input = value as Record<string, unknown>;
+  const next: ExpressionProfile = {};
+  if (input.eyeH !== undefined) next.eyeH = parseFloatInRange(input.eyeH, fallback?.eyeH ?? 1, 0.05, 2);
+  if (input.eyeW !== undefined) next.eyeW = parseFloatInRange(input.eyeW, fallback?.eyeW ?? 1, 0.3, 2);
+  if (input.eyeDy !== undefined) next.eyeDy = parseFloatInRange(input.eyeDy, fallback?.eyeDy ?? 0, -10, 15);
+  if (input.eyeSkew !== undefined) next.eyeSkew = parseFloatInRange(input.eyeSkew, fallback?.eyeSkew ?? 0, -0.5, 0.5);
+  if (input.mouthW !== undefined) next.mouthW = parseFloatInRange(input.mouthW, fallback?.mouthW ?? 1, 0.1, 2);
+  if (input.mouthH !== undefined) next.mouthH = parseFloatInRange(input.mouthH, fallback?.mouthH ?? 1, 0.1, 4);
+  if (input.mouthRound !== undefined) next.mouthRound = Boolean(input.mouthRound);
+  if (input.tears !== undefined) next.tears = Boolean(input.tears);
+  if (input.eyeShape === 'rect' || input.eyeShape === 'heart') next.eyeShape = input.eyeShape;
+  if (
+    input.mouthShape === 'rect' ||
+    input.mouthShape === 'frown' ||
+    input.mouthShape === 'smile-arc' ||
+    input.mouthShape === 'round'
+  ) {
+    next.mouthShape = input.mouthShape;
+  }
+  if (input.colorHex !== undefined) next.colorHex = normalizeHexColor(input.colorHex, fallback?.colorHex ?? '#a855f7');
+  if (input.tearColorHex !== undefined) next.tearColorHex = normalizeHexColor(input.tearColorHex, fallback?.tearColorHex ?? '#57bfff');
+
+  if (!Object.keys(next).length) {
+    return name === 'idle' ? null : {};
+  }
+  return next;
 }
 
 function parseBoolean(value: unknown, fallback: boolean): boolean {

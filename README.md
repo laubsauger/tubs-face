@@ -138,26 +138,25 @@ When a face is detected, the bot adjusts eye position toward the average detecte
 ## Architecture
 
 ```
-Browser (vanilla JS)
-  ├── public/js/main.js         — app bootstrap + startup wiring
-  ├── public/js/message-handler.js
-  ├── public/js/audio-input.js
-  ├── public/js/face/*          — camera, worker orchestration, matching, debug
-  └── public/js/face-worker.js  — Web Worker: SCRFD detection + ArcFace recognition (ONNX)
+Browser (TypeScript + Vite)
+  ├── src/client/main.ts       — main shell bootstrap
+  ├── src/client/mini-main.ts  — mini shell bootstrap
+  ├── src/client/*             — UI, transport, audio, face, FX, behavior
+  └── src/workers/face-worker.ts — module worker: SCRFD detection + ArcFace recognition (ONNX)
 
-Node.js Bridge Server (src/bridge-server.js)
-  ├── Static file server (public/)
-  ├── WebSocket relay
-  ├── Face library CRUD API (/faces)
-  └── Proxies to Python STT/TTS
+Node.js Server (TypeScript)
+  ├── src/server/index.ts      — HTTP + WebSocket server
+  ├── src/server/routes/api.ts — API surface
+  ├── src/server/ws/server.ts  — WebSocket relay
+  └── src/server/config/runtime.ts — mutable runtime config exposed at /config
 
 Python Service (src/transcription-service.py)
-  ├── STT via faster-whisper
-  └── TTS via macOS `say` command
+  ├── STT via faster-whisper / MLX path
+  └── TTS proxy target on port 3001
 
-LLM Assistant (Gemini API)
-  ├── src/assistant-service.js — conversation flow + short context memory
-  ├── src/gemini-client.js     — generateContent API call
+LLM Assistant (TypeScript)
+  ├── src/server/assistant/*
+  ├── src/server/llm/*
   └── src/persona/*            — editable persona prompt + greeting presets
 ```
 

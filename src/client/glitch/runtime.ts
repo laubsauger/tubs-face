@@ -1,5 +1,5 @@
 import type { AppStore } from '../state/app-state.js';
-import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, type GlitchConfig } from './constants.js';
+import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
 import { rebuildScanlinePattern, initCanvas2DRenderer, recreateCanvasElement, sizeCanvasLayout } from './canvas2d.js';
 import { computeFrameState, renderFrameCanvas2D, renderFrameWebGpu } from './frame.js';
 import { buildPixelGrid, recolorPixelGrid, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
@@ -50,6 +50,7 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
   let currentGazeY = 0;
   let rendererConfig: GlitchConfig = structuredClone(DEFAULT_CONFIG);
   let lastRendererPreference = normalizeRenderer(DEFAULT_CONFIG.renderer);
+  let lastProfileSignature = '';
   const rendererState: RendererState = {
     kind: 'canvas2d',
     ready: false,
@@ -103,10 +104,48 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
   function syncConfig(): void {
     const state = store.getState();
     const config = state.config;
+    const nextProfiles = config?.glitchExpressionProfiles;
+    if (nextProfiles) {
+      const signature = JSON.stringify(nextProfiles);
+      if (signature !== lastProfileSignature) {
+        lastProfileSignature = signature;
+        setExpressionProfiles(structuredClone(nextProfiles));
+        lastBuiltExpression = '';
+      }
+    }
     rendererConfig = mergeConfig(DEFAULT_CONFIG);
     rendererConfig.renderer = config?.glitchRenderer ?? DEFAULT_CONFIG.renderer;
     rendererConfig.color.base = config?.glitchFxBaseColor ?? state.fxBaseColorDraft;
+    rendererConfig.pixel.size = config?.glitchPixelSize ?? DEFAULT_CONFIG.pixel.size;
+    rendererConfig.pixel.gap = config?.glitchPixelGap ?? DEFAULT_CONFIG.pixel.gap;
+    rendererConfig.color.hueVariation = config?.glitchColorHueVariation ?? DEFAULT_CONFIG.color.hueVariation;
+    rendererConfig.color.brightnessVariation = config?.glitchColorBrightnessVariation ?? DEFAULT_CONFIG.color.brightnessVariation;
+    rendererConfig.color.opacityMin = config?.glitchColorOpacityMin ?? DEFAULT_CONFIG.color.opacityMin;
     rendererConfig.glow.pixelGlow = config?.glitchGlowStrength ?? DEFAULT_CONFIG.glow.pixelGlow;
+    rendererConfig.svg.shapes[0] = {
+      x: config?.glitchShapeLeftEyeX ?? DEFAULT_CONFIG.svg.shapes[0]?.x ?? 0,
+      y: config?.glitchShapeLeftEyeY ?? DEFAULT_CONFIG.svg.shapes[0]?.y ?? 0,
+      w: config?.glitchShapeLeftEyeW ?? DEFAULT_CONFIG.svg.shapes[0]?.w ?? 14.59,
+      h: config?.glitchShapeLeftEyeH ?? DEFAULT_CONFIG.svg.shapes[0]?.h ?? 22.47,
+      rx: config?.glitchShapeLeftEyeRx ?? DEFAULT_CONFIG.svg.shapes[0]?.rx ?? 5.94,
+      ry: config?.glitchShapeLeftEyeRy ?? DEFAULT_CONFIG.svg.shapes[0]?.ry ?? 5.94,
+    };
+    rendererConfig.svg.shapes[1] = {
+      x: config?.glitchShapeRightEyeX ?? DEFAULT_CONFIG.svg.shapes[1]?.x ?? 40.85,
+      y: config?.glitchShapeRightEyeY ?? DEFAULT_CONFIG.svg.shapes[1]?.y ?? 0,
+      w: config?.glitchShapeRightEyeW ?? DEFAULT_CONFIG.svg.shapes[1]?.w ?? 14.59,
+      h: config?.glitchShapeRightEyeH ?? DEFAULT_CONFIG.svg.shapes[1]?.h ?? 22.47,
+      rx: config?.glitchShapeRightEyeRx ?? DEFAULT_CONFIG.svg.shapes[1]?.rx ?? 5.94,
+      ry: config?.glitchShapeRightEyeRy ?? DEFAULT_CONFIG.svg.shapes[1]?.ry ?? 5.94,
+    };
+    rendererConfig.svg.shapes[2] = {
+      x: config?.glitchShapeMouthX ?? DEFAULT_CONFIG.svg.shapes[2]?.x ?? 20.53,
+      y: config?.glitchShapeMouthY ?? DEFAULT_CONFIG.svg.shapes[2]?.y ?? 23.86,
+      w: config?.glitchShapeMouthW ?? DEFAULT_CONFIG.svg.shapes[2]?.w ?? 14.38,
+      h: config?.glitchShapeMouthH ?? DEFAULT_CONFIG.svg.shapes[2]?.h ?? 6.44,
+      rx: config?.glitchShapeMouthRx ?? DEFAULT_CONFIG.svg.shapes[2]?.rx ?? 1.95,
+      ry: config?.glitchShapeMouthRy ?? DEFAULT_CONFIG.svg.shapes[2]?.ry ?? 1.95,
+    };
     rendererConfig.brightnessPulse.enabled = config?.glitchBrightnessPulseEnabled ?? DEFAULT_CONFIG.brightnessPulse.enabled;
     rendererConfig.brightnessPulse.dim = config?.glitchBrightnessPulseDim ?? DEFAULT_CONFIG.brightnessPulse.dim;
     rendererConfig.brightnessPulse.bright = config?.glitchBrightnessPulseBright ?? DEFAULT_CONFIG.brightnessPulse.bright;

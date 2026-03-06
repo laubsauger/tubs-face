@@ -3,7 +3,10 @@ import type { ConfigResponse } from '../../shared/contracts/http.js';
 export const GLITCH_CONFIG_KEYS = [
   'glitchFxEnabled',
   'glitchFxBaseColor',
+  'glitchExpressionProfiles',
   'glitchRenderer',
+  'glitchPixelSize',
+  'glitchPixelGap',
   'glitchScanlines',
   'glitchScanlineIntensity',
   'glitchScanlineSpacing',
@@ -14,6 +17,27 @@ export const GLITCH_CONFIG_KEYS = [
   'glitchFlickerSpeed',
   'glitchFlickerDepth',
   'glitchGlowStrength',
+  'glitchColorHueVariation',
+  'glitchColorBrightnessVariation',
+  'glitchColorOpacityMin',
+  'glitchShapeLeftEyeX',
+  'glitchShapeLeftEyeY',
+  'glitchShapeLeftEyeW',
+  'glitchShapeLeftEyeH',
+  'glitchShapeLeftEyeRx',
+  'glitchShapeLeftEyeRy',
+  'glitchShapeRightEyeX',
+  'glitchShapeRightEyeY',
+  'glitchShapeRightEyeW',
+  'glitchShapeRightEyeH',
+  'glitchShapeRightEyeRx',
+  'glitchShapeRightEyeRy',
+  'glitchShapeMouthX',
+  'glitchShapeMouthY',
+  'glitchShapeMouthW',
+  'glitchShapeMouthH',
+  'glitchShapeMouthRx',
+  'glitchShapeMouthRy',
   'glitchBrightnessPulseEnabled',
   'glitchBrightnessPulseDim',
   'glitchBrightnessPulseBright',
@@ -49,6 +73,8 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#a855f7',
     glitchRenderer: 'auto',
+    glitchPixelSize: 21,
+    glitchPixelGap: 7,
     glitchScanlines: true,
     glitchScanlineIntensity: 0.41,
     glitchScanlineSpacing: 5,
@@ -59,6 +85,27 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFlickerSpeed: 11,
     glitchFlickerDepth: 0.02,
     glitchGlowStrength: 14,
+    glitchColorHueVariation: 8,
+    glitchColorBrightnessVariation: 8,
+    glitchColorOpacityMin: 0.5,
+    glitchShapeLeftEyeX: 0,
+    glitchShapeLeftEyeY: 0,
+    glitchShapeLeftEyeW: 14.59,
+    glitchShapeLeftEyeH: 22.47,
+    glitchShapeLeftEyeRx: 5.94,
+    glitchShapeLeftEyeRy: 5.94,
+    glitchShapeRightEyeX: 40.85,
+    glitchShapeRightEyeY: 0,
+    glitchShapeRightEyeW: 14.59,
+    glitchShapeRightEyeH: 22.47,
+    glitchShapeRightEyeRx: 5.94,
+    glitchShapeRightEyeRy: 5.94,
+    glitchShapeMouthX: 20.53,
+    glitchShapeMouthY: 23.86,
+    glitchShapeMouthW: 14.38,
+    glitchShapeMouthH: 6.44,
+    glitchShapeMouthRx: 1.95,
+    glitchShapeMouthRy: 1.95,
     glitchBrightnessPulseEnabled: true,
     glitchBrightnessPulseDim: 0.88,
     glitchBrightnessPulseBright: 1,
@@ -90,6 +137,8 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#00ffcc',
     glitchRenderer: 'auto',
+    glitchPixelSize: 16,
+    glitchPixelGap: 5,
     glitchScanlines: true,
     glitchScanlineIntensity: 0.55,
     glitchScanlineSpacing: 4,
@@ -100,6 +149,27 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFlickerSpeed: 14,
     glitchFlickerDepth: 0.04,
     glitchGlowStrength: 20,
+    glitchColorHueVariation: 15,
+    glitchColorBrightnessVariation: 12,
+    glitchColorOpacityMin: 0.4,
+    glitchShapeLeftEyeX: 0,
+    glitchShapeLeftEyeY: 0,
+    glitchShapeLeftEyeW: 14.59,
+    glitchShapeLeftEyeH: 22.47,
+    glitchShapeLeftEyeRx: 5.94,
+    glitchShapeLeftEyeRy: 5.94,
+    glitchShapeRightEyeX: 40.85,
+    glitchShapeRightEyeY: 0,
+    glitchShapeRightEyeW: 14.59,
+    glitchShapeRightEyeH: 22.47,
+    glitchShapeRightEyeRx: 5.94,
+    glitchShapeRightEyeRy: 5.94,
+    glitchShapeMouthX: 20.53,
+    glitchShapeMouthY: 23.86,
+    glitchShapeMouthW: 14.38,
+    glitchShapeMouthH: 6.44,
+    glitchShapeMouthRx: 1.95,
+    glitchShapeMouthRy: 1.95,
     glitchBrightnessPulseEnabled: true,
     glitchBrightnessPulseDim: 0.88,
     glitchBrightnessPulseBright: 1,
@@ -131,6 +201,8 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#e0e0e0',
     glitchRenderer: 'auto',
+    glitchPixelSize: 26,
+    glitchPixelGap: 10,
     glitchScanlines: false,
     glitchScanlineIntensity: 0.1,
     glitchScanlineSpacing: 6,
@@ -141,6 +213,27 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFlickerSpeed: 5,
     glitchFlickerDepth: 0,
     glitchGlowStrength: 8,
+    glitchColorHueVariation: 2,
+    glitchColorBrightnessVariation: 3,
+    glitchColorOpacityMin: 0.7,
+    glitchShapeLeftEyeX: 0,
+    glitchShapeLeftEyeY: 0,
+    glitchShapeLeftEyeW: 14.59,
+    glitchShapeLeftEyeH: 22.47,
+    glitchShapeLeftEyeRx: 5.94,
+    glitchShapeLeftEyeRy: 5.94,
+    glitchShapeRightEyeX: 40.85,
+    glitchShapeRightEyeY: 0,
+    glitchShapeRightEyeW: 14.59,
+    glitchShapeRightEyeH: 22.47,
+    glitchShapeRightEyeRx: 5.94,
+    glitchShapeRightEyeRy: 5.94,
+    glitchShapeMouthX: 20.53,
+    glitchShapeMouthY: 23.86,
+    glitchShapeMouthW: 14.38,
+    glitchShapeMouthH: 6.44,
+    glitchShapeMouthRx: 1.95,
+    glitchShapeMouthRy: 1.95,
     glitchBrightnessPulseEnabled: false,
     glitchBrightnessPulseDim: 0.95,
     glitchBrightnessPulseBright: 1,
@@ -172,6 +265,8 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#ff8844',
     glitchRenderer: 'auto',
+    glitchPixelSize: 21,
+    glitchPixelGap: 7,
     glitchScanlines: true,
     glitchScanlineIntensity: 0.41,
     glitchScanlineSpacing: 5,
@@ -182,6 +277,27 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
     glitchFlickerSpeed: 11,
     glitchFlickerDepth: 0.02,
     glitchGlowStrength: 16,
+    glitchColorHueVariation: 12,
+    glitchColorBrightnessVariation: 10,
+    glitchColorOpacityMin: 0.5,
+    glitchShapeLeftEyeX: 0,
+    glitchShapeLeftEyeY: 0,
+    glitchShapeLeftEyeW: 14.59,
+    glitchShapeLeftEyeH: 22.47,
+    glitchShapeLeftEyeRx: 5.94,
+    glitchShapeLeftEyeRy: 5.94,
+    glitchShapeRightEyeX: 40.85,
+    glitchShapeRightEyeY: 0,
+    glitchShapeRightEyeW: 14.59,
+    glitchShapeRightEyeH: 22.47,
+    glitchShapeRightEyeRx: 5.94,
+    glitchShapeRightEyeRy: 5.94,
+    glitchShapeMouthX: 20.53,
+    glitchShapeMouthY: 23.86,
+    glitchShapeMouthW: 14.38,
+    glitchShapeMouthH: 6.44,
+    glitchShapeMouthRx: 1.95,
+    glitchShapeMouthRy: 1.95,
     glitchBrightnessPulseEnabled: true,
     glitchBrightnessPulseDim: 0.85,
     glitchBrightnessPulseBright: 1,
@@ -212,11 +328,12 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
 };
 
 export function pickGlitchConfig(config: ConfigResponse): Partial<ConfigResponse> {
-  const patch = {} as Record<GlitchConfigKey, ConfigResponse[GlitchConfigKey]>;
+  const patch: Partial<ConfigResponse> = {};
+  const target = patch as Record<string, unknown>;
   for (const key of GLITCH_CONFIG_KEYS) {
-    patch[key] = config[key];
+    target[key] = config[key];
   }
-  return patch satisfies Partial<ConfigResponse>;
+  return patch;
 }
 
 export function sanitizeImportedGlitchConfig(value: unknown): Partial<ConfigResponse> {
@@ -225,11 +342,12 @@ export function sanitizeImportedGlitchConfig(value: unknown): Partial<ConfigResp
   }
 
   const input = value as Record<string, unknown>;
-  const patch = {} as Record<GlitchConfigKey, ConfigResponse[GlitchConfigKey]>;
+  const patch: Partial<ConfigResponse> = {};
+  const target = patch as Record<string, unknown>;
   for (const key of GLITCH_CONFIG_KEYS) {
     if (key in input) {
-      patch[key] = input[key] as ConfigResponse[typeof key];
+      target[key] = input[key];
     }
   }
-  return patch satisfies Partial<ConfigResponse>;
+  return patch;
 }

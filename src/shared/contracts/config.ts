@@ -59,6 +59,39 @@ export type ExpressionName = (typeof EXPRESSIONS)[number];
 export type EmotionCue = (typeof EMOTION_CUES)[number];
 export type KokoroVoice = (typeof KOKORO_VOICES)[number];
 
+export interface ExpressionProfile {
+  eyeH?: number;
+  eyeW?: number;
+  eyeDy?: number;
+  eyeSkew?: number;
+  mouthW?: number;
+  mouthH?: number;
+  mouthRound?: boolean;
+  mouthShape?: 'rect' | 'frown' | 'smile-arc' | 'round';
+  eyeShape?: 'rect' | 'heart';
+  tears?: boolean;
+  colorHex?: `#${string}`;
+  tearColorHex?: `#${string}`;
+}
+
+export type ExpressionProfileMap = Record<ExpressionName, ExpressionProfile | null>;
+
+export const DEFAULT_EXPRESSION_PROFILES: ExpressionProfileMap = {
+  idle: null,
+  'idle-flat': { mouthH: 0.65 },
+  listening: { eyeH: 1.09, eyeW: 1.07 },
+  thinking: { eyeH: 0.5, eyeW: 1.15, eyeDy: 5, mouthW: 0.56, mouthH: 1.4, mouthRound: true },
+  smile: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
+  happy: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
+  love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5, eyeShape: 'heart', colorHex: '#ff4da1', mouthShape: 'smile-arc' },
+  sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown' },
+  crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown', tears: true, tearColorHex: '#57bfff' },
+  speaking: null,
+  sleep: { eyeH: 0.12, eyeDy: 8, mouthW: 0.8, mouthH: 0.5 },
+  angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4, eyeSkew: -0.15 },
+  surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 2.2, mouthRound: true, mouthShape: 'round' },
+};
+
 export interface SessionStats {
   messagesIn: number;
   messagesOut: number;
@@ -96,7 +129,10 @@ export interface RuntimeConfig {
   ambientAudioEnabled: boolean;
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;
+  glitchExpressionProfiles: ExpressionProfileMap;
   glitchRenderer: GlitchRenderer;
+  glitchPixelSize: number;
+  glitchPixelGap: number;
   glitchScanlines: boolean;
   glitchScanlineIntensity: number;
   glitchScanlineSpacing: number;
@@ -107,6 +143,27 @@ export interface RuntimeConfig {
   glitchFlickerSpeed: number;
   glitchFlickerDepth: number;
   glitchGlowStrength: number;
+  glitchColorHueVariation: number;
+  glitchColorBrightnessVariation: number;
+  glitchColorOpacityMin: number;
+  glitchShapeLeftEyeX: number;
+  glitchShapeLeftEyeY: number;
+  glitchShapeLeftEyeW: number;
+  glitchShapeLeftEyeH: number;
+  glitchShapeLeftEyeRx: number;
+  glitchShapeLeftEyeRy: number;
+  glitchShapeRightEyeX: number;
+  glitchShapeRightEyeY: number;
+  glitchShapeRightEyeW: number;
+  glitchShapeRightEyeH: number;
+  glitchShapeRightEyeRx: number;
+  glitchShapeRightEyeRy: number;
+  glitchShapeMouthX: number;
+  glitchShapeMouthY: number;
+  glitchShapeMouthW: number;
+  glitchShapeMouthH: number;
+  glitchShapeMouthRx: number;
+  glitchShapeMouthRy: number;
   glitchBrightnessPulseEnabled: boolean;
   glitchBrightnessPulseDim: number;
   glitchBrightnessPulseBright: number;
@@ -168,7 +225,10 @@ export interface ClientStateSnapshot {
   ttsBackend: TtsBackend;
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;
+  glitchExpressionProfiles: ExpressionProfileMap;
   glitchRenderer: GlitchRenderer;
+  glitchPixelSize: number;
+  glitchPixelGap: number;
   glitchScanlines: boolean;
   glitchScanlineIntensity: number;
   glitchScanlineSpacing: number;
@@ -179,6 +239,27 @@ export interface ClientStateSnapshot {
   glitchFlickerSpeed: number;
   glitchFlickerDepth: number;
   glitchGlowStrength: number;
+  glitchColorHueVariation: number;
+  glitchColorBrightnessVariation: number;
+  glitchColorOpacityMin: number;
+  glitchShapeLeftEyeX: number;
+  glitchShapeLeftEyeY: number;
+  glitchShapeLeftEyeW: number;
+  glitchShapeLeftEyeH: number;
+  glitchShapeLeftEyeRx: number;
+  glitchShapeLeftEyeRy: number;
+  glitchShapeRightEyeX: number;
+  glitchShapeRightEyeY: number;
+  glitchShapeRightEyeW: number;
+  glitchShapeRightEyeH: number;
+  glitchShapeRightEyeRx: number;
+  glitchShapeRightEyeRy: number;
+  glitchShapeMouthX: number;
+  glitchShapeMouthY: number;
+  glitchShapeMouthW: number;
+  glitchShapeMouthH: number;
+  glitchShapeMouthRx: number;
+  glitchShapeMouthRy: number;
   glitchBrightnessPulseEnabled: boolean;
   glitchBrightnessPulseDim: number;
   glitchBrightnessPulseBright: number;

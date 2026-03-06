@@ -1,3 +1,6 @@
+import type { ExpressionName, ExpressionProfile, ExpressionProfileMap } from '../../shared/contracts/config.js';
+import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
+
 export interface GlitchConfig {
   renderer: 'auto' | 'webgpu' | 'canvas2d';
   svg: {
@@ -35,21 +38,6 @@ export interface GlitchConfig {
   };
 }
 
-export interface ExpressionProfile {
-  eyeH?: number;
-  eyeW?: number;
-  eyeDy?: number;
-  eyeSkew?: number;
-  mouthW?: number;
-  mouthH?: number;
-  mouthRound?: boolean;
-  mouthShape?: 'rect' | 'frown' | 'smile-arc' | 'round';
-  eyeShape?: 'rect' | 'heart';
-  tears?: boolean;
-  colorHex?: `#${string}`;
-  tearColorHex?: `#${string}`;
-}
-
 export const DEFAULT_CONFIG: GlitchConfig = {
   renderer: 'auto',
   svg: {
@@ -78,26 +66,13 @@ export const DEFAULT_CONFIG: GlitchConfig = {
   },
 };
 
-export let EXPRESSION_PROFILES: Record<string, ExpressionProfile | null> = {
-  idle: null,
-  'idle-flat': { mouthH: 0.65 },
-  listening: { eyeH: 1.09, eyeW: 1.07 },
-  thinking: { eyeH: 0.5, eyeW: 1.15, eyeDy: 5, mouthW: 0.56, mouthH: 1.4, mouthRound: true },
-  smile: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
-  happy: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
-  sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown' },
-  crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown', tears: true, tearColorHex: '#57bfff' },
-  love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5, eyeShape: 'heart', colorHex: '#ff4da1', mouthShape: 'smile-arc' },
-  sleep: { eyeH: 0.12, eyeDy: 8, mouthW: 0.8, mouthH: 0.5 },
-  angry: { eyeH: 0.45, eyeW: 1.2, eyeDy: 4, eyeSkew: -0.15 },
-  surprised: { eyeH: 1.15, eyeW: 1.1, mouthW: 0.56, mouthH: 2.2, mouthRound: true, mouthShape: 'round' },
-};
+export let EXPRESSION_PROFILES: ExpressionProfileMap = structuredClone(DEFAULT_EXPRESSION_PROFILES);
 
-export function updateExpressionProfile(name: string, profile: ExpressionProfile | null): void {
+export function updateExpressionProfile(name: ExpressionName, profile: ExpressionProfile | null): void {
   EXPRESSION_PROFILES[name] = profile;
 }
 
-export function setExpressionProfiles(profiles: Record<string, ExpressionProfile | null>): void {
+export function setExpressionProfiles(profiles: ExpressionProfileMap): void {
   EXPRESSION_PROFILES = profiles;
 }
 

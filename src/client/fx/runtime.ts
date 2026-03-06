@@ -1,7 +1,9 @@
 import type { ConfigResponse } from '../../shared/contracts/http.js';
+import type { ExpressionName, ExpressionProfile } from '../../shared/contracts/config.js';
 import type { AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import { GLITCH_PRESETS, pickGlitchConfig, sanitizeImportedGlitchConfig } from './presets.js';
+import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface FxRuntime {
   init(): void;
@@ -9,6 +11,8 @@ export interface FxRuntime {
 }
 
 type RangeConfigKey =
+  | 'glitchPixelSize'
+  | 'glitchPixelGap'
   | 'glitchScanlineIntensity'
   | 'glitchScanlineSpacing'
   | 'glitchScanlineThickness'
@@ -17,6 +21,27 @@ type RangeConfigKey =
   | 'glitchFlickerSpeed'
   | 'glitchFlickerDepth'
   | 'glitchGlowStrength'
+  | 'glitchColorHueVariation'
+  | 'glitchColorBrightnessVariation'
+  | 'glitchColorOpacityMin'
+  | 'glitchShapeLeftEyeX'
+  | 'glitchShapeLeftEyeY'
+  | 'glitchShapeLeftEyeW'
+  | 'glitchShapeLeftEyeH'
+  | 'glitchShapeLeftEyeRx'
+  | 'glitchShapeLeftEyeRy'
+  | 'glitchShapeRightEyeX'
+  | 'glitchShapeRightEyeY'
+  | 'glitchShapeRightEyeW'
+  | 'glitchShapeRightEyeH'
+  | 'glitchShapeRightEyeRx'
+  | 'glitchShapeRightEyeRy'
+  | 'glitchShapeMouthX'
+  | 'glitchShapeMouthY'
+  | 'glitchShapeMouthW'
+  | 'glitchShapeMouthH'
+  | 'glitchShapeMouthRx'
+  | 'glitchShapeMouthRy'
   | 'glitchBrightnessPulseDim'
   | 'glitchBrightnessPulseBright'
   | 'glitchBrightnessPulseSpeed'
@@ -47,6 +72,26 @@ type ToggleConfigKey =
   | 'glitchChromaticAnimate'
   | 'glitchSliceEnabled';
 
+type ExpressionRangeKey =
+  | 'eyeH'
+  | 'eyeW'
+  | 'eyeDy'
+  | 'eyeSkew'
+  | 'mouthW'
+  | 'mouthH';
+
+type ExpressionToggleKey =
+  | 'mouthRound'
+  | 'tears';
+
+type ExpressionSelectKey =
+  | 'eyeShape'
+  | 'mouthShape';
+
+type ExpressionColorKey =
+  | 'colorHex'
+  | 'tearColorHex';
+
 export function createFxRuntime(store: AppStore): FxRuntime {
   const pendingTimers = new Map<string, number>();
 
@@ -76,13 +121,20 @@ export function createFxRuntime(store: AppStore): FxRuntime {
       const colorApply = root.querySelector<HTMLButtonElement>('#fx-color-apply');
       const beamColorInput = root.querySelector<HTMLInputElement>('#fx-scanbeam-color');
       const beamColorApply = root.querySelector<HTMLButtonElement>('#fx-scanbeam-color-apply');
+      const expressionSelect = root.querySelector<HTMLSelectElement>('#fx-expression-select');
+      const expressionReset = root.querySelector<HTMLButtonElement>('#fx-expression-reset');
       const rangeInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-config-range]');
       const toggleInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-config-toggle]');
+      const expressionRangeInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-range]');
+      const expressionToggleInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-toggle]');
+      const expressionSelectInputs = root.querySelectorAll<HTMLSelectElement>('[data-fx-expression-select]');
+      const expressionColorInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-color]');
 
       if (
         !toggle || !openEditor || !closeEditor || !renderMode || !renderQuality || !renderer ||
         !preset || !reset || !exportButton || !importButton ||
-        !colorInput || !colorApply || !beamColorInput || !beamColorApply
+        !colorInput || !colorApply || !beamColorInput || !beamColorApply ||
+        !expressionSelect || !expressionReset
       ) {
         return;
       }
@@ -96,6 +148,7 @@ export function createFxRuntime(store: AppStore): FxRuntime {
         store.setState((current) => ({
           ...current,
           fxEditorOpen: true,
+          currentExpression: current.fxExpressionSelected,
         }));
       };
 
@@ -103,6 +156,7 @@ export function createFxRuntime(store: AppStore): FxRuntime {
         store.setState((current) => ({
           ...current,
           fxEditorOpen: false,
+          currentExpression: current.sleeping ? 'sleep' : 'idle',
         }));
       };
 
@@ -195,6 +249,98 @@ export function createFxRuntime(store: AppStore): FxRuntime {
           ),
         });
       };
+
+      expressionSelect.onchange = () => {
+        const next = normalizeExpressionName(expressionSelect.value);
+        store.setState((current) => ({
+          ...current,
+          fxExpressionSelected: next,
+          ...(current.fxEditorOpen ? { currentExpression: next } : {}),
+        }));
+      };
+
+      expressionReset.onclick = async () => {
+        const expression = store.getState().fxExpressionSelected;
+        await patchConfig(store, patchExpressionProfile(store.getState().config, expression, null));
+        previewExpression(store, expression);
+      };
+
+      expressionRangeInputs.forEach((input) => {
+        input.oninput = () => {
+          const key = input.dataset.fxExpressionRange;
+          if (!key) {
+            return;
+          }
+          const value = Number(input.value);
+          if (!Number.isFinite(value)) {
+            return;
+          }
+          void patchConfig(
+            store,
+            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
+              type: 'range',
+              key,
+              value,
+            }),
+          );
+          previewExpression(store, store.getState().fxExpressionSelected);
+        };
+      });
+
+      expressionToggleInputs.forEach((input) => {
+        input.onchange = () => {
+          const key = input.dataset.fxExpressionToggle;
+          if (!key) {
+            return;
+          }
+          void patchConfig(
+            store,
+            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
+              type: 'toggle',
+              key,
+              value: input.checked,
+            }),
+          );
+          previewExpression(store, store.getState().fxExpressionSelected);
+        };
+      });
+
+      expressionSelectInputs.forEach((input) => {
+        input.onchange = () => {
+          const key = input.dataset.fxExpressionSelect;
+          if (!key) {
+            return;
+          }
+          void patchConfig(
+            store,
+            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
+              type: 'select',
+              key,
+              value: input.value,
+            }),
+          );
+          previewExpression(store, store.getState().fxExpressionSelected);
+        };
+      });
+
+      expressionColorInputs.forEach((input) => {
+        input.onchange = () => {
+          const key = input.dataset.fxExpressionColor;
+          if (!key) {
+            return;
+          }
+          const fallback = key === 'tearColorHex' ? '#57bfff' : '#a855f7';
+          void patchConfig(
+            store,
+            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
+              type: 'color',
+              key,
+              value: normalizeHex(input.value, fallback),
+            }),
+          );
+          previewExpression(store, store.getState().fxExpressionSelected);
+        };
+      });
     },
   };
 
@@ -240,6 +386,10 @@ function getRangePatch(key: string, value: number): Partial<ConfigResponse> | nu
   }
 
   switch (key as RangeConfigKey) {
+    case 'glitchPixelSize':
+      return { glitchPixelSize: value };
+    case 'glitchPixelGap':
+      return { glitchPixelGap: value };
     case 'glitchScanlineIntensity':
       return { glitchScanlineIntensity: value };
     case 'glitchScanlineSpacing':
@@ -256,6 +406,48 @@ function getRangePatch(key: string, value: number): Partial<ConfigResponse> | nu
       return { glitchFlickerDepth: value };
     case 'glitchGlowStrength':
       return { glitchGlowStrength: value };
+    case 'glitchColorHueVariation':
+      return { glitchColorHueVariation: value };
+    case 'glitchColorBrightnessVariation':
+      return { glitchColorBrightnessVariation: value };
+    case 'glitchColorOpacityMin':
+      return { glitchColorOpacityMin: value };
+    case 'glitchShapeLeftEyeX':
+      return { glitchShapeLeftEyeX: value };
+    case 'glitchShapeLeftEyeY':
+      return { glitchShapeLeftEyeY: value };
+    case 'glitchShapeLeftEyeW':
+      return { glitchShapeLeftEyeW: value };
+    case 'glitchShapeLeftEyeH':
+      return { glitchShapeLeftEyeH: value };
+    case 'glitchShapeLeftEyeRx':
+      return { glitchShapeLeftEyeRx: value };
+    case 'glitchShapeLeftEyeRy':
+      return { glitchShapeLeftEyeRy: value };
+    case 'glitchShapeRightEyeX':
+      return { glitchShapeRightEyeX: value };
+    case 'glitchShapeRightEyeY':
+      return { glitchShapeRightEyeY: value };
+    case 'glitchShapeRightEyeW':
+      return { glitchShapeRightEyeW: value };
+    case 'glitchShapeRightEyeH':
+      return { glitchShapeRightEyeH: value };
+    case 'glitchShapeRightEyeRx':
+      return { glitchShapeRightEyeRx: value };
+    case 'glitchShapeRightEyeRy':
+      return { glitchShapeRightEyeRy: value };
+    case 'glitchShapeMouthX':
+      return { glitchShapeMouthX: value };
+    case 'glitchShapeMouthY':
+      return { glitchShapeMouthY: value };
+    case 'glitchShapeMouthW':
+      return { glitchShapeMouthW: value };
+    case 'glitchShapeMouthH':
+      return { glitchShapeMouthH: value };
+    case 'glitchShapeMouthRx':
+      return { glitchShapeMouthRx: value };
+    case 'glitchShapeMouthRy':
+      return { glitchShapeMouthRy: value };
     case 'glitchBrightnessPulseDim':
       return { glitchBrightnessPulseDim: value };
     case 'glitchBrightnessPulseBright':
@@ -371,4 +563,101 @@ async function importConfig(store: AppStore): Promise<void> {
 function normalizeHex(value: string, fallback: `#${string}`): `#${string}` {
   const normalized = value.trim().toLowerCase();
   return /^#[0-9a-f]{6}$/.test(normalized) ? normalized as `#${string}` : fallback;
+}
+
+function normalizeExpressionName(value: string): ExpressionName {
+  const normalized = value.trim() as ExpressionName;
+  return normalized in DEFAULT_EXPRESSION_PROFILES ? normalized : 'idle';
+}
+
+function previewExpression(store: AppStore, expression: ExpressionName): void {
+  store.setState((current) => ({
+    ...current,
+    ...(current.fxEditorOpen ? { currentExpression: expression } : {}),
+  }));
+}
+
+function patchExpressionProfile(
+  config: ConfigResponse | null,
+  expression: ExpressionName,
+  change: ProfileChange | null,
+): Partial<ConfigResponse> {
+  const profiles = structuredClone(config?.glitchExpressionProfiles ?? DEFAULT_EXPRESSION_PROFILES);
+  const current = profiles[expression];
+  const next = current && typeof current === 'object' ? { ...current } : {};
+
+  if (change === null) {
+    profiles[expression] = expression === 'idle' ? null : {};
+    return { glitchExpressionProfiles: profiles };
+  }
+
+  applyProfileChange(next, change);
+  profiles[expression] = collapseProfile(expression, next);
+  return { glitchExpressionProfiles: profiles };
+}
+
+type ProfileChange =
+  | { type: 'range'; key: string; value: number }
+  | { type: 'toggle'; key: string; value: boolean }
+  | { type: 'select'; key: string; value: string }
+  | { type: 'color'; key: string; value: `#${string}` };
+
+function applyProfileChange(profile: Partial<ExpressionProfile>, change: ProfileChange): void {
+  switch (change.type) {
+    case 'range':
+      switch (change.key as ExpressionRangeKey) {
+        case 'eyeH': profile.eyeH = change.value; return;
+        case 'eyeW': profile.eyeW = change.value; return;
+        case 'eyeDy': profile.eyeDy = change.value; return;
+        case 'eyeSkew': profile.eyeSkew = change.value; return;
+        case 'mouthW': profile.mouthW = change.value; return;
+        case 'mouthH': profile.mouthH = change.value; return;
+        default: return;
+      }
+    case 'toggle':
+      if (change.key === 'mouthRound') {
+        if (change.value) profile.mouthRound = true;
+        else delete profile.mouthRound;
+      }
+      if (change.key === 'tears') {
+        if (change.value) profile.tears = true;
+        else delete profile.tears;
+      }
+      return;
+    case 'select':
+      if (change.key === 'eyeShape') {
+        if (change.value === 'heart') profile.eyeShape = 'heart';
+        else delete profile.eyeShape;
+      }
+      if (change.key === 'mouthShape') {
+        if (
+          change.value === 'frown' ||
+          change.value === 'smile-arc' ||
+          change.value === 'round'
+        ) {
+          profile.mouthShape = change.value;
+        } else {
+          delete profile.mouthShape;
+        }
+      }
+      return;
+    case 'color':
+      if (change.key === 'colorHex') profile.colorHex = change.value;
+      if (change.key === 'tearColorHex') profile.tearColorHex = change.value;
+      return;
+  }
+}
+
+function collapseProfile(
+  expression: ExpressionName,
+  profile: Partial<ExpressionProfile>,
+): ExpressionProfile | null {
+  const normalized = Object.fromEntries(
+    Object.entries(profile).filter(([, value]) => value !== undefined && value !== false && value !== 'rect'),
+  ) as ExpressionProfile;
+
+  if (!Object.keys(normalized).length) {
+    return expression === 'idle' ? null : {};
+  }
+  return normalized;
 }
