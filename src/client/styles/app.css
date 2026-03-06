@@ -100,6 +100,20 @@ a {
   box-shadow: 0 24px 80px rgba(2, 6, 23, 0.5);
 }
 
+.glitch-face-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+.visual-face[data-render-mode="glitch"] .face-svg {
+  opacity: 0;
+}
+
 .visual-face::before,
 .visual-face::after {
   content: "";
@@ -132,6 +146,69 @@ a {
     drop-shadow(0 0 var(--fx-glow-strength) color-mix(in srgb, var(--fx-base-color) 70%, transparent));
   opacity: calc(0.38 + var(--fx-flicker-depth));
   animation: fx-flicker 2.4s steps(2, end) infinite;
+}
+
+.face-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.face-svg-eyes {
+  transform: translate(
+    calc(var(--gaze-x) * 4px),
+    calc(var(--gaze-y) * 3px)
+  );
+}
+
+.face-svg-mouth-group {
+  transform: translate(
+    calc(var(--gaze-x) * 2px),
+    calc(var(--gaze-y) * 2px)
+  );
+}
+
+.face-svg-eye,
+.face-svg-mouth,
+.face-svg-decor {
+  vector-effect: non-scaling-stroke;
+}
+
+.face-svg-eye {
+  fill: rgba(248, 251, 255, 0.96);
+  stroke: rgba(226, 232, 240, 0.1);
+  stroke-width: 1.1;
+}
+
+.face-svg-mouth {
+  fill: none;
+  stroke: rgba(248, 250, 252, 0.96);
+  stroke-width: 4.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.visual-face.is-speaking .face-svg-mouth,
+.visual-face[data-expression="speaking"] .face-svg-mouth {
+  animation: face-svg-mouth-talk 190ms ease-in-out infinite alternate;
+}
+
+.face-svg-decor {
+  fill: none;
+  stroke: rgba(147, 197, 253, 0.94);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.face-svg-decor.tear-left,
+.face-svg-decor.tear-right {
+  fill: rgba(125, 211, 252, 0.72);
+  stroke: rgba(125, 211, 252, 0.9);
+}
+
+.face-svg-decor.zzz {
+  stroke: rgba(191, 219, 254, 0.88);
 }
 
 .visual-eyes {
@@ -638,6 +715,19 @@ a {
   gap: 12px;
 }
 
+.fx-editor-group {
+  display: grid;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(125, 211, 252, 0.1);
+}
+
+.fx-editor-group h3 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: rgba(229, 238, 252, 0.86);
+}
+
 .fx-editor-header {
   display: flex;
   justify-content: space-between;
@@ -812,6 +902,15 @@ a {
   padding-top: 24px;
 }
 
+.mini-visual-shell {
+  min-height: 220px;
+  padding: 18px 18px 28px;
+}
+
+.mini-visual-face {
+  width: min(220px, 64vw);
+}
+
 @media (max-width: 720px) {
   .shell {
     width: min(100vw - 24px, 1120px);
@@ -845,5 +944,14 @@ a {
   }
   73% {
     transform: translate3d(0, calc(var(--fx-pixel-jitter) * 0.35), 0);
+  }
+}
+
+@keyframes face-svg-mouth-talk {
+  from {
+    transform: scaleY(0.9);
+  }
+  to {
+    transform: scaleY(1.14);
   }
 }

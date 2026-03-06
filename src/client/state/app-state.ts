@@ -127,11 +127,6 @@ export interface AppState {
   manualSending: boolean;
   fxEditorOpen: boolean;
   fxBaseColorDraft: `#${string}`;
-  fxScanlineIntensity: number;
-  fxPixelJitter: number;
-  fxFlickerDepth: number;
-  fxGlowStrength: number;
-  fxChromaticOffset: number;
   chatEntries: ChatEntry[];
   liveTranscriptText: string;
   liveTranscriptDraft: boolean;
@@ -222,11 +217,6 @@ export function createAppStore(serverUrl: string): AppStore {
     manualSending: false,
     fxEditorOpen: false,
     fxBaseColorDraft: '#a855f7',
-    fxScanlineIntensity: 0.32,
-    fxPixelJitter: 1.4,
-    fxFlickerDepth: 0.035,
-    fxGlowStrength: 18,
-    fxChromaticOffset: 1.4,
     chatEntries: [],
     liveTranscriptText: '',
     liveTranscriptDraft: false,

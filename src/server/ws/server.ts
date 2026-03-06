@@ -1,5 +1,14 @@
 import type { Server as HttpServer } from 'node:http';
-import type { WsClientMessage, WsConfigServerMessage, WsPingServerMessage, WsServerMessage, WsSystemServerMessage } from '../../shared/contracts/ws.js';
+import type {
+  WsClientMessage,
+  WsConfigServerMessage,
+  WsFaceBlinkServerMessage,
+  WsFaceMotionServerMessage,
+  WsHeadSpeechStateServerMessage,
+  WsPingServerMessage,
+  WsServerMessage,
+  WsSystemServerMessage,
+} from '../../shared/contracts/ws.js';
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
@@ -96,6 +105,30 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
           text: 'Response generation failed',
         });
       });
+      return;
+    case 'face_motion':
+      broadcast({
+        type: 'face_motion',
+        x: message.x,
+        y: message.y,
+        ts: message.ts ?? Date.now(),
+      } satisfies WsFaceMotionServerMessage);
+      return;
+    case 'face_blink':
+      broadcast({
+        type: 'face_blink',
+        ts: message.ts ?? Date.now(),
+      } satisfies WsFaceBlinkServerMessage);
+      return;
+    case 'head_speech_state':
+      broadcast({
+        type: 'head_speech_state',
+        actor: message.actor,
+        state: message.state,
+        ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
+        ts: message.ts ?? Date.now(),
+        ...(message.durationMs !== undefined ? { durationMs: message.durationMs } : {}),
+      } satisfies WsHeadSpeechStateServerMessage);
       return;
     default:
       return;

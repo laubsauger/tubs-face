@@ -20,23 +20,30 @@ export function createVisualRuntime(store: AppStore): VisualRuntime {
       document.body.classList.toggle('app-sleeping', state.sleeping);
 
       if (face) {
+        const config = state.config;
+        const chromaticOffset = Math.max(
+          Math.abs(config?.glitchChromaticOffsetX ?? 0),
+          Math.abs(config?.glitchChromaticOffsetY ?? 4.5),
+        );
         face.dataset.expression = state.currentExpression;
         face.dataset.idleVariant = state.idleVariant;
+        face.dataset.renderMode = config?.faceRenderMode ?? 'css';
+        face.dataset.renderQuality = config?.renderQuality ?? 'high';
         face.classList.toggle('is-speaking', state.audioPlaying);
         face.classList.toggle('is-sleeping', state.sleeping);
         face.classList.toggle('is-blinking', state.blinkActive);
-        face.classList.toggle('is-glitch-enabled', Boolean(state.config?.glitchFxEnabled));
+        face.classList.toggle('is-glitch-enabled', Boolean(config?.glitchFxEnabled));
         face.style.setProperty('--gaze-x', state.gazeX.toFixed(4));
         face.style.setProperty('--gaze-y', state.gazeY.toFixed(4));
         face.style.setProperty('--mood-pos', state.moodPos.toFixed(3));
         face.style.setProperty('--mood-neg', state.moodNeg.toFixed(3));
         face.style.setProperty('--mood-arousal', state.moodArousal.toFixed(3));
-        face.style.setProperty('--fx-base-color', state.config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
-        face.style.setProperty('--fx-scanline-intensity', state.fxScanlineIntensity.toFixed(3));
-        face.style.setProperty('--fx-pixel-jitter', `${state.fxPixelJitter.toFixed(2)}px`);
-        face.style.setProperty('--fx-flicker-depth', state.fxFlickerDepth.toFixed(3));
-        face.style.setProperty('--fx-glow-strength', `${state.fxGlowStrength.toFixed(0)}px`);
-        face.style.setProperty('--fx-chromatic-offset', `${state.fxChromaticOffset.toFixed(2)}px`);
+        face.style.setProperty('--fx-base-color', config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
+        face.style.setProperty('--fx-scanline-intensity', String(config?.glitchScanlineIntensity ?? 0.41));
+        face.style.setProperty('--fx-pixel-jitter', `${(config?.glitchPixelJitter ?? 0).toFixed(2)}px`);
+        face.style.setProperty('--fx-flicker-depth', String(config?.glitchFlickerDepth ?? 0.02));
+        face.style.setProperty('--fx-glow-strength', `${(config?.glitchGlowStrength ?? 14).toFixed(0)}px`);
+        face.style.setProperty('--fx-chromatic-offset', `${chromaticOffset.toFixed(2)}px`);
       }
 
       if (bubble) {

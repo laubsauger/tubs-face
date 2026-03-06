@@ -1,3 +1,4 @@
+import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
 
 const BLINK_MIN_MS = 3800;
@@ -17,6 +18,7 @@ export interface FaceBehaviorRuntime {
   bind(root: HTMLElement): void;
   init(): void;
   dispose(): void;
+  attachSender(sender: ((message: WsClientMessage) => void) | null): void;
 }
 
 export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime {
@@ -26,6 +28,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   let lookResetTimer: number | null = null;
   let smileResetTimer: number | null = null;
   let rafId: number | null = null;
+  let sender: ((message: WsClientMessage) => void) | null = null;
   let currentX = 0;
   let currentY = 0;
   let velocityX = 0;
@@ -59,6 +62,9 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
       scheduleBlink();
       scheduleBehavior();
       resetGaze();
+    },
+    attachSender(nextSender): void {
+      sender = nextSender;
     },
     dispose(): void {
       clearManagedTimer(blinkTimer);
@@ -145,6 +151,10 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   }
 
   function blink(): void {
+    sender?.({
+      type: 'face_blink',
+      ts: Date.now(),
+    });
     store.setState((current) => ({
       ...current,
       blinkActive: true,
@@ -192,6 +202,12 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
       gazeX: currentX,
       gazeY: currentY,
     }));
+    sender?.({
+      type: 'face_motion',
+      x: Number(currentX.toFixed(4)),
+      y: Number(currentY.toFixed(4)),
+      ts: Date.now(),
+    });
 
     const doneX = Math.abs(targetX - currentX) < STOP_POS_EPS && Math.abs(velocityX) < STOP_VEL_EPS;
     const doneY = Math.abs(targetY - currentY) < STOP_POS_EPS && Math.abs(velocityY) < STOP_VEL_EPS;

@@ -4,6 +4,7 @@ import { createSpeechRuntime } from './audio/speech-runtime.js';
 import { createVoiceRuntime } from './audio/voice-runtime.js';
 import { createFaceBehaviorRuntime } from './face/behavior-runtime.js';
 import { createFxRuntime } from './fx/runtime.js';
+import { createGlitchRuntime } from './glitch/runtime.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
 import { createProactiveRuntime } from './behavior/proactive-runtime.js';
 import { createManualRuntime } from './manual/runtime.js';
@@ -32,10 +33,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   const emotionRuntime = options.mode === 'main' ? createEmotionRuntime(store) : null;
   const manualRuntime = options.mode === 'main' ? createManualRuntime(store) : null;
   const fxRuntime = options.mode === 'main' ? createFxRuntime(store) : null;
+  const glitchRuntime = createGlitchRuntime(store);
   const panelRuntime = options.mode === 'main' ? createPanelRuntime(store) : null;
   const proactiveRuntime = options.mode === 'main' ? createProactiveRuntime(store) : null;
   const speechRuntime = options.mode === 'main' ? createSpeechRuntime(store) : null;
-  const visualRuntime = options.mode === 'main' ? createVisualRuntime(store) : null;
+  const visualRuntime = createVisualRuntime(store);
   const voiceRuntime = options.mode === 'main' ? createVoiceRuntime(store) : null;
   const faceBehaviorRuntime = options.mode === 'main' ? createFaceBehaviorRuntime(store) : null;
   const faceRuntime = options.mode === 'main' ? createFaceShellRuntime(store) : null;
@@ -46,10 +48,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
     actionsRuntime?.bind(options.root);
     ambientRuntime.bind(options.root);
     fxRuntime?.bind(options.root);
+    glitchRuntime.bind(options.root);
     manualRuntime?.bind(options.root);
     panelRuntime?.bind(options.root);
     speechRuntime?.bind(options.root);
-    visualRuntime?.bind(options.root);
+    visualRuntime.bind(options.root);
     voiceRuntime?.bind(options.root);
     faceBehaviorRuntime?.bind(options.root);
     faceRuntime?.bind(options.root);
@@ -61,6 +64,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   await loadInitialState(store);
   ambientRuntime.init();
   fxRuntime?.init();
+  glitchRuntime.init();
   panelRuntime?.init();
   speechRuntime?.init();
   await voiceRuntime?.init();
@@ -108,6 +112,22 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
     },
   });
 
+  faceBehaviorRuntime?.attachSender((message) => {
+    wsClient.send(message);
+  });
+
+  window.addEventListener('tubs:head-speech-state', ((event: Event) => {
+    const detail = (event as CustomEvent<{ actor?: 'main' | 'small'; state?: 'start' | 'end'; turnId?: string | null; ts?: number; durationMs?: number }>).detail;
+    wsClient.send({
+      type: 'head_speech_state',
+      actor: detail?.actor === 'small' ? 'small' : 'main',
+      state: detail?.state === 'end' ? 'end' : 'start',
+      ...(detail?.turnId !== undefined ? { turnId: detail.turnId } : {}),
+      ts: detail?.ts ?? Date.now(),
+      ...(detail?.durationMs !== undefined ? { durationMs: detail.durationMs } : {}),
+    });
+  }) as EventListener);
+
   proactiveRuntime?.init((message) => {
     wsClient.send(message);
   });
@@ -127,6 +147,7 @@ async function loadInitialState(store: AppStore): Promise<void> {
       health,
       config,
       stats,
+      fxBaseColorDraft: config.glitchFxBaseColor,
       connectionLabel: current.connected ? current.connectionLabel : 'HTTP ready',
     }));
   } catch (error) {

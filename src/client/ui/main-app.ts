@@ -1,4 +1,5 @@
 import type { AppState, PanelKey } from '../state/app-state.js';
+import { renderFaceVisualMarkup } from './face-visual.js';
 
 function formatCurrency(value: number | undefined): string {
   if (typeof value !== 'number') return '$0.0000';
@@ -28,6 +29,47 @@ function isChatEntryVisible(state: AppState, type: AppState['chatEntries'][numbe
 }
 
 export function renderMainApp(root: HTMLElement, state: AppState): void {
+  const config = state.config;
+  const faceRenderMode = config?.faceRenderMode ?? 'glitch';
+  const renderQuality = config?.renderQuality ?? 'high';
+  const glitchRenderer = config?.glitchRenderer ?? 'auto';
+  const glitchBaseColor = config?.glitchFxBaseColor ?? state.fxBaseColorDraft;
+  const glitchScanlines = config?.glitchScanlines ?? true;
+  const glitchScanlineIntensity = config?.glitchScanlineIntensity ?? 0.41;
+  const glitchScanlineSpacing = config?.glitchScanlineSpacing ?? 5;
+  const glitchScanlineThickness = config?.glitchScanlineThickness ?? 3;
+  const glitchScanlineSpeed = config?.glitchScanlineSpeed ?? 26;
+  const glitchPixelJitter = config?.glitchPixelJitter ?? 0;
+  const glitchFlicker = config?.glitchFlicker ?? true;
+  const glitchFlickerSpeed = config?.glitchFlickerSpeed ?? 11;
+  const glitchFlickerDepth = config?.glitchFlickerDepth ?? 0.02;
+  const glitchGlowStrength = config?.glitchGlowStrength ?? 14;
+  const glitchBrightnessPulseEnabled = config?.glitchBrightnessPulseEnabled ?? true;
+  const glitchBrightnessPulseDim = config?.glitchBrightnessPulseDim ?? 0.88;
+  const glitchBrightnessPulseBright = config?.glitchBrightnessPulseBright ?? 1;
+  const glitchBrightnessPulseSpeed = config?.glitchBrightnessPulseSpeed ?? 3;
+  const glitchScanBeamEnabled = config?.glitchScanBeamEnabled ?? true;
+  const glitchScanBeamSpeed = config?.glitchScanBeamSpeed ?? 10;
+  const glitchScanBeamLineWidth = config?.glitchScanBeamLineWidth ?? 7;
+  const glitchScanBeamBrightness = config?.glitchScanBeamBrightness ?? 0.65;
+  const glitchScanBeamGlowStrength = config?.glitchScanBeamGlowStrength ?? 26;
+  const glitchScanBeamJitter = config?.glitchScanBeamJitter ?? 1;
+  const glitchScanBeamColor = config?.glitchScanBeamColor ?? '#a600ff';
+  const glitchChromaticEnabled = config?.glitchChromaticEnabled ?? true;
+  const glitchChromaticOffsetX = config?.glitchChromaticOffsetX ?? 0;
+  const glitchChromaticOffsetY = config?.glitchChromaticOffsetY ?? 4.5;
+  const glitchChromaticIntensity = config?.glitchChromaticIntensity ?? 0.65;
+  const glitchChromaticAnimate = config?.glitchChromaticAnimate ?? true;
+  const glitchChromaticAnimateSpeed = config?.glitchChromaticAnimateSpeed ?? 7;
+  const glitchSliceEnabled = config?.glitchSliceEnabled ?? true;
+  const glitchSliceCount = config?.glitchSliceCount ?? 24;
+  const glitchSliceMaxOffset = config?.glitchSliceMaxOffset ?? 5;
+  const glitchSliceSpeed = config?.glitchSliceSpeed ?? 28;
+  const glitchSliceIntensity = config?.glitchSliceIntensity ?? 0.53;
+  const glitchSliceColorShift = config?.glitchSliceColorShift ?? 0.03;
+  const glitchSliceGapChance = config?.glitchSliceGapChance ?? 0.07;
+  const glitchSliceIntervalMs = config?.glitchSliceIntervalMs ?? 18000;
+  const glitchSliceBurstDurationMs = config?.glitchSliceBurstDurationMs ?? 1800;
   const facesHtml = state.faceLastFaces.map((face, index) => `
     <li class="face-item">
       <div class="face-item-copy">
@@ -75,12 +117,8 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
       </section>
 
       <section class="visual-shell ${state.sleeping ? 'is-sleeping' : ''}">
-        <div id="visual-face" class="visual-face" data-expression="${escapeAttribute(state.currentExpression)}">
-          <div class="visual-eyes">
-            <span class="visual-eye"></span>
-            <span class="visual-eye"></span>
-          </div>
-          <div class="visual-mouth"></div>
+        <div id="visual-face" class="visual-face" data-expression="${escapeAttribute(state.currentExpression)}" data-render-mode="${escapeAttribute(faceRenderMode)}">
+          ${renderFaceVisualMarkup(state)}
         </div>
         <div id="visual-speech-bubble" class="visual-speech-bubble">${escapeHtml(state.currentSpeechText)}</div>
         <div id="visual-subtitle" class="visual-subtitle ${state.sleeping ? 'is-hidden' : ''}"></div>
@@ -126,9 +164,9 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
           <div class="panel-body ${isPanelCollapsed(state, 'config') ? 'is-hidden' : ''}">
           <dl class="kv">
             <div><dt>Model</dt><dd>${escapeHtml(state.config?.llmModel ?? 'n/a')}</dd></div>
-            <div><dt>Render</dt><dd>${escapeHtml(state.config?.faceRenderMode ?? 'n/a')}</dd></div>
-            <div><dt>Quality</dt><dd>${escapeHtml(state.config?.renderQuality ?? 'n/a')}</dd></div>
-            <div><dt>Muted</dt><dd>${state.config?.muted ? 'yes' : 'no'}</dd></div>
+            <div><dt>Render</dt><dd>${escapeHtml(faceRenderMode)}</dd></div>
+            <div><dt>Quality</dt><dd>${escapeHtml(renderQuality)}</dd></div>
+            <div><dt>Muted</dt><dd>${config?.muted ? 'yes' : 'no'}</dd></div>
             <div><dt>Ambient</dt><dd>${state.ambientAudioEnabled ? 'on' : 'off'}</dd></div>
           </dl>
           </div>
@@ -218,18 +256,59 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
         </article>
 
         <article class="${renderPanelCardClass(state, 'fx')}">
-          ${renderPanelHeader(state, 'fx', 'FX', state.config?.glitchFxEnabled ? 'glitch on' : 'glitch off')}
+          ${renderPanelHeader(state, 'fx', 'FX', config?.glitchFxEnabled ? 'glitch on' : 'glitch off')}
           <div class="panel-body ${isPanelCollapsed(state, 'fx') ? 'is-hidden' : ''}">
           <dl class="kv">
-            <div><dt>Base Color</dt><dd>${escapeHtml(state.config?.glitchFxBaseColor ?? state.fxBaseColorDraft)}</dd></div>
-            <div><dt>Glow</dt><dd>${state.fxGlowStrength.toFixed(0)} px</dd></div>
-            <div><dt>Flicker</dt><dd>${state.fxFlickerDepth.toFixed(3)}</dd></div>
-            <div><dt>Scanline</dt><dd>${state.fxScanlineIntensity.toFixed(2)}</dd></div>
+            <div><dt>Render Mode</dt><dd>${escapeHtml(faceRenderMode)}</dd></div>
+            <div><dt>Renderer</dt><dd>${escapeHtml(glitchRenderer)}</dd></div>
+            <div><dt>Quality</dt><dd>${escapeHtml(renderQuality)}</dd></div>
+            <div><dt>Base Color</dt><dd>${escapeHtml(glitchBaseColor)}</dd></div>
+            <div><dt>Glow</dt><dd>${glitchGlowStrength.toFixed(0)} px</dd></div>
+            <div><dt>Flicker</dt><dd>${glitchFlickerDepth.toFixed(3)}</dd></div>
+            <div><dt>Scanline</dt><dd>${glitchScanlineIntensity.toFixed(2)}</dd></div>
           </dl>
           <div class="face-actions">
             <div class="face-action-row">
-              <button id="fx-toggle" class="button button-secondary" type="button">${state.config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}</button>
+              <button id="fx-toggle" class="button button-secondary" type="button">${config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}</button>
               <button id="fx-editor-open" class="button button-secondary" type="button">${state.fxEditorOpen ? 'Editor Open' : 'Open Editor'}</button>
+            </div>
+            <div class="face-action-row">
+              <label class="manual-field">
+                <span>Render Mode</span>
+                <select id="face-render-mode-select" class="mini-select">
+                  <option value="glitch" ${faceRenderMode === 'glitch' ? 'selected' : ''}>Glitch</option>
+                  <option value="svg" ${faceRenderMode === 'svg' ? 'selected' : ''}>SVG</option>
+                  <option value="css" ${faceRenderMode === 'css' ? 'selected' : ''}>CSS</option>
+                </select>
+              </label>
+              <label class="manual-field">
+                <span>Render Quality</span>
+                <select id="face-render-quality-select" class="mini-select">
+                  <option value="high" ${renderQuality === 'high' ? 'selected' : ''}>High</option>
+                  <option value="balanced" ${renderQuality === 'balanced' ? 'selected' : ''}>Balanced</option>
+                  <option value="low" ${renderQuality === 'low' ? 'selected' : ''}>Low</option>
+                </select>
+              </label>
+            </div>
+            <div class="face-action-row">
+              <label class="manual-field">
+                <span>Renderer</span>
+                <select id="glitch-renderer-select" class="mini-select">
+                  <option value="auto" ${glitchRenderer === 'auto' ? 'selected' : ''}>Auto</option>
+                  <option value="webgpu" ${glitchRenderer === 'webgpu' ? 'selected' : ''}>WebGPU</option>
+                  <option value="canvas2d" ${glitchRenderer === 'canvas2d' ? 'selected' : ''}>Canvas2D</option>
+                </select>
+              </label>
+              <label class="manual-field">
+                <span>Preset</span>
+                <select id="glitch-preset-select" class="mini-select">
+                  <option value="">Select preset</option>
+                  <option value="default">Default</option>
+                  <option value="cyberpunk">Cyberpunk</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="warm">Warm</option>
+                </select>
+              </label>
             </div>
             <div class="face-action-row">
               <input id="fx-base-color" class="fx-color-input" type="color" value="${escapeAttribute(state.fxBaseColorDraft)}" />
@@ -238,13 +317,67 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
             <div class="fx-editor-shell ${state.fxEditorOpen ? 'is-open' : ''}">
               <div class="fx-editor-header">
                 <strong>FX Editor</strong>
-                <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
+                <div class="face-action-row">
+                  <button id="glitch-export-button" class="button button-secondary" type="button">Export</button>
+                  <button id="glitch-import-button" class="button button-secondary" type="button">Import</button>
+                  <button id="glitch-reset-button" class="button button-secondary" type="button">Reset</button>
+                  <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
+                </div>
               </div>
-              ${renderFxSlider('Scanline Intensity', 'scanlineIntensity', state.fxScanlineIntensity, 0, 1, 0.01)}
-              ${renderFxSlider('Pixel Jitter', 'pixelJitter', state.fxPixelJitter, 0, 8, 0.1)}
-              ${renderFxSlider('Flicker Depth', 'flickerDepth', state.fxFlickerDepth, 0, 0.2, 0.005)}
-              ${renderFxSlider('Glow Strength', 'glowStrength', state.fxGlowStrength, 0, 40, 1)}
-              ${renderFxSlider('Chromatic Offset', 'chromaticOffset', state.fxChromaticOffset, 0, 6, 0.1)}
+              <div class="fx-editor-group">
+                <h3>Scanlines & Flicker</h3>
+                ${renderFxToggle('Scanlines', 'glitchScanlines', glitchScanlines)}
+                ${renderFxSlider('Scanline Intensity', 'glitchScanlineIntensity', glitchScanlineIntensity, 0, 1, 0.01)}
+                ${renderFxSlider('Scanline Spacing', 'glitchScanlineSpacing', glitchScanlineSpacing, 1, 20, 1)}
+                ${renderFxSlider('Scanline Thickness', 'glitchScanlineThickness', glitchScanlineThickness, 1, 10, 1)}
+                ${renderFxSlider('Scanline Speed', 'glitchScanlineSpeed', glitchScanlineSpeed, 1, 60, 1)}
+                ${renderFxSlider('Pixel Jitter', 'glitchPixelJitter', glitchPixelJitter, 0, 10, 0.1)}
+                ${renderFxToggle('Flicker', 'glitchFlicker', glitchFlicker)}
+                ${renderFxSlider('Flicker Speed', 'glitchFlickerSpeed', glitchFlickerSpeed, 1, 30, 1)}
+                ${renderFxSlider('Flicker Depth', 'glitchFlickerDepth', glitchFlickerDepth, 0, 0.2, 0.005)}
+                ${renderFxSlider('Glow Strength', 'glitchGlowStrength', glitchGlowStrength, 0, 60, 1)}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Brightness Pulse</h3>
+                ${renderFxToggle('Pulse Enabled', 'glitchBrightnessPulseEnabled', glitchBrightnessPulseEnabled)}
+                ${renderFxSlider('Pulse Dim', 'glitchBrightnessPulseDim', glitchBrightnessPulseDim, 0.3, 1, 0.01)}
+                ${renderFxSlider('Pulse Bright', 'glitchBrightnessPulseBright', glitchBrightnessPulseBright, 0.5, 1.5, 0.01)}
+                ${renderFxSlider('Pulse Speed', 'glitchBrightnessPulseSpeed', glitchBrightnessPulseSpeed, 0.5, 15, 0.5)}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Scan Beam</h3>
+                ${renderFxToggle('Beam Enabled', 'glitchScanBeamEnabled', glitchScanBeamEnabled)}
+                ${renderFxSlider('Beam Speed', 'glitchScanBeamSpeed', glitchScanBeamSpeed, 1, 40, 1)}
+                ${renderFxSlider('Beam Width', 'glitchScanBeamLineWidth', glitchScanBeamLineWidth, 1, 30, 1)}
+                ${renderFxSlider('Beam Brightness', 'glitchScanBeamBrightness', glitchScanBeamBrightness, 0, 1, 0.05)}
+                ${renderFxSlider('Beam Glow', 'glitchScanBeamGlowStrength', glitchScanBeamGlowStrength, 0, 60, 1)}
+                ${renderFxSlider('Beam Jitter', 'glitchScanBeamJitter', glitchScanBeamJitter, 0, 10, 0.5)}
+                <div class="face-action-row">
+                  <input id="fx-scanbeam-color" class="fx-color-input" type="color" value="${escapeAttribute(glitchScanBeamColor)}" />
+                  <button id="fx-scanbeam-color-apply" class="button button-secondary" type="button">Apply Beam Color</button>
+                </div>
+              </div>
+              <div class="fx-editor-group">
+                <h3>Chromatic</h3>
+                ${renderFxToggle('Chromatic Enabled', 'glitchChromaticEnabled', glitchChromaticEnabled)}
+                ${renderFxSlider('Chromatic X', 'glitchChromaticOffsetX', glitchChromaticOffsetX, -10, 10, 0.1)}
+                ${renderFxSlider('Chromatic Y', 'glitchChromaticOffsetY', glitchChromaticOffsetY, -10, 10, 0.1)}
+                ${renderFxSlider('Chromatic Intensity', 'glitchChromaticIntensity', glitchChromaticIntensity, 0, 1, 0.05)}
+                ${renderFxToggle('Chromatic Animate', 'glitchChromaticAnimate', glitchChromaticAnimate)}
+                ${renderFxSlider('Animate Speed', 'glitchChromaticAnimateSpeed', glitchChromaticAnimateSpeed, 1, 20, 1)}
+              </div>
+              <div class="fx-editor-group">
+                <h3>Glitch Slice</h3>
+                ${renderFxToggle('Slice Enabled', 'glitchSliceEnabled', glitchSliceEnabled)}
+                ${renderFxSlider('Slice Count', 'glitchSliceCount', glitchSliceCount, 2, 60, 1)}
+                ${renderFxSlider('Slice Max Offset', 'glitchSliceMaxOffset', glitchSliceMaxOffset, 0, 30, 1)}
+                ${renderFxSlider('Slice Speed', 'glitchSliceSpeed', glitchSliceSpeed, 1, 60, 1)}
+                ${renderFxSlider('Slice Intensity', 'glitchSliceIntensity', glitchSliceIntensity, 0, 1, 0.01)}
+                ${renderFxSlider('Slice Color Shift', 'glitchSliceColorShift', glitchSliceColorShift, 0, 0.2, 0.01)}
+                ${renderFxSlider('Slice Gap Chance', 'glitchSliceGapChance', glitchSliceGapChance, 0, 0.5, 0.01)}
+                ${renderFxSlider('Burst Interval', 'glitchSliceIntervalMs', glitchSliceIntervalMs, 1000, 60000, 1000)}
+                ${renderFxSlider('Burst Duration', 'glitchSliceBurstDurationMs', glitchSliceBurstDurationMs, 200, 8000, 100)}
+              </div>
             </div>
           </div>
           </div>
@@ -483,8 +616,17 @@ function renderFxSlider(
   return `
     <label class="fx-slider-row">
       <span>${escapeHtml(label)}</span>
-      <input data-fx-range="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
+      <input data-fx-config-range="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
       <strong>${value.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 3)}</strong>
+    </label>
+  `;
+}
+
+function renderFxToggle(label: string, key: string, checked: boolean): string {
+  return `
+    <label class="voice-toggle fx-toggle-row">
+      <input data-fx-config-toggle="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
+      <span>${escapeHtml(label)}</span>
     </label>
   `;
 }

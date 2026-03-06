@@ -211,6 +211,33 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage): v
       }));
       store.appendLog('info', `${message.stage ?? 'stream'}: ${message.detail ?? 'update'}`);
       return;
+    case 'face_motion':
+      store.setState((current) => ({
+        ...current,
+        gazeX: message.x,
+        gazeY: message.y,
+      }));
+      return;
+    case 'face_blink':
+      store.setState((current) => ({
+        ...current,
+        blinkActive: true,
+        lastBlinkAt: message.ts,
+      }));
+      window.setTimeout(() => {
+        store.setState((current) => ({
+          ...current,
+          blinkActive: false,
+        }));
+      }, 140);
+      return;
+    case 'head_speech_state':
+      store.setState((current) => ({
+        ...current,
+        audioPlaying: message.state === 'start',
+        ...(message.turnId !== undefined ? { currentTurnId: message.turnId ?? current.currentTurnId } : {}),
+      }));
+      return;
     default:
       return;
   }
