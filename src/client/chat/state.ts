@@ -26,7 +26,7 @@ export function upsertChatDraft(
   state: AppState,
   type: ChatEntry['type'],
   text: string,
-  actor: ChatEntry['actor'] = 'main',
+  actor: ChatEntry['actor'] = type === 'in' ? 'user' : type === 'sys' ? 'system' : 'main',
 ): AppState {
   const normalized = String(text || '').trim();
   if (!normalized) {

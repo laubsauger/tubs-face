@@ -105,7 +105,6 @@ function updateGpuPostBindGroup(gpu: WebGpuState): void {
 
 function createGpuSceneTarget(gpu: WebGpuState, canvas: HTMLCanvasElement): void {
   if (!gpu.gpuDevice || !canvas.width || !canvas.height) return;
-  if (gpu.gpuSceneTexture && gpu.gpuSceneWidth === canvas.width && gpu.gpuSceneHeight === canvas.height) return;
 
   if (gpu.gpuSceneTexture) {
     try { gpu.gpuSceneTexture.destroy(); } catch {}

@@ -1,6 +1,6 @@
 export function fallbackToCanvas2D(args: {
   reason?: string;
-  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null };
+  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null; webGpuRetryDisabled: boolean };
   resetWebGpuResources: () => void;
   initCanvas2DRenderer: () => boolean;
   sizeCanvas: () => void;
@@ -37,7 +37,7 @@ export function fallbackToCanvas2D(args: {
 }
 
 export async function initializeRendererBackend(args: {
-  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null };
+  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null; webGpuRetryDisabled: boolean };
   preferredRenderer: 'webgpu' | 'canvas2d' | 'auto';
   initWebGpuRenderer: () => Promise<boolean>;
   recreateCanvasElement: () => void;
@@ -65,7 +65,7 @@ export async function initializeRendererBackend(args: {
   state.backendError = '';
   setBackendStatus();
 
-  const shouldTryWebGpu = preferredRenderer === 'auto' || preferredRenderer === 'webgpu';
+  const shouldTryWebGpu = (preferredRenderer === 'auto' || preferredRenderer === 'webgpu') && !state.webGpuRetryDisabled;
   if (shouldTryWebGpu) {
     const ok = await initWebGpuRenderer();
     if (ok) {
@@ -76,6 +76,7 @@ export async function initializeRendererBackend(args: {
       setBackendStatus();
       return;
     }
+    state.webGpuRetryDisabled = true;
     recreateCanvasElement();
   }
 
@@ -98,7 +99,7 @@ export async function initializeRendererBackend(args: {
 }
 
 export function ensureRendererBackendReady(args: {
-  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null };
+  state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null; webGpuRetryDisabled: boolean };
   initializeRendererBackend: () => Promise<void>;
   setBackendStatus: () => void;
 }): Promise<boolean> {

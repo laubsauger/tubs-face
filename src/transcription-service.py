@@ -105,7 +105,6 @@ def pcm_to_wav_bytes(pcm_float32, sample_rate=24000):
 
     return buf.getvalue()
 
-
 @app.route('/tts', methods=['POST'])
 def tts():
     data = request.json
@@ -166,7 +165,7 @@ def _tts_kokoro(text, voice):
         audio = np.concatenate(segments)
         wav_bytes = pcm_to_wav_bytes(audio, sample_rate=24000)
         elapsed = int((time.time() - t0) * 1000)
-        print(f"[TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms (Kokoro, voice={voice})")
+        print(f"[TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms (Kokoro, voice={voice}, lang=a)")
         return Response(wav_bytes, mimetype="audio/wav")
 
     except Exception as e:

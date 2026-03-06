@@ -35,6 +35,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage): v
     case 'system':
       store.setState((current) => appendChatEntry(current, {
         type: 'sys',
+        actor: 'system',
         text: message.text,
         ts: Date.now(),
       }));
@@ -44,6 +45,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage): v
       store.setState((current) => ({
         ...appendChatEntry(current, {
           type: 'sys',
+          actor: 'system',
           text: `ERROR: ${message.text}`,
           ts: Date.now(),
         }),
@@ -176,6 +178,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage): v
       store.setState((current) => ({
         ...appendChatEntry(current, {
           type: 'sys',
+          actor: 'system',
           text: `TURN ${message.turnId || 'n/a'} ${summarizeTurnScript(message)}`,
           ts: Date.now(),
         }),

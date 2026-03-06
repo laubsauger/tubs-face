@@ -14,7 +14,11 @@ interface FaceProfile {
 
 export function renderFaceVisualMarkup(state: AppState): string {
   const mode = state.config?.faceRenderMode ?? 'css';
-  if (mode === 'svg' || mode === 'glitch') {
+  if (mode === 'glitch') {
+    return '';
+  }
+
+  if (mode === 'svg') {
     return renderSvgFace(state);
   }
 

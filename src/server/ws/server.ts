@@ -1,4 +1,5 @@
 import type { Server as HttpServer } from 'node:http';
+import type { IncomingMessage } from 'node:http';
 import type {
   WsClientMessage,
   WsConfigServerMessage,
@@ -15,9 +16,21 @@ import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime
 import { runAssistantTurn } from '../assistant/service.js';
 
 const clients = new Set<WebSocket>();
+const WS_PATH = '/ws';
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (request, socket, head) => {
+    if (!isWebSocketRequest(request)) {
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  });
 
   wss.on('connection', (socket: WebSocket) => {
     clients.add(socket);
@@ -51,6 +64,11 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   });
 
   return wss;
+}
+
+function isWebSocketRequest(request: IncomingMessage): boolean {
+  const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+  return pathname === WS_PATH;
 }
 
 export function broadcast(message: WsServerMessage): void {

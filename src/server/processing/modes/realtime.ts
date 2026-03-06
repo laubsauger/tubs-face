@@ -1,9 +1,11 @@
 import { createPythonServiceController, buildRealtimeServiceEnv } from '../process-service.js';
 import type { ProcessingModeAdapter } from '../types.js';
 
+const REALTIME_PROCESSING_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
+
 const service = createPythonServiceController({
   scriptName: 'realtime-processing-service.py',
-  port: 3002,
+  port: REALTIME_PROCESSING_PORT,
   envFactory: () => buildRealtimeServiceEnv(),
   logPrefix: '[realtime-python]',
 });
@@ -27,6 +29,6 @@ export const realtimeProcessingMode: ProcessingModeAdapter = {
     return service.postAudioMultipart('/transcribe', audioBuffer, mimeType) as Promise<{ text: string; language?: string; probability?: number }>;
   },
   getTtsProxyTarget() {
-    return { hostname: '127.0.0.1', port: 3002, path: '/tts' };
+    return { hostname: '127.0.0.1', port: REALTIME_PROCESSING_PORT, path: '/tts' };
   },
 };

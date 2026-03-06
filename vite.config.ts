@@ -7,6 +7,25 @@ const rootDir = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig({
   appType: 'mpa',
   publicDir: path.resolve(rootDir, 'public'),
+  server: {
+    proxy: {
+      '^/(health|stats|config|speak|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script)': {
+        target: 'http://127.0.0.1:3000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://127.0.0.1:3000',
+        changeOrigin: true,
+        ws: true,
+      },
+    },
+  },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
+    esbuildOptions: {
+      target: 'esnext',
+    },
+  },
   resolve: {
     alias: {
       '@client': path.resolve(rootDir, 'src/client'),
@@ -19,11 +38,15 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist/client',
+    target: 'esnext',
     rollupOptions: {
       input: {
         main: path.resolve(rootDir, 'index.html'),
         mini: path.resolve(rootDir, 'app-mini.html'),
       },
     },
+  },
+  worker: {
+    format: 'es',
   },
 });

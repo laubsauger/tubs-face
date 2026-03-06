@@ -9,6 +9,7 @@ import uuid
 import urllib.error
 import urllib.request
 import threading
+import traceback
 
 import numpy as np
 from flask import Flask, Response, jsonify, request
@@ -105,7 +106,6 @@ def ensure_tts_model():
         print("[Realtime TTS] Using macOS system TTS (say)")
         tts_model = "system"
     return tts_model
-
 
 def normalize_audio_mime_type(value):
     normalized = str(value or "").lower()
@@ -682,9 +682,11 @@ def _tts_kokoro(text, voice):
         audio = np.concatenate(segments)
         wav_bytes = pcm_to_wav_bytes(audio, sample_rate=24000)
         elapsed = int((time.time() - t0) * 1000)
-        print(f"[Realtime TTS] Kokoro generated {len(wav_bytes)} bytes in {elapsed}ms")
+        print(f"[Realtime TTS] Kokoro generated {len(wav_bytes)} bytes in {elapsed}ms (voice={voice}, lang=a)")
         return Response(wav_bytes, mimetype="audio/wav")
     except Exception as err:
+        print(f"[Realtime TTS] Kokoro error (voice={voice}): {err}")
+        traceback.print_exc()
         return jsonify({"error": str(err)}), 500
 
 def _tts_system(text):

@@ -35,7 +35,10 @@ import {
 } from '../../shared/contracts/config.js';
 
 const DEFAULT_PROCESSING_MODE: ProcessingMode = pickOne(PROCESSING_MODES, process.env.PROCESSING_MODE, 'legacy');
-const DEFAULT_STT_MODEL = process.env.WHISPER_MODEL?.trim() || 'small';
+const DEFAULT_STT_MODEL = resolveProcessingEnv({
+  legacy: process.env.WHISPER_MODEL,
+  realtime: process.env.REALTIME_STT_MODEL,
+})?.trim() || 'small';
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash';
 const DEFAULT_GLITCH_RENDERER: GlitchRenderer = pickOne(GLITCH_RENDERERS, process.env.GLITCH_RENDERER, 'auto');
 
@@ -51,9 +54,18 @@ export const runtimeConfig: RuntimeConfig = {
   minFaceBoxAreaRatio: parseFloatInRange(process.env.MIN_FACE_BOX_AREA_RATIO, 0.02, 0, 0.2),
   faceRenderMode: pickOne(FACE_RENDER_MODES, process.env.FACE_RENDER_MODE, 'glitch'),
   renderQuality: pickOne(RENDER_QUALITIES, process.env.RENDER_QUALITY, 'high'),
-  ttsBackend: pickOne(TTS_BACKENDS, process.env.TTS_BACKEND, 'vibevoice'),
-  sttBackend: pickOne(STT_BACKENDS, process.env.STT_BACKEND, 'mlx'),
-  kokoroVoice: pickOne(KOKORO_VOICES, process.env.KOKORO_VOICE, 'hm_omega'),
+  ttsBackend: pickOne(TTS_BACKENDS, resolveProcessingEnv({
+    legacy: process.env.TTS_BACKEND,
+    realtime: process.env.REALTIME_TTS_BACKEND,
+  }), 'vibevoice'),
+  sttBackend: pickOne(STT_BACKENDS, resolveProcessingEnv({
+    legacy: process.env.STT_BACKEND,
+    realtime: process.env.REALTIME_STT_BACKEND,
+  }), 'mlx'),
+  kokoroVoice: pickOne(KOKORO_VOICES, resolveProcessingEnv({
+    legacy: process.env.KOKORO_VOICE,
+    realtime: process.env.REALTIME_KOKORO_VOICE,
+  }), 'hm_omega'),
   dualHeadEnabled: parseBoolean(process.env.DUAL_HEAD_ENABLED, false),
   dualHeadMode: pickOne(DUAL_HEAD_MODES, process.env.DUAL_HEAD_MODE, 'off'),
   secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'jf_tebukuro'),
@@ -168,6 +180,14 @@ export function toStatsResponse(): StatsResponse {
 
 export function toConfigResponse(): ConfigResponse {
   return { ...runtimeConfig };
+}
+
+function resolveProcessingEnv(values: { legacy: string | undefined; realtime: string | undefined }): string | undefined {
+  if (DEFAULT_PROCESSING_MODE === 'realtime') {
+    return values.realtime?.trim() || values.legacy?.trim();
+  }
+
+  return values.legacy?.trim() || values.realtime?.trim();
 }
 
 export type RuntimeConfigPatch = Partial<RuntimeConfig>;

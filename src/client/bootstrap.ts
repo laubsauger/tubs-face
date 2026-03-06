@@ -8,7 +8,7 @@ import { createGlitchRuntime } from './glitch/runtime.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
 import { createProactiveRuntime } from './behavior/proactive-runtime.js';
 import { createManualRuntime } from './manual/runtime.js';
-import type { AppStore } from './state/app-state.js';
+import type { AppState, AppStore } from './state/app-state.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../shared/contracts/http.js';
 import type { WsServerMessage } from '../shared/contracts/ws.js';
 import { applyServerMessage } from './handlers/messages.js';
@@ -27,24 +27,30 @@ export interface BootstrapOptions {
 }
 
 export async function bootstrapClient(options: BootstrapOptions): Promise<void> {
-  const store = createAppStore(window.location.host);
+  const store = createAppStore(resolveServerLabel());
   const actionsRuntime = options.mode === 'main' ? createAppActionsRuntime(store) : null;
   const ambientRuntime = createAmbientRuntime(store, options.mode);
   const emotionRuntime = options.mode === 'main' ? createEmotionRuntime(store) : null;
   const manualRuntime = options.mode === 'main' ? createManualRuntime(store) : null;
   const fxRuntime = options.mode === 'main' ? createFxRuntime(store) : null;
-  const glitchRuntime = createGlitchRuntime(store);
+  const glitchRuntime = createGlitchRuntime(store, options.mode);
   const panelRuntime = options.mode === 'main' ? createPanelRuntime(store) : null;
   const proactiveRuntime = options.mode === 'main' ? createProactiveRuntime(store) : null;
   const speechRuntime = options.mode === 'main' ? createSpeechRuntime(store) : null;
-  const visualRuntime = createVisualRuntime(store);
+  const visualRuntime = createVisualRuntime(store, options.mode);
   const voiceRuntime = options.mode === 'main' ? createVoiceRuntime(store) : null;
   const faceBehaviorRuntime = options.mode === 'main' ? createFaceBehaviorRuntime(store) : null;
   const faceRuntime = options.mode === 'main' ? createFaceShellRuntime(store) : null;
   const windowRuntime = createWindowRuntime(store, options.mode);
 
+  store.subscribeSelector(selectShellSlice, () => {
+    renderWithStableSubtrees(options.root, store.getState(), options);
+  }, {
+    equalityFn: shallowEqual,
+    fireImmediately: true,
+  });
+
   store.subscribe((state) => {
-    options.render(options.root, state);
     actionsRuntime?.bind(options.root);
     ambientRuntime.bind(options.root);
     fxRuntime?.bind(options.root);
@@ -154,4 +160,90 @@ async function loadInitialState(store: AppStore): Promise<void> {
     const message = error instanceof Error ? error.message : 'Failed to load initial state';
     store.appendLog('error', message);
   }
+}
+
+function resolveServerLabel(): string {
+  if (window.location.port !== '3000') {
+    return `${window.location.hostname}:3000`;
+  }
+
+  return window.location.host;
+}
+
+function renderWithStableSubtrees(
+  root: HTMLElement,
+  state: ReturnType<AppStore['getState']>,
+  options: BootstrapOptions,
+): void {
+  const stableSelectors = options.mode === 'main'
+    ? ['#face-panel-card']
+    : [];
+  const preserved = stableSelectors
+    .map((selector) => [selector, root.querySelector<HTMLElement>(selector)] as const)
+    .filter((entry): entry is readonly [string, HTMLElement] => entry[1] instanceof HTMLElement);
+
+  options.render(root, state);
+
+  for (const [selector, element] of preserved) {
+    const replacement = root.querySelector<HTMLElement>(selector);
+    if (replacement?.parentNode) {
+      replacement.parentNode.replaceChild(element, replacement);
+    }
+  }
+}
+
+function selectShellSlice(state: AppState) {
+  return {
+    connected: state.connected,
+    connectionLabel: state.connectionLabel,
+    serverUrl: state.serverUrl,
+    lastMessageType: state.lastMessageType,
+    lastPingMs: state.lastPingMs,
+    health: state.health,
+    config: state.config,
+    stats: state.stats,
+    ambientAudioEnabled: state.ambientAudioEnabled,
+    controlSpeakText: state.controlSpeakText,
+    controlDonationAmount: state.controlDonationAmount,
+    uiHidden: state.uiHidden,
+    fullscreenActive: state.fullscreenActive,
+    collapsedPanels: state.collapsedPanels,
+    chatPanelWidth: state.chatPanelWidth,
+    chatVerbosity: state.chatVerbosity,
+    manualComposerOpen: state.manualComposerOpen,
+    manualComposerMode: state.manualComposerMode,
+    manualActor: state.manualActor,
+    manualAction: state.manualAction,
+    manualExpression: state.manualExpression,
+    manualEmoji: state.manualEmoji,
+    manualDelay: state.manualDelay,
+    manualText: state.manualText,
+    manualScript: state.manualScript,
+    manualStatus: state.manualStatus,
+    manualStatusKind: state.manualStatusKind,
+    manualSending: state.manualSending,
+    fxEditorOpen: state.fxEditorOpen,
+    fxExpressionSelected: state.fxExpressionSelected,
+    fxBaseColorDraft: state.fxBaseColorDraft,
+  };
+}
+
+function shallowEqual(left: Record<string, unknown>, right: Record<string, unknown>): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(right, key) || !Object.is(left[key], right[key])) {
+      return false;
+    }
+  }
+
+  return true;
 }

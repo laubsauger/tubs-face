@@ -27,6 +27,7 @@ import type {
   StatsResponse,
   WakeWordResult,
   VoiceResponse,
+  TtsRequest,
 } from '../../shared/contracts/http.js';
 import type {
   WsConversationModeServerMessage,
@@ -214,12 +215,30 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
   }
 
   if (request.method === 'POST' && url.pathname === '/tts') {
+    let turnTimer = createTurnTimer({ side: 'backend', source: 'tts' });
     try {
       const rawBody = await readRawBody(request);
+      turnTimer.mark('TTS request received');
+      const ttsRequest = parseTtsRequest(rawBody);
+      turnTimer = createTurnTimer({
+        side: 'backend',
+        source: 'tts',
+        ...(ttsRequest.turnId ? { turnId: ttsRequest.turnId } : {}),
+      });
+      turnTimer.mark('TTS request received');
+      turnTimer.mark('Python TTS started');
       const proxied = await proxyTts(rawBody.toString('utf8'));
+      turnTimer.mark(`Python TTS completed (${proxied.statusCode})`);
+      if (proxied.statusCode >= 400) {
+        turnTimer.mark('Python TTS failed');
+      }
       response.writeHead(proxied.statusCode, proxied.headers);
       response.end(proxied.body);
+      turnTimer.mark('HTTP response sent');
+      turnTimer.log({ title: '[Turn Timing]' });
     } catch (error) {
+      turnTimer.mark('TTS proxy failed');
+      turnTimer.log({ title: '[Turn Timing]' });
       const message = error instanceof Error ? error.message : 'TTS proxy failed';
       sendError(response, 502, message);
     }
@@ -593,6 +612,15 @@ function proxyTts(body: string): Promise<{ statusCode: number; headers: http.Inc
     request.write(body);
     request.end();
   });
+}
+
+function parseTtsRequest(rawBody: Buffer): Partial<TtsRequest> {
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8')) as Partial<TtsRequest>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function badRequest(message: string): Error {

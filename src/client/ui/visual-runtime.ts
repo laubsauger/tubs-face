@@ -5,16 +5,16 @@ export interface VisualRuntime {
   bind(root: HTMLElement): void;
 }
 
-export function createVisualRuntime(store: AppStore): VisualRuntime {
+export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): VisualRuntime {
   return {
     bind(root: HTMLElement): void {
       const face = root.querySelector<HTMLElement>('#visual-face');
-      const bubble = root.querySelector<HTMLElement>('#visual-speech-bubble');
       const donationCard = root.querySelector<HTMLElement>('#visual-donation-card');
       const donationHandle = root.querySelector<HTMLElement>('#visual-donation-handle');
       const donationAmount = root.querySelector<HTMLElement>('#visual-donation-amount');
       const donationQr = root.querySelector<HTMLImageElement>('#visual-donation-qr');
       const subtitle = root.querySelector<HTMLElement>('#visual-subtitle');
+      const liveTranscript = root.querySelector<HTMLElement>('#visual-live-transcript');
       const state = store.getState();
 
       document.body.classList.toggle('app-sleeping', state.sleeping);
@@ -38,7 +38,10 @@ export function createVisualRuntime(store: AppStore): VisualRuntime {
         face.style.setProperty('--mood-pos', state.moodPos.toFixed(3));
         face.style.setProperty('--mood-neg', state.moodNeg.toFixed(3));
         face.style.setProperty('--mood-arousal', state.moodArousal.toFixed(3));
-        face.style.setProperty('--fx-base-color', config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
+        const baseColor = mode === 'mini'
+          ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
+          : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
+        face.style.setProperty('--fx-base-color', baseColor);
         face.style.setProperty('--fx-scanline-intensity', String(config?.glitchScanlineIntensity ?? 0.41));
         face.style.setProperty('--fx-pixel-jitter', `${(config?.glitchPixelJitter ?? 0).toFixed(2)}px`);
         face.style.setProperty('--fx-flicker-depth', String(config?.glitchFlickerDepth ?? 0.02));
@@ -46,14 +49,15 @@ export function createVisualRuntime(store: AppStore): VisualRuntime {
         face.style.setProperty('--fx-chromatic-offset', `${chromaticOffset.toFixed(2)}px`);
       }
 
-      if (bubble) {
-        const speech = state.currentSpeechText.trim();
-        bubble.textContent = speech;
-        bubble.classList.toggle('is-visible', speech.length > 0 && !state.audioPlaying);
+      if (subtitle) {
+        subtitle.textContent = state.subtitleText || state.currentSpeechText || '';
+        subtitle.classList.toggle('is-hidden', state.sleeping);
       }
 
-      if (subtitle) {
-        subtitle.classList.toggle('is-hidden', state.sleeping);
+      if (liveTranscript) {
+        liveTranscript.textContent = state.liveTranscriptText;
+        liveTranscript.classList.toggle('is-visible', state.liveTranscriptText.trim().length > 0);
+        liveTranscript.classList.toggle('is-draft', state.liveTranscriptDraft);
       }
 
       syncDonationCard(

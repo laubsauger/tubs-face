@@ -280,7 +280,8 @@ fn fsPost(in: VSOut) -> @location(0) vec4f {
   if (u.scanline.x > 0.5 && u.scanline.z > 0.0) {
     let phase = fract((y * u.canvas.y + u.scanline.w) / max(1.0, u.scanline.z));
     let lineMask = 1.0 - step(u.flags.y, phase);
-    color.rgb = color.rgb * (1.0 - lineMask * u.scanline.y);
+    let dim = 1.0 - lineMask * u.scanline.y;
+    color = vec4f(color.rgb * dim, color.a);
   }
 
   if (u.flags.z > 0.0) {
@@ -290,7 +291,7 @@ fn fsPost(in: VSOut) -> @location(0) vec4f {
       sampleScene(vec2f(x, y + 0.003)).rgb +
       sampleScene(vec2f(x, y - 0.003)).rgb
     ) * 0.25;
-    color.rgb = color.rgb + bloom * u.flags.z * 0.35;
+    color = vec4f(color.rgb + bloom * u.flags.z * 0.35, color.a);
   }
 
   return color;

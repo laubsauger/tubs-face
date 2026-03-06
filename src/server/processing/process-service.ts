@@ -3,6 +3,8 @@ import path from 'node:path';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { runtimeConfig } from '../config/runtime.js';
 
+const DEFAULT_REALTIME_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
+
 export interface PythonServiceDefinition {
   scriptName: string;
   port: number;
@@ -233,7 +235,7 @@ export function buildLegacyServiceEnv(sttModel = runtimeConfig.sttModel): NodeJS
 export function buildRealtimeServiceEnv(sttModel = runtimeConfig.sttModel): NodeJS.ProcessEnv {
   return {
     ...process.env,
-    REALTIME_PROCESSING_PORT: String(3002),
+    REALTIME_PROCESSING_PORT: String(DEFAULT_REALTIME_PORT),
     REALTIME_STT_MODEL: sttModel,
     REALTIME_STT_BACKEND: runtimeConfig.sttBackend,
     REALTIME_TTS_BACKEND: runtimeConfig.ttsBackend,

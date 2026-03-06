@@ -1,3 +1,5 @@
+import { subscribeWithSelector } from 'zustand/middleware';
+import { createStore } from 'zustand/vanilla';
 import type { ExpressionName } from '../../shared/contracts/config.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../../shared/contracts/http.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
@@ -15,7 +17,7 @@ export interface LogEntry {
 export interface ChatEntry {
   id: string;
   type: 'in' | 'out' | 'sys';
-  actor?: 'main' | 'small';
+  actor?: 'main' | 'small' | 'user' | 'system';
   text: string;
   ts: number;
   draft?: boolean;
@@ -92,6 +94,7 @@ export interface AppState {
   recording: boolean;
   listenState: string;
   voiceWakeWordEnabled: boolean;
+  voiceHandsFreeEnabled: boolean;
   voiceLastTranscript: string;
   ambientAudioEnabled: boolean;
   faceWorkerReady: boolean;
@@ -136,11 +139,20 @@ export interface AppState {
 }
 
 export type StateListener = (state: AppState) => void;
+export interface SelectorSubscribeOptions<T> {
+  equalityFn?: (left: T, right: T) => boolean;
+  fireImmediately?: boolean;
+}
 
 export interface AppStore {
   getState(): AppState;
   setState(updater: AppState | ((current: AppState) => AppState)): void;
   subscribe(listener: StateListener): () => void;
+  subscribeSelector<T>(
+    selector: (state: AppState) => T,
+    listener: (selected: T, previousSelected: T) => void,
+    options?: SelectorSubscribeOptions<T>,
+  ): () => void;
   appendLog(level: LogEntry['level'], text: string): void;
 }
 
@@ -149,7 +161,7 @@ const STREAM_DEBUG_STORAGE_KEY = 'tubs.streamDebugEnabled';
 
 export function createAppStore(serverUrl: string): AppStore {
   const streamDebugEnabled = readStoredStreamDebugEnabled();
-  let state: AppState = {
+  const initialState: AppState = {
     connected: false,
     connectionLabel: 'Offline',
     serverUrl,
@@ -183,6 +195,7 @@ export function createAppStore(serverUrl: string): AppStore {
     recording: false,
     listenState: 'Idle',
     voiceWakeWordEnabled: true,
+    voiceHandsFreeEnabled: true,
     voiceLastTranscript: '',
     ambientAudioEnabled: true,
     faceWorkerReady: false,
@@ -238,29 +251,21 @@ export function createAppStore(serverUrl: string): AppStore {
     },
     logs: [],
   };
-
-  const listeners = new Set<StateListener>();
-
-  function notify(): void {
-    for (const listener of listeners) {
-      listener(state);
-    }
-  }
+  const store = createStore<AppState>()(subscribeWithSelector(() => initialState));
 
   return {
     getState(): AppState {
-      return state;
+      return store.getState();
     },
     setState(updater): void {
-      state = typeof updater === 'function' ? updater(state) : updater;
-      notify();
+      const next = typeof updater === 'function' ? updater(store.getState()) : updater;
+      store.setState(next, true);
     },
     subscribe(listener): () => void {
-      listeners.add(listener);
-      listener(state);
-      return () => {
-        listeners.delete(listener);
-      };
+      return store.subscribe(listener);
+    },
+    subscribeSelector(selector, listener, options): () => void {
+      return store.subscribe(selector, listener, options);
     },
     appendLog(level, text): void {
       const entry: LogEntry = {
@@ -269,11 +274,10 @@ export function createAppStore(serverUrl: string): AppStore {
         text,
         ts: Date.now(),
       };
-      state = {
-        ...state,
-        logs: [entry, ...state.logs].slice(0, MAX_LOGS),
-      };
-      notify();
+      store.setState((current) => ({
+        ...current,
+        logs: [entry, ...current.logs].slice(0, MAX_LOGS),
+      }));
     },
   };
 }

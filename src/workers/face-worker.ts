@@ -1,6 +1,4 @@
 import * as ort from 'onnxruntime-web';
-import ortWasmMjsUrl from '@ort-dist/ort-wasm-simd-threaded.mjs?url';
-import ortWasmUrl from '@ort-dist/ort-wasm-simd-threaded.wasm?url';
 import type { DetectedFace, FaceBox, FaceEmbedding, FaceLandmarks } from '../shared/contracts/faces.js';
 import type {
   FaceWorkerFacesMessage,
@@ -43,7 +41,6 @@ let busy = false;
 let frameCount = 0;
 let prevTracked: TrackedFace[] = [];
 
-ort.env.wasm.wasmPaths = { wasm: ortWasmUrl, mjs: ortWasmMjsUrl };
 ort.env.wasm.numThreads = 1;
 ort.env.logLevel = 'error';
 

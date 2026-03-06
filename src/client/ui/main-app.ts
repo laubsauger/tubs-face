@@ -125,11 +125,11 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
   const chatHtml = state.chatEntries
     .filter((entry) => isChatEntryVisible(state, entry.type))
     .map((entry) => `
-      <li class="chat-entry chat-${entry.type} ${entry.draft ? 'is-draft' : ''}">
+      <li class="chat-entry chat-${entry.type} chat-actor-${escapeAttribute(resolveChatActor(entry))} ${entry.draft ? 'is-draft' : ''}">
         <span class="chat-time">${formatTimestamp(entry.ts)}</span>
-        <span class="chat-text">${escapeHtml(renderChatPrefix(entry.type))} ${escapeHtml(entry.text)}</span>
+        <span class="chat-text"><strong class="chat-speaker">${escapeHtml(renderChatPrefix(entry.type, entry.actor))}</strong> ${escapeHtml(entry.text)}</span>
       </li>
-    `).join('');
+  `).join('');
   const debugHtml = state.streamDebug.entries.map((entry) => `
     <li class="debug-entry">
       <span class="log-time">${formatTimestamp(entry.ts)}</span>
@@ -138,7 +138,7 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
   `).join('');
 
   root.innerHTML = `
-    <main class="shell ${state.uiHidden ? 'shell-ui-hidden' : ''}">
+    <main class="shell ${state.uiHidden ? 'shell-ui-hidden' : ''} ${state.fullscreenActive ? 'fullscreen-active' : ''}">
       <section class="hero">
         <div>
           <p class="eyebrow">Tubs Face</p>
@@ -153,22 +153,103 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
         </div>
       </section>
 
-      <section class="visual-shell ${state.sleeping ? 'is-sleeping' : ''}">
-        <div id="visual-face" class="visual-face" data-expression="${escapeAttribute(state.currentExpression)}" data-render-mode="${escapeAttribute(faceRenderMode)}">
-          ${renderFaceVisualMarkup(state)}
-        </div>
-        <div id="visual-speech-bubble" class="visual-speech-bubble">${escapeHtml(state.currentSpeechText)}</div>
-        <div id="visual-subtitle" class="visual-subtitle ${state.sleeping ? 'is-hidden' : ''}"></div>
-        <div class="visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}">
-          ${escapeHtml(state.liveTranscriptText)}
-        </div>
-        <div id="visual-donation-card" class="visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}">
-          <img id="visual-donation-qr" alt="Donation QR" />
-          <div class="visual-donation-copy">
-            <strong id="visual-donation-handle">Venmo @TubsBot</strong>
-            <span id="visual-donation-amount">${escapeHtml(formatDonation(state))}</span>
+      <section class="visual-workspace">
+        <article class="${renderPanelCardClass(state, 'voice')} voice-panel-card">
+          ${renderPanelHeader(state, 'voice', 'Voice', state.listenState, 'voice-panel-meta')}
+          <div class="panel-body ${isPanelCollapsed(state, 'voice') ? 'is-hidden' : ''}">
+          <dl class="kv">
+            <div><dt>Mic</dt><dd id="voice-mic-value">${state.micReady ? 'ready' : state.micDenied ? 'denied' : 'pending'}</dd></div>
+            <div><dt>State</dt><dd id="voice-state-value">${escapeHtml(state.listenState)}</dd></div>
+            <div><dt>Wake Word</dt><dd id="voice-wakeword-value">${state.voiceWakeWordEnabled ? 'on' : 'off'}</dd></div>
+            <div><dt>Mode</dt><dd id="voice-mode-value">${state.voiceHandsFreeEnabled ? 'hands-free' : 'push-to-talk'}</dd></div>
+            <div><dt>Playback</dt><dd id="voice-playback-value">${state.audioPlaying ? 'speaking' : 'idle'}</dd></div>
+          </dl>
+          <div class="voice-meter">
+            <span id="voice-meter-bar" class="voice-meter-bar" style="transform: scaleX(${Math.max(0.05, state.micLevel).toFixed(3)});"></span>
           </div>
-        </div>
+          <div class="face-actions">
+            <div class="face-action-row">
+              <button id="voice-enable-mic" class="button button-secondary" type="button">Enable Mic</button>
+              <button id="voice-record-button" class="button ${state.recording ? 'button-live' : ''}" type="button">
+                ${state.recording ? 'Recording… release to send' : 'Push to Talk'}
+              </button>
+            </div>
+            <label class="voice-toggle">
+              <input id="voice-handsfree-toggle" type="checkbox" ${state.voiceHandsFreeEnabled ? 'checked' : ''} />
+              <span>Always listen</span>
+            </label>
+            <label class="voice-toggle">
+              <input id="voice-wakeword-toggle" type="checkbox" ${state.voiceWakeWordEnabled ? 'checked' : ''} />
+              <span>Require wake word</span>
+            </label>
+            <p id="voice-last-transcript" class="voice-copy">${escapeHtml(state.voiceLastTranscript || 'Speak naturally or use push-to-talk to send a voice turn.')}</p>
+          </div>
+          </div>
+        </article>
+
+        <section class="visual-shell ${state.sleeping ? 'is-sleeping' : ''}">
+          <div id="visual-face" class="visual-face" data-expression="${escapeAttribute(state.currentExpression)}" data-render-mode="${escapeAttribute(faceRenderMode)}">
+            ${renderFaceVisualMarkup(state)}
+          </div>
+          <div id="visual-subtitle" class="visual-subtitle ${state.sleeping ? 'is-hidden' : ''}"></div>
+          <div id="visual-live-transcript" class="visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}">
+            ${escapeHtml(state.liveTranscriptText)}
+          </div>
+          <div id="visual-donation-card" class="visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}">
+            <img id="visual-donation-qr" alt="Donation QR" />
+            <div class="visual-donation-copy">
+              <strong id="visual-donation-handle">Venmo @TubsBot</strong>
+              <span id="visual-donation-amount">${escapeHtml(formatDonation(state))}</span>
+            </div>
+          </div>
+        </section>
+
+        <article id="face-panel-card" class="${renderPanelCardClass(state, 'face')} face-panel-card">
+          ${renderPanelHeader(state, 'face', 'Face Worker', formatFaceSummary(state))}
+          <div class="panel-body ${isPanelCollapsed(state, 'face') ? 'is-hidden' : ''}">
+          <p id="face-summary-metric" class="metric ${state.faceWorkerReady ? 'is-good' : 'is-bad'}">${formatFaceSummary(state)}</p>
+          <div class="camera-shell">
+            <div class="camera-stage">
+              <video id="face-camera-video" class="camera-video ${state.faceCameraActive ? '' : 'is-hidden'}" autoplay muted playsinline></video>
+              <canvas id="face-camera-overlay" class="camera-overlay ${state.faceCameraActive ? '' : 'is-hidden'}"></canvas>
+              <div class="camera-placeholder ${state.faceCameraActive ? 'is-hidden' : ''}">
+                Camera inactive
+              </div>
+            </div>
+          </div>
+          <div class="face-panel-secondary">
+          <dl class="kv">
+            <div><dt>Status</dt><dd id="face-status-value">${escapeHtml(state.faceStatus)}</dd></div>
+            <div><dt>Inference</dt><dd id="face-inference-value">${state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`}</dd></div>
+            <div><dt>Embeddings</dt><dd id="face-embeddings-value">${state.faceLastEmbeddingsExtracted} new / ${state.faceLastEmbeddingsReused} cached</dd></div>
+            <div><dt>Library</dt><dd id="face-library-value">${state.faceLibraryEmbeddings} embeddings / ${state.faceLibraryPeople} people</dd></div>
+          </dl>
+          <div class="face-actions">
+            <input id="face-upload-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/jpg" />
+            <div class="face-action-row">
+              <button id="face-camera-toggle" class="button" type="button">
+                ${state.faceCameraActive ? 'Stop Camera' : 'Start Camera'}
+              </button>
+              <button id="face-upload-trigger" class="button" type="button" ${state.faceWorkerBusy ? 'disabled' : ''}>
+                ${state.faceWorkerBusy ? 'Processing…' : 'Detect From Image'}
+              </button>
+              <button id="face-refresh-trigger" class="button button-secondary" type="button">
+                Refresh Library
+              </button>
+            </div>
+            <div class="face-action-row">
+              <input id="face-enroll-name" class="face-name-input" type="text" placeholder="Name this face" value="${escapeAttribute(state.faceDraftName)}" />
+              <button id="face-save-trigger" class="button" type="button" ${!state.faceLastFaces.some((face) => Array.isArray(face.embedding)) ? 'disabled' : ''}>
+                Save First Face
+              </button>
+            </div>
+          </div>
+          <ul id="face-results-list" class="face-list">
+            ${facesHtml || '<li class="face-item face-item-empty">No detections yet.</li>'}
+          </ul>
+          </div>
+          </div>
+        </article>
       </section>
 
       <section class="grid">
@@ -222,48 +303,20 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
         </article>
 
         <article class="${renderPanelCardClass(state, 'assistant')}">
-          ${renderPanelHeader(state, 'assistant', 'Assistant', state.currentExpression)}
+          ${renderPanelHeader(state, 'assistant', 'Assistant', state.currentExpression, 'assistant-panel-meta')}
           <div class="panel-body ${isPanelCollapsed(state, 'assistant') ? 'is-hidden' : ''}">
           <dl class="kv">
-            <div><dt>Expression</dt><dd>${escapeHtml(state.currentExpression)}</dd></div>
-            <div><dt>Sleep</dt><dd>${state.sleeping ? 'asleep' : 'awake'}</dd></div>
-            <div><dt>Conversation</dt><dd>${state.conversationActive ? 'active' : 'idle'}</dd></div>
-            <div><dt>Awake</dt><dd>${formatAwakeElapsed(state.awakeElapsedSec)}</dd></div>
-            <div><dt>Turn</dt><dd>${escapeHtml(state.currentTurnId ?? 'n/a')}</dd></div>
-            <div><dt>Mood</dt><dd>${state.moodPos.toFixed(2)} / ${state.moodNeg.toFixed(2)} / ${state.moodArousal.toFixed(2)}</dd></div>
+            <div><dt>Expression</dt><dd id="assistant-expression-value">${escapeHtml(state.currentExpression)}</dd></div>
+            <div><dt>Sleep</dt><dd id="assistant-sleep-value">${state.sleeping ? 'asleep' : 'awake'}</dd></div>
+            <div><dt>Conversation</dt><dd id="assistant-conversation-value">${state.conversationActive ? 'active' : 'idle'}</dd></div>
+            <div><dt>Awake</dt><dd id="assistant-awake-value">${formatAwakeElapsed(state.awakeElapsedSec)}</dd></div>
+            <div><dt>Turn</dt><dd id="assistant-turn-value">${escapeHtml(state.currentTurnId ?? 'n/a')}</dd></div>
+            <div><dt>Mood</dt><dd id="assistant-mood-value">${state.moodPos.toFixed(2)} / ${state.moodNeg.toFixed(2)} / ${state.moodArousal.toFixed(2)}</dd></div>
           </dl>
           <div class="assistant-copy">
-            <p><strong>User</strong> ${escapeHtml(state.currentIncomingText || 'No incoming text yet.')}</p>
-            <p><strong>Tubs</strong> ${escapeHtml(state.currentSpeechText || 'No spoken output yet.')}</p>
-            <p><strong>Donation</strong> ${escapeHtml(formatDonation(state))}</p>
-          </div>
-          </div>
-        </article>
-
-        <article class="${renderPanelCardClass(state, 'voice')}">
-          ${renderPanelHeader(state, 'voice', 'Voice', state.listenState)}
-          <div class="panel-body ${isPanelCollapsed(state, 'voice') ? 'is-hidden' : ''}">
-          <dl class="kv">
-            <div><dt>Mic</dt><dd>${state.micReady ? 'ready' : state.micDenied ? 'denied' : 'pending'}</dd></div>
-            <div><dt>State</dt><dd>${escapeHtml(state.listenState)}</dd></div>
-            <div><dt>Wake Word</dt><dd>${state.voiceWakeWordEnabled ? 'on' : 'off'}</dd></div>
-            <div><dt>Playback</dt><dd>${state.audioPlaying ? 'speaking' : 'idle'}</dd></div>
-          </dl>
-          <div class="voice-meter">
-            <span class="voice-meter-bar" style="transform: scaleX(${Math.max(0.05, state.micLevel).toFixed(3)});"></span>
-          </div>
-          <div class="face-actions">
-            <div class="face-action-row">
-              <button id="voice-enable-mic" class="button button-secondary" type="button">Enable Mic</button>
-              <button id="voice-record-button" class="button ${state.recording ? 'button-live' : ''}" type="button">
-                ${state.recording ? 'Recording… release to send' : 'Hold to Talk'}
-              </button>
-            </div>
-            <label class="voice-toggle">
-              <input id="voice-wakeword-toggle" type="checkbox" ${state.voiceWakeWordEnabled ? 'checked' : ''} />
-              <span>Require wake word</span>
-            </label>
-            <p class="voice-copy">${escapeHtml(state.voiceLastTranscript || 'Press and hold the button or Space to send a voice turn.')}</p>
+            <p><strong>User</strong> <span id="assistant-user-copy">${escapeHtml(state.currentIncomingText || 'No incoming text yet.')}</span></p>
+            <p><strong>Tubs</strong> <span id="assistant-speech-copy">${escapeHtml(state.currentSpeechText || 'No spoken output yet.')}</span></p>
+            <p><strong>Donation</strong> <span id="assistant-donation-copy">${escapeHtml(formatDonation(state))}</span></p>
           </div>
           </div>
         </article>
@@ -554,56 +607,12 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
           </div>
         </article>
 
-        <article class="${renderPanelCardClass(state, 'face')}">
-          ${renderPanelHeader(state, 'face', 'Face Worker', formatFaceSummary(state))}
-          <div class="panel-body ${isPanelCollapsed(state, 'face') ? 'is-hidden' : ''}">
-          <p class="metric ${state.faceWorkerReady ? 'is-good' : 'is-bad'}">${formatFaceSummary(state)}</p>
-          <div class="camera-shell">
-            <div class="camera-stage">
-              <video id="face-camera-video" class="camera-video ${state.faceCameraActive ? '' : 'is-hidden'}" autoplay muted playsinline></video>
-              <canvas id="face-camera-overlay" class="camera-overlay ${state.faceCameraActive ? '' : 'is-hidden'}"></canvas>
-              <div class="camera-placeholder ${state.faceCameraActive ? 'is-hidden' : ''}">
-                Camera inactive
-              </div>
-            </div>
-          </div>
-          <dl class="kv">
-            <div><dt>Status</dt><dd>${escapeHtml(state.faceStatus)}</dd></div>
-            <div><dt>Inference</dt><dd>${state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`}</dd></div>
-            <div><dt>Embeddings</dt><dd>${state.faceLastEmbeddingsExtracted} new / ${state.faceLastEmbeddingsReused} cached</dd></div>
-            <div><dt>Library</dt><dd>${state.faceLibraryEmbeddings} embeddings / ${state.faceLibraryPeople} people</dd></div>
-          </dl>
-          <div class="face-actions">
-            <input id="face-upload-input" class="sr-only" type="file" accept="image/png,image/jpeg,image/jpg" />
-            <div class="face-action-row">
-              <button id="face-camera-toggle" class="button" type="button">
-                ${state.faceCameraActive ? 'Stop Camera' : 'Start Camera'}
-              </button>
-              <button id="face-upload-trigger" class="button" type="button" ${state.faceWorkerBusy ? 'disabled' : ''}>
-                ${state.faceWorkerBusy ? 'Processing…' : 'Detect From Image'}
-              </button>
-              <button id="face-refresh-trigger" class="button button-secondary" type="button">
-                Refresh Library
-              </button>
-            </div>
-            <div class="face-action-row">
-              <input id="face-enroll-name" class="face-name-input" type="text" placeholder="Name this face" value="${escapeAttribute(state.faceDraftName)}" />
-              <button id="face-save-trigger" class="button" type="button" ${!state.faceLastFaces.some((face) => Array.isArray(face.embedding)) ? 'disabled' : ''}>
-                Save First Face
-              </button>
-            </div>
-          </div>
-          <ul class="face-list">
-            ${facesHtml || '<li class="face-item face-item-empty">No detections yet.</li>'}
-          </ul>
-          </div>
-        </article>
       </section>
 
-      <section id="chat-panel-card" class="${renderPanelCardClass(state, 'chat')} logs-card"${renderChatPanelStyle(state)}>
-        ${renderPanelHeader(state, 'chat', 'Chat', `${state.chatEntries.length} entries`)}
+      <section id="chat-panel-card" class="${renderPanelCardClass(state, 'chat')} logs-card chat-panel-top"${renderChatPanelStyle(state)}>
+        ${renderPanelHeader(state, 'chat', 'Chat', `${state.chatEntries.length} entries`, 'chat-panel-meta')}
         <div class="panel-body ${isPanelCollapsed(state, 'chat') ? 'is-hidden' : ''}">
-          <ul class="logs chat-log-list">
+          <ul id="chat-log-list" class="logs chat-log-list">
             ${chatHtml || '<li class="log"><span>No chat yet.</span></li>'}
           </ul>
           <div id="chat-panel-resize" class="panel-resize-handle" aria-hidden="true"></div>
@@ -612,20 +621,20 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
 
       <section class="grid">
         <article class="${renderPanelCardClass(state, 'streamDebug')}">
-          ${renderPanelHeader(state, 'streamDebug', 'Stream Debug', state.streamDebug.enabled ? (state.streamDebug.currentTurnId?.slice(0, 8) ?? 'none') : 'disabled')}
+          ${renderPanelHeader(state, 'streamDebug', 'Stream Debug', state.streamDebug.enabled ? (state.streamDebug.currentTurnId?.slice(0, 8) ?? 'none') : 'disabled', 'stream-debug-panel-meta')}
           <div class="panel-body ${isPanelCollapsed(state, 'streamDebug') ? 'is-hidden' : ''}">
           <div class="face-action-row">
             <button id="stream-debug-toggle" class="button button-secondary" type="button">${state.streamDebug.enabled ? 'Disable Debug' : 'Enable Debug'}</button>
             <button id="stream-debug-clear" class="button button-secondary" type="button">Clear</button>
           </div>
           <dl class="kv">
-            <div><dt>LLM</dt><dd>${state.streamDebug.llmDeltas}/${state.streamDebug.llmChars}</dd></div>
-            <div><dt>Sentences</dt><dd>${state.streamDebug.sentences}</dd></div>
-            <div><dt>TTS Out</dt><dd>${state.streamDebug.ttsSentences}/${state.streamDebug.ttsChars}</dd></div>
-            <div><dt>Audio In</dt><dd>${state.streamDebug.audioChunksIn}/${Math.round(state.streamDebug.audioBytesIn / 1024)}KB</dd></div>
-            <div><dt>Played</dt><dd>${state.streamDebug.audioChunksPlayed}/${state.streamDebug.audioSecondsPlayed.toFixed(2)}s</dd></div>
+            <div><dt>LLM</dt><dd id="stream-debug-llm-value">${state.streamDebug.llmDeltas}/${state.streamDebug.llmChars}</dd></div>
+            <div><dt>Sentences</dt><dd id="stream-debug-sentences-value">${state.streamDebug.sentences}</dd></div>
+            <div><dt>TTS Out</dt><dd id="stream-debug-tts-value">${state.streamDebug.ttsSentences}/${state.streamDebug.ttsChars}</dd></div>
+            <div><dt>Audio In</dt><dd id="stream-debug-audio-in-value">${state.streamDebug.audioChunksIn}/${Math.round(state.streamDebug.audioBytesIn / 1024)}KB</dd></div>
+            <div><dt>Played</dt><dd id="stream-debug-played-value">${state.streamDebug.audioChunksPlayed}/${state.streamDebug.audioSecondsPlayed.toFixed(2)}s</dd></div>
           </dl>
-          <ul class="logs">
+          <ul id="stream-debug-list" class="logs">
             ${state.streamDebug.enabled
               ? (debugHtml || '<li class="log"><span>No stream events yet.</span></li>')
               : '<li class="log"><span>Stream debug disabled.</span></li>'}
@@ -636,7 +645,7 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
         <article class="${renderPanelCardClass(state, 'eventLog')}">
           ${renderPanelHeader(state, 'eventLog', 'Event Log', `${state.logs.length} entries`)}
           <div class="panel-body ${isPanelCollapsed(state, 'eventLog') ? 'is-hidden' : ''}">
-          <ul class="logs">
+          <ul id="event-log-list" class="logs">
             ${logsHtml || '<li class="log"><span>No events yet.</span></li>'}
           </ul>
           </div>
@@ -646,10 +655,12 @@ export function renderMainApp(root: HTMLElement, state: AppState): void {
   `;
 }
 
-function renderChatPrefix(type: AppState['chatEntries'][number]['type']): string {
-  if (type === 'in') return '◂';
-  if (type === 'out') return '▸';
-  return '◆';
+function renderChatPrefix(type: AppState['chatEntries'][number]['type'], actor?: AppState['chatEntries'][number]['actor']): string {
+  if (type === 'in') return 'User';
+  if (actor === 'small') return 'Mini';
+  if (actor === 'main') return 'Tubs';
+  if (type === 'sys' || actor === 'system') return 'System';
+  return 'Tubs';
 }
 
 function formatDebugPayload(payload: Record<string, unknown>): string {
@@ -684,12 +695,12 @@ function renderPanelCardClass(state: AppState, key: PanelKey): string {
   return `card panel-card ${isPanelCollapsed(state, key) ? 'is-collapsed' : ''}`;
 }
 
-function renderPanelHeader(state: AppState, key: PanelKey, title: string, meta: string): string {
+function renderPanelHeader(state: AppState, key: PanelKey, title: string, meta: string, metaId?: string): string {
   return `
     <button class="panel-header" data-panel-toggle="${escapeAttribute(key)}" type="button">
       <span class="panel-title-wrap">
         <h2>${escapeHtml(title)}</h2>
-        <span class="panel-meta">${escapeHtml(meta)}</span>
+        <span class="panel-meta"${metaId ? ` id="${escapeAttribute(metaId)}"` : ''}>${escapeHtml(meta)}</span>
       </span>
       <span class="panel-toggle-copy">${isPanelCollapsed(state, key) ? 'Expand' : 'Collapse'}</span>
     </button>
@@ -698,6 +709,15 @@ function renderPanelHeader(state: AppState, key: PanelKey, title: string, meta: 
 
 function renderChatPanelStyle(state: AppState): string {
   return state.chatPanelWidth ? ` style="width:${state.chatPanelWidth}px;max-width:100%;"` : '';
+}
+
+function resolveChatActor(entry: AppState['chatEntries'][number]): 'user' | 'main' | 'small' | 'system' {
+  if (entry.actor === 'main' || entry.actor === 'small' || entry.actor === 'system' || entry.actor === 'user') {
+    return entry.actor;
+  }
+  if (entry.type === 'in') return 'user';
+  if (entry.type === 'sys') return 'system';
+  return 'main';
 }
 
 function renderManualStatusClass(state: AppState): string {

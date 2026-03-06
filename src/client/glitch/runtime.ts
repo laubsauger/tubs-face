@@ -18,9 +18,10 @@ interface RendererState {
   ready: boolean;
   initPromise: Promise<boolean> | null;
   backendError: string;
+  webGpuRetryDisabled: boolean;
 }
 
-export function createGlitchRuntime(store: AppStore): GlitchRuntime {
+export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): GlitchRuntime {
   let faceEl: HTMLElement | null = null;
   let canvas: HTMLCanvasElement | null = null;
   let ctx: CanvasRenderingContext2D | null = null;
@@ -56,6 +57,7 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
     ready: false,
     initPromise: null,
     backendError: '',
+    webGpuRetryDisabled: false,
   };
   const gpu: WebGpuState = createWebGpuState();
   const colorLUTs = new Map<number, string[]>();
@@ -77,6 +79,7 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
         scanlinePattern = null;
         rendererState.ready = false;
         rendererState.initPromise = null;
+        rendererState.webGpuRetryDisabled = false;
         setupCanvas();
         setupResize();
       }
@@ -115,7 +118,9 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
     }
     rendererConfig = mergeConfig(DEFAULT_CONFIG);
     rendererConfig.renderer = config?.glitchRenderer ?? DEFAULT_CONFIG.renderer;
-    rendererConfig.color.base = config?.glitchFxBaseColor ?? state.fxBaseColorDraft;
+    rendererConfig.color.base = mode === 'mini'
+      ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
+      : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
     rendererConfig.pixel.size = config?.glitchPixelSize ?? DEFAULT_CONFIG.pixel.size;
     rendererConfig.pixel.gap = config?.glitchPixelGap ?? DEFAULT_CONFIG.pixel.gap;
     rendererConfig.color.hueVariation = config?.glitchColorHueVariation ?? DEFAULT_CONFIG.color.hueVariation;
@@ -311,6 +316,7 @@ export function createGlitchRuntime(store: AppStore): GlitchRuntime {
     rendererState.ready = false;
     rendererState.initPromise = null;
     rendererState.backendError = '';
+    rendererState.webGpuRetryDisabled = false;
     rendererState.kind = 'canvas2d';
     ctx = null;
     tempCanvas = null;

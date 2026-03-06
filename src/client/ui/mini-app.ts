@@ -8,7 +8,7 @@ export function renderMiniApp(root: HTMLElement, state: AppState): void {
         <div id="visual-face" class="visual-face mini-visual-face" data-expression="${escapeHtml(state.currentExpression)}" data-render-mode="${escapeHtml(state.config?.faceRenderMode ?? 'css')}">
           ${renderFaceVisualMarkup(state)}
         </div>
-        <div class="visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}">
+        <div id="visual-live-transcript" class="visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}">
           ${escapeHtml(state.liveTranscriptText)}
         </div>
         <div class="visual-subtitle">${escapeHtml(state.subtitleText || state.currentSpeechText || '')}</div>
