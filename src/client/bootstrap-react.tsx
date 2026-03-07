@@ -14,7 +14,7 @@ import { fetchJson } from './transport/http.js';
 import { createManagedWsClient } from './transport/ws-client.js';
 import { createVisualRuntime } from './ui/visual-runtime.js';
 import { createWindowRuntime } from './ui/window-runtime.js';
-import { AppShell } from './ui/app-shell.js';
+import { AppShell, type AppShellControls } from './ui/app-shell.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../shared/contracts/http.js';
 import type { WsServerMessage } from '../shared/contracts/ws.js';
 
@@ -30,44 +30,87 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   const fxRuntime = options.mode === 'main' ? createFxRuntime(store) : null;
   const glitchRuntime = createGlitchRuntime(store, options.mode);
   const proactiveRuntime = options.mode === 'main' ? createProactiveRuntime(store) : null;
-  const speechRuntime = options.mode === 'main' ? createSpeechRuntime(store) : null;
+  const speechRuntime = createSpeechRuntime(store, options.mode);
   const visualRuntime = createVisualRuntime(store, options.mode);
   const voiceRuntime = options.mode === 'main' ? createVoiceRuntime(store) : null;
-  const faceBehaviorRuntime = options.mode === 'main' ? createFaceBehaviorRuntime(store) : null;
+  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, options.mode);
   const faceRuntime = options.mode === 'main' ? createFaceShellRuntime(store) : null;
   const windowRuntime = createWindowRuntime(store, options.mode);
 
-  const reactRoot = createRoot(options.root);
-  reactRoot.render(<AppShell mode={options.mode} store={store} />);
-
-  let bindRaf = 0;
-  const bindAll = () => {
-    ambientRuntime.bind(options.root);
-    fxRuntime?.bind(options.root);
-    glitchRuntime.bind(options.root);
-    speechRuntime?.bind(options.root);
-    visualRuntime.bind(options.root);
-    voiceRuntime?.bind(options.root);
-    faceBehaviorRuntime?.bind(options.root);
-    faceRuntime?.bind(options.root);
-    windowRuntime.bind(options.root);
-  };
-  const scheduleBind = () => {
-    if (bindRaf) {
-      return;
+  const controls: AppShellControls | undefined = options.mode === 'main'
+    ? {
+      ambient: {
+        toggleEnabled: () => ambientRuntime.toggleEnabled(),
+      },
+      ...(voiceRuntime ? {
+        voice: {
+          enableMic: () => voiceRuntime.enableMic(),
+          startManualRecording: () => voiceRuntime.startManualRecording(),
+          stopManualRecording: () => voiceRuntime.stopManualRecording(),
+        },
+      } : {}),
+      ...(faceRuntime ? {
+        face: {
+          toggleCamera: async () => {
+            if (store.getState().faceCameraActive) {
+              faceRuntime.stopCamera();
+            } else {
+              await faceRuntime.startCamera();
+            }
+          },
+          detectFile: (file: File) => faceRuntime.detectFile(file),
+          saveDetectedFace: () => faceRuntime.saveDetectedFace(),
+          refreshLibrary: () => faceRuntime.refreshLibrary(),
+        },
+      } : {}),
     }
-    bindRaf = window.requestAnimationFrame(() => {
-      bindRaf = 0;
-      bindAll();
-    });
-  };
+    : undefined;
 
-  store.subscribeSelector(selectBindSlice, () => {
-    scheduleBind();
+  const reactRoot = createRoot(options.root);
+  reactRoot.render(
+    <AppShell
+      mode={options.mode}
+      store={store}
+      {...(controls ? { controls } : {})}
+    />,
+  );
+
+  const bindInteractiveRuntimes = () => {
+    speechRuntime.bind(options.root);
+    faceBehaviorRuntime.bind(options.root);
+    faceRuntime?.bind(options.root);
+  };
+  window.requestAnimationFrame(() => {
+    bindInteractiveRuntimes();
+    visualRuntime.bind(options.root);
+    glitchRuntime.bind(options.root);
+  });
+
+  store.subscribeSelector(selectVisualSlice, () => {
+    visualRuntime.bind(options.root);
   }, {
     equalityFn: shallowEqual,
-    fireImmediately: true,
+    fireImmediately: false,
   });
+
+  store.subscribeSelector(selectGlitchSlice, () => {
+    glitchRuntime.bind(options.root);
+  }, {
+    equalityFn: shallowEqual,
+    fireImmediately: false,
+  });
+
+  if (faceRuntime) {
+    store.subscribeSelector(
+      (state: AppState) => state.faceCameraActive,
+      () => {
+        window.requestAnimationFrame(() => {
+          faceRuntime.bind(options.root);
+        });
+      },
+      { fireImmediately: false },
+    );
+  }
 
   store.appendLog('info', `${options.mode} client booting`);
 
@@ -88,9 +131,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   ambientRuntime.init();
   fxRuntime?.init();
   glitchRuntime.init();
-  speechRuntime?.init();
+  speechRuntime.init();
   await voiceRuntime?.init();
-  faceBehaviorRuntime?.init();
+  faceBehaviorRuntime.init();
   faceRuntime?.init();
   windowRuntime.init();
   emotionRuntime?.init();
@@ -128,13 +171,17 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
       if (message.type === 'donation_signal') {
         emotionRuntime?.pushImpulse({ pos: 1, neg: 0, arousal: 0.85 }, 'system');
       }
-      speechRuntime?.handleServerMessage(message);
-      applyServerMessage(store, message);
+      speechRuntime.handleServerMessage(message);
+      applyServerMessage(store, message, options.mode);
       proactiveRuntime?.onPresenceChanged();
     },
   });
 
-  faceBehaviorRuntime?.attachSender((message) => {
+  faceBehaviorRuntime.attachSender((message) => {
+    wsClient.send(message);
+  });
+
+  faceRuntime?.attachSender((message) => {
     wsClient.send(message);
   });
 
@@ -186,24 +233,38 @@ function resolveServerLabel(): string {
   return window.location.host;
 }
 
-function selectBindSlice(state: AppState) {
+function selectVisualSlice(state: AppState) {
   return {
+    sleeping: state.sleeping,
+    audioPlaying: state.audioPlaying,
+    currentExpression: state.currentExpression,
+    idleVariant: state.idleVariant,
+    blinkActive: state.blinkActive,
+    subtitleText: state.subtitleText,
+    currentSpeechText: state.currentSpeechText,
+    liveTranscriptText: state.liveTranscriptText,
+    liveTranscriptDraft: state.liveTranscriptDraft,
+    currentDonationSignal: state.currentDonationSignal,
+    gazeX: state.gazeX,
+    gazeY: state.gazeY,
+    moodPos: state.moodPos,
+    moodNeg: state.moodNeg,
+    moodArousal: state.moodArousal,
+    fxBaseColorDraft: state.fxBaseColorDraft,
     config: state.config,
-    fullscreenActive: state.fullscreenActive,
-    uiHidden: state.uiHidden,
-    collapsedPanels: state.collapsedPanels,
-    manualComposerOpen: state.manualComposerOpen,
-    manualComposerMode: state.manualComposerMode,
-    fxEditorOpen: state.fxEditorOpen,
-    faceWorkerBusy: state.faceWorkerBusy,
-    faceCameraActive: state.faceCameraActive,
-    faceDraftName: state.faceDraftName,
-    controlSpeakText: state.controlSpeakText,
-    controlDonationAmount: state.controlDonationAmount,
-    voiceWakeWordEnabled: state.voiceWakeWordEnabled,
-    voiceHandsFreeEnabled: state.voiceHandsFreeEnabled,
-    micReady: state.micReady,
-    recording: state.recording,
+  };
+}
+
+function selectGlitchSlice(state: AppState) {
+  return {
+    faceRenderMode: state.config?.faceRenderMode,
+    glitchFxEnabled: state.config?.glitchFxEnabled,
+    glitchRenderer: state.config?.glitchRenderer,
+    glitchFxBaseColor: state.config?.glitchFxBaseColor,
+    secondaryGlitchFxBaseColor: state.config?.secondaryGlitchFxBaseColor,
+    glitchExpressionProfiles: state.config?.glitchExpressionProfiles,
+    renderQuality: state.config?.renderQuality,
+    fxBaseColorDraft: state.fxBaseColorDraft,
   };
 }
 

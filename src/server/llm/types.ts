@@ -1,5 +1,9 @@
 export interface LlmContentPart {
-  text: string;
+  text?: string;
+  inlineData?: {
+    mimeType: string;
+    data: string;
+  };
 }
 
 export interface LlmContent {
@@ -27,6 +31,8 @@ export interface LlmGenerateArgs {
   maxOutputTokens: number;
   temperature?: number;
   timeoutMs?: number;
+  responseMimeType?: string;
+  responseSchema?: Record<string, unknown>;
 }
 
 export interface LlmGenerateResult {

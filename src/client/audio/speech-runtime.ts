@@ -2,18 +2,26 @@ import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.j
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
 import { pushStreamDebugEntry } from '../chat/state.js';
+import { buildLocalTurnTimeline } from '../turn-script.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
 
 interface SpeakQueueItem {
-  type: 'speak' | 'wait' | 'react';
+  type: 'speak' | 'wait' | 'react' | 'wait_remote';
+  actor?: 'main' | 'small';
   text?: string;
   delayMs?: number;
   emotion?: TurnEmotion | null;
   turnId?: string | null;
+  waitRemoteStartedAt?: number;
+  waitRemoteSawStart?: boolean;
 }
 
 const INTER_UTTERANCE_PAUSE_MS = 220;
+const REACTION_PAUSE_MS = 420;
+const REMOTE_SPEECH_STALE_MS = 20_000;
+const REMOTE_WAIT_POLL_MS = 90;
+const REMOTE_WAIT_MAX_MS = 45_000;
 const STREAMING_GAP_GRACE_MS = 280;
 
 export interface SpeechRuntime {
@@ -23,7 +31,7 @@ export interface SpeechRuntime {
   dispose(): void;
 }
 
-export function createSpeechRuntime(store: AppStore): SpeechRuntime {
+export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): SpeechRuntime {
   const queue: SpeakQueueItem[] = [];
   let audioElement: HTMLAudioElement | null = null;
   let processing = false;
@@ -34,6 +42,10 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   let streamingActiveNodes = 0;
   let streamingFinalizeTimer: number | null = null;
   let subtitles: SubtitleController = createSubtitleController(null);
+  let remoteActorSpeaking = false;
+  let remoteActorSpeakingUntil = 0;
+  let remoteWaitTimer: number | null = null;
+  let reactionResetTimer: number | null = null;
 
   return {
     init(): void {
@@ -50,6 +62,9 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
 
       switch (message.type) {
         case 'speak':
+          if (mode === 'mini') {
+            return;
+          }
           enqueueSpeak(message.text, message.turnId);
           return;
         case 'turn_script':
@@ -64,6 +79,9 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
         case 'sleep':
           stopAllPlayback();
           return;
+        case 'head_speech_state':
+          handleRemoteHeadSpeechState(message);
+          return;
         default:
           return;
       }
@@ -72,7 +90,7 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
       disposed = true;
       stopAllPlayback();
       if (streamingAudioContext && streamingAudioContext.state !== 'closed') {
-        void streamingAudioContext.close().catch(() => {});
+        void streamingAudioContext.close().catch(() => { });
       }
     },
   };
@@ -91,34 +109,31 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   }
 
   function enqueueTurnScript(beats: TurnBeat[], turnId?: string): void {
-    for (const beat of beats) {
-      if (beat.actor !== 'main') {
-        continue;
-      }
-      if (beat.action === 'wait') {
-        queue.push({
-          type: 'wait',
-          delayMs: Math.max(120, beat.delayMs ?? 320),
-          ...(turnId !== undefined ? { turnId } : {}),
-        });
-        continue;
-      }
-      if (beat.action !== 'speak' || !beat.text?.trim()) {
-        if (beat.action === 'react') {
+    const actor = mode === 'mini' ? 'small' : 'main';
+    const includeRemoteWait = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
+    const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait });
+    const hasSpeakBeat = timeline.some((item) => item.action === 'speak' && item.text?.trim());
+    let promotedReactToSpeak = false;
+    for (const item of timeline) {
+      if (mode === 'mini' && item.action === 'react') {
+        const reactText = item.text?.trim() ?? '';
+        if (!hasSpeakBeat && reactText && !promotedReactToSpeak) {
+          promotedReactToSpeak = true;
           queue.push({
-            type: 'react',
-            ...(beat.text?.trim() ? { text: beat.text.trim() } : {}),
-            delayMs: Math.max(120, beat.delayMs ?? 420),
-            ...(beat.emotion ? { emotion: beat.emotion } : {}),
+            type: 'speak',
+            text: reactText,
+            ...(item.emotion ? { emotion: item.emotion } : {}),
             ...(turnId !== undefined ? { turnId } : {}),
           });
+          continue;
         }
-        continue;
       }
       queue.push({
-        type: 'speak',
-        text: beat.text.trim(),
-        ...(beat.emotion ? { emotion: beat.emotion } : {}),
+        type: item.action,
+        ...(item.actor ? { actor: item.actor } : {}),
+        ...(item.text?.trim() ? { text: item.text.trim() } : {}),
+        ...(item.delayMs !== undefined ? { delayMs: Math.max(120, item.delayMs) } : {}),
+        ...(item.emotion ? { emotion: item.emotion } : {}),
         ...(turnId !== undefined ? { turnId } : {}),
       });
     }
@@ -137,6 +152,9 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
 
     if (item.type === 'wait') {
       processing = true;
+      if (mode === 'mini') {
+        subtitles.stop();
+      }
       window.setTimeout(() => {
         processing = false;
         processQueue();
@@ -144,17 +162,38 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
       return;
     }
 
+    if (item.type === 'wait_remote') {
+      processing = true;
+      if (mode === 'mini') {
+        subtitles.stop();
+      }
+      if (waitForRemoteActor(item)) {
+        processing = false;
+        processQueue();
+      }
+      return;
+    }
+
     if (item.type === 'react') {
       processing = true;
       applyBeatVisuals(item.text ?? '', item.emotion, false);
+      if (mode === 'mini') {
+        const subtitlesEnabled = store.getState().config?.secondarySubtitleEnabled !== false;
+        if (subtitlesEnabled && item.text?.trim()) {
+          subtitles.start(item.text.trim(), Math.max(450, item.delayMs ?? REACTION_PAUSE_MS) / 1000);
+        } else {
+          subtitles.stop();
+        }
+      }
       window.setTimeout(() => {
         store.setState((current) => ({
           ...current,
+          currentReactionEmoji: '',
           currentExpression: current.sleeping ? 'sleep' : 'idle',
         }));
         processing = false;
         processQueue();
-      }, item.delayMs ?? 420);
+      }, item.delayMs ?? REACTION_PAUSE_MS);
       return;
     }
 
@@ -168,6 +207,7 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
     void playTts(item.text, item.turnId)
       .catch((error) => {
         store.appendLog('error', error instanceof Error ? error.message : 'Speech playback failed');
+        finishSpeech(item.turnId ?? null);
       })
       .finally(() => {
         window.setTimeout(() => {
@@ -212,7 +252,9 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
         },
         body: JSON.stringify({
           text,
-          voice: store.getState().config?.kokoroVoice,
+          voice: mode === 'mini'
+            ? store.getState().config?.secondaryVoice
+            : store.getState().config?.kokoroVoice,
           ...(effectiveTurnId ? { turnId: effectiveTurnId } : {}),
         }),
       });
@@ -272,8 +314,18 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   async function playBlob(blob: Blob, turnId: string | null, turnTimer?: TurnTimer): Promise<void> {
     const objectUrl = URL.createObjectURL(blob);
     const audio = new Audio(objectUrl);
+    if (mode === 'mini') {
+      audio.volume = Math.max(0, Math.min(1.2, store.getState().config?.secondaryAudioGain ?? 1));
+    }
     audioElement = audio;
-    subtitles.start(store.getState().currentSpeechText || '', audio);
+    const subtitlesEnabled = mode === 'mini'
+      ? store.getState().config?.secondarySubtitleEnabled !== false
+      : true;
+    if (subtitlesEnabled) {
+      subtitles.start(store.getState().currentSpeechText || '', audio);
+    } else {
+      subtitles.stop();
+    }
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -312,7 +364,14 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   }
 
   async function speakWithBrowserTts(text: string, turnId: string | null, turnTimer?: TurnTimer): Promise<void> {
-    subtitles.start(text);
+    const subtitlesEnabled = mode === 'mini'
+      ? store.getState().config?.secondarySubtitleEnabled !== false
+      : true;
+    if (subtitlesEnabled) {
+      subtitles.start(text);
+    } else {
+      subtitles.stop();
+    }
     await new Promise<void>((resolve, reject) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.onend = () => {
@@ -341,7 +400,14 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
 
     updatePlaybackState(true, 'Speaking (Stream)');
     emitHeadSpeechState('start', turnId ?? null);
-    subtitles.start(store.getState().currentSpeechText || 'Streaming audio');
+    const subtitlesEnabled = mode === 'mini'
+      ? store.getState().config?.secondarySubtitleEnabled !== false
+      : true;
+    if (subtitlesEnabled) {
+      subtitles.start(store.getState().currentSpeechText || 'Streaming audio');
+    } else {
+      subtitles.stop();
+    }
 
     const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
     const audioBuffer = await streamingAudioContext.decodeAudioData(bytes.buffer.slice(0));
@@ -413,7 +479,7 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   function emitHeadSpeechState(state: 'start' | 'end', turnId: string | null): void {
     window.dispatchEvent(new CustomEvent('tubs:head-speech-state', {
       detail: {
-        actor: 'main',
+        actor: mode === 'mini' ? 'small' : 'main',
         state,
         turnId,
         ts: Date.now(),
@@ -425,9 +491,13 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
     queue.length = 0;
     processing = false;
     pendingInferencePlayback = null;
+    clearRemoteWaitTimer();
     clearStreamingFinalizeTimer();
     streamingActiveNodes = 0;
     streamingNextStartTime = 0;
+    remoteActorSpeaking = false;
+    remoteActorSpeakingUntil = 0;
+    clearReactionResetTimer();
     if (audioElement) {
       audioElement.pause();
       audioElement.src = '';
@@ -462,12 +532,110 @@ export function createSpeechRuntime(store: AppStore): SpeechRuntime {
   }
 
   function applyBeatVisuals(text: string, emotion: TurnEmotion | null | undefined, speaking: boolean): void {
+    const nextReactionEmoji = !speaking ? (emotion?.emoji ?? '') : '';
     store.setState((current) => ({
       ...current,
       currentSpeechText: text,
       subtitleText: text,
+      currentReactionEmoji: nextReactionEmoji,
       currentExpression: emotion?.expression ?? (speaking ? 'speaking' : current.currentExpression),
     }));
+    if (!speaking) {
+      clearReactionResetTimer();
+      if (nextReactionEmoji) {
+        reactionResetTimer = window.setTimeout(() => {
+          reactionResetTimer = null;
+          store.setState((current) => ({
+            ...current,
+            currentReactionEmoji: '',
+          }));
+        }, 1100);
+      }
+    }
+  }
+
+  function handleRemoteHeadSpeechState(message: Extract<WsServerMessage, { type: 'head_speech_state' }>): void {
+    const localActor = mode === 'mini' ? 'small' : 'main';
+    if (message.actor === localActor) {
+      return;
+    }
+    if (message.state === 'start') {
+      markRemoteActorSpeaking(true, message.ts, message.durationMs);
+      return;
+    }
+    markRemoteActorSpeaking(false, message.ts);
+    if (!store.getState().audioPlaying && queue.length > 0) {
+      clearRemoteWaitTimer();
+      window.setTimeout(() => {
+        processQueue();
+      }, 0);
+    }
+  }
+
+  function markRemoteActorSpeaking(isSpeaking: boolean, ts = Date.now(), durationMs?: number): void {
+    remoteActorSpeaking = Boolean(isSpeaking);
+    if (!remoteActorSpeaking) {
+      remoteActorSpeakingUntil = 0;
+      return;
+    }
+    const timeoutMs = durationMs && Number.isFinite(durationMs) && durationMs > 0
+      ? durationMs + 500
+      : REMOTE_SPEECH_STALE_MS;
+    remoteActorSpeakingUntil = ts + timeoutMs;
+  }
+
+  function isRemoteActorSpeakingNow(): boolean {
+    if (!remoteActorSpeaking) {
+      return false;
+    }
+    if (Date.now() > remoteActorSpeakingUntil) {
+      remoteActorSpeaking = false;
+      remoteActorSpeakingUntil = 0;
+      return false;
+    }
+    return true;
+  }
+
+  function waitForRemoteActor(item: SpeakQueueItem): boolean {
+    const now = Date.now();
+    if (!item.waitRemoteStartedAt) {
+      item.waitRemoteStartedAt = now;
+      item.waitRemoteSawStart = false;
+    }
+    const remoteSpeaking = isRemoteActorSpeakingNow();
+    if (remoteSpeaking) {
+      item.waitRemoteSawStart = true;
+    }
+    const elapsed = now - item.waitRemoteStartedAt;
+    const timedOut = !item.waitRemoteSawStart && elapsed >= REMOTE_WAIT_MAX_MS;
+    const done = (item.waitRemoteSawStart && !remoteSpeaking) || timedOut;
+    if (done) {
+      return true;
+    }
+    queue.unshift(item);
+    clearRemoteWaitTimer();
+    remoteWaitTimer = window.setTimeout(() => {
+      remoteWaitTimer = null;
+      processing = false;
+      processQueue();
+    }, REMOTE_WAIT_POLL_MS);
+    return false;
+  }
+
+  function clearRemoteWaitTimer(): void {
+    if (remoteWaitTimer == null) {
+      return;
+    }
+    window.clearTimeout(remoteWaitTimer);
+    remoteWaitTimer = null;
+  }
+
+  function clearReactionResetTimer(): void {
+    if (reactionResetTimer == null) {
+      return;
+    }
+    window.clearTimeout(reactionResetTimer);
+    reactionResetTimer = null;
   }
 }
 

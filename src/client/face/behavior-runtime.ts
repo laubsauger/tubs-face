@@ -13,6 +13,10 @@ const SPRING_STIFFNESS = 185;
 const SPRING_DAMPING = 22;
 const STOP_POS_EPS = 0.0012;
 const STOP_VEL_EPS = 0.0012;
+const FACE_TARGET_SWITCH_MIN_MS = 1900;
+const FACE_TARGET_SWITCH_MAX_MS = 3600;
+const PARTNER_MOTION_IDLE_BLOCK_MS = 1800;
+const PARTNER_BLINK_MIN_GAP_MS = 900;
 
 export interface FaceBehaviorRuntime {
   bind(root: HTMLElement): void;
@@ -21,7 +25,7 @@ export interface FaceBehaviorRuntime {
   attachSender(sender: ((message: WsClientMessage) => void) | null): void;
 }
 
-export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime {
+export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'): FaceBehaviorRuntime {
   let rootEl: HTMLElement | null = null;
   let blinkTimer: number | null = null;
   let behaviorTimer: number | null = null;
@@ -36,6 +40,14 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   let targetX = 0;
   let targetY = 0;
   let lastTickMs = 0;
+  let lastPointerAt = 0;
+  let activeFaceIndex = 0;
+  let nextFaceSwitchAt = 0;
+  let partnerMotionAt = 0;
+  let partnerBlinkTimer: number | null = null;
+  let lastPartnerBlinkAt = 0;
+  let partnerMotionHandler: ((event: Event) => void) | null = null;
+  let partnerBlinkHandler: ((event: Event) => void) | null = null;
 
   return {
     bind(root: HTMLElement): void {
@@ -51,6 +63,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
         }
         const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         const normalizedY = ((event.clientY - rect.top) / rect.height) * 2 - 1;
+        lastPointerAt = Date.now();
         lookAt(normalizedX * 0.8, normalizedY * 0.6);
       };
 
@@ -59,6 +72,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
       };
     },
     init(): void {
+      attachPartnerHandlers();
       scheduleBlink();
       scheduleBehavior();
       resetGaze();
@@ -71,6 +85,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
       clearManagedTimer(behaviorTimer);
       clearManagedTimer(lookResetTimer);
       clearManagedTimer(smileResetTimer);
+      clearManagedTimer(partnerBlinkTimer);
       if (rafId != null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -79,6 +94,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
         rootEl.onpointermove = null;
         rootEl.onpointerleave = null;
       }
+      detachPartnerHandlers();
     },
   };
 
@@ -90,6 +106,11 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   function shouldIdleAnimate(): boolean {
     const state = store.getState();
     return shouldAnimate() && state.currentExpression === 'idle';
+  }
+
+  function hasTrackedFaces(): boolean {
+    const state = store.getState();
+    return Boolean(state.faceCameraActive && state.faceLastFaces.length > 0 && state.faceFrameWidth && state.faceFrameHeight);
   }
 
   function scheduleBlink(): void {
@@ -113,6 +134,14 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   }
 
   function runBehaviorStep(): void {
+    if (steerTowardDetectedFace()) {
+      return;
+    }
+
+    if (mode === 'mini' && Date.now() - partnerMotionAt <= PARTNER_MOTION_IDLE_BLOCK_MS) {
+      return;
+    }
+
     const roll = Math.random();
     if (roll < 0.42) {
       store.setState((current) => ({
@@ -153,6 +182,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   function blink(): void {
     sender?.({
       type: 'face_blink',
+      actor: mode === 'mini' ? 'small' : 'main',
       ts: Date.now(),
     });
     store.setState((current) => ({
@@ -166,6 +196,58 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
         blinkActive: false,
       }));
     }, randBetween(95, 184));
+  }
+
+  function attachPartnerHandlers(): void {
+    if (mode !== 'mini' || partnerMotionHandler || partnerBlinkHandler) {
+      return;
+    }
+
+    partnerMotionHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ x?: number; y?: number; ts?: number }>).detail;
+      if (!detail || store.getState().sleeping) {
+        return;
+      }
+      if (typeof detail.x !== 'number' || typeof detail.y !== 'number') {
+        return;
+      }
+      partnerMotionAt = Number(detail.ts) || Date.now();
+      lookAt(detail.x, detail.y);
+    };
+
+    partnerBlinkHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ts?: number }>).detail;
+      if (store.getState().sleeping) {
+        return;
+      }
+      const now = Number(detail?.ts) || Date.now();
+      if (now - lastPartnerBlinkAt < PARTNER_BLINK_MIN_GAP_MS) {
+        return;
+      }
+      if (Math.random() < 0.35) {
+        return;
+      }
+      clearManagedTimer(partnerBlinkTimer);
+      partnerBlinkTimer = window.setTimeout(() => {
+        partnerBlinkTimer = null;
+        lastPartnerBlinkAt = Date.now();
+        blink();
+      }, randBetween(90, 420));
+    };
+
+    window.addEventListener('tubs:partner-face-motion', partnerMotionHandler as EventListener);
+    window.addEventListener('tubs:partner-face-blink', partnerBlinkHandler as EventListener);
+  }
+
+  function detachPartnerHandlers(): void {
+    if (partnerMotionHandler) {
+      window.removeEventListener('tubs:partner-face-motion', partnerMotionHandler as EventListener);
+      partnerMotionHandler = null;
+    }
+    if (partnerBlinkHandler) {
+      window.removeEventListener('tubs:partner-face-blink', partnerBlinkHandler as EventListener);
+      partnerBlinkHandler = null;
+    }
   }
 
   function lookAt(x: number, y: number): void {
@@ -188,6 +270,10 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
   }
 
   function tick(nowMs: number): void {
+    if (Date.now() - lastPointerAt > 1200) {
+      steerTowardDetectedFace();
+    }
+
     if (!lastTickMs) {
       lastTickMs = nowMs;
     }
@@ -204,6 +290,7 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
     }));
     sender?.({
       type: 'face_motion',
+      actor: mode === 'mini' ? 'small' : 'main',
       x: Number(currentX.toFixed(4)),
       y: Number(currentY.toFixed(4)),
       ts: Date.now(),
@@ -222,6 +309,39 @@ export function createFaceBehaviorRuntime(store: AppStore): FaceBehaviorRuntime 
     }
 
     rafId = requestAnimationFrame(tick);
+  }
+
+  function steerTowardDetectedFace(): boolean {
+    const state = store.getState();
+    const frameWidth = state.faceFrameWidth;
+    const frameHeight = state.faceFrameHeight;
+    const faces = state.faceLastFaces;
+    if (!state.faceCameraActive || !frameWidth || !frameHeight || faces.length === 0) {
+      return false;
+    }
+
+    const now = Date.now();
+    if (faces.length === 1) {
+      activeFaceIndex = 0;
+    } else if (now >= nextFaceSwitchAt) {
+      activeFaceIndex = (activeFaceIndex + 1) % faces.length;
+      nextFaceSwitchAt = now + randBetween(FACE_TARGET_SWITCH_MIN_MS, FACE_TARGET_SWITCH_MAX_MS);
+    }
+
+    const face = faces[Math.min(activeFaceIndex, faces.length - 1)];
+    if (!face) {
+      return false;
+    }
+
+    const [x1, y1, x2, y2] = face.box;
+    const centerX = (x1 + x2) / 2;
+    const centerY = (y1 + y2) / 2;
+    const normalizedX = (centerX / frameWidth) * 2 - 1;
+    const normalizedY = (centerY / frameHeight) * 2 - 1;
+
+    // Camera feed is mirrored in the UI, so invert the horizontal target.
+    lookAt((-normalizedX) * 0.92, normalizedY * 0.68);
+    return true;
   }
 }
 

@@ -36,7 +36,9 @@ interface BrowserSpeechRecognitionCtor {
 
 export interface VoiceRuntime {
   init(): Promise<void>;
-  bind(root: HTMLElement): void;
+  enableMic(): Promise<void>;
+  startManualRecording(): Promise<void>;
+  stopManualRecording(): void;
   dispose(): void;
 }
 
@@ -47,7 +49,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let audioContext: AudioContext | null = null;
   let levelRaf = 0;
   let chunks: Blob[] = [];
-  let bindingsApplied = false;
   let keyHandlersBound = false;
   let speechRecognition: BrowserSpeechRecognition | null = null;
   let speechRecognitionRunning = false;
@@ -72,36 +73,16 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       await ensureMicrophone();
       bindKeyboardShortcuts();
     },
-    bind(root: HTMLElement): void {
-      const enableButton = root.querySelector<HTMLButtonElement>('#voice-enable-mic');
-      const recordButton = root.querySelector<HTMLButtonElement>('#voice-record-button');
-
-      if (!enableButton || !recordButton) {
-        return;
-      }
-
-      enableButton.onclick = async () => {
-        await ensureMicrophone();
-      };
-
-      recordButton.onpointerdown = async (event) => {
-        event.preventDefault();
-        manualPressActive = true;
-        await startRecording('manual');
-      };
-      recordButton.onpointerup = (event) => {
-        event.preventDefault();
-        manualPressActive = false;
-        stopRecording('manual');
-      };
-      recordButton.onpointerleave = () => {
-        manualPressActive = false;
-        stopRecording('manual');
-      };
-
-      if (!bindingsApplied) {
-        bindingsApplied = true;
-      }
+    enableMic(): Promise<void> {
+      return ensureMicrophone();
+    },
+    async startManualRecording(): Promise<void> {
+      manualPressActive = true;
+      await startRecording('manual');
+    },
+    stopManualRecording(): void {
+      manualPressActive = false;
+      stopRecording('manual');
     },
     dispose(): void {
       stopRecording(recordingMode ?? 'manual');

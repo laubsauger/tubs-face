@@ -107,7 +107,7 @@ function buildResult(text: string, emoji: EmotionCue): SplitEmotionResult {
   };
 }
 
-function buildEmotionFromEmoji(emoji: EmotionCue): SpeechEmotionPayload {
+export function buildEmotionFromEmoji(emoji: EmotionCue): SpeechEmotionPayload {
   const mapped = EMOJI_EMOTION_MAP[emoji];
   return {
     emoji,
@@ -116,7 +116,7 @@ function buildEmotionFromEmoji(emoji: EmotionCue): SpeechEmotionPayload {
   };
 }
 
-function pickSupportedEmotionEmoji(text: string): EmotionCue | null {
+export function pickSupportedEmotionEmoji(text: string): EmotionCue | null {
   const matches = String(text).match(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu) ?? [];
   for (const candidate of matches) {
     const cue = asSupportedEmotionCue(candidate);
@@ -129,4 +129,8 @@ function pickSupportedEmotionEmoji(text: string): EmotionCue | null {
 
 function asSupportedEmotionCue(value: string): EmotionCue | null {
   return value in EMOJI_EMOTION_MAP ? (value as EmotionCue) : null;
+}
+
+export function defaultDualHeadSpeakEmotion(actor: 'main' | 'small'): SpeechEmotionPayload {
+  return buildEmotionFromEmoji(actor === 'small' ? '😏' : '🙂');
 }

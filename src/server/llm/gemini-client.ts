@@ -10,6 +10,8 @@ interface GenerateGeminiArgs {
   maxOutputTokens: number;
   temperature?: number;
   timeoutMs?: number;
+  responseMimeType?: string;
+  responseSchema?: Record<string, unknown>;
 }
 
 interface GeminiResponseJson {
@@ -57,6 +59,8 @@ export async function generateGeminiContent(args: GenerateGeminiArgs): Promise<L
         generationConfig: {
           maxOutputTokens: args.maxOutputTokens,
           temperature: args.temperature ?? 1,
+          ...(args.responseMimeType ? { responseMimeType: args.responseMimeType } : {}),
+          ...(args.responseSchema ? { responseSchema: args.responseSchema } : {}),
           thinkingConfig: {
             thinkingLevel: 'MINIMAL',
           },

@@ -78,6 +78,7 @@ export interface AppState {
   currentTurnId: string | null;
   currentIncomingText: string;
   currentSpeechText: string;
+  currentReactionEmoji: string;
   currentDonationSignal: DonationSignalPayload | null;
   subtitleText: string;
   gazeX: number;
@@ -105,6 +106,8 @@ export interface AppState {
   faceLastDetectedCount: number;
   faceLastEmbeddingsExtracted: number;
   faceLastEmbeddingsReused: number;
+  faceFrameWidth: number | null;
+  faceFrameHeight: number | null;
   faceLastFaces: DetectedFace[];
   faceLibraryEmbeddings: number;
   faceLibraryPeople: number;
@@ -179,6 +182,7 @@ export function createAppStore(serverUrl: string): AppStore {
     currentTurnId: null,
     currentIncomingText: '',
     currentSpeechText: '',
+    currentReactionEmoji: '',
     currentDonationSignal: null,
     subtitleText: '',
     gazeX: 0,
@@ -206,6 +210,8 @@ export function createAppStore(serverUrl: string): AppStore {
     faceLastDetectedCount: 0,
     faceLastEmbeddingsExtracted: 0,
     faceLastEmbeddingsReused: 0,
+    faceFrameWidth: null,
+    faceFrameHeight: null,
     faceLastFaces: [],
     faceLibraryEmbeddings: 0,
     faceLibraryPeople: 0,

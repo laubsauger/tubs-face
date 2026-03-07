@@ -13,8 +13,8 @@ const SLEEP_GAIN_FACTOR = 0.72;
 const PAUSE_IDLE_DELAY_MS = 600;
 
 export interface AmbientRuntime {
-  bind(root: HTMLElement): void;
   init(): void;
+  toggleEnabled(): Promise<void>;
   dispose(): void;
 }
 
@@ -30,33 +30,10 @@ export function createAmbientRuntime(store: AppStore, mode: 'main' | 'mini'): Am
   let lastAppliedTarget = -1;
   let pulseToken = 0;
   let pauseTimer: number | null = null;
-  let ambientButton: HTMLButtonElement | null = null;
   let gestureHandler: ((event: Event) => void) | null = null;
   let speechObservedHandler: ((event: Event) => void) | null = null;
 
   return {
-    bind(root: HTMLElement): void {
-      if (mode !== 'main') {
-        return;
-      }
-      ambientButton = root.querySelector<HTMLButtonElement>('#ambient-toggle');
-      if (!ambientButton) {
-        return;
-      }
-      ambientButton.onclick = async () => {
-        const enabled = !store.getState().ambientAudioEnabled;
-        store.setState((current) => ({
-          ...current,
-          ambientAudioEnabled: enabled,
-        }));
-        try {
-          await postJson('/config', { ambientAudioEnabled: enabled });
-        } catch (error) {
-          store.appendLog('error', error instanceof Error ? error.message : 'Ambient toggle failed');
-        }
-        syncActiveState();
-      };
-    },
     init(): void {
       if (mode === 'mini') {
         return;
@@ -73,6 +50,22 @@ export function createAmbientRuntime(store: AppStore, mode: 'main' | 'mini'): Am
       window.addEventListener('tubs:head-speech-state', speechObservedHandler as EventListener);
       window.addEventListener('tubs:head-speech-observed', speechObservedHandler as EventListener);
       document.addEventListener('visibilitychange', syncActiveState);
+    },
+    async toggleEnabled(): Promise<void> {
+      if (mode !== 'main') {
+        return;
+      }
+      const enabled = !store.getState().ambientAudioEnabled;
+      store.setState((current) => ({
+        ...current,
+        ambientAudioEnabled: enabled,
+      }));
+      try {
+        await postJson('/config', { ambientAudioEnabled: enabled });
+      } catch (error) {
+        store.appendLog('error', error instanceof Error ? error.message : 'Ambient toggle failed');
+      }
+      syncActiveState();
     },
     dispose(): void {
       if (gestureHandler) {

@@ -24,19 +24,38 @@ import {
 import { GLITCH_PRESETS } from '../fx/presets.js';
 import { renderFaceVisualMarkup } from './face-visual.js';
 import { useAppSelector } from './react-store.js';
+import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
 
 export interface AppShellProps {
   mode: 'main' | 'mini';
   store: AppStore;
+  controls?: AppShellControls | undefined;
+}
+
+export interface AppShellControls {
+  ambient?: {
+    toggleEnabled(): Promise<void>;
+  };
+  voice?: {
+    enableMic(): Promise<void>;
+    startManualRecording(): Promise<void>;
+    stopManualRecording(): void;
+  } | undefined;
+  face?: {
+    toggleCamera(): Promise<void>;
+    detectFile(file: File): Promise<void>;
+    saveDetectedFace(): Promise<void>;
+    refreshLibrary(): Promise<void>;
+  } | undefined;
 }
 
 export function AppShell(props: AppShellProps): JSX.Element {
   return props.mode === 'mini'
     ? <MiniAppShell store={props.store} />
-    : <MainAppShell store={props.store} />;
+    : <MainAppShell store={props.store} {...(props.controls ? { controls: props.controls } : {})} />;
 }
 
-function MainAppShell({ store }: { store: AppStore }): JSX.Element {
+function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls }): JSX.Element {
   const shellState = useAppSelector(store, (state) => ({
     uiHidden: state.uiHidden,
     fullscreenActive: state.fullscreenActive,
@@ -46,21 +65,21 @@ function MainAppShell({ store }: { store: AppStore }): JSX.Element {
     <main className={`shell ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
       <HeroSection store={store} />
       <section className="visual-workspace">
-        <VoicePanel store={store} />
+        <VoicePanel store={store} {...(controls?.voice ? { controls: controls.voice } : {})} />
         <VisualShell store={store} mode="main" />
-        <FacePanel store={store} />
+        <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
       </section>
+      <ChatPanel store={store} />
       <section className="grid">
         <ConnectionPanel store={store} />
         <HealthPanel store={store} />
         <ConfigPanel store={store} />
         <StatsPanel store={store} />
         <AssistantPanel store={store} />
-        <ControlsPanel store={store} />
+        <ControlsPanel store={store} {...(controls ? { controls } : {})} />
         <FxPanel store={store} />
         <ManualPanel store={store} />
       </section>
-      <ChatPanel store={store} />
       <section className="grid">
         <StreamDebugPanel store={store} />
         <EventLogPanel store={store} />
@@ -76,6 +95,7 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
     currentExpression: current.currentExpression,
     sleeping: current.sleeping,
     audioPlaying: current.audioPlaying,
+    currentReactionEmoji: current.currentReactionEmoji,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
     subtitleText: current.subtitleText,
@@ -92,16 +112,24 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
           id="visual-face"
           className="visual-face mini-visual-face"
           data-expression={state.currentExpression}
-          data-render-mode={state.config?.faceRenderMode ?? 'css'}
-          dangerouslySetInnerHTML={{ __html: initialFaceMarkup }}
+          data-render-mode="glitch"
         />
+        <div
+          className={`mini-reaction ${state.currentReactionEmoji ? 'is-visible' : ''}`}
+          aria-hidden={!state.currentReactionEmoji}
+        >
+          {state.currentReactionEmoji}
+        </div>
         <div
           id="visual-live-transcript"
           className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
         >
           {state.liveTranscriptText}
         </div>
-        <div id="visual-subtitle" className="visual-subtitle">
+        <div
+          id="visual-subtitle"
+          className={`visual-subtitle ${state.config?.secondarySubtitleEnabled === false ? 'is-hidden' : ''}`}
+        >
           {state.subtitleText || state.currentSpeechText || ''}
         </div>
       </section>
@@ -134,14 +162,38 @@ function HeroSection({ store }: { store: AppStore }): JSX.Element {
         </p>
       </div>
       <div className="hero-actions">
-        <button id="window-open-mini" className="button button-secondary" type="button">Open Mini Window</button>
-        <button id="window-fullscreen" className="button" type="button">{fullscreenActive ? 'Exit Fullscreen' : 'Fullscreen'}</button>
+        <button
+          id="window-open-mini"
+          className="button button-secondary"
+          type="button"
+          onClick={() => {
+            openMiniWindow(store, true);
+          }}
+        >
+          Open Mini Window
+        </button>
+        <button
+          id="window-fullscreen"
+          className="button"
+          type="button"
+          onClick={async () => {
+            await toggleFullscreen(store);
+          }}
+        >
+          {fullscreenActive ? 'Exit Fullscreen' : 'Fullscreen'}
+        </button>
       </div>
     </section>
   );
 }
 
-function VoicePanel({ store }: { store: AppStore }): JSX.Element {
+function VoicePanel({
+  store,
+  controls,
+}: {
+  store: AppStore;
+  controls?: AppShellControls['voice'];
+}): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.voice),
     micReady: current.micReady,
@@ -173,9 +225,33 @@ function VoicePanel({ store }: { store: AppStore }): JSX.Element {
         </div>
         <div className="face-actions">
           <div className="face-action-row">
-            <button id="voice-enable-mic" className="button button-secondary" type="button">Enable Mic</button>
-            <button id="voice-record-button" className={`button ${state.recording ? 'button-live' : pending ? 'is-pending' : ''}`} type="button">
-              {state.recording ? 'Recording… release to send' : pending ? state.listenState : 'Push to Talk'}
+            <button
+              id="voice-enable-mic"
+              className="button button-secondary"
+              type="button"
+              onClick={async () => {
+                await controls?.enableMic();
+              }}
+            >
+              Enable Mic
+            </button>
+            <button
+              id="voice-record-button"
+              className={`button ${state.recording ? 'button-live' : pending ? 'is-pending' : ''}`}
+              type="button"
+              onPointerDown={async (event) => {
+                event.preventDefault();
+                await controls?.startManualRecording();
+              }}
+              onPointerUp={(event) => {
+                event.preventDefault();
+                controls?.stopManualRecording();
+              }}
+              onPointerLeave={() => {
+                controls?.stopManualRecording();
+              }}
+            >
+              {state.recording ? 'Recording...' : pending ? state.listenState : 'Push to Talk'}
             </button>
           </div>
           <label className="voice-toggle">
@@ -230,6 +306,7 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
     currentSpeechText: current.currentSpeechText,
     currentDonationSignal: current.currentDonationSignal,
     config: current.config,
+    micLevel: current.micLevel,
   }));
   const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
 
@@ -239,8 +316,7 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
         id="visual-face"
         className="visual-face"
         data-expression={state.currentExpression}
-        data-render-mode={state.config?.faceRenderMode ?? 'glitch'}
-        dangerouslySetInnerHTML={{ __html: initialFaceMarkup }}
+        data-render-mode="glitch"
       />
       <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`}>
         {state.subtitleText || state.currentSpeechText || ''}
@@ -250,6 +326,9 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
         className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
       >
         {state.liveTranscriptText}
+      </div>
+      <div className={`visual-mic-meter ${state.sleeping ? 'is-hidden' : ''}`}>
+        <span className="visual-mic-meter-bar" style={{ transform: `scaleX(${Math.max(0.01, state.micLevel).toFixed(3)})` }} />
       </div>
       <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
         <img id="visual-donation-qr" alt="Donation QR" />
@@ -262,7 +341,13 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
   );
 }
 
-function FacePanel({ store }: { store: AppStore }): JSX.Element {
+function FacePanel({
+  store,
+  controls,
+}: {
+  store: AppStore;
+  controls?: AppShellControls['face'];
+}): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.face),
     faceWorkerReady: current.faceWorkerReady,
@@ -278,13 +363,14 @@ function FacePanel({ store }: { store: AppStore }): JSX.Element {
     faceDraftName: current.faceDraftName,
     faceLastFaces: current.faceLastFaces,
   }));
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
     <article id="face-panel-card" className={`${renderPanelCardClass(state.collapsed)} face-panel-card`}>
       <PanelHeader store={store} panelKey="face" title="Face Worker" meta={formatFaceSummary(state)} />
       <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
         <p id="face-summary-metric" className={`metric ${state.faceWorkerReady ? 'is-good' : 'is-bad'}`}>{formatFaceSummary(state)}</p>
-        <div className="camera-shell">
+        <div className={`camera-shell ${state.faceCameraActive ? '' : 'is-inactive-shell'}`}>
           <div className="camera-stage">
             <video id="face-camera-video" className={`camera-video ${state.faceCameraActive ? '' : 'is-hidden'}`} autoPlay muted playsInline />
             <canvas id="face-camera-overlay" className={`camera-overlay ${state.faceCameraActive ? '' : 'is-hidden'}`} />
@@ -299,15 +385,51 @@ function FacePanel({ store }: { store: AppStore }): JSX.Element {
             <div><dt>Library</dt><dd id="face-library-value">{state.faceLibraryEmbeddings} embeddings / {state.faceLibraryPeople} people</dd></div>
           </dl>
           <div className="face-actions">
-            <input id="face-upload-input" className="sr-only" type="file" accept="image/png,image/jpeg,image/jpg" />
+            <input
+              ref={uploadInputRef}
+              id="face-upload-input"
+              className="sr-only"
+              type="file"
+              accept="image/png,image/jpeg,image/jpg"
+              onChange={async (event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (!file) {
+                  return;
+                }
+                await controls?.detectFile(file);
+              }}
+            />
             <div className="face-action-row">
-              <button id="face-camera-toggle" className="button" type="button">
+              <button
+                id="face-camera-toggle"
+                className={`button ${state.faceCameraActive ? 'is-active' : ''}`}
+                type="button"
+                onClick={async () => {
+                  await controls?.toggleCamera();
+                }}
+              >
                 {state.faceCameraActive ? 'Stop Camera' : 'Start Camera'}
               </button>
-              <button id="face-upload-trigger" className="button" type="button" disabled={state.faceWorkerBusy}>
+              <button
+                id="face-upload-trigger"
+                className="button"
+                type="button"
+                disabled={state.faceWorkerBusy}
+                onClick={() => {
+                  uploadInputRef.current?.click();
+                }}
+              >
                 {state.faceWorkerBusy ? 'Processing…' : 'Detect From Image'}
               </button>
-              <button id="face-refresh-trigger" className="button button-secondary" type="button">
+              <button
+                id="face-refresh-trigger"
+                className="button button-secondary"
+                type="button"
+                onClick={async () => {
+                  await controls?.refreshLibrary();
+                }}
+              >
                 Refresh Library
               </button>
             </div>
@@ -326,7 +448,15 @@ function FacePanel({ store }: { store: AppStore }): JSX.Element {
                   }));
                 }}
               />
-              <button id="face-save-trigger" className="button" type="button" disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}>
+              <button
+                id="face-save-trigger"
+                className="button"
+                type="button"
+                disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
+                onClick={async () => {
+                  await controls?.saveDetectedFace();
+                }}
+              >
                 Save First Face
               </button>
             </div>
@@ -481,7 +611,13 @@ function AssistantPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function ControlsPanel({ store }: { store: AppStore }): JSX.Element {
+function ControlsPanel({
+  store,
+  controls,
+}: {
+  store: AppStore;
+  controls?: AppShellControls;
+}): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.controls),
     chatVerbosity: current.chatVerbosity,
@@ -499,7 +635,7 @@ function ControlsPanel({ store }: { store: AppStore }): JSX.Element {
           <div className="face-action-row">
             <button
               id="chat-verbosity-toggle"
-              className="button button-secondary"
+              className={`button button-secondary ${state.chatVerbosity === 'all' ? 'is-active' : ''}`}
               type="button"
               onClick={() => {
                 store.setState((current) => ({
@@ -514,7 +650,16 @@ function ControlsPanel({ store }: { store: AppStore }): JSX.Element {
             >
               Verbosity {state.chatVerbosity.toUpperCase()}
             </button>
-            <button id="ambient-toggle" className="button button-secondary" type="button">Ambient {state.ambientAudioEnabled ? 'On' : 'Off'}</button>
+            <button
+              id="ambient-toggle"
+              className={`button button-secondary ${state.ambientAudioEnabled ? 'is-active' : ''}`}
+              type="button"
+              onClick={async () => {
+                await controls?.ambient?.toggleEnabled();
+              }}
+            >
+              Ambient {state.ambientAudioEnabled ? 'On' : 'Off'}
+            </button>
           </div>
           <div className="face-action-row">
             <button
@@ -643,253 +788,151 @@ function FxPanel({ store }: { store: AppStore }): JSX.Element {
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="fx" title="FX" meta={config?.glitchFxEnabled ? 'glitch on' : 'glitch off'} />
       <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Render Mode</dt><dd>{faceRenderMode}</dd></div>
-          <div><dt>Renderer</dt><dd>{glitchRenderer}</dd></div>
-          <div><dt>Quality</dt><dd>{renderQuality}</dd></div>
-          <div><dt>Base Color</dt><dd>{glitchBaseColor}</dd></div>
-          <div><dt>Glow</dt><dd>{glitchGlowStrength.toFixed(0)} px</dd></div>
-          <div><dt>Flicker</dt><dd>{glitchFlickerDepth.toFixed(3)}</dd></div>
-          <div><dt>Scanline</dt><dd>{glitchScanlineIntensity.toFixed(2)}</dd></div>
-        </dl>
         <div className="face-actions">
           <div className="face-action-row">
             <button
               id="fx-toggle"
-              className="button button-secondary"
+              className={`button ${config?.glitchFxEnabled ? 'is-active' : 'button-secondary'}`}
               type="button"
-              onClick={async () => {
-                await patchFxConfig(store, { glitchFxEnabled: !store.getState().config?.glitchFxEnabled });
-              }}
+              onClick={async () => patchFxConfig(store, { glitchFxEnabled: !store.getState().config?.glitchFxEnabled })}
             >
-              {config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}
+              {config?.glitchFxEnabled ? 'Glitch ON' : 'Glitch OFF'}
             </button>
             <button
               id="fx-editor-open"
-              className="button button-secondary"
+              className={`button ${state.fxEditorOpen ? 'is-active' : 'button-secondary'}`}
               type="button"
-              onClick={() => {
-                store.setState((current) => ({
-                  ...current,
-                  fxEditorOpen: true,
-                  currentExpression: current.fxExpressionSelected,
-                }));
-              }}
+              onClick={() => store.setState((current) => ({
+                ...current,
+                fxEditorOpen: !current.fxEditorOpen,
+                ...(current.fxEditorOpen ? { currentExpression: current.sleeping ? 'sleep' : 'idle' } : { currentExpression: current.fxExpressionSelected }),
+              }))}
             >
-              {state.fxEditorOpen ? 'Editor Open' : 'Open Editor'}
+              {state.fxEditorOpen ? 'Close Editor' : 'Open Editor'}
             </button>
           </div>
-          <div className="face-action-row">
-            <label className="manual-field">
-              <span>Render Mode</span>
-              <select
-                id="face-render-mode-select"
-                className="mini-select"
-                value={faceRenderMode}
-                onChange={async (event) => {
-                  const value = event.currentTarget.value === 'css'
-                    ? 'css'
-                    : event.currentTarget.value === 'svg'
-                      ? 'svg'
-                      : 'glitch';
-                  await patchFxConfig(store, { faceRenderMode: value });
-                }}
-              >
-                <option value="glitch">Glitch</option>
-                <option value="svg">SVG</option>
-                <option value="css">CSS</option>
-              </select>
-            </label>
-            <label className="manual-field">
-              <span>Render Quality</span>
-              <select
-                id="face-render-quality-select"
-                className="mini-select"
-                value={renderQuality}
-                onChange={async (event) => {
-                  const value = event.currentTarget.value === 'balanced' || event.currentTarget.value === 'low'
-                    ? event.currentTarget.value
-                    : 'high';
-                  await patchFxConfig(store, { renderQuality: value });
-                }}
-              >
-                <option value="high">High</option>
-                <option value="balanced">Balanced</option>
-                <option value="low">Low</option>
-              </select>
-            </label>
-          </div>
-          <div className="face-action-row">
-            <label className="manual-field">
-              <span>Renderer</span>
-              <select
-                id="glitch-renderer-select"
-                className="mini-select"
-                value={glitchRenderer}
-                onChange={async (event) => {
-                  const value = event.currentTarget.value === 'webgpu' || event.currentTarget.value === 'canvas2d'
-                    ? event.currentTarget.value
-                    : 'auto';
-                  await patchFxConfig(store, { glitchRenderer: value });
-                }}
-              >
-                <option value="auto">Auto</option>
-                <option value="webgpu">WebGPU</option>
-                <option value="canvas2d">Canvas2D</option>
-              </select>
-            </label>
-            <label className="manual-field">
-              <span>Preset</span>
-              <select
-                id="glitch-preset-select"
-                className="mini-select"
-                defaultValue=""
-                onChange={async (event) => {
-                  const selected = GLITCH_PRESETS[event.currentTarget.value];
-                  if (!selected) {
-                    return;
-                  }
-                  await patchFxConfig(store, selected);
-                  event.currentTarget.value = '';
-                }}
-              >
-                <option value="">Select preset</option>
-                <option value="default">Default</option>
-                <option value="cyberpunk">Cyberpunk</option>
-                <option value="minimal">Minimal</option>
-                <option value="warm">Warm</option>
-              </select>
-            </label>
-          </div>
-          <div className="face-action-row">
-            <input
-              id="fx-base-color"
-              className="fx-color-input"
-              type="color"
-              value={state.fxBaseColorDraft}
-              onChange={(event) => {
-                const value = normalizeHex(event.currentTarget.value, state.fxBaseColorDraft);
-                store.setState((current) => ({
-                  ...current,
-                  fxBaseColorDraft: value,
-                }));
-              }}
-            />
-            <button
-              id="fx-color-apply"
-              className="button button-secondary"
-              type="button"
-              onClick={async () => {
-                await patchFxConfig(store, {
-                  glitchFxBaseColor: normalizeHex(store.getState().fxBaseColorDraft, store.getState().fxBaseColorDraft),
-                });
-              }}
-            >
-              Apply Color
-            </button>
-          </div>
-          <div className={`fx-editor-shell ${state.fxEditorOpen ? 'is-open' : ''}`}>
+        </div>
+      </div>
+
+      <div className={`fx-fullscreen-hud ${state.fxEditorOpen ? 'is-open' : ''}`}>
+        <div className={`fx-editor-overlay ${state.fxEditorOpen ? 'is-open' : ''}`}>
+          <div className="fx-editor-group">
             <div className="fx-editor-header">
-              <strong>FX Editor</strong>
-              <div className="face-action-row">
-                <button id="glitch-export-button" className="button button-secondary" type="button" onClick={() => exportGlitchConfig(store.getState().config)}>Export</button>
-                <button id="glitch-import-button" className="button button-secondary" type="button" onClick={() => { void importGlitchConfig(store); }}>Import</button>
-                <button id="glitch-reset-button" className="button button-secondary" type="button" onClick={async () => { await patchFxConfig(store, GLITCH_PRESETS.default ?? {}); }}>Reset</button>
-                <button
-                  id="fx-editor-close"
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() => {
-                    store.setState((current) => ({
-                      ...current,
-                      fxEditorOpen: false,
-                      currentExpression: current.sleeping ? 'sleep' : 'idle',
-                    }));
-                  }}
-                >
-                  Close
-                </button>
-              </div>
+              <h3>Render Settings</h3>
             </div>
-            <div className="fx-editor-group">
+            <div className="face-action-row">
+              <label className="manual-field">
+                <span>Mode</span>
+                <select className="mini-select" value={faceRenderMode} onChange={async (e) => patchFxConfig(store, { faceRenderMode: e.currentTarget.value as any })}>
+                  <option value="glitch">Glitch</option>
+                  <option value="css">CSS</option>
+                </select>
+              </label>
+              <label className="manual-field">
+                <span>Quality</span>
+                <select className="mini-select" value={renderQuality} onChange={async (e) => patchFxConfig(store, { renderQuality: e.currentTarget.value as any })}>
+                  <option value="high">High</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <label className="manual-field">
+                <span>Renderer</span>
+                <select className="mini-select" value={glitchRenderer} onChange={async (e) => patchFxConfig(store, { glitchRenderer: e.currentTarget.value as any })}>
+                  <option value="auto">Auto</option>
+                  <option value="webgpu">WebGPU</option>
+                  <option value="canvas2d">Canvas2D</option>
+                </select>
+              </label>
+            </div>
+            <div className="face-action-row">
+              <label className="manual-field">
+                <span>Preset</span>
+                <select className="mini-select" defaultValue="" onChange={async (e) => {
+                  const selected = GLITCH_PRESETS[e.currentTarget.value];
+                  if (selected) await patchFxConfig(store, selected);
+                  e.currentTarget.value = '';
+                }}>
+                  <option value="">Select preset</option>
+                  <option value="default">Default</option>
+                  <option value="cyberpunk">Cyberpunk</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="warm">Warm</option>
+                </select>
+              </label>
+              <label className="manual-field">
+                <span>Color</span>
+                <input className="fx-color-input" type="color" value={state.fxBaseColorDraft} onChange={(e) => store.setState(c => ({ ...c, fxBaseColorDraft: normalizeHex(e.currentTarget.value, c.fxBaseColorDraft) }))} />
+              </label>
+              <button className="button button-secondary" type="button" onClick={async () => patchFxConfig(store, { glitchFxBaseColor: store.getState().fxBaseColorDraft })}>Apply</button>
+            </div>
+          </div>
+
+          <div className="fx-editor-group">
+            <div className="fx-editor-header">
               <h3>Expression Profiles</h3>
               <div className="face-action-row">
-                <label className="manual-field">
-                  <span>Expression</span>
-                  <select
-                    id="fx-expression-select"
-                    className="mini-select"
-                    value={state.fxExpressionSelected}
-                    onChange={(event) => {
-                      const next = normalizeExpressionName(event.currentTarget.value);
-                      store.setState((current) => ({
-                        ...current,
-                        fxExpressionSelected: next,
-                        ...(current.fxEditorOpen ? { currentExpression: next } : {}),
-                      }));
-                    }}
-                  >
-                    <option value="idle">idle</option>
-                    <option value="idle-flat">idle-flat</option>
-                    <option value="listening">listening</option>
-                    <option value="thinking">thinking</option>
-                    <option value="speaking">speaking</option>
-                    <option value="smile">smile</option>
-                    <option value="happy">happy</option>
-                    <option value="love">love</option>
-                    <option value="sad">sad</option>
-                    <option value="crying">crying</option>
-                    <option value="sleep">sleep</option>
-                    <option value="angry">angry</option>
-                    <option value="surprised">surprised</option>
-                  </select>
-                </label>
-                <button
-                  id="fx-expression-reset"
-                  className="button button-secondary"
-                  type="button"
-                  onClick={async () => {
-                    const expression = store.getState().fxExpressionSelected;
-                    await patchFxConfig(store, patchExpressionProfile(store.getState().config, expression, null));
-                    previewExpression(store, expression);
-                  }}
-                >
-                  Reset Profile
-                </button>
+                <button className="button button-secondary" type="button" onClick={() => exportGlitchConfig(store.getState().config)}>Export</button>
+                <button className="button button-secondary" type="button" onClick={() => importGlitchConfig(store)}>Import</button>
+                <button className="button button-secondary" type="button" onClick={async () => patchFxConfig(store, GLITCH_PRESETS.default ?? {})}>Reset</button>
               </div>
-              <FxRange label="Eye Height" dataKey="eyeH" value={profileEyeH} min={0.05} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxRange label="Eye Width" dataKey="eyeW" value={profileEyeW} min={0.3} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxRange label="Eye Offset Y" dataKey="eyeDy" value={profileEyeDy} min={-10} max={15} step={0.5} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeDy', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxRange label="Eye Skew" dataKey="eyeSkew" value={profileEyeSkew} min={-0.5} max={0.5} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeSkew', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxRange label="Mouth Width" dataKey="mouthW" value={profileMouthW} min={0.1} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxRange label="Mouth Height" dataKey="mouthH" value={profileMouthH} min={0.1} max={4} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxToggle label="Mouth Round" dataKey="mouthRound" checked={profileMouthRound} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'mouthRound', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <FxToggle label="Tears" dataKey="tears" checked={profileTears} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'tears', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              <label className="manual-field">
-                <span>Eye Shape</span>
-                <select data-fx-expression-select="eyeShape" className="mini-select" value={profileEyeShape} onChange={(event) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'eyeShape', value: event.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
-                  <option value="rect">rect</option>
-                  <option value="heart">heart</option>
-                </select>
-              </label>
-              <label className="manual-field">
-                <span>Mouth Shape</span>
-                <select data-fx-expression-select="mouthShape" className="mini-select" value={profileMouthShape} onChange={(event) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'mouthShape', value: event.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
-                  <option value="rect">rect</option>
-                  <option value="frown">frown</option>
-                  <option value="smile-arc">smile-arc</option>
-                  <option value="round">round</option>
-                </select>
-              </label>
-              <label className="manual-field">
-                <span>Color Override</span>
-                <input data-fx-expression-color="colorHex" className="fx-color-input" type="color" value={profileColorHex} onChange={(event) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'color', key: 'colorHex', value: normalizeHex(event.currentTarget.value, '#a855f7') })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              </label>
-              <label className="manual-field">
-                <span>Tear Color</span>
-                <input data-fx-expression-color="tearColorHex" className="fx-color-input" type="color" value={profileTearColorHex} onChange={(event) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'color', key: 'tearColorHex', value: normalizeHex(event.currentTarget.value, '#57bfff') })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-              </label>
             </div>
+            <div className="face-action-row">
+              <label className="manual-field">
+                <span>Expression</span>
+                <select className="mini-select" value={state.fxExpressionSelected} onChange={(e) => {
+                  const next = normalizeExpressionName(e.currentTarget.value);
+                  store.setState(c => ({
+                    ...c,
+                    fxExpressionSelected: next,
+                    ...(c.fxEditorOpen ? { currentExpression: next } : {}),
+                  }));
+                }}>
+                  <option value="idle">idle</option>
+                  <option value="idle-flat">idle-flat</option>
+                  <option value="listening">listening</option>
+                  <option value="thinking">thinking</option>
+                  <option value="speaking">speaking</option>
+                  <option value="smile">smile</option>
+                  <option value="happy">happy</option>
+                  <option value="love">love</option>
+                  <option value="sad">sad</option>
+                  <option value="crying">crying</option>
+                  <option value="sleep">sleep</option>
+                  <option value="angry">angry</option>
+                  <option value="surprised">surprised</option>
+                </select>
+              </label>
+              <button className="button button-secondary" type="button" onClick={async () => {
+                const expression = store.getState().fxExpressionSelected;
+                await patchFxConfig(store, patchExpressionProfile(store.getState().config, expression, null));
+                previewExpression(store, expression);
+              }}>Reset Profile</button>
+            </div>
+            <FxRange label="Eye Height" dataKey="eyeH" value={profileEyeH} min={0.05} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxRange label="Eye Width" dataKey="eyeW" value={profileEyeW} min={0.3} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxRange label="Eye Offset Y" dataKey="eyeDy" value={profileEyeDy} min={-10} max={15} step={0.5} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeDy', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxRange label="Eye Skew" dataKey="eyeSkew" value={profileEyeSkew} min={-0.5} max={0.5} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeSkew', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxRange label="Mouth W" dataKey="mouthW" value={profileMouthW} min={0.1} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxRange label="Mouth H" dataKey="mouthH" value={profileMouthH} min={0.1} max={4} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxToggle label="Mouth Round" dataKey="mouthRound" checked={profileMouthRound} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'mouthRound', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <FxToggle label="Tears" dataKey="tears" checked={profileTears} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'tears', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
+            <label className="manual-field">
+              <span>Eye Shape</span>
+              <select className="mini-select" value={profileEyeShape} onChange={(e) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'eyeShape', value: e.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
+                <option value="rect">rect</option>
+                <option value="heart">heart</option>
+              </select>
+            </label>
+            <label className="manual-field">
+              <span>Mouth Shape</span>
+              <select className="mini-select" value={profileMouthShape} onChange={(e) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'mouthShape', value: e.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
+                <option value="rect">rect</option>
+                <option value="frown">frown</option>
+                <option value="smile-arc">smile-arc</option>
+                <option value="round">round</option>
+              </select>
+            </label>
           </div>
         </div>
       </div>
@@ -1492,111 +1535,111 @@ function renderFxMarkup(args: {
   const profileTearColorHex = selectedProfile?.tearColorHex ?? '#57bfff';
 
   return `
-    <dl class="kv">
-      <div><dt>Render Mode</dt><dd>${escapeHtml(faceRenderMode)}</dd></div>
-      <div><dt>Renderer</dt><dd>${escapeHtml(glitchRenderer)}</dd></div>
-      <div><dt>Quality</dt><dd>${escapeHtml(renderQuality)}</dd></div>
-      <div><dt>Base Color</dt><dd>${escapeHtml(glitchBaseColor)}</dd></div>
-      <div><dt>Glow</dt><dd>${glitchGlowStrength.toFixed(0)} px</dd></div>
-      <div><dt>Flicker</dt><dd>${glitchFlickerDepth.toFixed(3)}</dd></div>
-      <div><dt>Scanline</dt><dd>${glitchScanlineIntensity.toFixed(2)}</dd></div>
-    </dl>
-    <div class="face-actions">
-      <div class="face-action-row">
-        <button id="fx-toggle" class="button button-secondary" type="button">${config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}</button>
-        <button id="fx-editor-open" class="button button-secondary" type="button">${args.fxEditorOpen ? 'Editor Open' : 'Open Editor'}</button>
-      </div>
-      <div class="face-action-row">
-        <label class="manual-field">
-          <span>Render Mode</span>
-          <select id="face-render-mode-select" class="mini-select">
-            <option value="glitch" ${faceRenderMode === 'glitch' ? 'selected' : ''}>Glitch</option>
-            <option value="svg" ${faceRenderMode === 'svg' ? 'selected' : ''}>SVG</option>
-            <option value="css" ${faceRenderMode === 'css' ? 'selected' : ''}>CSS</option>
-          </select>
-        </label>
-        <label class="manual-field">
-          <span>Render Quality</span>
-          <select id="face-render-quality-select" class="mini-select">
-            <option value="high" ${renderQuality === 'high' ? 'selected' : ''}>High</option>
-            <option value="balanced" ${renderQuality === 'balanced' ? 'selected' : ''}>Balanced</option>
-            <option value="low" ${renderQuality === 'low' ? 'selected' : ''}>Low</option>
-          </select>
-        </label>
-      </div>
-      <div class="face-action-row">
-        <label class="manual-field">
-          <span>Renderer</span>
-          <select id="glitch-renderer-select" class="mini-select">
-            <option value="auto" ${glitchRenderer === 'auto' ? 'selected' : ''}>Auto</option>
-            <option value="webgpu" ${glitchRenderer === 'webgpu' ? 'selected' : ''}>WebGPU</option>
-            <option value="canvas2d" ${glitchRenderer === 'canvas2d' ? 'selected' : ''}>Canvas2D</option>
-          </select>
-        </label>
-        <label class="manual-field">
-          <span>Preset</span>
-          <select id="glitch-preset-select" class="mini-select">
-            <option value="">Select preset</option>
-            <option value="default">Default</option>
-            <option value="cyberpunk">Cyberpunk</option>
-            <option value="minimal">Minimal</option>
-            <option value="warm">Warm</option>
-          </select>
-        </label>
-      </div>
-      <div class="face-action-row">
-        <input id="fx-base-color" class="fx-color-input" type="color" value="${escapeAttribute(args.fxBaseColorDraft)}" />
-        <button id="fx-color-apply" class="button button-secondary" type="button">Apply Color</button>
-      </div>
-      <div class="fx-editor-shell ${args.fxEditorOpen ? 'is-open' : ''}">
-        <div class="fx-editor-header">
-          <strong>FX Editor</strong>
+        <dl class="kv">
+          <div><dt>Render Mode</dt><dd>${escapeHtml(faceRenderMode)}</dd></div>
+          <div><dt>Renderer</dt><dd>${escapeHtml(glitchRenderer)}</dd></div>
+          <div><dt>Quality</dt><dd>${escapeHtml(renderQuality)}</dd></div>
+          <div><dt>Base Color</dt><dd>${escapeHtml(glitchBaseColor)}</dd></div>
+          <div><dt>Glow</dt><dd>${glitchGlowStrength.toFixed(0)} px</dd></div>
+          <div><dt>Flicker</dt><dd>${glitchFlickerDepth.toFixed(3)}</dd></div>
+          <div><dt>Scanline</dt><dd>${glitchScanlineIntensity.toFixed(2)}</dd></div>
+        </dl>
+        <div class="face-actions">
           <div class="face-action-row">
-            <button id="glitch-export-button" class="button button-secondary" type="button">Export</button>
-            <button id="glitch-import-button" class="button button-secondary" type="button">Import</button>
-            <button id="glitch-reset-button" class="button button-secondary" type="button">Reset</button>
-            <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
+            <button id="fx-toggle" class="button button-secondary" type="button">${config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}</button>
+            <button id="fx-editor-open" class="button button-secondary" type="button">${args.fxEditorOpen ? 'Editor Open' : 'Open Editor'}</button>
           </div>
-        </div>
-        <div class="fx-editor-group">
-          <h3>Expression Profiles</h3>
           <div class="face-action-row">
             <label class="manual-field">
-              <span>Expression</span>
-              <select id="fx-expression-select" class="mini-select">
-                ${renderExpressionOption('idle', selectedExpression)}
-                ${renderExpressionOption('idle-flat', selectedExpression)}
-                ${renderExpressionOption('listening', selectedExpression)}
-                ${renderExpressionOption('thinking', selectedExpression)}
-                ${renderExpressionOption('speaking', selectedExpression)}
-                ${renderExpressionOption('smile', selectedExpression)}
-                ${renderExpressionOption('happy', selectedExpression)}
-                ${renderExpressionOption('love', selectedExpression)}
-                ${renderExpressionOption('sad', selectedExpression)}
-                ${renderExpressionOption('crying', selectedExpression)}
-                ${renderExpressionOption('sleep', selectedExpression)}
-                ${renderExpressionOption('angry', selectedExpression)}
-                ${renderExpressionOption('surprised', selectedExpression)}
+              <span>Render Mode</span>
+              <select id="face-render-mode-select" class="mini-select">
+                <option value="glitch" ${faceRenderMode === 'glitch' ? 'selected' : ''}>Glitch</option>
+                <option value="svg" ${faceRenderMode === 'svg' ? 'selected' : ''}>SVG</option>
+                <option value="css" ${faceRenderMode === 'css' ? 'selected' : ''}>CSS</option>
               </select>
             </label>
-            <button id="fx-expression-reset" class="button button-secondary" type="button">Reset Profile</button>
+            <label class="manual-field">
+              <span>Render Quality</span>
+              <select id="face-render-quality-select" class="mini-select">
+                <option value="high" ${renderQuality === 'high' ? 'selected' : ''}>High</option>
+                <option value="balanced" ${renderQuality === 'balanced' ? 'selected' : ''}>Balanced</option>
+                <option value="low" ${renderQuality === 'low' ? 'selected' : ''}>Low</option>
+              </select>
+            </label>
           </div>
-          ${renderFxSlider('Eye Height', 'eyeH', profileEyeH, 0.05, 2, 0.01, 'expression-range')}
-          ${renderFxSlider('Eye Width', 'eyeW', profileEyeW, 0.3, 2, 0.01, 'expression-range')}
-          ${renderFxSlider('Eye Offset Y', 'eyeDy', profileEyeDy, -10, 15, 0.5, 'expression-range')}
-          ${renderFxSlider('Eye Skew', 'eyeSkew', profileEyeSkew, -0.5, 0.5, 0.01, 'expression-range')}
-          ${renderFxSlider('Mouth Width', 'mouthW', profileMouthW, 0.1, 2, 0.01, 'expression-range')}
-          ${renderFxSlider('Mouth Height', 'mouthH', profileMouthH, 0.1, 4, 0.01, 'expression-range')}
-          ${renderFxToggle('Mouth Round', 'mouthRound', profileMouthRound, 'expression-toggle')}
-          ${renderFxToggle('Tears', 'tears', profileTears, 'expression-toggle')}
-          ${renderFxSelect('Eye Shape', 'eyeShape', profileEyeShape, ['rect', 'heart'])}
-          ${renderFxSelect('Mouth Shape', 'mouthShape', profileMouthShape, ['rect', 'frown', 'smile-arc', 'round'])}
-          ${renderFxColor('Color Override', 'colorHex', profileColorHex)}
-          ${renderFxColor('Tear Color', 'tearColorHex', profileTearColorHex)}
+          <div class="face-action-row">
+            <label class="manual-field">
+              <span>Renderer</span>
+              <select id="glitch-renderer-select" class="mini-select">
+                <option value="auto" ${glitchRenderer === 'auto' ? 'selected' : ''}>Auto</option>
+                <option value="webgpu" ${glitchRenderer === 'webgpu' ? 'selected' : ''}>WebGPU</option>
+                <option value="canvas2d" ${glitchRenderer === 'canvas2d' ? 'selected' : ''}>Canvas2D</option>
+              </select>
+            </label>
+            <label class="manual-field">
+              <span>Preset</span>
+              <select id="glitch-preset-select" class="mini-select">
+                <option value="">Select preset</option>
+                <option value="default">Default</option>
+                <option value="cyberpunk">Cyberpunk</option>
+                <option value="minimal">Minimal</option>
+                <option value="warm">Warm</option>
+              </select>
+            </label>
+          </div>
+          <div class="face-action-row">
+            <input id="fx-base-color" class="fx-color-input" type="color" value="${escapeAttribute(args.fxBaseColorDraft)}" />
+            <button id="fx-color-apply" class="button button-secondary" type="button">Apply Color</button>
+          </div>
+          <div class="fx-editor-shell ${args.fxEditorOpen ? 'is-open' : ''}">
+            <div class="fx-editor-header">
+              <strong>FX Editor</strong>
+              <div class="face-action-row">
+                <button id="glitch-export-button" class="button button-secondary" type="button">Export</button>
+                <button id="glitch-import-button" class="button button-secondary" type="button">Import</button>
+                <button id="glitch-reset-button" class="button button-secondary" type="button">Reset</button>
+                <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
+              </div>
+            </div>
+            <div class="fx-editor-group">
+              <h3>Expression Profiles</h3>
+              <div class="face-action-row">
+                <label class="manual-field">
+                  <span>Expression</span>
+                  <select id="fx-expression-select" class="mini-select">
+                    ${renderExpressionOption('idle', selectedExpression)}
+                    ${renderExpressionOption('idle-flat', selectedExpression)}
+                    ${renderExpressionOption('listening', selectedExpression)}
+                    ${renderExpressionOption('thinking', selectedExpression)}
+                    ${renderExpressionOption('speaking', selectedExpression)}
+                    ${renderExpressionOption('smile', selectedExpression)}
+                    ${renderExpressionOption('happy', selectedExpression)}
+                    ${renderExpressionOption('love', selectedExpression)}
+                    ${renderExpressionOption('sad', selectedExpression)}
+                    ${renderExpressionOption('crying', selectedExpression)}
+                    ${renderExpressionOption('sleep', selectedExpression)}
+                    ${renderExpressionOption('angry', selectedExpression)}
+                    ${renderExpressionOption('surprised', selectedExpression)}
+                  </select>
+                </label>
+                <button id="fx-expression-reset" class="button button-secondary" type="button">Reset Profile</button>
+              </div>
+              ${renderFxSlider('Eye Height', 'eyeH', profileEyeH, 0.05, 2, 0.01, 'expression-range')}
+              ${renderFxSlider('Eye Width', 'eyeW', profileEyeW, 0.3, 2, 0.01, 'expression-range')}
+              ${renderFxSlider('Eye Offset Y', 'eyeDy', profileEyeDy, -10, 15, 0.5, 'expression-range')}
+              ${renderFxSlider('Eye Skew', 'eyeSkew', profileEyeSkew, -0.5, 0.5, 0.01, 'expression-range')}
+              ${renderFxSlider('Mouth Width', 'mouthW', profileMouthW, 0.1, 2, 0.01, 'expression-range')}
+              ${renderFxSlider('Mouth Height', 'mouthH', profileMouthH, 0.1, 4, 0.01, 'expression-range')}
+              ${renderFxToggle('Mouth Round', 'mouthRound', profileMouthRound, 'expression-toggle')}
+              ${renderFxToggle('Tears', 'tears', profileTears, 'expression-toggle')}
+              ${renderFxSelect('Eye Shape', 'eyeShape', profileEyeShape, ['rect', 'heart'])}
+              ${renderFxSelect('Mouth Shape', 'mouthShape', profileMouthShape, ['rect', 'frown', 'smile-arc', 'round'])}
+              ${renderFxColor('Color Override', 'colorHex', profileColorHex)}
+              ${renderFxColor('Tear Color', 'tearColorHex', profileTearColorHex)}
+            </div>
+          </div>
         </div>
-      </div>
-    </div>
-  `;
+        `;
 }
 
 function renderFxSlider(
@@ -1610,42 +1653,42 @@ function renderFxSlider(
 ): string {
   const datasetAttribute = datasetType === 'expression-range' ? 'data-fx-expression-range' : 'data-fx-config-range';
   return `
-    <label class="fx-slider-row">
-      <span>${escapeHtml(label)}</span>
-      <input ${datasetAttribute}="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
-      <strong>${value.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 3)}</strong>
-    </label>
-  `;
+        <label class="fx-slider-row">
+          <span>${escapeHtml(label)}</span>
+          <input ${datasetAttribute}="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
+          <strong>${value.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 3)}</strong>
+        </label>
+        `;
 }
 
 function renderFxToggle(label: string, key: string, checked: boolean, datasetType: 'config-toggle' | 'expression-toggle' = 'config-toggle'): string {
   const datasetAttribute = datasetType === 'expression-toggle' ? 'data-fx-expression-toggle' : 'data-fx-config-toggle';
   return `
-    <label class="voice-toggle fx-toggle-row">
-      <input ${datasetAttribute}="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
-      <span>${escapeHtml(label)}</span>
-    </label>
-  `;
+        <label class="voice-toggle fx-toggle-row">
+          <input ${datasetAttribute}="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
+          <span>${escapeHtml(label)}</span>
+        </label>
+        `;
 }
 
 function renderFxSelect(label: string, key: string, value: string, options: string[]): string {
   return `
-    <label class="manual-field">
-      <span>${escapeHtml(label)}</span>
-      <select data-fx-expression-select="${escapeAttribute(key)}" class="mini-select">
-        ${options.map((option) => `<option value="${escapeAttribute(option)}" ${value === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
-      </select>
-    </label>
-  `;
+        <label class="manual-field">
+          <span>${escapeHtml(label)}</span>
+          <select data-fx-expression-select="${escapeAttribute(key)}" class="mini-select">
+            ${options.map((option) => `<option value="${escapeAttribute(option)}" ${value === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
+          </select>
+        </label>
+        `;
 }
 
 function renderFxColor(label: string, key: string, value: `#${string}`): string {
   return `
-    <label class="manual-field">
-      <span>${escapeHtml(label)}</span>
-      <input data-fx-expression-color="${escapeAttribute(key)}" class="fx-color-input" type="color" value="${escapeAttribute(value)}" />
-    </label>
-  `;
+        <label class="manual-field">
+          <span>${escapeHtml(label)}</span>
+          <input data-fx-expression-color="${escapeAttribute(key)}" class="fx-color-input" type="color" value="${escapeAttribute(value)}" />
+        </label>
+        `;
 }
 
 function renderExpressionOption(name: string, selected: string): string {

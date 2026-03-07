@@ -5,36 +5,17 @@ const FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
 const MINI_FULLSCREEN_MESSAGE_TYPE = 'tubs-mini-fullscreen';
 
 export interface WindowRuntime {
-  bind(root: HTMLElement): void;
   init(): void;
   dispose(): void;
 }
 
+let sharedMiniWindowRef: Window | null = null;
+
 export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): WindowRuntime {
-  let rootEl: HTMLElement | null = null;
-  let miniWindowRef: Window | null = null;
   let keyHandler: ((event: KeyboardEvent) => void) | null = null;
   let clickHandler: (() => void) | null = null;
 
   return {
-    bind(root: HTMLElement): void {
-      rootEl = root;
-
-      if (mode === 'main') {
-        const fullscreenButton = root.querySelector<HTMLButtonElement>('#window-fullscreen');
-        const miniButton = root.querySelector<HTMLButtonElement>('#window-open-mini');
-        if (fullscreenButton) {
-          fullscreenButton.onclick = async () => {
-            await toggleFullscreen();
-          };
-        }
-        if (miniButton) {
-          miniButton.onclick = () => {
-            openMiniWindow(true);
-          };
-        }
-      }
-    },
     init(): void {
       if (mode === 'main') {
         initMainControls();
@@ -85,7 +66,7 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
 
       if (event.key === 'x' || event.key === 'X') {
         event.preventDefault();
-        void toggleFullscreen();
+        void toggleFullscreen(store);
         return;
       }
 
@@ -100,7 +81,7 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
 
       if (event.key === 'o' || event.key === 'O') {
         event.preventDefault();
-        openMiniWindow(true);
+        openMiniWindow(store, true);
       }
     };
 
@@ -141,71 +122,78 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
     });
   }
 
-  async function toggleFullscreen(): Promise<void> {
-    const next = !isFullscreenActive();
-    try {
-      if (next) {
-        await requestFullscreen();
-      } else {
-        await exitFullscreen();
-      }
-      writeFullscreenIntent(next);
-      store.setState((current) => ({
-        ...current,
-        fullscreenActive: next,
-      }));
-      syncMiniFullscreenIntent(next, next);
-    } catch (error) {
-      store.appendLog('error', error instanceof Error ? error.message : 'Fullscreen unavailable');
-    }
-  }
-
-  function openMiniWindow(focus: boolean): Window | null {
-    if (mode !== 'main') {
-      return null;
-    }
-    if (miniWindowRef && !miniWindowRef.closed) {
-      if (focus) {
-        miniWindowRef.focus();
-      }
-      return miniWindowRef;
-    }
-
-    const opened = window.open('/app-mini.html', 'tubs-mini-face', 'popup=yes,width=560,height=420,left=80,top=80,resizable=yes');
-    if (!opened) {
-      store.appendLog('error', 'Popup blocked: allow popups to open Mini Window');
-      return null;
-    }
-    miniWindowRef = opened;
-    if (focus) {
-      opened.focus();
-    }
-    if (store.getState().fullscreenActive) {
-      window.setTimeout(() => {
-        syncMiniFullscreenIntent(true, false);
-      }, 300);
-    }
-    return opened;
-  }
-
   function syncMiniFullscreenIntent(enabled: boolean, openIfNeeded: boolean): void {
     if (mode !== 'main') {
       return;
     }
-    writeFullscreenIntent(enabled);
-    let targetWindow = miniWindowRef;
-    if ((!targetWindow || targetWindow.closed) && enabled && openIfNeeded) {
-      targetWindow = openMiniWindow(false);
-    }
-    if (!targetWindow || targetWindow.closed) {
-      return;
-    }
-    targetWindow.postMessage({
-      type: MINI_FULLSCREEN_MESSAGE_TYPE,
-      enabled,
-      ts: Date.now(),
-    }, location.origin);
+    syncMiniFullscreenIntentShared(store, enabled, openIfNeeded);
   }
+}
+
+export async function toggleFullscreen(store: AppStore): Promise<void> {
+  const next = !isFullscreenActive();
+  try {
+    if (next) {
+      await requestFullscreen();
+    } else {
+      await exitFullscreen();
+    }
+    writeFullscreenIntent(next);
+    store.setState((current) => ({
+      ...current,
+      fullscreenActive: next,
+    }));
+    syncMiniFullscreenIntentShared(store, next, next);
+  } catch (error) {
+    store.appendLog('error', error instanceof Error ? error.message : 'Fullscreen unavailable');
+  }
+}
+
+export function openMiniWindow(store: AppStore, focus: boolean): Window | null {
+  if (sharedMiniWindowRef && !sharedMiniWindowRef.closed) {
+    if (focus) {
+      sharedMiniWindowRef.focus();
+    }
+    return sharedMiniWindowRef;
+  }
+
+  const opened = window.open('/app-mini.html', 'tubs-mini-face', 'popup=yes,width=560,height=420,left=80,top=80,resizable=yes');
+  if (!opened) {
+    store.appendLog('error', 'Popup blocked: allow popups to open Mini Window');
+    return null;
+  }
+  sharedMiniWindowRef = opened;
+  void postJson('/config', {
+    dualHeadEnabled: true,
+    dualHeadMode: 'llm_directed',
+  }).catch((error) => {
+    store.appendLog('error', error instanceof Error ? error.message : 'Failed to enable dual-head mode');
+  });
+  if (focus) {
+    opened.focus();
+  }
+  if (store.getState().fullscreenActive) {
+    window.setTimeout(() => {
+      syncMiniFullscreenIntentShared(store, true, false);
+    }, 300);
+  }
+  return opened;
+}
+
+function syncMiniFullscreenIntentShared(store: AppStore, enabled: boolean, openIfNeeded: boolean): void {
+  writeFullscreenIntent(enabled);
+  let targetWindow = sharedMiniWindowRef;
+  if ((!targetWindow || targetWindow.closed) && enabled && openIfNeeded) {
+    targetWindow = openMiniWindow(store, false);
+  }
+  if (!targetWindow || targetWindow.closed) {
+    return;
+  }
+  targetWindow.postMessage({
+    type: MINI_FULLSCREEN_MESSAGE_TYPE,
+    enabled,
+    ts: Date.now(),
+  }, location.origin);
 }
 
 function isFullscreenActive(): boolean {

@@ -13,6 +13,14 @@ interface HistoryEntry {
 }
 
 const conversationHistory: HistoryEntry[] = [];
+let visualContextText = '';
+export function updateVisualContext(text: string): void {
+  visualContextText = text;
+}
+
+export function getVisualContext(): string {
+  return visualContextText;
+}
 
 export interface BuiltContentsResult {
   contents: LlmContent[];
@@ -38,7 +46,32 @@ export function buildContents(nextUserText: string): BuiltContentsResult {
     contents,
     meta: {
       mode: 'text',
-      imageAttached: false,
+      imageAttached: Boolean(visualContextText),
+      historyMessages: recent.length,
+      historyChars,
+    },
+  };
+}
+
+export function buildProactiveContents(context: string): BuiltContentsResult {
+  pruneConversationHistory();
+  const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
+  const contents: LlmContent[] = recent.map((entry) => ({
+    role: entry.role,
+    parts: [{ text: entry.text }],
+  }));
+
+  contents.push({
+    role: 'user',
+    parts: [{ text: compactForHistory(context) }],
+  });
+
+  const historyChars = recent.reduce((sum, entry) => sum + entry.text.length, 0);
+  return {
+    contents,
+    meta: {
+      mode: 'proactive',
+      imageAttached: Boolean(visualContextText),
       historyMessages: recent.length,
       historyChars,
     },

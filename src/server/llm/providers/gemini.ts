@@ -32,6 +32,12 @@ async function generateContent(args: LlmGenerateArgs): Promise<LlmGenerateResult
   if (args.timeoutMs !== undefined) {
     Object.assign(request, { timeoutMs: args.timeoutMs });
   }
+  if (args.responseMimeType !== undefined) {
+    Object.assign(request, { responseMimeType: args.responseMimeType });
+  }
+  if (args.responseSchema !== undefined) {
+    Object.assign(request, { responseSchema: args.responseSchema });
+  }
   return generateGeminiContent(request);
 }
 

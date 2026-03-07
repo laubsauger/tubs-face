@@ -2,7 +2,7 @@ flask
 flask-sock
 faster-whisper
 pyttsx3
-mlx-audio
+mlx-audio==0.2.10
 misaki[en]
 lightning-whisper-mlx
 git+https://github.com/microsoft/VibeVoice.git#egg=vibevoice

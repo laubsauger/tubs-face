@@ -13,7 +13,7 @@ import type {
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
-import { runAssistantTurn } from '../assistant/service.js';
+import { runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
 
 const clients = new Set<WebSocket>();
 const WS_PATH = '/ws';
@@ -124,9 +124,40 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         });
       });
       return;
+    case 'appearance_frame':
+    case 'camera_frame':
+      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'camera_frame'));
+      if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
+        sessionStats.messagesIn += 1;
+        sessionStats.lastActivity = Date.now();
+        const names = message.faces && message.faces.length > 0 ? message.faces.join(' and ') : 'Someone';
+        const prompt = `${names} is nearby but has not spoken. Break the ice with something unexpected.`;
+        broadcast({ type: 'thinking' });
+        void runProactiveTurn(prompt, broadcast).catch(console.error);
+      }
+      return;
+    case 'face_greeting':
+      if (runtimeConfig.muted) {
+        return;
+      }
+      sessionStats.messagesIn += 1;
+      sessionStats.lastActivity = Date.now();
+      broadcast({ type: 'thinking' });
+      void runProactiveTurn('Someone just appeared. Greet them in a way that gets an immediate response.', broadcast).catch(console.error);
+      return;
+    case 'proactive':
+      if (runtimeConfig.muted || !message.context) {
+        return;
+      }
+      sessionStats.messagesIn += 1;
+      sessionStats.lastActivity = Date.now();
+      broadcast({ type: 'thinking' });
+      void runProactiveTurn(message.context, broadcast).catch(console.error);
+      return;
     case 'face_motion':
       broadcast({
         type: 'face_motion',
+        actor: message.actor,
         x: message.x,
         y: message.y,
         ts: message.ts ?? Date.now(),
@@ -135,6 +166,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     case 'face_blink':
       broadcast({
         type: 'face_blink',
+        actor: message.actor,
         ts: message.ts ?? Date.now(),
       } satisfies WsFaceBlinkServerMessage);
       return;

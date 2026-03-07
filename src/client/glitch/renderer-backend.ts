@@ -1,6 +1,7 @@
 export function fallbackToCanvas2D(args: {
   reason?: string;
   state: { kind: 'webgpu' | 'canvas2d'; ready: boolean; backendError: string; initPromise: Promise<boolean> | null; webGpuRetryDisabled: boolean };
+  recreateCanvasElement: () => void;
   resetWebGpuResources: () => void;
   initCanvas2DRenderer: () => boolean;
   sizeCanvas: () => void;
@@ -10,6 +11,7 @@ export function fallbackToCanvas2D(args: {
   const {
     reason = 'fallback',
     state,
+    recreateCanvasElement,
     resetWebGpuResources,
     initCanvas2DRenderer,
     sizeCanvas,
@@ -18,6 +20,7 @@ export function fallbackToCanvas2D(args: {
   } = args;
   console.warn(`[GlitchFX] Switching to Canvas2D (${reason})`);
   resetWebGpuResources();
+  recreateCanvasElement();
   state.kind = 'canvas2d';
   state.ready = false;
   state.backendError = '';

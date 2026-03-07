@@ -341,11 +341,11 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
           initCanvas2DRenderer: initCanvasBackend,
           sizeCanvas,
           buildPixelGrid: buildGrid,
-          setBackendStatus: () => {},
+          setBackendStatus: () => { },
           setGlitchVisualActive: setCanvasVisible,
         });
       },
-      setBackendStatus: () => {},
+      setBackendStatus: () => { },
     });
   }
 
@@ -424,33 +424,6 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
         glitchBurstSeed,
         sleeping: state.sleeping,
       });
-      if (!drawn) {
-        const ok = fallbackToCanvas2D({
-          reason: 'webgpu-frame-failed',
-          state: rendererState,
-          resetWebGpuResources: resetGpu,
-          initCanvas2DRenderer: initCanvasBackend,
-          sizeCanvas,
-          buildPixelGrid: buildGrid,
-          setBackendStatus: () => {},
-        });
-        if (ok) {
-          drawn = renderFrameCanvas2D(frameResult.frame, {
-            canvas,
-            ctx,
-            tempCtx,
-            tempCanvas,
-            config: rendererConfig,
-            baseHSL,
-            pixelGrid,
-            shapeGroups,
-            shapeCenters,
-            cachedGlowFilter,
-            cachedScanBeamRGBA,
-            scanlinePattern,
-          });
-        }
-      }
     } else {
       drawn = renderFrameCanvas2D(frameResult.frame, {
         canvas,
@@ -468,7 +441,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       });
     }
 
-    setCanvasVisible(drawn);
+    // If WebGPU simply skipped rendering (for size recalculations, etc.),
+    // ensure we don't brutally crash and hide the DOM element
+    setCanvasVisible(rendererState.kind === 'webgpu' || drawn);
   }
 
   function getBlinkFactor(now: number): number {

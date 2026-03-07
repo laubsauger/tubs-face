@@ -53,6 +53,7 @@ export interface WsInterruptClientMessage {
 
 export interface WsFaceMotionClientMessage {
   type: 'face_motion';
+  actor: 'main' | 'small';
   x: number;
   y: number;
   ts?: number;
@@ -60,6 +61,7 @@ export interface WsFaceMotionClientMessage {
 
 export interface WsFaceBlinkClientMessage {
   type: 'face_blink';
+  actor: 'main' | 'small';
   ts?: number;
 }
 
@@ -158,6 +160,9 @@ export interface WsSpeakEndServerMessage {
   type: 'speak_end';
   turnId?: string;
   text?: string;
+  emotion?: SpeechEmotionPayload | null;
+  donation?: TurnDonation | null;
+  fullText?: string;
 }
 
 export interface WsAudioChunkServerMessage {
@@ -237,6 +242,7 @@ export interface WsErrorServerMessage {
 
 export interface WsFaceMotionServerMessage {
   type: 'face_motion';
+  actor: 'main' | 'small';
   x: number;
   y: number;
   ts: number;
@@ -244,6 +250,7 @@ export interface WsFaceMotionServerMessage {
 
 export interface WsFaceBlinkServerMessage {
   type: 'face_blink';
+  actor: 'main' | 'small';
   ts: number;
 }
 

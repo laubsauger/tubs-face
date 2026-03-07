@@ -7,7 +7,6 @@ import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface FxRuntime {
   init(): void;
-  bind(root: HTMLElement): void;
 }
 
 type RangeConfigKey =
@@ -103,9 +102,6 @@ export function createFxRuntime(store: AppStore): FxRuntime {
         ...current,
         fxBaseColorDraft: config.glitchFxBaseColor,
       }));
-    },
-    bind(_root: HTMLElement): void {
-      // React owns the FX controls now.
     },
   };
 }

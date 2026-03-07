@@ -67,7 +67,7 @@ export const runtimeConfig: RuntimeConfig = {
     realtime: process.env.REALTIME_KOKORO_VOICE,
   }), 'hm_omega'),
   dualHeadEnabled: parseBoolean(process.env.DUAL_HEAD_ENABLED, false),
-  dualHeadMode: pickOne(DUAL_HEAD_MODES, process.env.DUAL_HEAD_MODE, 'off'),
+  dualHeadMode: normalizeDualHeadModeInput(process.env.DUAL_HEAD_MODE, 'off'),
   secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'jf_tebukuro'),
   secondaryRenderQuality: pickOne(RENDER_QUALITIES, process.env.SECONDARY_RENDER_QUALITY, 'balanced'),
   secondarySubtitleEnabled: parseBoolean(process.env.SECONDARY_SUBTITLE_ENABLED, true),
@@ -226,7 +226,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   }
   if (patch.dualHeadEnabled !== undefined) runtimeConfig.dualHeadEnabled = Boolean(patch.dualHeadEnabled);
   if (patch.dualHeadMode !== undefined) {
-    runtimeConfig.dualHeadMode = expectOne(DUAL_HEAD_MODES, patch.dualHeadMode, 'dualHeadMode');
+    runtimeConfig.dualHeadMode = normalizeDualHeadModeInput(patch.dualHeadMode, runtimeConfig.dualHeadMode);
   }
   if (patch.secondaryVoice !== undefined) {
     runtimeConfig.secondaryVoice = expectOne(KOKORO_VOICES, patch.secondaryVoice, 'secondaryVoice');
@@ -657,6 +657,17 @@ function parseBoolean(value: unknown, fallback: boolean): boolean {
   if (normalized === 'true' || normalized === '1') return true;
   if (normalized === 'false' || normalized === '0') return false;
   return fallback;
+}
+
+function normalizeDualHeadModeInput(value: unknown, fallback: DualHeadMode): DualHeadMode {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === 'mirror') {
+    return 'llm_directed';
+  }
+  return expectOne(DUAL_HEAD_MODES, normalized, 'dualHeadMode');
 }
 
 function parseIntegerInRange(value: unknown, fallback: number, min: number, max: number): number {

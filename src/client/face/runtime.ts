@@ -1,5 +1,6 @@
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { AppStore } from '../state/app-state.js';
+import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { createFaceEntry, loadFaceLibrary } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
 import { createFaceWorkerClient, type FaceWorkerClient } from './worker-client.js';
@@ -7,7 +8,13 @@ import { createFaceWorkerClient, type FaceWorkerClient } from './worker-client.j
 export interface FaceShellRuntime {
   init(): void;
   bind(root: HTMLElement): void;
+  startCamera(): Promise<void>;
+  stopCamera(): void;
+  detectFile(file: File): Promise<void>;
+  saveDetectedFace(): Promise<void>;
+  refreshLibrary(): Promise<void>;
   dispose(): void;
+  attachSender(sender: ((message: WsClientMessage) => void) | null): void;
 }
 
 export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
@@ -24,6 +31,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let stableFaces: DetectedFace[] = [];
   let stableFacesAt = 0;
   let emptyFrameCount = 0;
+  let sender: ((message: WsClientMessage) => void) | null = null;
 
   const worker = createFaceWorkerClient({
     onReady: () => {
@@ -44,6 +52,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       }));
     },
     onFaces: (packet) => {
+      const isNewAppearance = stableFaces.length === 0 && packet.faces.length > 0;
       const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
       store.setState((current) => ({
         ...current,
@@ -53,10 +62,22 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
         faceLastDetectedCount: faces.length,
         faceLastEmbeddingsExtracted: packet.embeddingsExtracted,
         faceLastEmbeddingsReused: packet.embeddingsReused,
+        faceFrameWidth: captureCanvas.width || current.faceFrameWidth,
+        faceFrameHeight: captureCanvas.height || current.faceFrameHeight,
         faceLastFaces: faces,
       }));
       lastInferenceMs = Math.max(250, packet.inferenceMs || lastInferenceMs);
       drawOverlay(faces);
+
+      if (isNewAppearance && sender && captureCanvas.width > 0) {
+        sender({
+          type: 'appearance_frame',
+          frame: captureCanvas.toDataURL('image/jpeg', 0.6),
+          faces: faces.map((f) => f.name || f.match?.name).filter((n): n is string => Boolean(n)),
+          count: faces.length,
+        });
+      }
+
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
       if (store.getState().faceCameraActive) {
         scheduleLoop();
@@ -78,14 +99,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   function bind(root: HTMLElement): void {
     videoEl = root.querySelector<HTMLVideoElement>('#face-camera-video');
     overlayEl = root.querySelector<HTMLCanvasElement>('#face-camera-overlay');
-    const picker = root.querySelector<HTMLInputElement>('#face-upload-input');
-    const trigger = root.querySelector<HTMLButtonElement>('#face-upload-trigger');
-    const saveButton = root.querySelector<HTMLButtonElement>('#face-save-trigger');
-    const refreshButton = root.querySelector<HTMLButtonElement>('#face-refresh-trigger');
-    const cameraToggle = root.querySelector<HTMLButtonElement>('#face-camera-toggle');
-    if (!picker || !trigger || !saveButton || !refreshButton || !cameraToggle) {
-      return;
-    }
 
     if (videoEl) {
       videoEl.onloadedmetadata = () => {
@@ -93,38 +106,10 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       };
       if (stream && videoEl.srcObject !== stream) {
         videoEl.srcObject = stream;
-        void videoEl.play().catch(() => {});
+        void videoEl.play().catch(() => { });
       }
     }
 
-    cameraToggle.onclick = async () => {
-      if (store.getState().faceCameraActive) {
-        stopCamera(store);
-      } else {
-        await startCamera(store);
-      }
-    };
-
-    trigger.onclick = () => {
-      picker.click();
-    };
-
-    picker.onchange = async () => {
-      const file = picker.files?.[0];
-      picker.value = '';
-      if (!file) {
-        return;
-      }
-      await detectUploadedFile(worker, file, store);
-    };
-
-    saveButton.onclick = async () => {
-      await saveDetectedFace(store, refreshFaceLibraryState);
-    };
-
-    refreshButton.onclick = async () => {
-      await refreshFaceLibraryState(store);
-    };
   }
 
   return {
@@ -133,9 +118,27 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       void refreshFaceLibraryState(store);
     },
     bind,
+    startCamera(): Promise<void> {
+      return startCamera(store);
+    },
+    stopCamera(): void {
+      stopCamera(store);
+    },
+    detectFile(file: File): Promise<void> {
+      return detectUploadedFile(worker, file, store);
+    },
+    saveDetectedFace(): Promise<void> {
+      return saveDetectedFace(store, refreshFaceLibraryState);
+    },
+    refreshLibrary(): Promise<void> {
+      return refreshFaceLibraryState(store);
+    },
     dispose(): void {
       stopCamera(store);
       worker.terminate();
+    },
+    attachSender(s): void {
+      sender = s;
     },
   };
 
@@ -157,7 +160,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       appStore.appendLog('info', 'Camera active');
       if (videoEl) {
         videoEl.srcObject = stream;
-        await videoEl.play().catch(() => {});
+        await videoEl.play().catch(() => { });
         syncOverlaySize();
       }
       scheduleLoop();
@@ -191,6 +194,8 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       ...current,
       faceCameraActive: false,
       faceWorkerBusy: false,
+      faceFrameWidth: null,
+      faceFrameHeight: null,
       faceStatus: current.faceWorkerReady ? 'Ready' : 'Idle',
     }));
     appStore.appendLog('info', 'Camera off');

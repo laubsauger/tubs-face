@@ -86,6 +86,8 @@ function buildPayload(args: LlmGenerateArgs): Record<string, unknown> {
     maxOutputTokens: args.maxOutputTokens,
     temperature: args.temperature,
     timeoutMs: args.timeoutMs,
+    responseMimeType: args.responseMimeType,
+    responseSchema: args.responseSchema,
   };
 }
 
