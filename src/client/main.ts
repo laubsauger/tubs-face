@@ -1,5 +1,4 @@
-import { bootstrapClient } from './bootstrap.js';
-import { renderMainApp } from './ui/main-app.js';
+import { bootstrapClient } from './bootstrap-react.js';
 import './styles/app.css';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -11,5 +10,4 @@ if (!root) {
 void bootstrapClient({
   mode: 'main',
   root,
-  render: renderMainApp,
 });

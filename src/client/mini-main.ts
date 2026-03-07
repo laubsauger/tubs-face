@@ -1,5 +1,4 @@
-import { bootstrapClient } from './bootstrap.js';
-import { renderMiniApp } from './ui/mini-app.js';
+import { bootstrapClient } from './bootstrap-react.js';
 import './styles/app.css';
 
 const root = document.querySelector<HTMLElement>('#app');
@@ -11,5 +10,4 @@ if (!root) {
 void bootstrapClient({
   mode: 'mini',
   root,
-  render: renderMiniApp,
 });

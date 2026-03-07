@@ -1,5 +1,4 @@
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
-import type { AppState } from '../state/app-state.js';
 import type { AppStore } from '../state/app-state.js';
 import { createFaceEntry, loadFaceLibrary } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
@@ -77,16 +76,14 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   });
 
   function bind(root: HTMLElement): void {
-    syncFacePanel(root);
     videoEl = root.querySelector<HTMLVideoElement>('#face-camera-video');
     overlayEl = root.querySelector<HTMLCanvasElement>('#face-camera-overlay');
     const picker = root.querySelector<HTMLInputElement>('#face-upload-input');
     const trigger = root.querySelector<HTMLButtonElement>('#face-upload-trigger');
-    const nameInput = root.querySelector<HTMLInputElement>('#face-enroll-name');
     const saveButton = root.querySelector<HTMLButtonElement>('#face-save-trigger');
     const refreshButton = root.querySelector<HTMLButtonElement>('#face-refresh-trigger');
     const cameraToggle = root.querySelector<HTMLButtonElement>('#face-camera-toggle');
-    if (!picker || !trigger || !nameInput || !saveButton || !refreshButton || !cameraToggle) {
+    if (!picker || !trigger || !saveButton || !refreshButton || !cameraToggle) {
       return;
     }
 
@@ -119,13 +116,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
         return;
       }
       await detectUploadedFile(worker, file, store);
-    };
-
-    nameInput.oninput = () => {
-      store.setState((current) => ({
-        ...current,
-        faceDraftName: nameInput.value,
-      }));
     };
 
     saveButton.onclick = async () => {
@@ -322,62 +312,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     }
   }
 
-  function syncFacePanel(root: HTMLElement): void {
-    const state = store.getState();
-    const summary = root.querySelector<HTMLElement>('#face-summary-metric');
-    const status = root.querySelector<HTMLElement>('#face-status-value');
-    const inference = root.querySelector<HTMLElement>('#face-inference-value');
-    const embeddings = root.querySelector<HTMLElement>('#face-embeddings-value');
-    const library = root.querySelector<HTMLElement>('#face-library-value');
-    const results = root.querySelector<HTMLElement>('#face-results-list');
-    const cameraToggle = root.querySelector<HTMLButtonElement>('#face-camera-toggle');
-    const uploadTrigger = root.querySelector<HTMLButtonElement>('#face-upload-trigger');
-    const saveTrigger = root.querySelector<HTMLButtonElement>('#face-save-trigger');
-    const cameraVideo = root.querySelector<HTMLElement>('#face-camera-video');
-    const cameraOverlay = root.querySelector<HTMLElement>('#face-camera-overlay');
-    const cameraPlaceholder = root.querySelector<HTMLElement>('.camera-placeholder');
-
-    if (summary) {
-      summary.textContent = formatFaceSummary(state);
-      summary.classList.toggle('is-good', state.faceWorkerReady);
-      summary.classList.toggle('is-bad', !state.faceWorkerReady);
-    }
-    if (status) {
-      status.textContent = state.faceStatus;
-    }
-    if (inference) {
-      inference.textContent = state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`;
-    }
-    if (embeddings) {
-      embeddings.textContent = `${state.faceLastEmbeddingsExtracted} new / ${state.faceLastEmbeddingsReused} cached`;
-    }
-    if (library) {
-      library.textContent = `${state.faceLibraryEmbeddings} embeddings / ${state.faceLibraryPeople} people`;
-    }
-    if (cameraToggle) {
-      cameraToggle.textContent = state.faceCameraActive ? 'Stop Camera' : 'Start Camera';
-    }
-    if (cameraVideo) {
-      cameraVideo.classList.toggle('is-hidden', !state.faceCameraActive);
-    }
-    if (cameraOverlay) {
-      cameraOverlay.classList.toggle('is-hidden', !state.faceCameraActive);
-    }
-    if (cameraPlaceholder) {
-      cameraPlaceholder.classList.toggle('is-hidden', state.faceCameraActive);
-    }
-    if (uploadTrigger) {
-      uploadTrigger.disabled = state.faceWorkerBusy;
-      uploadTrigger.textContent = state.faceWorkerBusy ? 'Processing…' : 'Detect From Image';
-    }
-    if (saveTrigger) {
-      saveTrigger.disabled = !state.faceLastFaces.some((face) => Array.isArray(face.embedding));
-    }
-    if (results) {
-      results.innerHTML = renderFaceResults(state.faceLastFaces);
-    }
-  }
-
   function stabilizeFaces(nextFaces: DetectedFace[]): DetectedFace[] {
     const now = Date.now();
     if (nextFaces.length > 0) {
@@ -396,56 +330,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stableFacesAt = 0;
     return [];
   }
-}
-
-function formatFaceSummary(state: AppState): string {
-  if (state.faceWorkerBusy) return 'Running';
-  if (!state.faceWorkerReady) return 'Loading worker';
-  return state.faceLastDetectedCount > 0 ? `${state.faceLastDetectedCount} detected` : 'Ready';
-}
-
-function renderFaceResults(faces: DetectedFace[]): string {
-  if (faces.length === 0) {
-    return '<li class="face-item face-item-empty">No detections yet.</li>';
-  }
-
-  return faces.map((face, index) => {
-    const name = escapeHtml(face.name ?? face.match?.name ?? `Face ${index + 1}`);
-    const meta = escapeHtml(renderFaceMeta(face));
-    const score = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
-    return `
-      <li class="face-item">
-        <div class="face-item-copy">
-          <strong>${name}</strong>
-          <span>${meta}</span>
-        </div>
-        <span>${score}%</span>
-      </li>
-    `;
-  }).join('');
-}
-
-function renderFaceMeta(face: DetectedFace): string {
-  const parts: string[] = [];
-  if (face.match?.name) {
-    parts.push(`matched ${face.match.name}`);
-  }
-  if (typeof face.confidence === 'number') {
-    parts.push(`conf ${(face.confidence * 100).toFixed(0)}%`);
-  }
-  if (typeof face.score === 'number') {
-    parts.push(`score ${(face.score * 100).toFixed(0)}%`);
-  }
-  return parts.join(' · ') || 'unclassified';
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
 }
 
 async function detectUploadedFile(worker: FaceWorkerClient, file: File, store: AppStore): Promise<void> {

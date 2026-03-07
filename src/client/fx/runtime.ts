@@ -93,8 +93,6 @@ type ExpressionColorKey =
   | 'tearColorHex';
 
 export function createFxRuntime(store: AppStore): FxRuntime {
-  const pendingTimers = new Map<string, number>();
-
   return {
     init(): void {
       const config = store.getState().config;
@@ -106,259 +104,13 @@ export function createFxRuntime(store: AppStore): FxRuntime {
         fxBaseColorDraft: config.glitchFxBaseColor,
       }));
     },
-    bind(root: HTMLElement): void {
-      const toggle = root.querySelector<HTMLButtonElement>('#fx-toggle');
-      const openEditor = root.querySelector<HTMLButtonElement>('#fx-editor-open');
-      const closeEditor = root.querySelector<HTMLButtonElement>('#fx-editor-close');
-      const renderMode = root.querySelector<HTMLSelectElement>('#face-render-mode-select');
-      const renderQuality = root.querySelector<HTMLSelectElement>('#face-render-quality-select');
-      const renderer = root.querySelector<HTMLSelectElement>('#glitch-renderer-select');
-      const preset = root.querySelector<HTMLSelectElement>('#glitch-preset-select');
-      const reset = root.querySelector<HTMLButtonElement>('#glitch-reset-button');
-      const exportButton = root.querySelector<HTMLButtonElement>('#glitch-export-button');
-      const importButton = root.querySelector<HTMLButtonElement>('#glitch-import-button');
-      const colorInput = root.querySelector<HTMLInputElement>('#fx-base-color');
-      const colorApply = root.querySelector<HTMLButtonElement>('#fx-color-apply');
-      const beamColorInput = root.querySelector<HTMLInputElement>('#fx-scanbeam-color');
-      const beamColorApply = root.querySelector<HTMLButtonElement>('#fx-scanbeam-color-apply');
-      const expressionSelect = root.querySelector<HTMLSelectElement>('#fx-expression-select');
-      const expressionReset = root.querySelector<HTMLButtonElement>('#fx-expression-reset');
-      const rangeInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-config-range]');
-      const toggleInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-config-toggle]');
-      const expressionRangeInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-range]');
-      const expressionToggleInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-toggle]');
-      const expressionSelectInputs = root.querySelectorAll<HTMLSelectElement>('[data-fx-expression-select]');
-      const expressionColorInputs = root.querySelectorAll<HTMLInputElement>('[data-fx-expression-color]');
-
-      if (
-        !toggle || !openEditor || !closeEditor || !renderMode || !renderQuality || !renderer ||
-        !preset || !reset || !exportButton || !importButton ||
-        !colorInput || !colorApply || !beamColorInput || !beamColorApply ||
-        !expressionSelect || !expressionReset
-      ) {
-        return;
-      }
-
-      toggle.onclick = async () => {
-        const enabled = !store.getState().config?.glitchFxEnabled;
-        await patchConfig(store, { glitchFxEnabled: enabled });
-      };
-
-      openEditor.onclick = () => {
-        store.setState((current) => ({
-          ...current,
-          fxEditorOpen: true,
-          currentExpression: current.fxExpressionSelected,
-        }));
-      };
-
-      closeEditor.onclick = () => {
-        store.setState((current) => ({
-          ...current,
-          fxEditorOpen: false,
-          currentExpression: current.sleeping ? 'sleep' : 'idle',
-        }));
-      };
-
-      colorInput.oninput = () => {
-        store.setState((current) => ({
-          ...current,
-          fxBaseColorDraft: normalizeHex(colorInput.value, current.fxBaseColorDraft),
-        }));
-      };
-
-      colorApply.onclick = async () => {
-        await patchConfig(store, { glitchFxBaseColor: normalizeHex(colorInput.value, store.getState().fxBaseColorDraft) });
-      };
-
-      renderMode.onchange = async () => {
-        await patchConfig(store, {
-          faceRenderMode: renderMode.value === 'css'
-            ? 'css'
-            : renderMode.value === 'svg'
-              ? 'svg'
-              : 'glitch',
-        });
-      };
-
-      renderQuality.onchange = async () => {
-        const value = renderQuality.value === 'balanced' || renderQuality.value === 'low' ? renderQuality.value : 'high';
-        await patchConfig(store, { renderQuality: value });
-      };
-
-      renderer.onchange = async () => {
-        const value = renderer.value === 'webgpu' || renderer.value === 'canvas2d' ? renderer.value : 'auto';
-        await patchConfig(store, { glitchRenderer: value });
-      };
-
-      preset.onchange = async () => {
-        const selected = GLITCH_PRESETS[preset.value];
-        if (!selected) {
-          return;
-        }
-        await patchConfig(store, selected);
-        preset.value = '';
-      };
-
-      reset.onclick = async () => {
-        await patchConfig(store, GLITCH_PRESETS.default ?? {});
-      };
-
-      exportButton.onclick = () => {
-        exportConfig(store.getState().config);
-      };
-
-      importButton.onclick = () => {
-        void importConfig(store);
-      };
-
-      rangeInputs.forEach((input) => {
-        input.oninput = () => {
-          const key = input.dataset.fxConfigRange;
-          const patch = key ? getRangePatch(key, Number(input.value)) : null;
-          if (!key || !patch) {
-            return;
-          }
-          queuePatch(key, patch);
-        };
-      });
-
-      toggleInputs.forEach((input) => {
-        input.onchange = async () => {
-          const key = input.dataset.fxConfigToggle;
-          const patch = key ? getTogglePatch(key, input.checked) : null;
-          if (!patch) {
-            return;
-          }
-          await patchConfig(store, patch);
-        };
-      });
-
-      beamColorInput.oninput = () => {
-        beamColorInput.value = normalizeHex(
-          beamColorInput.value,
-          store.getState().config?.glitchScanBeamColor ?? '#a600ff',
-        );
-      };
-
-      beamColorApply.onclick = async () => {
-        await patchConfig(store, {
-          glitchScanBeamColor: normalizeHex(
-            beamColorInput.value,
-            store.getState().config?.glitchScanBeamColor ?? '#a600ff',
-          ),
-        });
-      };
-
-      expressionSelect.onchange = () => {
-        const next = normalizeExpressionName(expressionSelect.value);
-        store.setState((current) => ({
-          ...current,
-          fxExpressionSelected: next,
-          ...(current.fxEditorOpen ? { currentExpression: next } : {}),
-        }));
-      };
-
-      expressionReset.onclick = async () => {
-        const expression = store.getState().fxExpressionSelected;
-        await patchConfig(store, patchExpressionProfile(store.getState().config, expression, null));
-        previewExpression(store, expression);
-      };
-
-      expressionRangeInputs.forEach((input) => {
-        input.oninput = () => {
-          const key = input.dataset.fxExpressionRange;
-          if (!key) {
-            return;
-          }
-          const value = Number(input.value);
-          if (!Number.isFinite(value)) {
-            return;
-          }
-          void patchConfig(
-            store,
-            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
-              type: 'range',
-              key,
-              value,
-            }),
-          );
-          previewExpression(store, store.getState().fxExpressionSelected);
-        };
-      });
-
-      expressionToggleInputs.forEach((input) => {
-        input.onchange = () => {
-          const key = input.dataset.fxExpressionToggle;
-          if (!key) {
-            return;
-          }
-          void patchConfig(
-            store,
-            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
-              type: 'toggle',
-              key,
-              value: input.checked,
-            }),
-          );
-          previewExpression(store, store.getState().fxExpressionSelected);
-        };
-      });
-
-      expressionSelectInputs.forEach((input) => {
-        input.onchange = () => {
-          const key = input.dataset.fxExpressionSelect;
-          if (!key) {
-            return;
-          }
-          void patchConfig(
-            store,
-            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
-              type: 'select',
-              key,
-              value: input.value,
-            }),
-          );
-          previewExpression(store, store.getState().fxExpressionSelected);
-        };
-      });
-
-      expressionColorInputs.forEach((input) => {
-        input.onchange = () => {
-          const key = input.dataset.fxExpressionColor;
-          if (!key) {
-            return;
-          }
-          const fallback = key === 'tearColorHex' ? '#57bfff' : '#a855f7';
-          void patchConfig(
-            store,
-            patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, {
-              type: 'color',
-              key,
-              value: normalizeHex(input.value, fallback),
-            }),
-          );
-          previewExpression(store, store.getState().fxExpressionSelected);
-        };
-      });
+    bind(_root: HTMLElement): void {
+      // React owns the FX controls now.
     },
   };
-
-  function queuePatch(key: string, patch: Partial<ConfigResponse>): void {
-    applyOptimisticConfigPatch(store, patch);
-    const existing = pendingTimers.get(key);
-    if (existing != null) {
-      window.clearTimeout(existing);
-    }
-    const timer = window.setTimeout(() => {
-      pendingTimers.delete(key);
-      void patchConfig(store, patch);
-    }, 120);
-    pendingTimers.set(key, timer);
-  }
 }
 
-async function patchConfig(store: AppStore, patch: Partial<ConfigResponse>): Promise<void> {
+export async function patchConfig(store: AppStore, patch: Partial<ConfigResponse>): Promise<void> {
   applyOptimisticConfigPatch(store, patch);
   try {
     const config = await postJson<Partial<ConfigResponse>, ConfigResponse>('/config', patch);
@@ -372,7 +124,7 @@ async function patchConfig(store: AppStore, patch: Partial<ConfigResponse>): Pro
   }
 }
 
-function applyOptimisticConfigPatch(store: AppStore, patch: Partial<ConfigResponse>): void {
+export function applyOptimisticConfigPatch(store: AppStore, patch: Partial<ConfigResponse>): void {
   store.setState((current) => ({
     ...current,
     ...(current.config ? { config: { ...current.config, ...patch } } : {}),
@@ -380,7 +132,7 @@ function applyOptimisticConfigPatch(store: AppStore, patch: Partial<ConfigRespon
   }));
 }
 
-function getRangePatch(key: string, value: number): Partial<ConfigResponse> | null {
+export function getRangePatch(key: string, value: number): Partial<ConfigResponse> | null {
   if (!Number.isFinite(value)) {
     return null;
   }
@@ -493,7 +245,7 @@ function getRangePatch(key: string, value: number): Partial<ConfigResponse> | nu
   }
 }
 
-function getTogglePatch(key: string, value: boolean): Partial<ConfigResponse> | null {
+export function getTogglePatch(key: string, value: boolean): Partial<ConfigResponse> | null {
   switch (key as ToggleConfigKey) {
     case 'glitchScanlines':
       return { glitchScanlines: value };
@@ -514,7 +266,7 @@ function getTogglePatch(key: string, value: boolean): Partial<ConfigResponse> | 
   }
 }
 
-function exportConfig(config: ConfigResponse | null): void {
+export function exportConfig(config: ConfigResponse | null): void {
   if (!config) {
     return;
   }
@@ -531,7 +283,7 @@ function exportConfig(config: ConfigResponse | null): void {
   URL.revokeObjectURL(url);
 }
 
-async function importConfig(store: AppStore): Promise<void> {
+export async function importConfig(store: AppStore): Promise<void> {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.json,application/json';
@@ -560,24 +312,24 @@ async function importConfig(store: AppStore): Promise<void> {
   input.click();
 }
 
-function normalizeHex(value: string, fallback: `#${string}`): `#${string}` {
+export function normalizeHex(value: string, fallback: `#${string}`): `#${string}` {
   const normalized = value.trim().toLowerCase();
   return /^#[0-9a-f]{6}$/.test(normalized) ? normalized as `#${string}` : fallback;
 }
 
-function normalizeExpressionName(value: string): ExpressionName {
+export function normalizeExpressionName(value: string): ExpressionName {
   const normalized = value.trim() as ExpressionName;
   return normalized in DEFAULT_EXPRESSION_PROFILES ? normalized : 'idle';
 }
 
-function previewExpression(store: AppStore, expression: ExpressionName): void {
+export function previewExpression(store: AppStore, expression: ExpressionName): void {
   store.setState((current) => ({
     ...current,
     ...(current.fxEditorOpen ? { currentExpression: expression } : {}),
   }));
 }
 
-function patchExpressionProfile(
+export function patchExpressionProfile(
   config: ConfigResponse | null,
   expression: ExpressionName,
   change: ProfileChange | null,

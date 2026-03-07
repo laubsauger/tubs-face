@@ -75,36 +75,13 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     bind(root: HTMLElement): void {
       const enableButton = root.querySelector<HTMLButtonElement>('#voice-enable-mic');
       const recordButton = root.querySelector<HTMLButtonElement>('#voice-record-button');
-      const wakeWordToggle = root.querySelector<HTMLInputElement>('#voice-wakeword-toggle');
-      const handsFreeToggle = root.querySelector<HTMLInputElement>('#voice-handsfree-toggle');
 
-      if (!enableButton || !recordButton || !wakeWordToggle || !handsFreeToggle) {
+      if (!enableButton || !recordButton) {
         return;
       }
 
       enableButton.onclick = async () => {
         await ensureMicrophone();
-      };
-
-      wakeWordToggle.checked = store.getState().voiceWakeWordEnabled;
-      wakeWordToggle.onchange = () => {
-        store.setState((current) => ({
-          ...current,
-          voiceWakeWordEnabled: wakeWordToggle.checked,
-        }));
-      };
-
-      handsFreeToggle.checked = store.getState().voiceHandsFreeEnabled;
-      handsFreeToggle.onchange = () => {
-        store.setState((current) => ({
-          ...current,
-          voiceHandsFreeEnabled: handsFreeToggle.checked,
-          listenState: current.recording
-            ? current.listenState
-            : handsFreeToggle.checked
-              ? 'Hands-free ready'
-              : (current.micReady ? 'Mic ready' : current.listenState),
-        }));
       };
 
       recordButton.onpointerdown = async (event) => {
