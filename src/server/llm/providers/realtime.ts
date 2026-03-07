@@ -25,7 +25,7 @@ function getAuthState(): LlmAuthState {
   if (!apiKey) {
     return {
       ready: false,
-      warningMessage: '[llm] OPENAI_API_KEY missing for realtime provider. Falling back to demo replies.',
+      warningMessage: '[llm] OPENAI_API_KEY missing for realtime provider. Assistant generation is unavailable.',
       auth: null,
     };
   }

@@ -63,13 +63,16 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
 
   return (
     <main className={`shell ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
-      <HeroSection store={store} />
+      <TopBar store={store} />
       <section className="visual-workspace">
         <VoicePanel store={store} {...(controls?.voice ? { controls: controls.voice } : {})} />
         <VisualShell store={store} mode="main" />
         <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
       </section>
-      <ChatPanel store={store} />
+      <section className="chat-log-row">
+        <ChatPanel store={store} />
+        <EventLogPanel store={store} />
+      </section>
       <section className="grid">
         <ConnectionPanel store={store} />
         <HealthPanel store={store} />
@@ -79,10 +82,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
         <ControlsPanel store={store} {...(controls ? { controls } : {})} />
         <FxPanel store={store} />
         <ManualPanel store={store} />
-      </section>
-      <section className="grid">
         <StreamDebugPanel store={store} />
-        <EventLogPanel store={store} />
       </section>
     </main>
   );
@@ -90,18 +90,14 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
 
 function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    connected: current.connected,
-    lastMessageType: current.lastMessageType,
     currentExpression: current.currentExpression,
     sleeping: current.sleeping,
-    audioPlaying: current.audioPlaying,
     currentReactionEmoji: current.currentReactionEmoji,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
     subtitleText: current.subtitleText,
     currentSpeechText: current.currentSpeechText,
     config: current.config,
-    health: current.health,
   }));
   const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
 
@@ -133,57 +129,37 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
           {state.subtitleText || state.currentSpeechText || ''}
         </div>
       </section>
-      <p className="eyebrow">Mini</p>
-      <h1>{state.connected ? 'Connected' : 'Waiting'}</h1>
-      <p className="mini-copy">
-        {state.connected ? `Last message: ${state.lastMessageType}` : 'Waiting for the TypeScript bridge server.'}
-      </p>
-      <dl className="mini-kv">
-        <div><dt>Render</dt><dd>{state.config?.faceRenderMode ?? 'n/a'}</dd></div>
-        <div><dt>Mode</dt><dd>{state.health?.processingMode ?? 'n/a'}</dd></div>
-        <div><dt>Model</dt><dd>{state.config?.llmModel ?? 'n/a'}</dd></div>
-        <div><dt>Expression</dt><dd>{state.currentExpression}</dd></div>
-        <div><dt>Sleep</dt><dd>{state.sleeping ? 'yes' : 'no'}</dd></div>
-        <div><dt>Audio</dt><dd>{state.audioPlaying ? 'speaking' : 'idle'}</dd></div>
-      </dl>
     </main>
   );
 }
 
-function HeroSection({ store }: { store: AppStore }): JSX.Element {
+
+
+function TopBar({ store }: { store: AppStore }): JSX.Element {
   const fullscreenActive = useAppSelector(store, (state) => state.fullscreenActive);
   return (
-    <section className="hero">
-      <div>
-        <p className="eyebrow">Tubs Face</p>
-        <h1>TypeScript Client Shell</h1>
-        <p className="lede">
-          Main app entry is now running from <code>src/client/</code> against the TypeScript server core.
-        </p>
-      </div>
-      <div className="hero-actions">
-        <button
-          id="window-open-mini"
-          className="button button-secondary"
-          type="button"
-          onClick={() => {
-            openMiniWindow(store, true);
-          }}
-        >
-          Open Mini Window
-        </button>
-        <button
-          id="window-fullscreen"
-          className="button"
-          type="button"
-          onClick={async () => {
-            await toggleFullscreen(store);
-          }}
-        >
-          {fullscreenActive ? 'Exit Fullscreen' : 'Fullscreen'}
-        </button>
-      </div>
-    </section>
+    <div className="top-bar">
+      <button
+        id="window-open-mini"
+        className="button button-secondary button-compact"
+        type="button"
+        onClick={() => {
+          openMiniWindow(store, true);
+        }}
+      >
+        Mini
+      </button>
+      <button
+        id="window-fullscreen"
+        className="button button-compact"
+        type="button"
+        onClick={async () => {
+          await toggleFullscreen(store);
+        }}
+      >
+        {fullscreenActive ? 'Exit FS' : 'Fullscreen'}
+      </button>
+    </div>
   );
 }
 
@@ -205,19 +181,21 @@ function VoicePanel({
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     audioPlaying: current.audioPlaying,
     voiceLastTranscript: current.voiceLastTranscript,
+    vadModel: current.config?.vadModel ?? 'rms',
   }));
 
   const pending = !state.recording && (state.listenState === 'Uploading...' || state.listenState === 'Thinking...');
 
   return (
     <article className={`${renderPanelCardClass(state.collapsed)} voice-panel-card`}>
-      <PanelHeader store={store} panelKey="voice" title="Voice" meta={state.listenState} metaId="voice-panel-meta" />
+      <PanelHeader store={store} panelKey="voice" title="Voice" meta="" metaId="voice-panel-meta" />
       <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
         <dl className="kv">
           <div><dt>Mic</dt><dd id="voice-mic-value">{state.micReady ? 'ready' : state.micDenied ? 'denied' : 'pending'}</dd></div>
           <div><dt>State</dt><dd id="voice-state-value">{state.listenState}</dd></div>
           <div><dt>Wake Word</dt><dd id="voice-wakeword-value">{state.voiceWakeWordEnabled ? 'on' : 'off'}</dd></div>
           <div><dt>Mode</dt><dd id="voice-mode-value">{state.voiceHandsFreeEnabled ? 'hands-free' : 'push-to-talk'}</dd></div>
+          <div><dt>VAD</dt><dd id="voice-vad-value">{state.vadModel}</dd></div>
           <div><dt>Playback</dt><dd id="voice-playback-value">{state.audioPlaying ? 'speaking' : 'idle'}</dd></div>
         </dl>
         <div className="voice-meter">
@@ -287,6 +265,29 @@ function VoicePanel({
             />
             <span>Require wake word</span>
           </label>
+          <label className="voice-toggle">
+            <select
+              id="voice-vad-model"
+              className="select-inline"
+              value={state.vadModel}
+              onChange={(event) => {
+                const vadModel = event.currentTarget.value;
+                void fetch('/config', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ vadModel }),
+                });
+                store.setState((current) => ({
+                  ...current,
+                  config: current.config ? { ...current.config, vadModel: vadModel as 'rms' | 'ten-vad' } : current.config,
+                }));
+              }}
+            >
+              <option value="rms">RMS (amplitude)</option>
+              <option value="ten-vad">TEN-VAD (neural)</option>
+            </select>
+            <span>VAD model</span>
+          </label>
           <p id="voice-last-transcript" className="voice-copy">
             {state.voiceLastTranscript || 'Speak naturally or use push-to-talk to send a voice turn.'}
           </p>
@@ -307,6 +308,11 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
     currentDonationSignal: current.currentDonationSignal,
     config: current.config,
     micLevel: current.micLevel,
+    recording: current.recording,
+    listenState: current.listenState,
+    voiceWakeWordEnabled: current.voiceWakeWordEnabled,
+    voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
+    conversationActive: current.conversationActive,
   }));
   const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
 
@@ -327,9 +333,15 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
       >
         {state.liveTranscriptText}
       </div>
-      <div className={`visual-mic-meter ${state.sleeping ? 'is-hidden' : ''}`}>
-        <span className="visual-mic-meter-bar" style={{ transform: `scaleX(${Math.max(0.01, state.micLevel).toFixed(3)})` }} />
-      </div>
+      <VoiceWaveformIndicator
+        micLevel={state.micLevel}
+        recording={state.recording}
+        listenState={state.listenState}
+        conversationActive={state.conversationActive}
+        voiceWakeWordEnabled={state.voiceWakeWordEnabled}
+        voiceHandsFreeEnabled={state.voiceHandsFreeEnabled}
+        hidden={state.sleeping}
+      />
       <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
         <img id="visual-donation-qr" alt="Donation QR" />
         <div className="visual-donation-copy">
@@ -339,6 +351,90 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
       </div>
     </section>
   );
+}
+
+function VoiceWaveformIndicator(props: {
+  micLevel: number;
+  recording: boolean;
+  listenState: string;
+  conversationActive: boolean;
+  voiceWakeWordEnabled: boolean;
+  voiceHandsFreeEnabled: boolean;
+  hidden: boolean;
+}): JSX.Element {
+  const bars = Array.from({ length: 20 }, (_, index) => {
+    const normalizedLevel = Math.max(0.02, Math.min(1, props.micLevel));
+    const centerBias = 1 - Math.abs(index - 9.5) / 10.5;
+    const seeded = ((index * 17) % 11) / 10;
+    const height = 6 + Math.round((normalizedLevel * 26 * (0.45 + centerBias * 0.9)) + (seeded * 6));
+    return (
+      <span
+        key={index}
+        className="visual-wave-bar"
+        style={{ height: `${Math.max(6, Math.min(34, height))}px` }}
+      />
+    );
+  });
+
+  const mode = resolveWaveformMode(props);
+  const label = resolveWaveformLabel(props, mode);
+
+  return (
+    <div className={`visual-wave-shell visual-wave-${mode} ${props.hidden ? 'is-hidden' : ''}`}>
+      <div className="visual-waveform" aria-hidden="true">
+        {bars}
+      </div>
+      <div className="visual-wave-label">{label}</div>
+    </div>
+  );
+}
+
+function resolveWaveformMode(props: {
+  recording: boolean;
+  listenState: string;
+  conversationActive: boolean;
+  voiceWakeWordEnabled: boolean;
+  voiceHandsFreeEnabled: boolean;
+}): 'idle' | 'always-on' | 'wake' | 'conversation' | 'transcribing' | 'recording' {
+  if (props.recording) {
+    return 'recording';
+  }
+  if (props.listenState === 'Uploading...' || props.listenState === 'Thinking...') {
+    return 'transcribing';
+  }
+  if (props.conversationActive) {
+    return 'conversation';
+  }
+  if (props.voiceHandsFreeEnabled && props.voiceWakeWordEnabled) {
+    return 'wake';
+  }
+  if (props.voiceHandsFreeEnabled) {
+    return 'always-on';
+  }
+  return 'idle';
+}
+
+function resolveWaveformLabel(
+  props: {
+    listenState: string;
+    voiceWakeWordEnabled: boolean;
+    voiceHandsFreeEnabled: boolean;
+  },
+  mode: ReturnType<typeof resolveWaveformMode>,
+): string {
+  if (mode === 'recording' || mode === 'transcribing') {
+    return props.listenState;
+  }
+  if (mode === 'conversation') {
+    return 'Conversation Open';
+  }
+  if (mode === 'wake') {
+    return 'Wake Word Armed';
+  }
+  if (mode === 'always-on') {
+    return props.voiceWakeWordEnabled ? 'Always Listening' : 'Always On';
+  }
+  return 'Push To Talk';
 }
 
 function FacePanel({
@@ -367,9 +463,8 @@ function FacePanel({
 
   return (
     <article id="face-panel-card" className={`${renderPanelCardClass(state.collapsed)} face-panel-card`}>
-      <PanelHeader store={store} panelKey="face" title="Face Worker" meta={formatFaceSummary(state)} />
+      <PanelHeader store={store} panelKey="face" title="Face Worker" meta="" />
       <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <p id="face-summary-metric" className={`metric ${state.faceWorkerReady ? 'is-good' : 'is-bad'}`}>{formatFaceSummary(state)}</p>
         <div className={`camera-shell ${state.faceCameraActive ? '' : 'is-inactive-shell'}`}>
           <div className="camera-stage">
             <video id="face-camera-video" className={`camera-video ${state.faceCameraActive ? '' : 'is-hidden'}`} autoPlay muted playsInline />
@@ -1358,7 +1453,7 @@ function PanelHeader(props: {
     >
       <span className="panel-title-wrap">
         <h2>{props.title}</h2>
-        <span className="panel-meta" {...(props.metaId ? { id: props.metaId } : {})}>{props.meta}</span>
+        {props.meta ? <span className="panel-meta" {...(props.metaId ? { id: props.metaId } : {})}>{props.meta}</span> : null}
       </span>
       <span className="panel-toggle-copy">{collapsed ? 'Expand' : 'Collapse'}</span>
     </button>

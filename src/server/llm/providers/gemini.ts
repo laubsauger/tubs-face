@@ -6,7 +6,7 @@ function getAuthState(): LlmAuthState {
   if (!apiKey) {
     return {
       ready: false,
-      warningMessage: '[llm] GEMINI_API_KEY missing. Falling back to demo replies.',
+      warningMessage: '[llm] GEMINI_API_KEY missing. Assistant generation is unavailable.',
       auth: null,
     };
   }

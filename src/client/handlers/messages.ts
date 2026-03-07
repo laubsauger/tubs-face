@@ -1,17 +1,27 @@
 import type { AppStore } from '../state/app-state.js';
 import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
-import { appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
-import { detectDonationSignal } from '../message-handler-utils.js';
+import { appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, reconcileIncomingChat, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
+import { detectDonationSignal, inferDonationPrompt } from '../message-handler-utils.js';
 
 const DONATION_JOY_DURATION_MS = 1_800;
+const DONATION_PROMPT_HIDE_MS = 12_000;
+const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
+const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config', 'stream_debug']);
 let donationJoyUntil = 0;
 let donationJoyResetTimer: number | null = null;
+let donationPromptTimer: number | null = null;
 
 export function applyServerMessage(store: AppStore, message: WsServerMessage, mode: 'main' | 'mini'): void {
   store.setState((current) => ({
     ...current,
     lastMessageType: message.type,
+    ...(NON_ACTIVITY_TYPES.has(message.type) ? {} : {
+      stats: current.stats ? {
+        ...current.stats,
+        lastActivity: Date.now(),
+      } : current.stats,
+    }),
   }));
 
   switch (message.type) {
@@ -75,7 +85,8 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'thinking':
       store.setState((current) => ({
         ...commitChatDraft(current, 'in'),
-        currentExpression: 'thinking',
+        currentExpression: nextExpression(current.currentExpression, 'thinking'),
+        liveTranscriptText: '',
         liveTranscriptDraft: false,
       }));
       store.appendLog('info', 'Assistant is thinking');
@@ -83,15 +94,17 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'expression':
       store.setState((current) => ({
         ...current,
-        currentExpression: message.expression,
+        currentExpression: nextExpression(current.currentExpression, message.expression),
       }));
       return;
     case 'sleep':
+      clearDonationPromptTimer();
       store.setState((current) => ({
         ...current,
         sleeping: true,
         currentExpression: 'sleep',
         currentReactionEmoji: '',
+        currentDonationSignal: null,
         subtitleText: '',
         liveTranscriptText: '',
         liveTranscriptDraft: false,
@@ -110,13 +123,44 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.appendLog('info', 'Sleep mode cleared');
       return;
     case 'turn_start':
-      store.setState((current) => ({
-        ...resetStreamDebugState(clearChatDraft(current, 'in'), message.turnId),
+      clearLiveTranscript(store);
+      store.setState((current) => {
+        if (current.currentTurnId && current.currentTurnId !== message.turnId && (current.audioPlaying || current.currentSpeechText)) {
+          window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
+            detail: {
+              turnId: current.currentTurnId,
+              previousTurnId: current.currentTurnId,
+              nextTurnId: message.turnId,
+              source: 'turn_start',
+            },
+          }));
+        }
+        return {
+          ...resetStreamDebugState(clearChatDraft(clearChatDraft(current, 'out'), 'in'), message.turnId),
         currentTurnId: message.turnId,
         currentSpeechText: '',
+        subtitleText: '',
         currentReactionEmoji: '',
-      }));
+        };
+      });
       store.appendLog('info', `Turn started: ${message.turnId}`);
+      return;
+    case 'interrupt':
+      window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
+        detail: {
+          turnId: message.turnId ?? store.getState().currentTurnId,
+          source: message.source ?? 'system',
+        },
+      }));
+      store.setState((current) => ({
+        ...clearChatDraft(current, 'out'),
+        currentSpeechText: '',
+        subtitleText: '',
+        currentReactionEmoji: '',
+        audioPlaying: false,
+        currentExpression: current.sleeping ? 'sleep' : nextExpression(current.currentExpression, 'listening'),
+      }));
+      store.appendLog('info', `Interrupt received${message.source ? ` (${message.source})` : ''}`);
       return;
     case 'turn_context':
       store.setState((current) => pushStreamDebugEntry(current, 'turn_context', {
@@ -133,9 +177,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           triggerDonationJoy(store);
         }
         return {
-          ...upsertChatDraft(current, 'in', message.text),
+          ...reconcileIncomingChat(current, message.text),
           currentIncomingText: message.text,
-          currentExpression: donationSignal ? 'love' : 'listening',
+          currentExpression: donationSignal ? 'love' : nextExpression(current.currentExpression, 'listening'),
           liveTranscriptText: message.text,
           liveTranscriptDraft: true,
           ...(donationSignal ? {
@@ -153,6 +197,8 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       if (mode === 'mini') {
         return;
       }
+      clearLiveTranscript(store);
+      applyDonationPrompt(store, message.donation ?? null, message.text);
       store.setState((current) => ({
         ...appendChatEntry(current, {
           type: 'out',
@@ -162,7 +208,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }),
         currentSpeechText: message.text,
         subtitleText: message.text,
-        currentExpression: 'speaking',
+        currentExpression: nextExpression(current.currentExpression, 'speaking'),
       }));
       store.appendLog('info', `Speak: ${message.text}`);
       return;
@@ -170,24 +216,32 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       if (mode === 'mini') {
         return;
       }
+      clearLiveTranscript(store);
       store.setState((current) => ({
-        ...pushStreamDebugEntry(current, 'llm_delta', {
+        ...upsertChatDraft(
+          pushStreamDebugEntry(current, 'llm_delta', {
           turnId: message.turnId ?? current.currentTurnId,
           deltaChars: message.text.length,
           ts: Date.now(),
-        }),
+          }),
+          'out',
+          `${current.currentSpeechText} ${message.text}`.trim(),
+          'main',
+        ),
         currentSpeechText: `${current.currentSpeechText} ${message.text}`.trim(),
         subtitleText: `${current.subtitleText} ${message.text}`.trim(),
-        currentExpression: 'speaking',
+        currentExpression: nextExpression(current.currentExpression, 'speaking'),
       }));
       return;
     case 'speak_end':
       if (mode === 'mini') {
         return;
       }
+      clearLiveTranscript(store);
+      applyDonationPrompt(store, message.donation ?? null, message.fullText ?? message.text ?? '');
       store.setState((current) => ({
-        ...current,
-        currentExpression: current.sleeping ? 'sleep' : 'idle',
+        ...commitChatDraft(current, 'out'),
+        currentExpression: current.sleeping ? 'sleep' : nextExpression(current.currentExpression, 'idle'),
         subtitleText: current.currentSpeechText,
       }));
       return;
@@ -204,17 +258,27 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }),
         currentSpeechText: message.text,
         subtitleText: message.text,
-        currentExpression: 'smile',
+        currentExpression: nextExpression(current.currentExpression, 'smile'),
       }));
       store.appendLog('info', `Backchannel: ${message.text}`);
       return;
     case 'turn_script':
       {
+        clearLiveTranscript(store);
         const targetActor = mode === 'mini' ? 'small' : 'main';
         const hasRelevantBeat = message.beats.some((beat) => beat.actor === targetActor);
         if (!hasRelevantBeat) {
           return;
         }
+        applyDonationPrompt(
+          store,
+          message.donation ?? null,
+          message.beats
+            .filter((beat) => beat.action === 'speak')
+            .map((beat) => beat.text?.trim() ?? '')
+            .filter(Boolean)
+            .join(' '),
+        );
         store.setState((current) => {
           let next: AppState = {
             ...current,
@@ -237,6 +301,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         return;
       }
     case 'audio_chunk':
+      if (mode === 'main') {
+        clearLiveTranscript(store);
+      }
       store.setState((current) => ({
         ...pushStreamDebugEntry(current, 'audio_chunk_ws_in', {
           turnId: message.turnId ?? current.currentTurnId,
@@ -244,14 +311,14 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           audioBytes: Math.round(((message.audio || '').length * 3) / 4),
           ts: Date.now(),
         }),
-        currentExpression: 'speaking',
+        currentExpression: nextExpression(current.currentExpression, 'speaking'),
       }));
       return;
     case 'donation_signal':
       triggerDonationJoy(store);
+      applyDonationPrompt(store, compactDonationSignal(message), '');
       store.setState((current) => ({
         ...current,
-        currentDonationSignal: compactDonationSignal(message),
         currentExpression: 'love',
       }));
       store.appendLog('info', `Donation signal: ${message.certainty}`);
@@ -320,6 +387,70 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     default:
       return;
   }
+}
+
+function clearLiveTranscript(store: AppStore): void {
+  store.setState((current) => ({
+    ...current,
+    liveTranscriptText: '',
+    liveTranscriptDraft: false,
+  }));
+}
+
+function applyDonationPrompt(
+  store: AppStore,
+  explicitSignal: AppState['currentDonationSignal'] | { show?: boolean } | null,
+  text: string,
+): void {
+  const nextSignal: AppState['currentDonationSignal'] = explicitSignal && 'show' in explicitSignal
+    ? (explicitSignal.show ? {
+      certainty: 'implied',
+      source: 'assistant-explicit',
+      ts: Date.now(),
+    } : null)
+    : (explicitSignal && 'certainty' in explicitSignal ? explicitSignal : null);
+  const inferredSignal = !nextSignal && inferDonationPrompt(text)
+    ? {
+      certainty: 'implied' as const,
+      source: 'assistant-text',
+      ts: Date.now(),
+    }
+    : null;
+  const signal = nextSignal ?? inferredSignal;
+  if (!signal) {
+    return;
+  }
+  clearDonationPromptTimer();
+  store.setState((current) => ({
+    ...current,
+    currentDonationSignal: signal,
+  }));
+  donationPromptTimer = window.setTimeout(() => {
+    donationPromptTimer = null;
+    store.setState((current) => ({
+      ...current,
+      currentDonationSignal: null,
+    }));
+  }, DONATION_PROMPT_HIDE_MS);
+}
+
+function clearDonationPromptTimer(): void {
+  if (donationPromptTimer == null) {
+    return;
+  }
+  window.clearTimeout(donationPromptTimer);
+  donationPromptTimer = null;
+}
+
+function isDonationJoyActive(now = Date.now()): boolean {
+  return now < donationJoyUntil;
+}
+
+function nextExpression(currentExpression: AppState['currentExpression'], proposedExpression: AppState['currentExpression']): AppState['currentExpression'] {
+  if (isDonationJoyActive() && JOY_LOCKED_EXPRESSIONS.has(proposedExpression)) {
+    return currentExpression;
+  }
+  return proposedExpression;
 }
 
 function triggerDonationJoy(store: AppStore): void {

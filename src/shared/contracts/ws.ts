@@ -179,6 +179,12 @@ export interface WsTurnStartServerMessage {
   turnId: string;
 }
 
+export interface WsInterruptServerMessage {
+  type: 'interrupt';
+  turnId?: string | null;
+  source?: 'user' | 'system' | 'turn_start' | 'voice_barge_in';
+}
+
 export interface WsTurnContextServerMessage {
   type: 'turn_context';
   turnId?: string;
@@ -274,6 +280,7 @@ export type WsServerMessage =
   | WsSpeakEndServerMessage
   | WsAudioChunkServerMessage
   | WsTurnStartServerMessage
+  | WsInterruptServerMessage
   | WsTurnContextServerMessage
   | WsTurnScriptServerMessage
   | WsBackchannelServerMessage

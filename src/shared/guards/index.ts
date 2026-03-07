@@ -26,6 +26,7 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'speak_end',
   'audio_chunk',
   'turn_start',
+  'interrupt',
   'turn_context',
   'turn_script',
   'backchannel',

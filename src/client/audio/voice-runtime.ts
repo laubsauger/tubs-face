@@ -1,6 +1,7 @@
 import type { VoiceResponse } from '../../shared/contracts/http.js';
 import type { AppStore } from '../state/app-state.js';
 import { upsertChatDraft } from '../chat/state.js';
+import { createVadProvider, type VadModelId, type VadProvider } from './vad/index.js';
 
 interface BrowserSpeechRecognitionAlternative {
   transcript: string;
@@ -59,6 +60,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let recordingStartedAt = 0;
   let speechDetectedAt = 0;
   let silenceDetectedAt = 0;
+  let vadProvider: VadProvider | null = null;
+  let vadModelId: VadModelId = 'rms';
   let unlockHandlerBound = false;
   const unlockHandler = () => {
     if (audioContext?.state === 'suspended') {
@@ -72,6 +75,16 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       bindUnlockHandlers();
       await ensureMicrophone();
       bindKeyboardShortcuts();
+      // Hot-switch VAD model when config changes
+      store.subscribeSelector(
+        (s) => s.config?.vadModel,
+        () => {
+          if (audioContext) {
+            void ensureVadProvider(audioContext.sampleRate);
+          }
+        },
+        { fireImmediately: false },
+      );
     },
     enableMic(): Promise<void> {
       return ensureMicrophone();
@@ -99,6 +112,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       if (speechRecognitionRunning) {
         speechRecognition?.abort();
       }
+      vadProvider?.dispose();
+      vadProvider = null;
       unbindUnlockHandlers();
     },
   };
@@ -132,6 +147,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       analyser.fftSize = 256;
       source.connect(analyser);
       mediaRecorder = createRecorder(micStream);
+      await ensureVadProvider(audioContext.sampleRate);
       store.setState((current) => ({
         ...current,
         micReady: true,
@@ -193,6 +209,21 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
 
+    const state = store.getState();
+    if (state.audioPlaying || state.currentSpeechText || state.currentTurnId) {
+      window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
+        detail: {
+          turnId: state.currentTurnId ?? null,
+          source: 'voice_barge_in',
+        },
+      }));
+      window.dispatchEvent(new CustomEvent('tubs:request-interrupt', {
+        detail: {
+          turnId: state.currentTurnId ?? null,
+        },
+      }));
+    }
+
     if (audioContext?.state === 'suspended') {
       await audioContext.resume().catch(() => {});
     }
@@ -222,6 +253,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     if (recordingMode && recordingMode !== mode) {
       return;
     }
+
     store.setState((current) => ({
       ...current,
       recording: false,
@@ -257,7 +289,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         `Voice bridge replied ${json.ignored ? 'ignored' : 'ok'}${json.turnId ? ` (${json.turnId.slice(0, 8)})` : ''}`,
       );
       store.setState((current) => ({
-        ...upsertChatDraft(current, 'in', json.text ?? ''),
+        ...current,
         listenState: json.ignored ? 'Ignored' : 'Thinking...',
         voiceLastTranscript: json.text ?? '',
         currentIncomingText: json.text ?? current.currentIncomingText,
@@ -377,7 +409,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         ...current,
         micLevel: Math.max(0, Math.min(1, rms * 8)),
       }));
-      handleHandsFreeVad(rms);
+      handleHandsFreeVad(rms, samples);
       levelRaf = window.requestAnimationFrame(tick);
     };
     if (!levelRaf) {
@@ -414,7 +446,30 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     });
   }
 
-  function handleHandsFreeVad(rms: number): void {
+  async function ensureVadProvider(sampleRate: number): Promise<void> {
+    const configModel = (store.getState().config?.vadModel ?? 'rms') as VadModelId;
+    if (vadProvider && vadModelId === configModel) {
+      return;
+    }
+    vadProvider?.dispose();
+    vadProvider = null;
+    vadModelId = configModel;
+    const noiseGate = store.getState().config?.vadNoiseGate ?? 0.008;
+    vadProvider = createVadProvider(configModel, { noiseGate, sampleRate });
+    try {
+      await vadProvider.init();
+      store.appendLog('info', `VAD provider: ${configModel}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'VAD init failed';
+      store.appendLog('error', `VAD ${configModel} init failed: ${message}, falling back to rms`);
+      vadProvider.dispose();
+      vadModelId = 'rms';
+      vadProvider = createVadProvider('rms', { noiseGate, sampleRate });
+      await vadProvider.init();
+    }
+  }
+
+  function handleHandsFreeVad(rms: number, samples: Float32Array): void {
     const state = store.getState();
     if (!state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || state.audioPlaying || manualPressActive) {
       speechDetectedAt = 0;
@@ -422,16 +477,28 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
 
-    const gate = Math.max(0.008, state.config?.vadNoiseGate ?? 0.008);
-    const startThreshold = Math.max(0.018, gate * 2.5);
-    const stopThreshold = Math.max(0.01, gate * 1.5);
+    // Resolve voice activity: use model provider if available, else RMS thresholds
+    let isVoice: boolean;
+    let isSilence: boolean;
+    if (vadProvider && vadModelId !== 'rms') {
+      const result = vadProvider.process(samples);
+      isVoice = result.isVoice;
+      isSilence = !result.isVoice;
+    } else {
+      const gate = Math.max(0.008, state.config?.vadNoiseGate ?? 0.008);
+      const startThreshold = Math.max(0.018, gate * 2.5);
+      const stopThreshold = Math.max(0.01, gate * 1.5);
+      isVoice = rms >= startThreshold;
+      isSilence = rms <= stopThreshold;
+    }
+
     const now = Date.now();
 
     if (!state.recording) {
       if (state.listenState === 'Uploading...' || state.listenState === 'Thinking...') {
         return;
       }
-      if (rms >= startThreshold) {
+      if (isVoice) {
         speechDetectedAt = speechDetectedAt || now;
         if (now - speechDetectedAt >= 180) {
           speechDetectedAt = 0;
@@ -452,7 +519,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
 
-    if (rms <= stopThreshold) {
+    if (isSilence) {
       silenceDetectedAt = silenceDetectedAt || now;
       if (now - silenceDetectedAt >= 900) {
         silenceDetectedAt = 0;

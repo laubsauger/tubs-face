@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import type { TurnBeat, TurnContextMeta, TurnDonation, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { SpeechEmotionPayload, WsServerMessage, WsSpeakServerMessage, WsStatsServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig, sessionStats } from '../config/runtime.js';
-import { generateDemoResponse } from './demo.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
@@ -14,6 +13,7 @@ import {
   DUAL_HEAD_RESPONSE_SCHEMA,
   hasRequiredDualHeadCoverage,
   mergeDonationSignalFromBeats,
+  type ParsedDualHeadScript,
   parseDualHeadScript,
   rescueBeatsFromRawText,
   shouldUseDualHeadDirectedMode,
@@ -24,7 +24,7 @@ export interface AssistantReply {
   text: string;
   model: string;
   latencyMs: number;
-  source: 'demo' | 'greeting' | 'llm';
+  source: 'greeting' | 'llm';
   donation: TurnDonation | null;
   emotion: SpeechEmotionPayload | null;
   contextMeta: TurnContextMeta;
@@ -38,6 +38,7 @@ export interface AssistantReply {
 export interface AssistantTurnResult {
   turnId: string;
   reply: AssistantReply;
+  superseded?: boolean;
 }
 
 interface DualHeadReply {
@@ -50,7 +51,7 @@ interface DualHeadReply {
     out: number;
   };
   costUsd: number;
-  source: 'demo' | 'greeting' | 'llm';
+  source: 'greeting' | 'llm';
   fullText: string;
   emotion: SpeechEmotionPayload | null;
   contextMeta: TurnContextMeta;
@@ -61,11 +62,49 @@ export function createTurnId(): string {
 }
 
 let assistantReplyCount = 0;
+let activeTurnEpoch = 0;
+let activeTurnId: string | null = null;
 const PERSONA_DRIFT_PHRASE_RE = /\b(certainly|however|it's important to remember|do you have any other questions|any other questions or topics you'd like to discuss|let me know if you|in conclusion)\b/i;
 const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|additionally|furthermore|moreover)\b/i;
 const PERSONA_MARKER_RE = /\b(tubs|rapha|wheel|wheels|venmo|thailand|robot|plastic tubs?)\b/i;
 const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
 const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+
+function assistantUnavailable(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AssistantUnavailableError';
+  return error;
+}
+
+export function interruptAssistantTurns(): string | null {
+  const previousTurnId = activeTurnId;
+  activeTurnEpoch += 1;
+  activeTurnId = null;
+  return previousTurnId;
+}
+
+function activateAssistantTurn(turnId: string): number {
+  activeTurnEpoch += 1;
+  activeTurnId = turnId;
+  return activeTurnEpoch;
+}
+
+function isAssistantTurnActive(turnId: string, epoch: number): boolean {
+  return activeTurnEpoch === epoch && activeTurnId === turnId;
+}
+
+function emitIfActive(
+  turnId: string,
+  epoch: number,
+  broadcast: (message: WsServerMessage) => void,
+  message: WsServerMessage,
+): boolean {
+  if (!isAssistantTurnActive(turnId, epoch)) {
+    return false;
+  }
+  broadcast(message);
+  return true;
+}
 
 export async function generateAssistantReply(userText: string): Promise<AssistantReply> {
   const normalized = userText.trim();
@@ -77,7 +116,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
       text,
       model: runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
-      source: 'demo',
+      source: 'llm',
       donation: buildDonationPayload(false),
       emotion: null,
       contextMeta: context.meta,
@@ -118,7 +157,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
     if (authState.warningMessage) {
       console.warn(authState.warningMessage);
     }
-    return buildDemoReply(normalized, startedAt, context.meta);
+    throw assistantUnavailable(authState.warningMessage || '[assistant] LLM provider unavailable');
   }
 
   try {
@@ -152,7 +191,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
     );
     const text = clampOutput(nudged.text);
     if (!text) {
-      return buildDemoReply(normalized, startedAt, context.meta);
+      throw assistantUnavailable('[assistant] LLM returned empty reply text');
     }
 
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repaired.usageIn) || estimateTokens(normalized);
@@ -182,7 +221,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
     if (error instanceof Error) {
       console.error(`[assistant] ${provider.id} generation failed: ${error.message}`);
     }
-    return buildDemoReply(normalized, startedAt, context.meta);
+    throw error instanceof Error ? error : assistantUnavailable('[assistant] Response generation failed');
   }
 }
 
@@ -265,6 +304,72 @@ async function maybeRepairPersonaDrift(args: {
   };
 }
 
+async function maybeRepairDualHeadScript(args: {
+  rawText: string;
+  userInput: string;
+  provider: ReturnType<typeof resolveLlmProvider>;
+  auth: Record<string, string> | null;
+  systemInstruction: string;
+  model: string;
+}): Promise<{ script: ParsedDualHeadScript | null; usageIn: number; usageOut: number; repaired: boolean }> {
+  const rawText = String(args.rawText ?? '').trim();
+  if (!rawText) {
+    return { script: null, usageIn: 0, usageOut: 0, repaired: false };
+  }
+
+  const repairSystemInstruction = [
+    args.systemInstruction,
+    '',
+    'You are repairing malformed model output into strict JSON.',
+    'Return only a valid JSON object with a top-level "beats" array.',
+    'Do not add commentary, markdown, or code fences.',
+    'Preserve the original wording and beat intent as much as possible.',
+    'Do not invent new dialogue unless required to make the structure valid.',
+    'If a beat has dialogue text, set action to "speak".',
+    'If a beat is silent, use action "react" with emoji and/or delayMs only.',
+    'Allowed actors: "main", "small".',
+    'Allowed actions: "speak", "react".',
+  ].join('\n');
+
+  const repairPrompt = [
+    `Original user input: ${normalizeInput(args.userInput) || '[none]'}`,
+    'Malformed raw model output to repair:',
+    rawText,
+    '',
+    'Return repaired JSON only.',
+  ].join('\n');
+
+  const result = await args.provider.generateContent({
+    auth: args.auth,
+    model: args.model,
+    systemInstruction: repairSystemInstruction,
+    contents: [{ role: 'user', parts: [{ text: repairPrompt }] }],
+    maxOutputTokens: Math.max(220, Math.min(runtimeConfig.llmMaxOutputTokens, 420)),
+    temperature: 0,
+    timeoutMs: 12_000,
+    responseMimeType: 'application/json',
+    responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
+  });
+
+  const repaired = parseDualHeadScript(result.text);
+  if (!repaired || !hasRequiredDualHeadCoverage(repaired.beats)) {
+    logDualHeadInvalidScript(result.text, 'Repair pass still returned invalid dual-head JSON.');
+    return {
+      script: null,
+      usageIn: Number(result.usage.promptTokenCount || 0),
+      usageOut: Number(result.usage.candidatesTokenCount || 0),
+      repaired: false,
+    };
+  }
+
+  return {
+    script: repaired,
+    usageIn: Number(result.usage.promptTokenCount || 0),
+    usageOut: Number(result.usage.candidatesTokenCount || 0),
+    repaired: true,
+  };
+}
+
 function isPersonaDrift(text: string): boolean {
   const normalized = normalizeInput(text).toLowerCase();
   if (!normalized) {
@@ -310,30 +415,32 @@ function stripOuterQuotes(text: string): string {
   return normalized.replace(/^["'`]+/, '').replace(/["'`]+$/, '').trim();
 }
 
-function buildDemoReply(userText: string, startedAt: number, contextMeta: TurnContextMeta = { mode: 'text' }): AssistantReply {
-  const parsed = splitTrailingEmotionEmoji(generateDemoResponse(userText));
-  const text = parsed.text || 'Okay.';
-  assistantReplyCount += 1;
-  pushHistory('user', userText);
-  pushHistory('model', text);
-  return {
-    text,
-    model: runtimeConfig.llmModel,
-    latencyMs: Date.now() - startedAt,
-    source: 'demo',
-    donation: buildDonationPayload(false),
-    emotion: parsed.emotion,
-    contextMeta,
-    tokens: {
-      in: estimateTokens(userText),
-      out: estimateTokens(text),
-    },
-    costUsd: 0,
-  };
+function formatDualHeadRawForLog(rawText: string): string {
+  const normalized = String(rawText ?? '')
+    .replace(/\r/g, '')
+    .trim();
+  if (!normalized) {
+    return '[empty response]';
+  }
+  const limited = normalized.length > 2400
+    ? `${normalized.slice(0, 2400)}\n...[truncated ${normalized.length - 2400} chars]`
+    : normalized;
+  return limited;
+}
+
+function logDualHeadInvalidScript(rawText: string, reason: string): void {
+  const block = [
+    `[LLM:dual] ${reason}`,
+    '[LLM:dual] Raw model output begin',
+    formatDualHeadRawForLog(rawText),
+    '[LLM:dual] Raw model output end',
+  ].join('\n');
+  process.stderr.write(`${block}\n`);
 }
 
 export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult> {
   const turnId = createTurnId();
+  const epoch = activateAssistantTurn(turnId);
   broadcast({
     type: 'turn_start',
     turnId,
@@ -342,19 +449,53 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
   if (shouldUseDualHeadDirectedMode()) {
     const dualHead = await generateDualHeadReply(userText);
 
-    broadcast({
+    if (!isAssistantTurnActive(turnId, epoch)) {
+      return {
+        turnId,
+        reply: {
+          text: dualHead.fullText,
+          model: dualHead.model,
+          latencyMs: dualHead.latencyMs,
+          source: dualHead.source,
+          donation: dualHead.donation,
+          emotion: dualHead.emotion,
+          contextMeta: dualHead.contextMeta,
+          tokens: dualHead.tokens,
+          costUsd: dualHead.costUsd,
+        },
+        superseded: true,
+      };
+    }
+
+    emitIfActive(turnId, epoch, broadcast, {
       type: 'turn_context',
       turnId,
       meta: dualHead.contextMeta,
     });
 
-    broadcast({
+    if (!emitIfActive(turnId, epoch, broadcast, {
       type: 'turn_script',
       turnId,
       beats: dualHead.beats,
       ...(dualHead.donation ? { donation: dualHead.donation } : {}),
       ts: Date.now(),
-    });
+    })) {
+      return {
+        turnId,
+        reply: {
+          text: dualHead.fullText,
+          model: dualHead.model,
+          latencyMs: dualHead.latencyMs,
+          source: dualHead.source,
+          donation: dualHead.donation,
+          emotion: dualHead.emotion,
+          contextMeta: dualHead.contextMeta,
+          tokens: dualHead.tokens,
+          costUsd: dualHead.costUsd,
+        },
+        superseded: true,
+      };
+    }
 
     sessionStats.messagesOut += 1;
     sessionStats.lastActivity = Date.now();
@@ -363,7 +504,7 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
     sessionStats.costUsd += dualHead.costUsd;
     sessionStats.model = dualHead.model;
 
-    broadcast({
+    emitIfActive(turnId, epoch, broadcast, {
       type: 'stats',
       tokens: dualHead.tokens,
       totals: {
@@ -394,20 +535,26 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
 
   const reply = await generateAssistantReply(userText);
 
-  broadcast({
+  if (!isAssistantTurnActive(turnId, epoch)) {
+    return { turnId, reply, superseded: true };
+  }
+
+  emitIfActive(turnId, epoch, broadcast, {
     type: 'turn_context',
     turnId,
     meta: reply.contextMeta,
   });
 
-  broadcast({
+  if (!emitIfActive(turnId, epoch, broadcast, {
     type: 'speak',
     text: reply.text,
     ts: Date.now(),
     donation: reply.donation,
     emotion: reply.emotion,
     turnId,
-  } satisfies WsSpeakServerMessage);
+  } satisfies WsSpeakServerMessage)) {
+    return { turnId, reply, superseded: true };
+  }
 
   sessionStats.messagesOut += 1;
   sessionStats.lastActivity = Date.now();
@@ -416,7 +563,7 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
   sessionStats.costUsd += reply.costUsd;
   sessionStats.model = reply.model;
 
-  broadcast({
+  emitIfActive(turnId, epoch, broadcast, {
     type: 'stats',
     tokens: reply.tokens,
     totals: {
@@ -434,6 +581,7 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
 
 export async function runProactiveTurn(context: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult | null> {
   const turnId = createTurnId();
+  const epoch = activateAssistantTurn(turnId);
   broadcast({
     type: 'turn_start',
     turnId,
@@ -447,7 +595,25 @@ export async function runProactiveTurn(context: string, broadcast: (message: WsS
     return null;
   }
 
-  broadcast({
+  if (!isAssistantTurnActive(turnId, epoch)) {
+    return {
+      turnId,
+      reply: {
+        text: isDualHeadReply(reply) ? reply.fullText : reply.text,
+        model: reply.model,
+        latencyMs: reply.latencyMs,
+        source: reply.source,
+        donation: reply.donation,
+        emotion: reply.emotion,
+        contextMeta: reply.contextMeta,
+        tokens: reply.tokens,
+        costUsd: reply.costUsd,
+      },
+      superseded: true,
+    };
+  }
+
+  emitIfActive(turnId, epoch, broadcast, {
     type: 'turn_context',
     turnId,
     meta: reply.contextMeta,
@@ -456,22 +622,54 @@ export async function runProactiveTurn(context: string, broadcast: (message: WsS
   const proactiveText = isDualHeadReply(reply) ? reply.fullText : reply.text;
 
   if (isDualHeadReply(reply)) {
-    broadcast({
+    if (!emitIfActive(turnId, epoch, broadcast, {
       type: 'turn_script',
       turnId,
       beats: reply.beats,
       ...(reply.donation ? { donation: reply.donation } : {}),
       ts: Date.now(),
-    });
+    })) {
+      return {
+        turnId,
+        reply: {
+          text: proactiveText,
+          model: reply.model,
+          latencyMs: reply.latencyMs,
+          source: reply.source,
+          donation: reply.donation,
+          emotion: reply.emotion,
+          contextMeta: reply.contextMeta,
+          tokens: reply.tokens,
+          costUsd: reply.costUsd,
+        },
+        superseded: true,
+      };
+    }
   } else {
-    broadcast({
+    if (!emitIfActive(turnId, epoch, broadcast, {
       type: 'speak',
       text: proactiveText,
       ts: Date.now(),
       donation: reply.donation,
       emotion: reply.emotion,
       turnId,
-    } satisfies WsSpeakServerMessage);
+    } satisfies WsSpeakServerMessage)) {
+      return {
+        turnId,
+        reply: {
+          text: proactiveText,
+          model: reply.model,
+          latencyMs: reply.latencyMs,
+          source: reply.source,
+          donation: reply.donation,
+          emotion: reply.emotion,
+          contextMeta: reply.contextMeta,
+          tokens: reply.tokens,
+          costUsd: reply.costUsd,
+        },
+        superseded: true,
+      };
+    }
   }
 
   sessionStats.messagesOut += 1;
@@ -481,7 +679,7 @@ export async function runProactiveTurn(context: string, broadcast: (message: WsS
   sessionStats.costUsd += reply.costUsd;
   sessionStats.model = reply.model;
 
-  broadcast({
+  emitIfActive(turnId, epoch, broadcast, {
     type: 'stats',
     tokens: reply.tokens,
     totals: {
@@ -534,7 +732,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
         out: estimateTokens(text),
       },
       costUsd: 0,
-      source: 'demo',
+      source: 'llm',
       fullText: text,
       emotion: defaultDualHeadSpeakEmotion('main'),
       contextMeta: context.meta,
@@ -545,42 +743,16 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
     if (authState.warningMessage) {
       console.warn(authState.warningMessage);
     }
-    const demo = buildDemoReply(normalized, startedAt, context.meta);
-    return {
-      beats: [
-        {
-          actor: 'main',
-          action: 'speak',
-          text: demo.text,
-          emotion: toTurnEmotion(demo.emotion ?? defaultDualHeadSpeakEmotion('main')),
-        },
-        {
-          actor: 'small',
-          action: 'speak',
-          text: buildSecondaryFallback(demo.text),
-          emotion: toTurnEmotion(defaultDualHeadSpeakEmotion('small')),
-          delayMs: 180,
-        },
-      ],
-      donation: demo.donation,
-      model: `${demo.model}-dual-fallback`,
-      latencyMs: Date.now() - startedAt,
-      tokens: {
-        in: demo.tokens.in,
-        out: demo.tokens.out + estimateTokens(buildSecondaryFallback(demo.text)),
-      },
-      costUsd: 0,
-      source: 'demo',
-      fullText: demo.text,
-      emotion: demo.emotion,
-      contextMeta: demo.contextMeta,
-    };
+    throw assistantUnavailable(authState.warningMessage || '[assistant] Dual-head LLM provider unavailable');
   }
 
   try {
+    const dualHeadModel = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel;
+    let repairUsageIn = 0;
+    let repairUsageOut = 0;
     const result = await provider.generateContent({
       auth: authState.auth,
-      model: String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel,
+      model: dualHeadModel,
       systemInstruction: buildDualHeadSystemInstruction(getVisualContext()),
       contents: context.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
@@ -592,13 +764,28 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
-      console.warn('[LLM:dual] Invalid script JSON, attempting regex rescue from raw text.');
+      logDualHeadInvalidScript(result.text, 'Invalid script JSON, attempting regex rescue from raw text.');
       const rescued = rescueBeatsFromRawText(result.text);
       if (rescued && hasRequiredDualHeadCoverage(rescued.beats)) {
         script = rescued;
+      } else {
+        const repaired = await maybeRepairDualHeadScript({
+          rawText: result.text,
+          userInput: normalized,
+          provider,
+          auth: authState.auth,
+          systemInstruction: buildDualHeadSystemInstruction(getVisualContext()),
+          model: dualHeadModel,
+        });
+        repairUsageIn += repaired.usageIn;
+        repairUsageOut += repaired.usageOut;
+        if (repaired.script) {
+          script = repaired.script;
+        }
       }
     }
     if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
+      logDualHeadInvalidScript(result.text, 'No valid dual-head script returned by LLM.');
       throw new Error('No valid dual-head script returned by LLM');
     }
 
@@ -631,8 +818,8 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
       throw new Error('Dual-head script produced empty output');
     }
 
-    const tokensIn = Number(result.usage.promptTokenCount || 0) || estimateTokens(normalized);
-    const tokensOut = Number(result.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
+    const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(normalized);
+    const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     assistantReplyCount += 1;
     pushHistory('user', normalized);
@@ -642,7 +829,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
     return {
       beats,
       donation,
-      model: result.model || runtimeConfig.llmModel,
+      model: result.model || dualHeadModel,
       latencyMs: Date.now() - startedAt,
       tokens: {
         in: tokensIn,
@@ -658,36 +845,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
     if (error instanceof Error) {
       console.error(`[assistant] dual-head generation failed: ${error.message}`);
     }
-    const demo = buildDemoReply(normalized, startedAt, context.meta);
-    return {
-      beats: [
-        {
-          actor: 'main',
-          action: 'speak',
-          text: demo.text,
-          emotion: toTurnEmotion(demo.emotion ?? defaultDualHeadSpeakEmotion('main')),
-        },
-        {
-          actor: 'small',
-          action: 'speak',
-          text: buildSecondaryFallback(demo.text),
-          emotion: toTurnEmotion(defaultDualHeadSpeakEmotion('small')),
-          delayMs: 180,
-        },
-      ],
-      donation: demo.donation,
-      model: `${demo.model}-dual-fallback`,
-      latencyMs: Date.now() - startedAt,
-      tokens: {
-        in: demo.tokens.in,
-        out: demo.tokens.out + estimateTokens(buildSecondaryFallback(demo.text)),
-      },
-      costUsd: 0,
-      source: 'demo',
-      fullText: demo.text,
-      emotion: demo.emotion,
-      contextMeta: demo.contextMeta,
-    };
+    throw error instanceof Error ? error : assistantUnavailable('[assistant] Dual-head generation failed');
   }
 }
 
@@ -770,9 +928,12 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
   const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: You are starting conversation unprompted. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.`;
 
   try {
+    const dualHeadModel = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel;
+    let repairUsageIn = 0;
+    let repairUsageOut = 0;
     const result = await provider.generateContent({
       auth: authState.auth,
-      model: String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel,
+      model: dualHeadModel,
       systemInstruction,
       contents: contents.contents,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
@@ -784,12 +945,28 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
+      logDualHeadInvalidScript(result.text, 'Invalid proactive dual-head script JSON, attempting regex rescue from raw text.');
       const rescued = rescueBeatsFromRawText(result.text);
       if (rescued && hasRequiredDualHeadCoverage(rescued.beats)) {
         script = rescued;
+      } else {
+        const repaired = await maybeRepairDualHeadScript({
+          rawText: result.text,
+          userInput: context,
+          provider,
+          auth: authState.auth,
+          systemInstruction,
+          model: dualHeadModel,
+        });
+        repairUsageIn += repaired.usageIn;
+        repairUsageOut += repaired.usageOut;
+        if (repaired.script) {
+          script = repaired.script;
+        }
       }
     }
     if (!script || !hasRequiredDualHeadCoverage(script.beats)) {
+      logDualHeadInvalidScript(result.text, 'No valid proactive dual-head script returned by LLM.');
       return null;
     }
 
@@ -822,14 +999,14 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
     pushHistory('model', fullText);
     assistantReplyCount += 1;
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
-    const tokensIn = Number(result.usage.promptTokenCount || 0) || estimateTokens(context);
-    const tokensOut = Number(result.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
+    const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(context);
+    const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
     console.log(`[LLM:dual-proactive] beats=${beats.length} donation=${donation.show ? donation.reason : 'none'}${summarizeDualHeadBeatsForLog(beats, { userInput: context })}`);
 
     return {
       beats,
       donation,
-      model: result.model || runtimeConfig.llmModel,
+      model: result.model || dualHeadModel,
       latencyMs: Date.now() - startedAt,
       tokens: {
         in: tokensIn,
@@ -847,17 +1024,6 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
     }
     return null;
   }
-}
-
-function buildSecondaryFallback(mainText: string): string {
-  const normalized = mainText.trim();
-  if (!normalized) {
-    return 'tiny tubs is here.';
-  }
-  const firstSentence = normalized.split(/[.!?]\s/)[0]?.trim() || normalized;
-  return firstSentence.length > 48
-    ? `${firstSentence.slice(0, 45).trim()}...`
-    : `${firstSentence}`;
 }
 
 function toTurnEmotion(emotion: SpeechEmotionPayload): TurnEmotion {

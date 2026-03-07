@@ -49,6 +49,54 @@ export function upsertChatDraft(
   };
 }
 
+export function reconcileIncomingChat(state: AppState, text: string): AppState {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    return clearChatDraft(state, 'in');
+  }
+
+  for (let index = state.chatEntries.length - 1; index >= 0; index -= 1) {
+    const entry = state.chatEntries[index];
+    if (!entry) {
+      continue;
+    }
+    if (entry.type !== 'in') {
+      continue;
+    }
+
+    if (entry.draft) {
+      const nextEntries = [...state.chatEntries];
+      nextEntries[index] = {
+        ...entry,
+        text: normalized,
+        ts: Date.now(),
+      } satisfies ChatEntry;
+      return {
+        ...state,
+        chatEntries: nextEntries,
+      };
+    }
+
+    const recentUserEntry = entry.actor === 'user' && (Date.now() - entry.ts) < 8_000;
+    if (recentUserEntry) {
+      const nextEntries = [...state.chatEntries];
+      nextEntries[index] = {
+        ...entry,
+        text: normalized,
+        ts: Date.now(),
+      } satisfies ChatEntry;
+      return {
+        ...state,
+        chatEntries: nextEntries,
+      };
+    }
+
+    break;
+  }
+
+  return upsertChatDraft(state, 'in', normalized, 'user');
+}
+
 export function commitChatDraft(state: AppState, type: ChatEntry['type']): AppState {
   return {
     ...state,

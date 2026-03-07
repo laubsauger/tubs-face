@@ -6,6 +6,7 @@ import type {
   WsFaceBlinkServerMessage,
   WsFaceMotionServerMessage,
   WsHeadSpeechStateServerMessage,
+  WsInterruptServerMessage,
   WsPingServerMessage,
   WsServerMessage,
   WsSystemServerMessage,
@@ -13,7 +14,7 @@ import type {
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
-import { runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
+import { interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
 
 const clients = new Set<WebSocket>();
 const WS_PATH = '/ws';
@@ -107,6 +108,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         broadcast({ type: 'expression', expression: 'idle' });
         return;
       }
+      broadcastInterrupt(interruptAssistantTurns(), 'user');
       sessionStats.messagesIn += 1;
       sessionStats.lastActivity = Date.now();
       broadcast({
@@ -128,6 +130,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     case 'camera_frame':
       void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'camera_frame'));
       if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
+        broadcastInterrupt(interruptAssistantTurns(), 'system');
         sessionStats.messagesIn += 1;
         sessionStats.lastActivity = Date.now();
         const names = message.faces && message.faces.length > 0 ? message.faces.join(' and ') : 'Someone';
@@ -140,6 +143,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       if (runtimeConfig.muted) {
         return;
       }
+      broadcastInterrupt(interruptAssistantTurns(), 'system');
       sessionStats.messagesIn += 1;
       sessionStats.lastActivity = Date.now();
       broadcast({ type: 'thinking' });
@@ -149,10 +153,15 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       if (runtimeConfig.muted || !message.context) {
         return;
       }
+      broadcastInterrupt(interruptAssistantTurns(), 'system');
       sessionStats.messagesIn += 1;
       sessionStats.lastActivity = Date.now();
       broadcast({ type: 'thinking' });
       void runProactiveTurn(message.context, broadcast).catch(console.error);
+      return;
+    case 'interrupt':
+      interruptAssistantTurns();
+      broadcastInterrupt(message.turnId ?? null, 'user');
       return;
     case 'face_motion':
       broadcast({
@@ -183,6 +192,14 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     default:
       return;
   }
+}
+
+function broadcastInterrupt(turnId?: string | null, source?: WsInterruptServerMessage['source']): void {
+  broadcast({
+    type: 'interrupt',
+    ...(turnId !== undefined ? { turnId } : {}),
+    ...(source ? { source } : {}),
+  } satisfies WsInterruptServerMessage);
 }
 
 function send(socket: WebSocket, message: WsServerMessage): void {

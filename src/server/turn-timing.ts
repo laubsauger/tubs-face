@@ -93,7 +93,12 @@ export function createTurnTimer(args: CreateTurnTimerArgs = {}): TurnTimer {
   function log(options: { title?: string | null } = {}): void {
     const output = chart(options);
     if (output) {
-      console.log(output);
+      const wrapped = [
+        '[Turn Timing Begin]',
+        output,
+        '[Turn Timing End]',
+      ].join('\n');
+      process.stdout.write(`${wrapped}\n`);
     }
   }
 

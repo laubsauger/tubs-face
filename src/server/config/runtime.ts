@@ -19,6 +19,7 @@ import type {
   SessionStats,
   SttBackend,
   TtsBackend,
+  VadModel,
 } from '../../shared/contracts/config.js';
 import {
   DEFAULT_EXPRESSION_PROFILES,
@@ -32,6 +33,7 @@ import {
   RENDER_QUALITIES,
   STT_BACKENDS,
   TTS_BACKENDS,
+  VAD_MODELS,
 } from '../../shared/contracts/config.js';
 
 const DEFAULT_PROCESSING_MODE: ProcessingMode = pickOne(PROCESSING_MODES, process.env.PROCESSING_MODE, 'legacy');
@@ -141,6 +143,7 @@ export const runtimeConfig: RuntimeConfig = {
   secondaryGlitchFxBaseColor: normalizeHexColor(process.env.SECONDARY_GLITCH_FX_BASE_COLOR, '#22d3ee'),
   ttsStreamingEnabled: parseBoolean(process.env.TTS_STREAMING_ENABLED, true),
   vadNoiseGate: parseFloatInRange(process.env.VAD_NOISE_GATE, 0.008, 0, 0.06),
+  vadModel: pickOne(VAD_MODELS, process.env.VAD_MODEL, 'ten-vad'),
 };
 
 export const sessionStats: SessionStats = {
@@ -559,6 +562,9 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   if (patch.ttsStreamingEnabled !== undefined) runtimeConfig.ttsStreamingEnabled = Boolean(patch.ttsStreamingEnabled);
   if (patch.vadNoiseGate !== undefined) {
     runtimeConfig.vadNoiseGate = parseFloatInRange(patch.vadNoiseGate, runtimeConfig.vadNoiseGate ?? 0.008, 0, 0.06);
+  }
+  if (patch.vadModel !== undefined) {
+    runtimeConfig.vadModel = pickOne(VAD_MODELS, patch.vadModel, runtimeConfig.vadModel ?? 'rms');
   }
 
   sessionStats.model = runtimeConfig.model;

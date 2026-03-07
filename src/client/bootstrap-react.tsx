@@ -197,6 +197,14 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
     });
   }) as EventListener);
 
+  window.addEventListener('tubs:request-interrupt', ((event: Event) => {
+    const detail = (event as CustomEvent<{ turnId?: string | null }>).detail;
+    wsClient.send({
+      type: 'interrupt',
+      ...(detail?.turnId ? { turnId: detail.turnId } : {}),
+    });
+  }) as EventListener);
+
   proactiveRuntime?.init((message) => {
     wsClient.send(message);
   });

@@ -38,7 +38,7 @@ a {
 .mini-shell {
   width: calc(100vw - 32px);
   margin: 0;
-  padding: 32px 0 48px;
+  padding: 12px 0 48px;
 }
 
 .shell.shell-ui-hidden .card,
@@ -50,12 +50,24 @@ a {
   margin-top: 24px;
 }
 
-.hero {
+.top-bar {
+  position: fixed;
+  top: 10px;
+  right: 16px;
+  z-index: 900;
   display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: flex-start;
-  margin-bottom: 24px;
+  gap: 8px;
+  align-items: center;
+}
+
+.shell.shell-ui-hidden .top-bar {
+  display: none;
+}
+
+.button-compact {
+  padding: 6px 14px;
+  font-size: 0.78rem;
+  letter-spacing: 0.03em;
 }
 
 .visual-shell {
@@ -81,22 +93,30 @@ a {
   margin-bottom: 20px;
 }
 
+.chat-log-row {
+  display: grid;
+  grid-template-columns: 7fr 3fr;
+  gap: 18px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
 .voice-panel-card {
   min-height: 320px;
 }
 
 .visual-workspace .visual-shell {
   margin-bottom: 0;
-  min-height: 420px;
+  min-height: 520px;
 }
 
 .face-panel-card {
-  min-height: 320px;
+  min-height: 0;
 }
 
 .face-panel-secondary {
   display: grid;
-  gap: 14px;
+  gap: 8px;
 }
 
 .visual-shell.is-sleeping::after {
@@ -379,29 +399,74 @@ a {
   transform: translateY(0);
 }
 
-.visual-mic-meter {
+.visual-wave-shell {
+  --wave-color: #7c8798;
   position: relative;
   z-index: 6;
-  margin-top: 18px;
-  width: min(320px, calc(100% - 48px));
-  height: 6px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(125, 211, 252, 0.08);
-  border: 1px solid rgba(125, 211, 252, 0.12);
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  width: min(360px, calc(100% - 48px));
 }
 
-.visual-mic-meter.is-hidden {
+.visual-wave-shell.is-hidden {
   display: none;
 }
 
-.visual-mic-meter-bar {
-  display: block;
-  width: 100%;
-  height: 100%;
-  transform-origin: left center;
-  background: linear-gradient(90deg, #38bdf8, #c084fc, #fb7185);
-  transition: transform 0.05s ease-out;
+.visual-waveform {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.visual-wave-bar {
+  width: 4px;
+  min-height: 6px;
+  border-radius: 999px;
+  background: var(--wave-color);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--wave-color) 42%, transparent);
+  opacity: 0.78;
+  transition: height 90ms ease-out, background-color 180ms ease, opacity 180ms ease;
+}
+
+.visual-wave-label {
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--wave-color) 72%, white);
+  background: rgba(5, 10, 18, 0.74);
+  border: 1px solid color-mix(in srgb, var(--wave-color) 26%, transparent);
+}
+
+.visual-wave-idle {
+  --wave-color: #8b96a8;
+}
+
+.visual-wave-always-on {
+  --wave-color: #2dd4bf;
+}
+
+.visual-wave-wake {
+  --wave-color: #fbbf24;
+}
+
+.visual-wave-conversation {
+  --wave-color: #4cdf7a;
+}
+
+.visual-wave-transcribing {
+  --wave-color: #4ca8ff;
+}
+
+.visual-wave-recording {
+  --wave-color: #f472b6;
 }
 
 .visual-live-transcript.is-draft {
@@ -592,7 +657,7 @@ a {
 }
 
 .panel-body {
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .panel-resize-handle {
@@ -653,6 +718,16 @@ a {
   color: rgba(229, 238, 252, 0.78);
 }
 
+.select-inline {
+  background: rgba(4, 10, 18, 0.72);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 6px;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 3px 6px;
+}
+
 .voice-copy {
   margin: 0;
   color: rgba(229, 238, 252, 0.66);
@@ -660,8 +735,8 @@ a {
 }
 
 .metric {
-  margin: 0 0 12px;
-  font-size: 1.5rem;
+  margin: 0 0 8px;
+  font-size: 1.1rem;
   font-weight: 700;
 }
 
@@ -676,7 +751,7 @@ a {
 .kv,
 .mini-kv {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   margin: 0;
 }
 
@@ -690,12 +765,14 @@ a {
 .kv dt,
 .mini-kv dt {
   color: rgba(229, 238, 252, 0.6);
+  font-size: 0.82rem;
 }
 
 .kv dd,
 .mini-kv dd {
   margin: 0;
   text-align: right;
+  font-size: 0.82rem;
 }
 
 .logs-card {
@@ -708,9 +785,9 @@ a {
 }
 
 .face-actions {
-  margin-top: 16px;
+  margin-top: 10px;
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .face-action-row {
@@ -901,7 +978,7 @@ a {
 }
 
 .camera-shell {
-  margin: 14px 0 16px;
+  margin: 8px 0 10px;
 }
 
 .camera-shell.is-inactive-shell {
@@ -922,7 +999,7 @@ a {
   background:
     radial-gradient(circle at top, rgba(56, 189, 248, 0.18), transparent 42%),
     rgba(4, 10, 18, 0.92);
-  aspect-ratio: 4 / 3;
+  aspect-ratio: 16 / 9;
 }
 
 .camera-video,
@@ -960,9 +1037,9 @@ a {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 16px;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 12px;
   background: rgba(125, 211, 252, 0.08);
   color: rgba(229, 238, 252, 0.88);
 }
@@ -1101,17 +1178,29 @@ a {
 }
 
 .mini-shell {
-  width: min(520px, calc(100vw - 24px));
-  padding-top: 24px;
+  width: 100vw;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .mini-visual-shell {
-  min-height: 220px;
-  padding: 18px 18px 28px;
+  flex: 1;
+  min-height: 100vh;
+  padding: 0;
+  border-radius: 0;
+  border: none;
 }
 
 .mini-visual-face {
-  width: min(220px, 64vw);
+  width: 100%;
+  max-width: none;
+  aspect-ratio: unset;
+  height: 100%;
+  min-height: 100vh;
+  border-radius: 0;
 }
 
 .mini-reaction {

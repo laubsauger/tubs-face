@@ -41,7 +41,7 @@ import type {
   WsWakeServerMessage,
 } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
-import { createTurnId, runAssistantTurn } from '../assistant/service.js';
+import { createTurnId, interruptAssistantTurns, runAssistantTurn } from '../assistant/service.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, sessionStats, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
@@ -151,6 +151,18 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       const transcription = await transcribeAudio(audioBuffer, request.headers['content-type']);
       turnTimer.mark('STT completed');
       const text = String((transcription as { text?: string }).text ?? '').trim();
+
+      if (!text || isWhisperHallucination(text)) {
+        turnTimer.mark(`Ignored (${!text ? 'empty' : 'hallucination'}: "${text}")`);
+        sendJson(response, 200, {
+          ok: true,
+          ignored: true,
+          reason: !text ? 'empty' : 'hallucination',
+        } satisfies VoiceResponse);
+        turnTimer.log({ title: '[Turn Timing]' });
+        return true;
+      }
+
       let wake: WakeWordResult | undefined;
       const inConversation = (Date.now() - lastConversationAt) < CONVERSATION_WINDOW_MS;
 
@@ -182,6 +194,13 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       sessionStats.lastActivity = Date.now();
       lastConversationAt = Date.now();
 
+      const interruptedTurnId = interruptAssistantTurns();
+      broadcast({
+        type: 'interrupt',
+        ...(interruptedTurnId ? { turnId: interruptedTurnId } : {}),
+        source: 'voice_barge_in',
+      });
+
       broadcast({
         type: 'incoming',
         text,
@@ -196,15 +215,16 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       } satisfies WsThinkingServerMessage);
 
       turnTimer.mark('Assistant turn started');
-      const { turnId } = await runAssistantTurn(text, broadcast);
-      turnTimer.mark('Assistant turn completed');
+      const result = await runAssistantTurn(text, broadcast);
+      turnTimer.mark(result.superseded ? 'Assistant turn superseded' : 'Assistant turn completed');
 
       sendJson(response, 200, {
         ok: true,
         text,
-        turnId,
+        ...(result.turnId ? { turnId: result.turnId } : {}),
+        ...(result.superseded ? { ignored: true, reason: 'superseded' } : {}),
         ...(wake ? { wake } : {}),
-      } satisfies VoiceResponse & { turnId: string });
+      } satisfies VoiceResponse & { turnId?: string });
       turnTimer.mark('HTTP response sent');
       turnTimer.log({ title: '[Turn Timing]' });
     } catch (error) {
@@ -694,4 +714,53 @@ function normalizeManualTurnBeats(beats: TurnBeat[] | undefined): TurnBeat[] {
 
     return normalized;
   });
+}
+
+/**
+ * Detect common Whisper hallucinations — short phantom phrases the model
+ * produces when fed silence or background noise.
+ */
+const WHISPER_HALLUCINATIONS = new Set([
+  'thank you.',
+  'thank you',
+  'thanks.',
+  'thanks',
+  'thanks for watching.',
+  'thanks for watching',
+  'thank you for watching.',
+  'thank you for watching',
+  'bye.',
+  'bye',
+  'goodbye.',
+  'goodbye',
+  'you',
+  'the end.',
+  'the end',
+  'subscribe.',
+  'subscribe',
+  'like and subscribe.',
+  '.',
+  '...',
+  'you.',
+  'hmm.',
+  'hmm',
+  'hm.',
+  'huh.',
+  'uh.',
+  'um.',
+  'oh.',
+  'ah.',
+  'i\'m sorry.',
+]);
+
+function isWhisperHallucination(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  if (WHISPER_HALLUCINATIONS.has(lower)) {
+    return true;
+  }
+  // Pure punctuation / whitespace
+  if (/^[\s.,!?…\-–—]+$/.test(lower)) {
+    return true;
+  }
+  return false;
 }

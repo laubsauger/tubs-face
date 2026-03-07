@@ -19,10 +19,14 @@ interface SpeakQueueItem {
 
 const INTER_UTTERANCE_PAUSE_MS = 220;
 const REACTION_PAUSE_MS = 420;
+const POST_SPEECH_IDLE_DELAY_MS = 350;
+const SUBTITLE_CLEAR_DELAY_MS = 4000;
 const REMOTE_SPEECH_STALE_MS = 20_000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_MAX_MS = 45_000;
+const SPEECH_SAFETY_MAX_MS = 60_000;
 const STREAMING_GAP_GRACE_MS = 280;
+const STREAMING_SUBTITLE_HOLD_SEC = 12;
 
 export interface SpeechRuntime {
   init(): void;
@@ -41,15 +45,25 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let streamingNextStartTime = 0;
   let streamingActiveNodes = 0;
   let streamingFinalizeTimer: number | null = null;
+  let streamingSessionActive = false;
+  let streamingSessionTurnId: string | null = null;
+  let streamingSubtitleText = '';
+  let activeSpeechTurnId: string | null = null;
+  let activeQueueTurnId: string | null = null;
   let subtitles: SubtitleController = createSubtitleController(null);
   let remoteActorSpeaking = false;
   let remoteActorSpeakingUntil = 0;
   let remoteWaitTimer: number | null = null;
   let reactionResetTimer: number | null = null;
+  let speechSafetyTimer: number | null = null;
+  let subtitleClearTimer: number | null = null;
+  let stopSpeechHandler: ((event: Event) => void) | null = null;
+  let lastEmotion: TurnEmotion | null = null;
 
   return {
     init(): void {
       bindInferenceUnlockHandlers();
+      bindStopSpeechHandler();
       store.appendLog('info', 'Speech runtime ready');
     },
     bind(root: HTMLElement): void {
@@ -79,6 +93,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         case 'sleep':
           stopAllPlayback();
           return;
+        case 'interrupt':
+          interruptTurn(message.turnId ?? null);
+          return;
         case 'head_speech_state':
           handleRemoteHeadSpeechState(message);
           return;
@@ -89,6 +106,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     dispose(): void {
       disposed = true;
       stopAllPlayback();
+      detachStopSpeechHandler();
       if (streamingAudioContext && streamingAudioContext.state !== 'closed') {
         void streamingAudioContext.close().catch(() => { });
       }
@@ -141,7 +159,13 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   function processQueue(): void {
-    if (processing || queue.length === 0 || disposed) {
+    clearSpeechSafetyTimer();
+    if (processing || disposed) {
+      return;
+    }
+
+    if (queue.length === 0) {
+      lastEmotion = null;
       return;
     }
 
@@ -149,6 +173,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     if (!item) {
       return;
     }
+    activeQueueTurnId = item.turnId ?? null;
 
     if (item.type === 'wait') {
       processing = true;
@@ -156,6 +181,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         subtitles.stop();
       }
       window.setTimeout(() => {
+        activeQueueTurnId = null;
         processing = false;
         processQueue();
       }, item.delayMs ?? 320);
@@ -168,6 +194,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         subtitles.stop();
       }
       if (waitForRemoteActor(item)) {
+        activeQueueTurnId = null;
         processing = false;
         processQueue();
       }
@@ -191,6 +218,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           currentReactionEmoji: '',
           currentExpression: current.sleeping ? 'sleep' : 'idle',
         }));
+        activeQueueTurnId = null;
         processing = false;
         processQueue();
       }, item.delayMs ?? REACTION_PAUSE_MS);
@@ -198,12 +226,16 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
 
     if (!item.text) {
+      activeQueueTurnId = null;
       processQueue();
       return;
     }
 
     processing = true;
+    lastEmotion = item.emotion ?? null;
+    clearSubtitleClearTimer();
     applyBeatVisuals(item.text, item.emotion, true);
+    startSpeechSafetyTimer();
     void playTts(item.text, item.turnId)
       .catch((error) => {
         store.appendLog('error', error instanceof Error ? error.message : 'Speech playback failed');
@@ -211,6 +243,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       })
       .finally(() => {
         window.setTimeout(() => {
+          activeQueueTurnId = null;
           processing = false;
           processQueue();
         }, INTER_UTTERANCE_PAUSE_MS);
@@ -219,6 +252,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   async function playTts(text: string, turnId?: string | null): Promise<void> {
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    activeSpeechTurnId = effectiveTurnId;
     const turnTimer = createTurnTimer({
       side: 'frontend',
       source: 'tts',
@@ -398,25 +432,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       await streamingAudioContext.resume();
     }
 
-    updatePlaybackState(true, 'Speaking (Stream)');
-    emitHeadSpeechState('start', turnId ?? null);
-    const subtitlesEnabled = mode === 'mini'
-      ? store.getState().config?.secondarySubtitleEnabled !== false
-      : true;
-    if (subtitlesEnabled) {
-      subtitles.start(store.getState().currentSpeechText || 'Streaming audio');
-    } else {
-      subtitles.stop();
-    }
-
     const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
     const audioBuffer = await streamingAudioContext.decodeAudioData(bytes.buffer.slice(0));
-    store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
-      turnId: turnId ?? current.currentTurnId,
-      audioBytes: bytes.byteLength,
-      audioDurationSec: audioBuffer.duration,
-      ts: Date.now(),
-    }));
     const source = streamingAudioContext.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(streamingAudioContext.destination);
@@ -426,13 +443,59 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       streamingNextStartTime = now;
     }
 
+    const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    if (streamingSessionActive && streamingSessionTurnId && effectiveTurnId && streamingSessionTurnId !== effectiveTurnId) {
+      endStreamingSession(streamingSessionTurnId);
+    }
+    if (!streamingSessionActive) {
+      beginStreamingSession(effectiveTurnId);
+    }
+    updateStreamingSubtitle(store.getState().currentSpeechText || 'Streaming audio');
+
+    store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
+      turnId: effectiveTurnId ?? current.currentTurnId,
+      audioBytes: bytes.byteLength,
+      audioDurationSec: audioBuffer.duration,
+      ts: Date.now(),
+    }));
+
     streamingActiveNodes += 1;
     source.start(streamingNextStartTime);
     streamingNextStartTime += audioBuffer.duration;
     source.onended = () => {
       streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
-      scheduleStreamingEnd(turnId);
+      scheduleStreamingEnd(effectiveTurnId ?? undefined);
     };
+  }
+
+  function beginStreamingSession(turnId: string | null): void {
+    if (streamingSessionActive) {
+      return;
+    }
+    streamingSessionActive = true;
+    streamingSessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    activeSpeechTurnId = streamingSessionTurnId;
+    updatePlaybackState(true, 'Speaking (Stream)');
+    emitHeadSpeechState('start', streamingSessionTurnId);
+  }
+
+  function endStreamingSession(turnId: string | null): void {
+    clearStreamingFinalizeTimer();
+    if (!streamingSessionActive) {
+      streamingActiveNodes = 0;
+      streamingNextStartTime = 0;
+      streamingSubtitleText = '';
+      streamingSessionTurnId = null;
+      return;
+    }
+
+    const effectiveTurnId = turnId ?? streamingSessionTurnId ?? store.getState().currentTurnId ?? null;
+    streamingSessionActive = false;
+    streamingActiveNodes = 0;
+    streamingNextStartTime = 0;
+    streamingSubtitleText = '';
+    streamingSessionTurnId = null;
+    finishSpeech(effectiveTurnId);
   }
 
   function scheduleStreamingEnd(turnId?: string): void {
@@ -441,9 +504,24 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       if (streamingActiveNodes > 0) {
         return;
       }
-      finishSpeech(turnId ?? null);
-      streamingNextStartTime = 0;
+      endStreamingSession(turnId ?? null);
     }, STREAMING_GAP_GRACE_MS);
+  }
+
+  function updateStreamingSubtitle(text: string): void {
+    const normalized = String(text || '').trim();
+    if (!normalized || normalized === streamingSubtitleText) {
+      return;
+    }
+    streamingSubtitleText = normalized;
+    const subtitlesEnabled = mode === 'mini'
+      ? store.getState().config?.secondarySubtitleEnabled !== false
+      : true;
+    if (subtitlesEnabled) {
+      subtitles.start(normalized, STREAMING_SUBTITLE_HOLD_SEC);
+    } else {
+      subtitles.stop();
+    }
   }
 
   function clearStreamingFinalizeTimer(): void {
@@ -463,9 +541,59 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   function finishSpeech(turnId: string | null): void {
+    clearSpeechSafetyTimer();
+    if (turnId == null || activeSpeechTurnId === turnId) {
+      activeSpeechTurnId = null;
+    }
     updatePlaybackState(false, 'Idle');
     subtitles.finish();
     emitHeadSpeechState('end', turnId);
+    scheduleSubtitleClear();
+    const settledExpression = lastEmotion?.expression ?? null;
+    window.setTimeout(() => {
+      const state = store.getState();
+      if (state.audioPlaying || state.sleeping) {
+        return;
+      }
+      if (settledExpression && (state.currentExpression === 'speaking' || state.currentExpression === settledExpression)) {
+        store.setState((current) => ({
+          ...current,
+          currentExpression: settledExpression,
+        }));
+        return;
+      }
+      if (state.currentExpression !== 'speaking') {
+        return;
+      }
+      store.setState((current) => ({
+        ...current,
+        currentExpression: current.sleeping ? 'sleep' : 'idle',
+      }));
+    }, POST_SPEECH_IDLE_DELAY_MS);
+  }
+
+  function scheduleSubtitleClear(): void {
+    clearSubtitleClearTimer();
+    subtitleClearTimer = window.setTimeout(() => {
+      subtitleClearTimer = null;
+      const state = store.getState();
+      if (state.audioPlaying) {
+        return;
+      }
+      subtitles.stop();
+      store.setState((current) => ({
+        ...current,
+        subtitleText: '',
+        currentSpeechText: '',
+      }));
+    }, SUBTITLE_CLEAR_DELAY_MS);
+  }
+
+  function clearSubtitleClearTimer(): void {
+    if (subtitleClearTimer != null) {
+      window.clearTimeout(subtitleClearTimer);
+      subtitleClearTimer = null;
+    }
   }
 
   function updatePlaybackState(speaking: boolean, listenState: string): void {
@@ -490,11 +618,18 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   function stopAllPlayback(): void {
     queue.length = 0;
     processing = false;
+    lastEmotion = null;
+    activeQueueTurnId = null;
+    activeSpeechTurnId = null;
     pendingInferencePlayback = null;
+    clearSpeechSafetyTimer();
     clearRemoteWaitTimer();
     clearStreamingFinalizeTimer();
     streamingActiveNodes = 0;
     streamingNextStartTime = 0;
+    streamingSessionActive = false;
+    streamingSessionTurnId = null;
+    streamingSubtitleText = '';
     remoteActorSpeaking = false;
     remoteActorSpeakingUntil = 0;
     clearReactionResetTimer();
@@ -506,6 +641,25 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     speechSynthesis.cancel();
     subtitles.stop();
     finishSpeech(store.getState().currentTurnId);
+  }
+
+  function bindStopSpeechHandler(): void {
+    if (stopSpeechHandler) {
+      return;
+    }
+    stopSpeechHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ turnId?: string | null }>).detail;
+      interruptTurn(detail?.turnId ?? null);
+    };
+    window.addEventListener('tubs:stop-speech', stopSpeechHandler as EventListener);
+  }
+
+  function detachStopSpeechHandler(): void {
+    if (!stopSpeechHandler) {
+      return;
+    }
+    window.removeEventListener('tubs:stop-speech', stopSpeechHandler as EventListener);
+    stopSpeechHandler = null;
   }
 
   function bindInferenceUnlockHandlers(): void {
@@ -616,6 +770,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     clearRemoteWaitTimer();
     remoteWaitTimer = window.setTimeout(() => {
       remoteWaitTimer = null;
+      activeQueueTurnId = null;
       processing = false;
       processQueue();
     }, REMOTE_WAIT_POLL_MS);
@@ -636,6 +791,84 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
     window.clearTimeout(reactionResetTimer);
     reactionResetTimer = null;
+  }
+
+  function startSpeechSafetyTimer(): void {
+    clearSpeechSafetyTimer();
+    speechSafetyTimer = window.setTimeout(() => {
+      speechSafetyTimer = null;
+      store.appendLog('error', 'Speech safety timeout; forcing queue advance');
+      stopAllPlayback();
+      processQueue();
+    }, SPEECH_SAFETY_MAX_MS);
+  }
+
+  function clearSpeechSafetyTimer(): void {
+    if (speechSafetyTimer == null) {
+      return;
+    }
+    window.clearTimeout(speechSafetyTimer);
+    speechSafetyTimer = null;
+  }
+
+  function interruptTurn(turnId: string | null): void {
+    const targetTurnId = turnId ?? null;
+    const beforeLength = queue.length;
+    if (targetTurnId) {
+      const remaining = queue.filter((item) => item.turnId == null || item.turnId !== targetTurnId);
+      queue.length = 0;
+      queue.push(...remaining);
+    } else {
+      queue.length = 0;
+    }
+
+    const shouldStopActive =
+      targetTurnId == null
+      || activeQueueTurnId === targetTurnId
+      || activeSpeechTurnId === targetTurnId
+      || streamingSessionTurnId === targetTurnId;
+
+    if (shouldStopActive) {
+      processing = false;
+      lastEmotion = null;
+      activeQueueTurnId = null;
+      pendingInferencePlayback = null;
+      clearSpeechSafetyTimer();
+      clearRemoteWaitTimer();
+      clearStreamingFinalizeTimer();
+      streamingActiveNodes = 0;
+      streamingNextStartTime = 0;
+      streamingSessionActive = false;
+      streamingSubtitleText = '';
+      streamingSessionTurnId = null;
+      activeSpeechTurnId = null;
+      remoteActorSpeaking = false;
+      remoteActorSpeakingUntil = 0;
+      clearReactionResetTimer();
+      if (audioElement) {
+        audioElement.pause();
+        audioElement.src = '';
+        audioElement = null;
+      }
+      speechSynthesis.cancel();
+      subtitles.stop();
+      store.setState((current) => ({
+        ...current,
+        currentSpeechText: '',
+        subtitleText: '',
+        currentReactionEmoji: '',
+      }));
+      updatePlaybackState(false, 'Interrupted');
+      if (store.getState().currentTurnId === targetTurnId || targetTurnId == null) {
+        emitHeadSpeechState('end', targetTurnId ?? store.getState().currentTurnId);
+      }
+    }
+
+    if (beforeLength > 0 || shouldStopActive) {
+      window.setTimeout(() => {
+        processQueue();
+      }, 0);
+    }
   }
 }
 

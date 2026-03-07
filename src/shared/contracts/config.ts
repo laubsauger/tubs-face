@@ -7,6 +7,7 @@ export const TTS_BACKENDS = ['kokoro', 'system', 'vibevoice'] as const;
 export const STT_BACKENDS = ['mlx', 'faster-whisper'] as const;
 export const DUAL_HEAD_MODES = ['off', 'llm_directed'] as const;
 export const DUAL_HEAD_TURN_POLICIES = ['llm_order', 'main_first', 'small_first'] as const;
+export const VAD_MODELS = ['rms', 'ten-vad'] as const;
 export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-only'] as const;
 export const DONATION_SIGNAL_CERTAINTIES = ['implied', 'confident'] as const;
 export const DONATION_SIGNAL_KINDS = ['confirmed', 'pledge'] as const;
@@ -52,6 +53,7 @@ export type TtsBackend = (typeof TTS_BACKENDS)[number];
 export type SttBackend = (typeof STT_BACKENDS)[number];
 export type DualHeadMode = (typeof DUAL_HEAD_MODES)[number];
 export type DualHeadTurnPolicy = (typeof DUAL_HEAD_TURN_POLICIES)[number];
+export type VadModel = (typeof VAD_MODELS)[number];
 export type ChatVerbosity = (typeof CHAT_VERBOSITIES)[number];
 export type DonationSignalCertainty = (typeof DONATION_SIGNAL_CERTAINTIES)[number];
 export type DonationSignalKind = (typeof DONATION_SIGNAL_KINDS)[number];
@@ -193,6 +195,7 @@ export interface RuntimeConfig {
   secondaryGlitchFxBaseColor: `#${string}`;
   ttsStreamingEnabled: boolean;
   vadNoiseGate?: number;
+  vadModel?: VadModel;
 }
 
 export interface ClientStateSnapshot {
@@ -299,6 +302,7 @@ export interface ClientStateSnapshot {
   ambientAudioEnabled: boolean;
   enrolling: boolean;
   vadNoiseGate: number;
+  vadModel: VadModel;
   currentTurnId: string | null;
   editorMode: boolean;
 }
