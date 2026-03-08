@@ -1412,3 +1412,27 @@ a {
     transform: scaleY(1.14);
   }
 }
+
+/* Spectator mode */
+.spectator-shell {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+.spectator-subtitle {
+  font-size: clamp(1rem, 3.5vw, 1.6rem);
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+}
+
+.spectator-status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: rgba(125, 211, 252, 0.6);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  z-index: 10;
+}

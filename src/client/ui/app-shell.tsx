@@ -27,7 +27,7 @@ import { useAppSelector } from './react-store.js';
 import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
 
 export interface AppShellProps {
-  mode: 'main' | 'mini';
+  mode: 'main' | 'mini' | 'spectator';
   store: AppStore;
   controls?: AppShellControls | undefined;
 }
@@ -50,6 +50,9 @@ export interface AppShellControls {
 }
 
 export function AppShell(props: AppShellProps): JSX.Element {
+  if (props.mode === 'spectator') {
+    return <SpectatorAppShell store={props.store} />;
+  }
   return props.mode === 'mini'
     ? <MiniAppShell store={props.store} />
     : <MainAppShell store={props.store} {...(props.controls ? { controls: props.controls } : {})} />;
@@ -135,7 +138,38 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
+function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
+  const state = useAppSelector(store, (current) => ({
+    currentExpression: current.currentExpression,
+    sleeping: current.sleeping,
+    subtitleText: current.subtitleText,
+    currentSpeechText: current.currentSpeechText,
+    connected: current.connected,
+    config: current.config,
+  }));
 
+  return (
+    <main className="mini-shell spectator-shell">
+      <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
+        <div
+          id="visual-face"
+          className="visual-face mini-visual-face"
+          data-expression={state.currentExpression}
+          data-render-mode="glitch"
+        />
+        <div
+          id="visual-subtitle"
+          className="visual-subtitle spectator-subtitle"
+        >
+          {state.subtitleText || state.currentSpeechText || ''}
+        </div>
+        {!state.connected && (
+          <div className="spectator-status">Connecting...</div>
+        )}
+      </section>
+    </main>
+  );
+}
 
 function TopBar({ store }: { store: AppStore }): JSX.Element {
   const fullscreenActive = useAppSelector(store, (state) => state.fullscreenActive);

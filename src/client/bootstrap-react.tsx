@@ -19,28 +19,37 @@ import type { ConfigResponse, HealthResponse, StatsResponse } from '../shared/co
 import type { WsServerMessage } from '../shared/contracts/ws.js';
 
 export interface BootstrapOptions {
-  mode: 'main' | 'mini';
+  mode: 'main' | 'mini' | 'spectator';
   root: HTMLElement;
 }
 
-export async function bootstrapClient(options: BootstrapOptions): Promise<void> {
-  const store = createAppStore(resolveServerLabel());
-  const ambientRuntime = createAmbientRuntime(store, options.mode);
-  const emotionRuntime = options.mode === 'main' ? createEmotionRuntime(store) : null;
-  const fxRuntime = options.mode === 'main' ? createFxRuntime(store) : null;
-  const glitchRuntime = createGlitchRuntime(store, options.mode);
-  const proactiveRuntime = options.mode === 'main' ? createProactiveRuntime(store) : null;
-  const speechRuntime = createSpeechRuntime(store, options.mode);
-  const visualRuntime = createVisualRuntime(store, options.mode);
-  const voiceRuntime = options.mode === 'main' ? createVoiceRuntime(store) : null;
-  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, options.mode);
-  const faceRuntime = options.mode === 'main' ? createFaceShellRuntime(store) : null;
-  const windowRuntime = createWindowRuntime(store, options.mode);
+export interface BootstrapHandle {
+  dispose(): void;
+}
 
-  const controls: AppShellControls | undefined = options.mode === 'main'
+export async function bootstrapClient(options: BootstrapOptions): Promise<BootstrapHandle> {
+  const store = createAppStore(resolveServerLabel());
+  const isController = options.mode === 'main';
+  const isSpectator = options.mode === 'spectator';
+  // Spectator reuses mini runtime configs (no input, display-only)
+  const runtimeMode: 'main' | 'mini' = isSpectator ? 'mini' : (options.mode === 'main' ? 'main' : 'mini');
+
+  const ambientRuntime = isSpectator ? null : createAmbientRuntime(store, runtimeMode);
+  const emotionRuntime = isController ? createEmotionRuntime(store) : null;
+  const fxRuntime = isController ? createFxRuntime(store) : null;
+  const glitchRuntime = createGlitchRuntime(store, runtimeMode);
+  const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
+  const speechRuntime = createSpeechRuntime(store, runtimeMode);
+  const visualRuntime = createVisualRuntime(store, runtimeMode);
+  const voiceRuntime = isController ? createVoiceRuntime(store) : null;
+  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, runtimeMode);
+  const faceRuntime = isController ? createFaceShellRuntime(store) : null;
+  const windowRuntime = createWindowRuntime(store, runtimeMode);
+
+  const controls: AppShellControls | undefined = isController
     ? {
       ambient: {
-        toggleEnabled: () => ambientRuntime.toggleEnabled(),
+        toggleEnabled: () => ambientRuntime!.toggleEnabled(),
       },
       ...(voiceRuntime ? {
         voice: {
@@ -128,7 +137,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   }, 1000);
 
   await loadInitialState(store);
-  ambientRuntime.init();
+  ambientRuntime?.init();
   fxRuntime?.init();
   glitchRuntime.init();
   speechRuntime.init();
@@ -139,6 +148,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
   emotionRuntime?.init();
 
   const wsClient = createManagedWsClient({
+    ...(isSpectator ? { role: 'spectator' as const } : {}),
     onOpen: () => {
       store.setState((current) => ({
         ...current,
@@ -172,54 +182,64 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
         emotionRuntime?.pushImpulse({ pos: 1, neg: 0, arousal: 0.85 }, 'system');
       }
       speechRuntime.handleServerMessage(message);
-      applyServerMessage(store, message, options.mode);
+      applyServerMessage(store, message, runtimeMode);
       proactiveRuntime?.onPresenceChanged();
     },
   });
 
-  faceBehaviorRuntime.attachSender((message) => {
-    wsClient.send(message);
-  });
-
-  faceRuntime?.attachSender((message) => {
-    wsClient.send(message);
-  });
-
-  window.addEventListener('tubs:head-speech-state', ((event: Event) => {
-    const detail = (event as CustomEvent<{ actor?: 'main' | 'small'; state?: 'start' | 'end'; turnId?: string | null; ts?: number; durationMs?: number }>).detail;
-    wsClient.send({
-      type: 'head_speech_state',
-      actor: detail?.actor === 'small' ? 'small' : 'main',
-      state: detail?.state === 'end' ? 'end' : 'start',
-      ...(detail?.turnId !== undefined ? { turnId: detail.turnId } : {}),
-      ts: detail?.ts ?? Date.now(),
-      ...(detail?.durationMs !== undefined ? { durationMs: detail.durationMs } : {}),
+  if (!isSpectator) {
+    faceBehaviorRuntime.attachSender((message) => {
+      wsClient.send(message);
     });
-  }) as EventListener);
 
-  window.addEventListener('tubs:request-interrupt', ((event: Event) => {
-    const detail = (event as CustomEvent<{ turnId?: string | null }>).detail;
-    wsClient.send({
-      type: 'interrupt',
-      ...(detail?.turnId ? { turnId: detail.turnId } : {}),
+    faceRuntime?.attachSender((message) => {
+      wsClient.send(message);
     });
-  }) as EventListener);
 
-  window.addEventListener('tubs:tts-request', ((event: Event) => {
-    const detail = (event as CustomEvent<{ text: string; voice?: string; turnId?: string }>).detail;
-    if (!detail?.text) return;
-    wsClient.send({
-      type: 'tts_request',
-      text: detail.text,
-      ...(detail.voice ? { voice: detail.voice } : {}),
-      ...(detail.turnId ? { turnId: detail.turnId } : {}),
+    window.addEventListener('tubs:head-speech-state', ((event: Event) => {
+      const detail = (event as CustomEvent<{ actor?: 'main' | 'small'; state?: 'start' | 'end'; turnId?: string | null; ts?: number; durationMs?: number }>).detail;
+      wsClient.send({
+        type: 'head_speech_state',
+        actor: detail?.actor === 'small' ? 'small' : 'main',
+        state: detail?.state === 'end' ? 'end' : 'start',
+        ...(detail?.turnId !== undefined ? { turnId: detail.turnId } : {}),
+        ts: detail?.ts ?? Date.now(),
+        ...(detail?.durationMs !== undefined ? { durationMs: detail.durationMs } : {}),
+      });
+    }) as EventListener);
+
+    window.addEventListener('tubs:request-interrupt', ((event: Event) => {
+      const detail = (event as CustomEvent<{ turnId?: string | null }>).detail;
+      wsClient.send({
+        type: 'interrupt',
+        ...(detail?.turnId ? { turnId: detail.turnId } : {}),
+      });
+    }) as EventListener);
+
+    window.addEventListener('tubs:tts-request', ((event: Event) => {
+      const detail = (event as CustomEvent<{ text: string; voice?: string; turnId?: string }>).detail;
+      if (!detail?.text) return;
+      wsClient.send({
+        type: 'tts_request',
+        text: detail.text,
+        ...(detail.voice ? { voice: detail.voice } : {}),
+        ...(detail.turnId ? { turnId: detail.turnId } : {}),
+      });
+    }) as EventListener);
+
+    proactiveRuntime?.init((message) => {
+      wsClient.send(message);
     });
-  }) as EventListener);
-
-  proactiveRuntime?.init((message) => {
-    wsClient.send(message);
-  });
+  }
   wsClient.connect();
+
+  return {
+    dispose() {
+      wsClient.disconnect();
+      speechRuntime.dispose();
+      ambientRuntime?.dispose?.();
+    },
+  };
 }
 
 async function loadInitialState(store: AppStore): Promise<void> {

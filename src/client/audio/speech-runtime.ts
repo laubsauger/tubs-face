@@ -103,8 +103,12 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           enqueueSpeak(message.text, message.turnId);
           return;
         case 'audio_chunk':
-          console.log(`[Stream] audio_chunk received | audioLen=${message.audio?.length ?? 0} | turnId=${message.turnId ?? '?'} | chunkIndex=${(message as { chunkIndex?: number }).chunkIndex ?? '?'}`);
-          playStreamingAudioChunk(message.audio, message.turnId);
+          try {
+            console.log(`[Stream] audio_chunk received | audioLen=${message.audio?.length ?? 0} | turnId=${message.turnId ?? '?'} | chunkIndex=${(message as { chunkIndex?: number }).chunkIndex ?? '?'} | sessionActive=${streamingSessionActive} | receiveCount=${chunkReceiveCount}`);
+            playStreamingAudioChunk(message.audio, message.turnId);
+          } catch (err) {
+            console.error('[Stream] playStreamingAudioChunk THREW:', err);
+          }
           return;
         case 'speak_end':
           scheduleStreamingEnd(message.turnId);
@@ -539,21 +543,34 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     });
   }
 
-  // Serialize chunk processing to prevent concurrent decodeAudioData calls
-  // from racing on streamingNextStartTime.
-  let streamingChunkChain: Promise<void> = Promise.resolve();
+  // Decoded buffers waiting to be scheduled, keyed by chunk index.
+  // Chunks decode in parallel but schedule in order.
+  let pendingBuffers: Map<number, { buffer: AudioBuffer; turnId: string | null }> = new Map();
+  let nextScheduleIdx = 0;
+  let chunkReceiveCount = 0;
 
   function playStreamingAudioChunk(audioBase64: string, turnId?: string): void {
-    streamingChunkChain = streamingChunkChain
-      .then(() => playStreamingAudioChunkInner(audioBase64, turnId))
-      .catch((error) => {
-        store.appendLog('error', error instanceof Error ? error.message : 'Streaming audio chunk failed');
-      });
+    const idx = chunkReceiveCount++;
+    const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
+
+    clearStreamingFinalizeTimer();
+
+    // Start session immediately on first chunk (synchronous, before any async work)
+    if (streamingSessionActive && streamingSessionTurnId && effectiveTurnId && streamingSessionTurnId !== effectiveTurnId) {
+      endStreamingSession(streamingSessionTurnId);
+    }
+    if (!streamingSessionActive) {
+      beginStreamingSession(effectiveTurnId);
+    }
+    updateStreamingSubtitle(store.getState().currentSpeechText || 'Streaming audio');
+
+    // Fire-and-forget decode — scheduleReadyChunks() handles ordering
+    void decodeAndQueue(audioBase64, idx, effectiveTurnId).catch((error) => {
+      store.appendLog('error', `Chunk #${idx} decode failed: ${error instanceof Error ? error.message : 'unknown'}`);
+    });
   }
 
-  async function playStreamingAudioChunkInner(audioBase64: string, turnId?: string): Promise<void> {
-    console.log(`[Stream] decoding chunk | base64Len=${audioBase64?.length ?? 0} | sessionActive=${streamingSessionActive} | activeNodes=${streamingActiveNodes}`);
-    clearStreamingFinalizeTimer();
+  async function decodeAndQueue(audioBase64: string, idx: number, turnId: string | null): Promise<void> {
     if (!streamingAudioContext) {
       streamingAudioContext = new AudioContext();
     }
@@ -563,55 +580,64 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
     const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
     const audioBuffer = await streamingAudioContext.decodeAudioData(bytes.buffer.slice(0));
-    const source = streamingAudioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(streamingAudioContext.destination);
 
-    const now = streamingAudioContext.currentTime;
-    if (streamingNextStartTime < now) {
-      streamingNextStartTime = now;
-    }
+    console.log(`[Stream] chunk #${idx} decoded | duration=${audioBuffer.duration.toFixed(3)}s | bytes=${bytes.byteLength}`);
 
-    const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
-    if (streamingSessionActive && streamingSessionTurnId && effectiveTurnId && streamingSessionTurnId !== effectiveTurnId) {
-      endStreamingSession(streamingSessionTurnId);
-    }
-    if (!streamingSessionActive) {
-      beginStreamingSession(effectiveTurnId);
-    }
-    updateStreamingSubtitle(store.getState().currentSpeechText || 'Streaming audio');
+    pendingBuffers.set(idx, { buffer: audioBuffer, turnId });
+    scheduleReadyChunks();
+  }
 
-    store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
-      turnId: effectiveTurnId ?? current.currentTurnId,
-      audioBytes: bytes.byteLength,
-      audioDurationSec: audioBuffer.duration,
-      ts: Date.now(),
-    }));
+  /** Schedule decoded buffers in order. Only advances when the next index is ready. */
+  function scheduleReadyChunks(): void {
+    if (!streamingAudioContext) return;
 
-    const chunkIdx = streamingChunkLog.length;
-    const scheduledAt = streamingNextStartTime;
-    streamingActiveNodes += 1;
-    source.start(streamingNextStartTime);
-    streamingNextStartTime += audioBuffer.duration;
+    while (pendingBuffers.has(nextScheduleIdx)) {
+      const entry = pendingBuffers.get(nextScheduleIdx)!;
+      pendingBuffers.delete(nextScheduleIdx);
+      const chunkIdx = nextScheduleIdx;
+      nextScheduleIdx++;
 
-    streamingChunkLog.push({
-      idx: chunkIdx,
-      decodedAt: performance.now(),
-      scheduledAt,
-      duration: audioBuffer.duration,
-      ctxTime: now,
-      activeNodes: streamingActiveNodes,
-    });
-
-    source.onended = () => {
-      streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
-      console.log(`[Stream] chunk #${chunkIdx} ended | remaining=${streamingActiveNodes} | speakEndReceived=${streamingSpeakEndReceived}`);
-      // Only finalize if we've already received speak_end and all nodes are done
-      if (streamingSpeakEndReceived && streamingActiveNodes === 0) {
-        console.log(`[Stream] last chunk done after speak_end — finalizing`);
-        endStreamingSession(effectiveTurnId ?? null);
+      const now = streamingAudioContext.currentTime;
+      if (streamingNextStartTime < now) {
+        streamingNextStartTime = now;
       }
-    };
+
+      const source = streamingAudioContext.createBufferSource();
+      source.buffer = entry.buffer;
+      source.connect(streamingAudioContext.destination);
+
+      const scheduledAt = streamingNextStartTime;
+      streamingActiveNodes += 1;
+      source.start(streamingNextStartTime);
+      streamingNextStartTime += entry.buffer.duration;
+
+      console.log(`[Stream] chunk #${chunkIdx} scheduled | at=${scheduledAt.toFixed(3)} | dur=${entry.buffer.duration.toFixed(3)} | next=${streamingNextStartTime.toFixed(3)} | ctxNow=${now.toFixed(3)} | active=${streamingActiveNodes}`);
+
+      streamingChunkLog.push({
+        idx: chunkIdx,
+        decodedAt: performance.now(),
+        scheduledAt,
+        duration: entry.buffer.duration,
+        ctxTime: now,
+        activeNodes: streamingActiveNodes,
+      });
+
+      store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
+        turnId: entry.turnId ?? current.currentTurnId,
+        audioBytes: entry.buffer.length,
+        audioDurationSec: entry.buffer.duration,
+        ts: Date.now(),
+      }));
+
+      source.onended = () => {
+        streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
+        console.log(`[Stream] chunk #${chunkIdx} ended | remaining=${streamingActiveNodes} | speakEndReceived=${streamingSpeakEndReceived}`);
+        if (streamingSpeakEndReceived && streamingActiveNodes === 0) {
+          console.log(`[Stream] last chunk done after speak_end — finalizing`);
+          endStreamingSession(entry.turnId);
+        }
+      };
+    }
   }
 
   function beginStreamingSession(turnId: string | null): void {
@@ -621,6 +647,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     streamingSessionActive = true;
     streamingSpeakEndReceived = false;
     streamingChunkLog = [];
+    // Don't reset pendingBuffers/nextScheduleIdx/chunkReceiveCount here —
+    // the first chunk already incremented chunkReceiveCount before calling us.
+    // These are reset in endStreamingSession/stopAllPlayback instead.
     streamingSessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
     activeSpeechTurnId = streamingSessionTurnId;
     console.log(`[Stream] session begin | turn=${streamingSessionTurnId} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'}`);
@@ -653,6 +682,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     streamingNextStartTime = 0;
     streamingSubtitleText = '';
     streamingSessionTurnId = null;
+    pendingBuffers = new Map();
+    nextScheduleIdx = 0;
+    chunkReceiveCount = 0;
     finishSpeech(effectiveTurnId);
 
     // Signal any waiting playTts that streaming is done
@@ -722,18 +754,26 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   function scheduleStreamingEnd(turnId?: string): void {
     streamingSpeakEndReceived = true;
-    console.log(`[Stream] speak_end received | activeNodes=${streamingActiveNodes} | sessionActive=${streamingSessionActive} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'} | nextStart=${streamingNextStartTime.toFixed(3)}`);
-    // If all chunks have already finished playing, end now (with small grace period
-    // in case a final chunk is still being decoded in the chain).
+    const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
+    console.log(`[Stream] speak_end received | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes} | sessionActive=${streamingSessionActive} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'} | nextStart=${streamingNextStartTime.toFixed(3)}`);
+    tryFinalizeStreaming(turnId ?? null);
+  }
+
+  function tryFinalizeStreaming(turnId: string | null): void {
     clearStreamingFinalizeTimer();
     streamingFinalizeTimer = window.setTimeout(() => {
-      if (streamingActiveNodes > 0) {
-        console.log(`[Stream] grace period elapsed but ${streamingActiveNodes} node(s) still active — waiting for onended`);
-        // Nodes still playing — onended will finalize once the last one completes.
+      const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
+      if (pendingDecodes > 0) {
+        console.log(`[Stream] ${pendingDecodes} chunk(s) still decoding — retrying finalize`);
+        tryFinalizeStreaming(turnId);
         return;
       }
-      console.log(`[Stream] finalizing session after grace period`);
-      endStreamingSession(turnId ?? null);
+      if (streamingActiveNodes > 0) {
+        console.log(`[Stream] ${streamingActiveNodes} node(s) still playing — waiting for onended`);
+        return;
+      }
+      console.log(`[Stream] finalizing session`);
+      endStreamingSession(turnId);
     }, STREAMING_GAP_GRACE_MS);
   }
 
@@ -862,6 +902,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     streamingSpeakEndReceived = false;
     streamingSessionTurnId = null;
     streamingSubtitleText = '';
+    pendingBuffers = new Map();
+    nextScheduleIdx = 0;
+    chunkReceiveCount = 0;
     remoteActorSpeaking = false;
     remoteActorSpeakingUntil = 0;
     clearReactionResetTimer();
@@ -1115,6 +1158,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       streamingSpeakEndReceived = false;
       streamingSubtitleText = '';
       streamingSessionTurnId = null;
+      pendingBuffers = new Map();
+      nextScheduleIdx = 0;
+      chunkReceiveCount = 0;
       activeSpeechTurnId = null;
       remoteActorSpeaking = false;
       remoteActorSpeakingUntil = 0;

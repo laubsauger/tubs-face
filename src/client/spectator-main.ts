@@ -5,14 +5,13 @@ import './styles/app.css';
 const root = document.querySelector<HTMLElement>('#app');
 
 if (!root) {
-  throw new Error('Main app root not found');
+  throw new Error('Spectator app root not found');
 }
 
 let handle: BootstrapHandle | null = null;
 
-void bootstrapClient({ mode: 'main', root }).then((h) => { handle = h; });
+void bootstrapClient({ mode: 'spectator', root }).then((h) => { handle = h; });
 
-// Clean up old instance on HMR to prevent duplicate WS connections / audio playback
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     handle?.dispose();

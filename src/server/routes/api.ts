@@ -1,4 +1,5 @@
 import http from 'node:http';
+import os from 'node:os';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
@@ -45,7 +46,7 @@ import { createTurnId, interruptAssistantTurns, runAssistantTurn } from '../assi
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, sessionStats, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
-import { broadcast, broadcastConfig, getClientCount } from '../ws/server.js';
+import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '../ws/server.js';
 import { getTtsProxyTarget, restartTranscriptionService, transcribeAudio } from '../processing/mode-manager.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
@@ -615,6 +616,21 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     return true;
   }
 
+  if (request.method === 'GET' && url.pathname === '/api/spectator-url') {
+    const localIp = getLocalNetworkIp();
+    const serverPort = Number.parseInt(process.env.PORT ?? '3000', 10);
+    const actor = url.searchParams.get('actor') || undefined;
+    const baseUrl = `http://${localIp}:${serverPort}/spectator.html`;
+    const spectatorUrl = actor ? `${baseUrl}?actor=${actor}` : baseUrl;
+    sendJson(response, 200, {
+      url: spectatorUrl,
+      ip: localIp,
+      port: serverPort,
+      spectators: getSpectatorCount(),
+    });
+    return true;
+  }
+
   return false;
 }
 
@@ -776,6 +792,18 @@ const WHISPER_HALLUCINATIONS = new Set([
   'ah.',
   'i\'m sorry.',
 ]);
+
+function getLocalNetworkIp(): string {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] ?? []) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '127.0.0.1';
+}
 
 function isWhisperHallucination(text: string): boolean {
   const lower = text.toLowerCase().trim();

@@ -8,7 +8,7 @@ import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
-import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, stripFormatting } from './text.js';
+import { clampOutput, estimateCostUsd, estimateTokens, extractJsonBlock, normalizeInput, sanitizeForTts, stripFormatting } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -758,6 +758,63 @@ async function runStreamingAssistantTurn(args: {
 
   const kokoroVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
 
+  // Track raw LLM output to detect JSON-wrapped responses.
+  // When the model returns {"text":"..."} or {"main":"..."}, we strip
+  // the JSON envelope so only the prose reaches the sentence splitter.
+  let rawAccumulator = '';
+  let jsonUnwrapMode: 'unknown' | 'json' | 'plain' = 'unknown';
+  let jsonTextKey: string | null = null;
+  let jsonPreambleStripped = false;
+
+  function pushToSplitter(delta: string): void {
+    if (jsonUnwrapMode === 'plain') {
+      splitter.push(delta);
+      return;
+    }
+
+    rawAccumulator += delta;
+
+    if (jsonUnwrapMode === 'unknown') {
+      const trimmed = rawAccumulator.trimStart();
+      if (!trimmed) return;
+      if (trimmed[0] !== '{') {
+        // Not JSON — flush accumulated text and switch to plain mode
+        jsonUnwrapMode = 'plain';
+        splitter.push(rawAccumulator);
+        rawAccumulator = '';
+        return;
+      }
+      // Looks like JSON — find the first key's value
+      const keyMatch = trimmed.match(/^\{\s*"(\w+)"\s*:\s*"/);
+      if (keyMatch) {
+        jsonUnwrapMode = 'json';
+        jsonTextKey = keyMatch[1]!;
+        // Strip everything up to and including the opening quote of the value
+        const valueStart = trimmed.indexOf(keyMatch[0]) + keyMatch[0].length;
+        rawAccumulator = trimmed.slice(valueStart);
+        jsonPreambleStripped = true;
+      } else if (rawAccumulator.length > 40) {
+        // Accumulated enough — not a recognizable JSON pattern
+        jsonUnwrapMode = 'plain';
+        splitter.push(rawAccumulator);
+        rawAccumulator = '';
+        return;
+      } else {
+        // Still accumulating the JSON preamble — wait for more tokens
+        return;
+      }
+    }
+
+    // In JSON mode: feed text to splitter but watch for closing pattern
+    if (jsonUnwrapMode === 'json' && jsonPreambleStripped) {
+      // Strip trailing JSON closure: "} or "\n} etc. from the accumulated text.
+      // We can't know if we're at the end yet, so just push what we have,
+      // and clean up in flush.
+      splitter.push(rawAccumulator);
+      rawAccumulator = '';
+    }
+  }
+
   const splitter = createSentenceSplitter((sentence) => {
     let text = sentence;
     if (!emotionExtracted) {
@@ -768,11 +825,12 @@ async function runStreamingAssistantTurn(args: {
       }
       text = parsed.text;
     }
-    text = stripFormatting(text);
+    text = sanitizeForTts(stripFormatting(text));
     if (!text) return;
 
     fullText += (fullText ? ' ' : '') + text;
 
+    console.log(`\x1b[36m[Streaming TTS]\x1b[0m sentence → "${text}"`);
     if (ttsWsReady && ttsWs && ttsWs.ready) {
       pendingTtsSentences++;
       currentTtsSentence = text;
@@ -803,7 +861,8 @@ async function runStreamingAssistantTurn(args: {
           abortController.abort();
           return;
         }
-        splitter.push(delta);
+        console.log(`\x1b[90m[LLM delta]\x1b[0m ${JSON.stringify(delta)}`);
+        pushToSplitter(delta);
       },
       abortSignal: abortController.signal,
     });
@@ -814,9 +873,10 @@ async function runStreamingAssistantTurn(args: {
 
     // If no chunks were sent (very short response), send full text
     if (chunkIndex === 0 && llmResult.text) {
-      const parsed = splitTrailingEmotionEmoji(stripFormatting(llmResult.text));
+      const unwrapped = unwrapJsonText(llmResult.text);
+      const parsed = splitTrailingEmotionEmoji(stripFormatting(unwrapped));
       rawEmotion = parsed.emotion;
-      fullText = parsed.text;
+      fullText = sanitizeForTts(parsed.text);
       if (fullText && ttsWsReady && ttsWs && ttsWs.ready) {
         pendingTtsSentences++;
         ttsWs.send(fullText, kokoroVoice);
@@ -834,7 +894,7 @@ async function runStreamingAssistantTurn(args: {
     }
 
     if (!fullText) {
-      fullText = clampOutput(stripFormatting(llmResult.text));
+      fullText = clampOutput(sanitizeForTts(stripFormatting(unwrapJsonText(llmResult.text))));
     }
 
     if (!fullText) {
@@ -917,6 +977,27 @@ async function runStreamingAssistantTurn(args: {
     console.error(`\x1b[31m\x1b[1m[Streaming]\x1b[0m streaming turn threw: ${msg} — falling through to sequential`);
     return null;
   }
+}
+
+/**
+ * If the LLM returned a JSON object like {"text":"..."} or {"main":"..."},
+ * extract just the text value. Otherwise return the input unchanged.
+ */
+function unwrapJsonText(raw: string): string {
+  const jsonBlock = extractJsonBlock(raw);
+  if (!jsonBlock) return raw;
+  try {
+    const parsed = JSON.parse(jsonBlock) as Record<string, unknown>;
+    // Try common keys the model might use
+    for (const key of ['text', 'main', 'response', 'message', 'content']) {
+      if (typeof parsed[key] === 'string' && parsed[key]) {
+        return parsed[key] as string;
+      }
+    }
+  } catch {
+    // Not valid JSON — return raw
+  }
+  return raw;
 }
 
 export async function runProactiveTurn(context: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult | null> {

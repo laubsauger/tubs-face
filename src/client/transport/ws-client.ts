@@ -6,6 +6,7 @@ export interface WsClientOptions {
   onClose?: () => void;
   onMessage: (message: WsServerMessage) => void;
   onError?: (error: Event) => void;
+  role?: 'controller' | 'spectator';
 }
 
 export interface ManagedWsClient {
@@ -24,7 +25,8 @@ export function createManagedWsClient(options: WsClientOptions): ManagedWsClient
 
   function connect(): void {
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
+    const roleParam = options.role === 'spectator' ? '?role=spectator' : '';
+    socket = new WebSocket(`${protocol}://${window.location.host}/ws${roleParam}`);
 
     socket.addEventListener('open', () => {
       options.onOpen?.();

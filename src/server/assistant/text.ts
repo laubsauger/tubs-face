@@ -26,6 +26,20 @@ export function stripEmojiClusters(text: string): string {
   return normalizeInput(String(text).replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, ' '));
 }
 
+/**
+ * Sanitize text for TTS: remove anything that isn't speakable prose.
+ * Strips JSON wrappers, [[markers]], emojis, braces, quotes used as
+ * structural JSON delimiters, and other non-speech characters.
+ */
+export function sanitizeForTts(text: string): string {
+  return String(text)
+    .replace(/\[\[.*?\]\]/g, '')            // [[SHOW_QR]] etc.
+    .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, ' ')
+    .replace(/[{}[\]"]/g, '')               // braces, brackets, double quotes
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export function extractJsonBlock(text: string): string | null {
   const raw = String(text ?? '').trim();
   if (!raw) {

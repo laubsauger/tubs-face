@@ -1,28 +1,28 @@
 # TUBS BOT
 
-Animated chatbot face with voice interaction, camera-based face detection/recognition, and presence-aware sleep/wake behavior. Runs entirely in the browser with a Node.js bridge server and Python STT/TTS backend.
+Animated chatbot face with voice interaction, streaming TTS, camera-based face detection/recognition, presence-aware sleep/wake behavior, and multi-device spectator mode. TypeScript monorepo with React frontend, Node.js server, and Python STT/TTS backend.
 
 ## Quick Start
 
 ```bash
 npm install
 cp .env.example .env
-npm start          # Starts bridge server (port 3000) + Python STT/TTS (port 3001)
+npm run dev        # Dev: tsx watch server + vite client (port 5173)
+npm start          # Production: compiled server (port 3000)
 ```
 
-Open `http://localhost:3000` in your browser.
+Open `http://localhost:5173` (dev) or `http://localhost:3000` (production).
 
 ### Processing Modes
 
-- `npm run start:legacy` (default): current production stack.
-- `npm run start:realtime`: dedicated realtime stack path via `src/realtime-processing-service.py`.
 - `PROCESSING_MODE` is selected at server startup and exposed by `/health` + `/config`.
-- Realtime mode defaults:
+- **Legacy**: default production stack (Whisper STT + Gemini LLM + streaming TTS).
+- **Realtime**: dedicated realtime stack via `src/realtime-processing-service.py`.
   - STT: `lightning-whisper-mlx` (`REALTIME_STT_BACKEND=mlx`)
   - TTS: Kokoro (`REALTIME_TTS_BACKEND=kokoro`, voice from `KOKORO_VOICE` / `REALTIME_KOKORO_VOICE`)
   - LLM: Ollama-compatible chat API (`REALTIME_LLM_PROVIDER=ollama`, `OLLAMA_HOST` or `REALTIME_LLM_BASE_URL`)
   - Required: `REALTIME_LLM_MODEL` must be set to an installed model from `ollama list`
-  - Optional: `DUAL_HEAD_LLM_MODEL` for dedicated dual-head script generation (recommended when your main conversational model is weak at strict JSON)
+  - Optional: `DUAL_HEAD_LLM_MODEL` for dedicated dual-head script generation
 
 ### LLM Benchmarking
 
@@ -41,7 +41,7 @@ npm run bench:llm -- \
 Targets:
 - `ollama`: direct `POST /api/chat`
 - `realtime`: `POST /llm/generate` on realtime Python service
-- `assistant`: full assistant pipeline (`src/assistant/generate.js`) using configured provider
+- `assistant`: full assistant pipeline (`src/server/assistant/`) using configured provider
 
 ## Default Behavior
 
@@ -138,27 +138,87 @@ When a face is detected, the bot adjusts eye position toward the average detecte
 ## Architecture
 
 ```
-Browser (TypeScript + Vite)
-  ├── src/client/main.ts       — main shell bootstrap
-  ├── src/client/mini-main.ts  — mini shell bootstrap
-  ├── src/client/*             — UI, transport, audio, face, FX, behavior
-  └── src/workers/face-worker.ts — module worker: SCRFD detection + ArcFace recognition (ONNX)
+React Frontend (TypeScript + Vite + Zustand)
+  ├── src/client/main.ts            — main client bootstrap
+  ├── src/client/mini-main.ts       — mini display bootstrap
+  ├── src/client/spectator-main.ts  — spectator (read-only) bootstrap
+  ├── src/client/audio/*            — speech playback, voice input, ambient
+  ├── src/client/face/*             — face rendering, behavior, detection
+  ├── src/client/glitch/*           — glitch FX (canvas/WebGPU)
+  ├── src/client/transport/*        — WebSocket + HTTP clients
+  ├── src/client/state/*            — Zustand store
+  └── src/workers/face-worker.ts    — SCRFD + ArcFace (ONNX Runtime Web)
 
-Node.js Server (TypeScript)
-  ├── src/server/index.ts      — HTTP + WebSocket server
-  ├── src/server/routes/api.ts — API surface
-  ├── src/server/ws/server.ts  — WebSocket relay
-  └── src/server/config/runtime.ts — mutable runtime config exposed at /config
+Node.js Server (TypeScript, port 3000)
+  ├── src/server/index.ts           — HTTP + WebSocket server
+  ├── src/server/ws/server.ts       — WebSocket relay, broadcast, spectator tracking
+  ├── src/server/routes/api.ts      — REST API surface
+  ├── src/server/assistant/*        — LLM orchestration, dual-head, emotion, context
+  ├── src/server/llm/*              — Gemini streaming, provider abstraction
+  ├── src/server/tts/stream.ts      — Streaming audio chunks over WebSocket
+  └── src/server/config/runtime.ts  — mutable runtime config
 
-Python Service (src/transcription-service.py)
-  ├── STT via faster-whisper / MLX path
-  └── TTS proxy target on port 3001
+Shared Contracts (src/shared/contracts/)
+  └── Type-safe WebSocket, HTTP, config, turn-script interfaces
 
-LLM Assistant (TypeScript)
-  ├── src/server/assistant/*
-  ├── src/server/llm/*
-  └── src/persona/*            — editable persona prompt + greeting presets
+Python Service (src/transcription-service.py, port 3001)
+  ├── STT via faster-whisper / MLX
+  └── TTS proxy (Kokoro / macOS say)
+
+Persona (src/persona/)
+  ├── system-prompt.txt             — personality/soul
+  └── greetings.json                — fast greeting presets
 ```
+
+### Client Modes
+
+| Mode | Entry | URL | Description |
+|------|-------|-----|-------------|
+| **Main** | `index.html` | `/` | Full client — voice, camera, debug panels, all controls |
+| **Mini** | `app-mini.html` | `/app-mini.html` | Display-only secondary window — face + subtitles |
+| **Spectator** | `spectator.html` | `/spectator.html` | Read-only mobile client for crowd engagement |
+
+## Spectator Mode
+
+Lightweight read-only client for audience engagement at live events. Spectators see the same face, expressions, subtitles, and hear the same audio as the main client — perfectly synced across dozens of devices.
+
+### How It Works
+
+1. Audience scans a QR code or opens a URL on their phone
+2. `/spectator.html` loads a minimal client (face + subtitles, no input UI)
+3. WebSocket connects with `?role=spectator` — server ignores all input except pings
+4. Server broadcasts all output to every client, so spectators receive everything for free
+
+### Setup (Same WiFi)
+
+```bash
+npm run dev
+# Get the spectator URL with auto-detected local IP:
+curl http://localhost:3000/api/spectator-url
+# → {"url":"http://192.168.1.42:3000/spectator.html","ip":"192.168.1.42","port":3000,"spectators":0}
+```
+
+Share the URL or generate a QR code from it. Everyone on the same network connects instantly.
+
+### Setup (Remote)
+
+```bash
+ngrok http 5173   # dev
+ngrok http 3000   # production
+```
+
+Share `https://<ngrok-id>.ngrok.io/spectator.html`.
+
+### Actor Filter (Dual-Head)
+
+In dual-head mode (two characters), spectators can focus on one:
+
+```
+/spectator.html?actor=main    # primary character only
+/spectator.html?actor=small   # secondary character only
+```
+
+The `/api/spectator-url?actor=main` endpoint includes the actor param in the returned URL.
 
 ## API Endpoints
 
@@ -179,6 +239,7 @@ LLM Assistant (TypeScript)
 | `/checkout/paypal/capture` | POST | Capture PayPal order; emits confident donation signal on completion |
 | `/donations/confirm` | POST | Manual donation signal injection (`implied`/`confident`) |
 | `/webhooks/paypal` | POST | PayPal webhook ingestion (maps supported event types to donation signals) |
+| `/api/spectator-url` | GET | Spectator URL with auto-detected LAN IP + spectator count |
 
 ### Whisper Model Selection
 

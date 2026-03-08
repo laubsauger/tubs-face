@@ -17,7 +17,7 @@ interface GenerateGeminiArgs {
 interface GeminiResponseJson {
   candidates?: Array<{
     content?: {
-      parts?: Array<{ text?: string }>;
+      parts?: Array<{ text?: string; thought?: boolean }>;
     };
   }>;
   usageMetadata?: LlmUsage;
@@ -219,6 +219,7 @@ function extractResponseText(responseJson: GeminiResponseJson): string {
   for (const candidate of candidates) {
     const parts = Array.isArray(candidate.content?.parts) ? candidate.content.parts : [];
     const text = parts
+      .filter((part) => !part.thought)
       .map((part) => (typeof part.text === 'string' ? part.text : ''))
       .join('\n')
       .trim();

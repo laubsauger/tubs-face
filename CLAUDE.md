@@ -5,68 +5,95 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm start             # Start bridge server (port 3000) + Python transcription service (port 3001)
-npm run dev           # Same as start
-npm run kill          # Kill both Node and Python processes
-npm run restart       # Kill + sleep 1s + start
+npm run dev           # Start dev: tsx watch server + vite client (concurrent)
+npm start             # Start production server (compiled dist/)
+npm run build         # Build client (vite) + server (tsc)
+npm run typecheck     # Full TypeScript validation (both configs)
+npm run test          # vitest run
+npm run bench:llm     # Benchmark LLM performance
 
 # Python deps (if not using the committed venv/)
 pip install -r requirements.txt
 ```
 
-No test suite exists. No linter configured.
-
 ## Architecture
 
-Three-layer system: **Browser frontend** → **Node.js bridge server** → **Python STT/TTS microservice**.
+Three-layer TypeScript system: **React frontend** → **Node.js server** → **Python STT/TTS microservice**.
 
-### Bridge Server (`src/bridge-server.js`)
-- HTTP server + WebSocket relay on port 3000
-- Serves static files from `public/`
-- Spawns the Python transcription service as a child process
-- Proxies `/tts` requests to Python on port 3001
-- Implements wake-word detection for voice input (30+ fuzzy variants of "hey tubs")
-- HTTP API: `/health`, `/stats`, `/speak`, `/voice`, `/tts`, `/sleep`, `/wake`, `/config`
+Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). Dev uses `tsx watch` for server hot-reload.
+
+### Server (`src/server/`) — TypeScript, port 3000
+
+**Entry:** `index.ts` — HTTP server + WebSocket init
+
+- `ws/server.ts` — WebSocket server, client tracking, message routing, broadcast
+- `assistant/service.ts` — LLM orchestration, turn management
+- `assistant/dual-head.ts` — Structured multi-beat responses (actor/action schema)
+- `assistant/context.ts` — Conversation history
+- `assistant/emotion.ts` — Emotion extraction
+- `assistant/text.ts` — Output normalization, TTS sanitization
+- `assistant/sentence-splitter.ts` — Break responses into utterances
+- `assistant/prompt.ts` — System instruction builders
+- `assistant/vision.ts` — Camera/image analysis
+- `llm/provider.ts` — Router: Gemini or Realtime (via `LLM_PROVIDER` env)
+- `llm/gemini-client.ts` — Gemini API streaming with SSE
+- `llm/providers/gemini.ts` — Structured generation wrapper
+- `llm/providers/realtime.ts` — Gemini Realtime/Live API
+- `processing/mode-manager.ts` — Processing mode router (legacy/realtime)
+- `tts/stream.ts` — Streaming audio chunks to WebSocket
+- `config/runtime.ts` — Runtime configuration, session stats
+- `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
 
 ### Python Service (`src/transcription-service.py`)
 - Flask app on port 3001
 - STT via `faster-whisper` (Whisper model, CPU, int8)
-- TTS via macOS `say` command + `afconvert` to WAV (macOS-only)
-- Endpoints: `/transcribe` (POST multipart audio), `/tts` (POST JSON), `/health`
+- TTS via macOS `say` + `afconvert` (macOS-only)
+- Endpoints: `/transcribe`, `/tts`, `/health`
 
-### LLM Layer (`src/llm/`)
-- `provider.js` — abstraction that resolves to Gemini or Realtime provider (via `LLM_PROVIDER` env var)
-- `providers/gemini.js` — Gemini API via `src/gemini-client.js` (supports streaming)
-- `providers/realtime.js` — Gemini Realtime/Live API
-- Requires `GEMINI_API_KEY` env var
+### Client (`src/client/`) — React + TypeScript + Zustand
 
-### Assistant Layer (`src/assistant/`)
-- `generate.js` — main LLM response generation (single-head mode)
-- `dual-head.js` — structured dual-head mode (scripted multi-beat responses with actor/action schema)
-- `context.js` — conversation context/history management
-- `emotion.js` — emotion extraction from LLM output
-- `donation.js` — donation signal handling (Venmo/PayPal)
-- `constants.js`, `text.js` — shared constants and text utilities
+**Entry:** `main.ts` → `bootstrap-react.tsx` (initializes runtimes, React root)
 
-### Frontend (`public/`)
-- Single-page vanilla JS app (`js/main.js`, `css/style.css`, `index.html`)
-- Animated face with expressions: idle, listening, thinking, speaking, smile, happy
-- WebSocket client for real-time communication with bridge
-- Voice input: push-to-talk (spacebar) + always-on VAD (`@ricky0123/vad-web` from CDN)
-- TTS playback with browser `SpeechSynthesis` fallback
-- Sleep mode with auto-timeout (5 min default), wake via spacebar/click/voice
-- Zen mode: press `Z` to hide all panels
+Two build entries: `index.html` (main) and `app-mini.html` (mini display mode).
+
+**Runtime-based architecture** — each subsystem is a standalone runtime with `init()`, `bind()`, `dispose()`:
+
+- `audio/speech-runtime.ts` — Server audio playback (streaming queue), subtitle timing
+- `audio/voice-runtime.ts` — Mic input + VAD (push-to-talk + hands-free)
+- `audio/ambient-runtime.ts` — Background sounds
+- `face/runtime.ts` — Face shell, camera input, face detection
+- `face/behavior-runtime.ts` — Expression & animation synced with speech
+- `glitch/runtime.ts` — Glitch effect rendering (canvas/WebGPU)
+- `fx/runtime.ts` — Visual effects (filters, overlays)
+- `behavior/emotion-runtime.ts` — Emotional state
+- `behavior/proactive-runtime.ts` — Proactive/greeting responses
+- `transport/ws-client.ts` — Managed WebSocket with reconnection
+- `state/app-state.ts` — Zustand store with `subscribeWithSelector`
+- `handlers/messages.ts` — Routes WS messages to state updates
+- `ui/app-shell.tsx` — Main React shell with debug panels
+
+### Shared Contracts (`src/shared/contracts/`)
+
+Type-safe communication layer:
+- `ws.ts` — Full WebSocket protocol (all client & server message types)
+- `turn-script.ts` — Turn structure: beats (actor + action), emotions
+- `config.ts` — Runtime config shape, expression names
+- `http.ts` — HTTP request/response types
+- `faces.ts` — Face detection & storage contracts
 
 ## WebSocket Protocol
 
-Messages are JSON with a `type` field. Key types:
-- Server→Client: `speak`, `incoming`, `thinking`, `expression`, `system`, `error`, `sleep`, `wake`, `stats`, `config`
-- Client→Server: `incoming` (user text)
-- Bidirectional: `ping` (latency, every 5s)
+Messages are JSON with a `type` field. Full types in `src/shared/contracts/ws.ts`.
 
-### Other Server Modules
-- `src/config.js` — runtime config
-- `src/langfuse.js` — Langfuse observability integration
-- `src/processing/` — processing mode management
-- `src/persona/` + `src/persona.js` — persona/system prompt management
-- `src/face-library.js` + `data/face-library.json` — face identity storage
+**Client → Server:** `ping`, `incoming`, `interrupt`, `face_motion`, `face_blink`, `head_speech_state`, `presence`, `camera_frame`, `appearance_frame`, `tts_request`
+
+**Server → Client:** `ping`, `config`, `system`, `expression`, `thinking`, `speak`, `speak_chunk`, `speak_end`, `audio_chunk`, `turn_start`, `turn_script`, `turn_context`, `interrupt`, `backchannel`, `incoming`, `donation_signal`, `stats`, `stream_debug`, `conversation_mode`, `sleep`, `wake`, `error`, `face_motion`, `face_blink`, `head_speech_state`
+
+## Key Patterns
+
+- **Runtime composition** — features are standalone runtimes, not class hierarchies
+- **Streaming-first** — audio chunks streamed incrementally (not full responses)
+- **Dual-head** — structured multi-beat responses with different actors/actions
+- **Mode switching** — processing modes (legacy/realtime) swappable at runtime
+- **Broadcast model** — server broadcasts all messages to all connected WS clients
+- Requires `GEMINI_API_KEY` env var

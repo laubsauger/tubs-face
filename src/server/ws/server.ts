@@ -20,6 +20,7 @@ import { interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../
 import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
+const spectators = new Set<WebSocket>();
 const WS_PATH = '/ws';
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
@@ -36,8 +37,14 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     });
   });
 
-  wss.on('connection', (socket: WebSocket) => {
+  wss.on('connection', (socket: WebSocket, request: IncomingMessage) => {
+    const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+    const isSpectator = url.searchParams.get('role') === 'spectator';
+
     clients.add(socket);
+    if (isSpectator) {
+      spectators.add(socket);
+    }
 
     send(socket, {
       type: 'config',
@@ -46,13 +53,18 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
 
     send(socket, {
       type: 'system',
-      text: 'Connected to Tubs Bridge Server',
+      text: isSpectator ? 'Connected as spectator' : 'Connected to Tubs Bridge Server',
     } satisfies WsSystemServerMessage);
 
     socket.on('message', (raw: RawData) => {
       try {
         const parsed = JSON.parse(String(raw));
         if (!isWsClientMessage(parsed)) {
+          return;
+        }
+
+        // Spectators can only send pings
+        if (isSpectator && parsed.type !== 'ping') {
           return;
         }
 
@@ -64,6 +76,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
 
     socket.on('close', () => {
       clients.delete(socket);
+      spectators.delete(socket);
     });
   });
 
@@ -95,6 +108,10 @@ export function broadcastConfig(): void {
 
 export function getClientCount(): number {
   return clients.size;
+}
+
+export function getSpectatorCount(): number {
+  return spectators.size;
 }
 
 function handleClientMessage(socket: WebSocket, message: WsClientMessage): void {

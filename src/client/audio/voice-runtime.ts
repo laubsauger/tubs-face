@@ -62,6 +62,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let silenceDetectedAt = 0;
   let lastSpeechStart = 0;
   let lastSpeechStop = 0;
+  let lastVoiceDetectedAt = 0;
   let vadProvider: VadProvider | null = null;
   let vadModelId: VadModelId = 'rms';
   let unlockHandlerBound = false;
@@ -505,11 +506,17 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
 
     const now = Date.now();
 
+    if (isVoice) {
+      lastVoiceDetectedAt = now;
+    }
+
+    const activeVoice = isVoice || ((now - lastVoiceDetectedAt) < 300);
+
     if (!state.recording) {
       if (state.listenState === 'Uploading...' || state.listenState === 'Thinking...') {
         return;
       }
-      if (isVoice) {
+      if (activeVoice) {
         speechDetectedAt = speechDetectedAt || now;
         if (now - speechDetectedAt >= 180) {
           lastSpeechStart = speechDetectedAt;
@@ -531,7 +538,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
 
-    if (isSilence) {
+    // Must be completely silent for 900ms (so total ~1.2s since last actual voice)
+    if (!activeVoice) {
       silenceDetectedAt = silenceDetectedAt || now;
       if (now - silenceDetectedAt >= 900) {
         silenceDetectedAt = 0;

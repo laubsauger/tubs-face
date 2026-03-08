@@ -45,6 +45,7 @@ export default defineConfig({
       input: {
         main: path.resolve(rootDir, 'index.html'),
         mini: path.resolve(rootDir, 'app-mini.html'),
+        spectator: path.resolve(rootDir, 'spectator.html'),
       },
     },
   },
