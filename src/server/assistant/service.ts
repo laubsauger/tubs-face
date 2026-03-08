@@ -846,6 +846,14 @@ async function runStreamingAssistantTurn(args: {
       : donationSignal.donation;
     fullText = clampOutput(nudged.text);
 
+    if (turnTimer) {
+      if (context.meta?.imageAttached) {
+        turnTimer.setMeta('Image', 'attached');
+      }
+      const emoji = rawEmotion?.emoji ? `${rawEmotion.emoji} ` : '';
+      turnTimer.setMeta('Tubs', `${emoji}${fullText}`);
+    }
+
     // Send speak_end to finalize streaming on the client
     emitIfActive(turnId, epoch, broadcast, {
       type: 'speak_end',

@@ -138,16 +138,15 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       const turnTimer = createTurnTimer({
         side: 'backend',
         source: 'voice',
-        ...(startedAtStr ? { startedAt: Number(startedAtStr) } : {}),
+        startedAt: requestReceivedAt,
       });
 
-      if (startedAtStr) {
-        turnTimer.mark('User started speaking', Number(startedAtStr));
+      if (startedAtStr && stoppedAtStr) {
+        const spokenMs = Number(stoppedAtStr) - Number(startedAtStr);
+        if (spokenMs > 0) {
+          turnTimer.setMeta('Spoke', spokenMs < 1000 ? `${Math.round(spokenMs)} ms` : `${(spokenMs / 1000).toFixed(2)} s`);
+        }
       }
-      if (stoppedAtStr) {
-        turnTimer.mark('User stopped speaking', Number(stoppedAtStr));
-      }
-      turnTimer.mark('Voice request received', requestReceivedAt);
       if (runtimeConfig.muted) {
         turnTimer.mark('Ignored (muted)');
         sendJson(response, 200, {
@@ -251,6 +250,10 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Voice request failed';
       sendJson(response, 500, { error: message } satisfies ErrorResponse);
+      broadcast({
+        type: 'error',
+        text: message,
+      });
     }
     return true;
   }
