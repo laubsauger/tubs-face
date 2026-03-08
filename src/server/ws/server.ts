@@ -215,6 +215,21 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
   const turnId = message.turnId;
   const voice = message.voice || runtimeConfig.kokoroVoice || 'af_heart';
   let chunkIndex = 0;
+  let sentSpeakEnd = false;
+  const requestedAt = Date.now();
+
+  console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request received — text="${text.slice(0, 60)}" voice=${voice}${turnId ? ` turn=${turnId}` : ''}`);
+
+  function sendSpeakEnd(): void {
+    if (sentSpeakEnd) return;
+    sentSpeakEnd = true;
+    if (socket.readyState === socket.OPEN) {
+      send(socket, {
+        type: 'speak_end',
+        ...(turnId ? { turnId } : {}),
+      } satisfies WsSpeakEndServerMessage);
+    }
+  }
 
   const ttsSession = openTtsStream({
     onChunk(chunk) {
@@ -222,26 +237,29 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
         ttsSession.close();
         return;
       }
+      if (chunkIndex === 0) {
+        console.log(`\x1b[36m[Streaming]\x1b[0m first audio chunk ready in ${Date.now() - requestedAt}ms${turnId ? ` (turn: ${turnId})` : ''}`);
+      }
       send(socket, {
         type: 'audio_chunk',
         audio: chunk.audio,
         text: chunk.text || text,
-        turnId,
+        ...(turnId ? { turnId } : {}),
         chunkIndex: chunkIndex++,
       } satisfies WsAudioChunkServerMessage);
     },
     onSentenceDone() {
-      if (socket.readyState !== socket.OPEN) return;
-      send(socket, {
-        type: 'speak_end',
-        turnId,
-      } satisfies WsSpeakEndServerMessage);
+      sendSpeakEnd();
     },
     onError(error) {
       console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS request error: ${error.message}`);
+      // Ensure client gets speak_end even on error so it doesn't hang
+      sendSpeakEnd();
     },
     onClose() {
-      console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request done — ${chunkIndex} chunks sent${turnId ? ` (turn: ${turnId})` : ''}`);
+      console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request done — ${chunkIndex} chunks sent in ${Date.now() - requestedAt}ms${turnId ? ` (turn: ${turnId})` : ''}`);
+      // Ensure speak_end is sent if TTS stream closed without onSentenceDone
+      sendSpeakEnd();
     },
   });
 
@@ -253,6 +271,7 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
     }
     if (ttsSession.closed) {
       console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS closed before ready — text "${text.slice(0, 40)}..."`);
+      sendSpeakEnd();
       return;
     }
     setTimeout(waitAndSend, 10);

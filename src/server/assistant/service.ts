@@ -567,7 +567,7 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
       turnId,
       epoch,
       broadcast,
-      turnTimer,
+      ...(turnTimer ? { turnTimer } : {}),
       provider,
       authState,
     });
@@ -682,7 +682,7 @@ async function runStreamingAssistantTurn(args: {
   let fullText = '';
   let rawEmotion: SpeechEmotionPayload | null = null;
   let emotionExtracted = false;
-  let ttsWsResolve: (() => void) | null = null;
+  let ttsWsResolve!: () => void;
   const ttsWsDone = new Promise<void>((resolve) => { ttsWsResolve = resolve; });
   let currentTtsSentence = '';
 
@@ -704,6 +704,9 @@ async function runStreamingAssistantTurn(args: {
     ttsWs = openTtsStream({
       onChunk(chunk) {
         if (!isAssistantTurnActive(turnId, epoch)) return;
+        if (chunkIndex === 0) {
+          turnTimer?.mark('First audio chunk sent');
+        }
         broadcast({
           type: 'audio_chunk',
           audio: chunk.audio,
@@ -742,14 +745,14 @@ async function runStreamingAssistantTurn(args: {
     ttsWsReady = ttsWs.ready;
   } catch (error) {
     console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WebSocket failed to open: ${error instanceof Error ? error.message : 'unknown'} — falling through to sequential`);
-    ttsWsResolve?.();
+    if (ttsWsResolve) ttsWsResolve();
     return null;
   }
 
   if (!ttsWsReady) {
     console.warn('\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WebSocket did not connect within 500ms — falling through to sequential');
     ttsWs?.close();
-    ttsWsResolve?.();
+    if (ttsWsResolve) ttsWsResolve();
     return null;
   }
 

@@ -239,9 +239,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       }
       clearLiveTranscript(store);
       applyDonationPrompt(store, message.donation ?? null, message.fullText ?? message.text ?? '');
+      // Don't reset expression here — let speech runtime's finishSpeech handle it
+      // when audio actually finishes playing (speak_end arrives before audio ends).
       store.setState((current) => ({
         ...commitChatDraft(current, 'out'),
-        currentExpression: current.sleeping ? 'sleep' : nextExpression(current.currentExpression, 'idle'),
         subtitleText: current.currentSpeechText,
       }));
       return;

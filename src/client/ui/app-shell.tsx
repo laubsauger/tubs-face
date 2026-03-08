@@ -1281,7 +1281,7 @@ function ChatPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <section
       id="chat-panel-card"
-      className={`${renderPanelCardClass(state.collapsed)} logs-card chat-panel-top`}
+      className={`${renderPanelCardClass(state.collapsed)} logs-card flex-column-card`}
       style={state.chatPanelWidth ? { width: state.chatPanelWidth, maxWidth: '100%' } : undefined}
     >
       <PanelHeader store={store} panelKey="chat" title="Chat" meta={`${state.chatEntries.length} entries`} metaId="chat-panel-meta" />
@@ -1293,8 +1293,11 @@ function ChatPanel({ store }: { store: AppStore }): JSX.Element {
               const actor = resolveChatActor(entry);
               return (
                 <li key={entry.id} className={`chat-entry chat-${entry.type} chat-actor-${actor} ${entry.draft ? 'is-draft' : ''}`}>
-                  <span className="chat-time">{formatTimestamp(entry.ts)}</span>
-                  <span className="chat-text"><strong className="chat-speaker">{renderChatPrefix(entry.type, entry.actor)}</strong> {entry.text}</span>
+                  <div className="chat-entry-meta">
+                    <strong className="chat-speaker">{renderChatPrefix(entry.type, entry.actor)}</strong>
+                    <span className="chat-time">{formatTimestamp(entry.ts)}</span>
+                  </div>
+                  <span className="chat-text">{entry.text}</span>
                 </li>
               );
             })}
@@ -1402,16 +1405,18 @@ function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
   }));
 
   return (
-    <article className={renderPanelCardClass(state.collapsed)}>
+    <article className={`${renderPanelCardClass(state.collapsed)} flex-column-card`}>
       <PanelHeader store={store} panelKey="eventLog" title="Event Log" meta={`${state.logs.length} entries`} />
       <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <ul id="event-log-list" className="logs">
+        <ul id="event-log-list" className="logs event-log-list">
           {state.logs.length === 0
             ? <li className="log"><span>No events yet.</span></li>
             : state.logs.map((entry) => (
               <li key={entry.id} className={`log log-${entry.level}`}>
-                <span className="log-time">{formatTimestamp(entry.ts)}</span>
-                <span>{entry.text}</span>
+                <div className="log-meta">
+                  <span className="log-time">{formatTimestamp(entry.ts)}</span>
+                </div>
+                <span className="log-text">{entry.text}</span>
               </li>
             ))}
         </ul>

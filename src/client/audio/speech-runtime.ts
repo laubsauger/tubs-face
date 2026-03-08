@@ -47,6 +47,15 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let streamingFinalizeTimer: number | null = null;
   let streamingSessionActive = false;
   let streamingSessionTurnId: string | null = null;
+  let streamingSpeakEndReceived = false;
+  let streamingChunkLog: Array<{
+    idx: number;
+    decodedAt: number;
+    scheduledAt: number;
+    duration: number;
+    ctxTime: number;
+    activeNodes: number;
+  }> = [];
   let streamingSubtitleText = '';
   let activeSpeechTurnId: string | null = null;
   let activeSpeechActor: 'main' | 'small' | null = null;
@@ -94,6 +103,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           enqueueSpeak(message.text, message.turnId);
           return;
         case 'audio_chunk':
+          console.log(`[Stream] audio_chunk received | audioLen=${message.audio?.length ?? 0} | turnId=${message.turnId ?? '?'} | chunkIndex=${(message as { chunkIndex?: number }).chunkIndex ?? '?'}`);
           playStreamingAudioChunk(message.audio, message.turnId);
           return;
         case 'speak_end':
@@ -341,6 +351,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       const voice = (mode === 'mini' || actor === 'small')
         ? store.getState().config?.secondaryVoice
         : store.getState().config?.kokoroVoice;
+      console.log(`[Stream] playTts sending tts_request | turnId=${effectiveTurnId} | text="${text.slice(0, 50)}" | voice=${voice ?? 'default'}`);
       window.dispatchEvent(new CustomEvent('tubs:tts-request', {
         detail: {
           text,
@@ -351,17 +362,19 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
       // Wait for streaming playback to complete via speak_end
       await new Promise<void>((resolve) => {
-        const onSpeakEnd = (event: Event) => {
+        const onStreamDone = (event: Event) => {
           const msg = (event as CustomEvent<{ turnId?: string }>).detail;
+          console.log(`[Stream] tts-stream-done event | eventTurnId=${msg?.turnId ?? '?'} | waitingFor=${effectiveTurnId}`);
           if (!effectiveTurnId || msg?.turnId === effectiveTurnId) {
-            window.removeEventListener('tubs:tts-stream-done', onSpeakEnd as EventListener);
+            window.removeEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
             resolve();
           }
         };
-        window.addEventListener('tubs:tts-stream-done', onSpeakEnd as EventListener);
+        window.addEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
         // Safety timeout
         setTimeout(() => {
-          window.removeEventListener('tubs:tts-stream-done', onSpeakEnd as EventListener);
+          console.warn(`[Stream] WS TTS safety timeout (${SPEECH_SAFETY_MAX_MS}ms) — forcing resolve | turnId=${effectiveTurnId}`);
+          window.removeEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
           resolve();
         }, SPEECH_SAFETY_MAX_MS);
       });
@@ -539,6 +552,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   async function playStreamingAudioChunkInner(audioBase64: string, turnId?: string): Promise<void> {
+    console.log(`[Stream] decoding chunk | base64Len=${audioBase64?.length ?? 0} | sessionActive=${streamingSessionActive} | activeNodes=${streamingActiveNodes}`);
     clearStreamingFinalizeTimer();
     if (!streamingAudioContext) {
       streamingAudioContext = new AudioContext();
@@ -574,12 +588,29 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       ts: Date.now(),
     }));
 
+    const chunkIdx = streamingChunkLog.length;
+    const scheduledAt = streamingNextStartTime;
     streamingActiveNodes += 1;
     source.start(streamingNextStartTime);
     streamingNextStartTime += audioBuffer.duration;
+
+    streamingChunkLog.push({
+      idx: chunkIdx,
+      decodedAt: performance.now(),
+      scheduledAt,
+      duration: audioBuffer.duration,
+      ctxTime: now,
+      activeNodes: streamingActiveNodes,
+    });
+
     source.onended = () => {
       streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
-      scheduleStreamingEnd(effectiveTurnId ?? undefined);
+      console.log(`[Stream] chunk #${chunkIdx} ended | remaining=${streamingActiveNodes} | speakEndReceived=${streamingSpeakEndReceived}`);
+      // Only finalize if we've already received speak_end and all nodes are done
+      if (streamingSpeakEndReceived && streamingActiveNodes === 0) {
+        console.log(`[Stream] last chunk done after speak_end — finalizing`);
+        endStreamingSession(effectiveTurnId ?? null);
+      }
     };
   }
 
@@ -588,8 +619,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       return;
     }
     streamingSessionActive = true;
+    streamingSpeakEndReceived = false;
+    streamingChunkLog = [];
     streamingSessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
     activeSpeechTurnId = streamingSessionTurnId;
+    console.log(`[Stream] session begin | turn=${streamingSessionTurnId} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'}`);
     updatePlaybackState(true, 'Speaking (Stream)');
     emitHeadSpeechState('start', streamingSessionTurnId);
   }
@@ -597,15 +631,24 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   function endStreamingSession(turnId: string | null): void {
     clearStreamingFinalizeTimer();
     if (!streamingSessionActive) {
+      console.log(`[Stream] endStreamingSession called but no active session — dispatching tts-stream-done anyway`);
       streamingActiveNodes = 0;
       streamingNextStartTime = 0;
       streamingSubtitleText = '';
       streamingSessionTurnId = null;
+      // Still dispatch done event so playTts doesn't hang for 60s
+      const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
+      window.dispatchEvent(new CustomEvent('tubs:tts-stream-done', {
+        detail: { turnId: effectiveTurnId },
+      }));
       return;
     }
 
+    logStreamingTimeline();
+
     const effectiveTurnId = turnId ?? streamingSessionTurnId ?? store.getState().currentTurnId ?? null;
     streamingSessionActive = false;
+    streamingSpeakEndReceived = false;
     streamingActiveNodes = 0;
     streamingNextStartTime = 0;
     streamingSubtitleText = '';
@@ -618,12 +661,78 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }));
   }
 
+  function logStreamingTimeline(): void {
+    if (streamingChunkLog.length === 0) {
+      return;
+    }
+
+    const chunks = streamingChunkLog.slice();
+    streamingChunkLog = [];
+
+    const first = chunks[0]!;
+    const last = chunks[chunks.length - 1]!;
+    const firstDecoded = first.decodedAt;
+    const lines: string[] = [];
+    lines.push(`[Streaming Audio Timeline] ${chunks.length} chunk(s)`);
+    lines.push(`  #  | Decoded    | Sched @    | Duration  | Ctx Time   | Nodes | Gap`);
+    lines.push(`-----+------------+------------+-----------+------------+-------+--------`);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const c = chunks[i]!;
+      const decodedRel = ((c.decodedAt - firstDecoded) / 1000).toFixed(3);
+      const schedAt = c.scheduledAt.toFixed(3);
+      const dur = c.duration.toFixed(3);
+      const ctx = c.ctxTime.toFixed(3);
+      const prev = i > 0 ? chunks[i - 1]! : null;
+      const gap = prev
+        ? (c.scheduledAt - (prev.scheduledAt + prev.duration)).toFixed(3)
+        : '—';
+      lines.push(
+        `  ${String(c.idx).padStart(2)} | ${decodedRel.padStart(10)}s | ${schedAt.padStart(10)}s | ${dur.padStart(9)}s | ${ctx.padStart(10)}s | ${String(c.activeNodes).padStart(5)} | ${String(gap).padStart(6)}s`,
+      );
+    }
+
+    // Check for overlaps: any chunk scheduled before previous chunk ends?
+    let overlaps = 0;
+    let allStartAtSameTime = true;
+    for (let i = 1; i < chunks.length; i++) {
+      const cur = chunks[i]!;
+      const prev = chunks[i - 1]!;
+      const prevEnd = prev.scheduledAt + prev.duration;
+      if (cur.scheduledAt < prevEnd - 0.001) {
+        overlaps++;
+      }
+      if (Math.abs(cur.scheduledAt - first.scheduledAt) > 0.01) {
+        allStartAtSameTime = false;
+      }
+    }
+    if (overlaps > 0) {
+      lines.push(`  ⚠ ${overlaps} overlapping chunk(s) detected!`);
+    }
+    if (allStartAtSameTime && chunks.length > 1) {
+      lines.push(`  ⚠ All chunks scheduled at same time — serialization broken!`);
+    }
+
+    const totalDuration = chunks.reduce((sum, c) => sum + c.duration, 0);
+    const wallTime = (last.decodedAt - firstDecoded) / 1000;
+    lines.push(`  Total audio: ${totalDuration.toFixed(3)}s | Wall decode time: ${wallTime.toFixed(3)}s`);
+
+    console.log(lines.join('\n'));
+  }
+
   function scheduleStreamingEnd(turnId?: string): void {
+    streamingSpeakEndReceived = true;
+    console.log(`[Stream] speak_end received | activeNodes=${streamingActiveNodes} | sessionActive=${streamingSessionActive} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'} | nextStart=${streamingNextStartTime.toFixed(3)}`);
+    // If all chunks have already finished playing, end now (with small grace period
+    // in case a final chunk is still being decoded in the chain).
     clearStreamingFinalizeTimer();
     streamingFinalizeTimer = window.setTimeout(() => {
       if (streamingActiveNodes > 0) {
+        console.log(`[Stream] grace period elapsed but ${streamingActiveNodes} node(s) still active — waiting for onended`);
+        // Nodes still playing — onended will finalize once the last one completes.
         return;
       }
+      console.log(`[Stream] finalizing session after grace period`);
       endStreamingSession(turnId ?? null);
     }, STREAMING_GAP_GRACE_MS);
   }
@@ -750,6 +859,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     streamingActiveNodes = 0;
     streamingNextStartTime = 0;
     streamingSessionActive = false;
+    streamingSpeakEndReceived = false;
     streamingSessionTurnId = null;
     streamingSubtitleText = '';
     remoteActorSpeaking = false;
@@ -1002,6 +1112,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       streamingActiveNodes = 0;
       streamingNextStartTime = 0;
       streamingSessionActive = false;
+      streamingSpeakEndReceived = false;
       streamingSubtitleText = '';
       streamingSessionTurnId = null;
       activeSpeechTurnId = null;

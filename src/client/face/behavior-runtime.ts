@@ -17,6 +17,9 @@ const FACE_TARGET_SWITCH_MIN_MS = 1900;
 const FACE_TARGET_SWITCH_MAX_MS = 3600;
 const PARTNER_MOTION_IDLE_BLOCK_MS = 1800;
 const PARTNER_BLINK_MIN_GAP_MS = 900;
+const MICRO_SACCADE_INTERVAL_MS = 1200;
+const MICRO_SACCADE_MAX_INTERVAL_MS = 3200;
+const MICRO_SACCADE_AMPLITUDE = 0.045;
 
 export interface FaceBehaviorRuntime {
   bind(root: HTMLElement): void;
@@ -48,6 +51,11 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let lastPartnerBlinkAt = 0;
   let partnerMotionHandler: ((event: Event) => void) | null = null;
   let partnerBlinkHandler: ((event: Event) => void) | null = null;
+  let microSaccadeTimer: number | null = null;
+  let saccadeOffsetX = 0;
+  let saccadeOffsetY = 0;
+  let faceTrackBaseX = 0;
+  let faceTrackBaseY = 0;
 
   return {
     bind(root: HTMLElement): void {
@@ -75,6 +83,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       attachPartnerHandlers();
       scheduleBlink();
       scheduleBehavior();
+      scheduleMicroSaccade();
       resetGaze();
     },
     attachSender(nextSender): void {
@@ -86,6 +95,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(lookResetTimer);
       clearManagedTimer(smileResetTimer);
       clearManagedTimer(partnerBlinkTimer);
+      clearManagedTimer(microSaccadeTimer);
       if (rafId != null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -134,11 +144,14 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   }
 
   function runBehaviorStep(): void {
-    if (steerTowardDetectedFace()) {
-      return;
+    const tracking = hasTrackedFaces();
+
+    // Steer toward detected face (updates gaze target)
+    if (tracking) {
+      steerTowardDetectedFace();
     }
 
-    if (mode === 'mini' && Date.now() - partnerMotionAt <= PARTNER_MOTION_IDLE_BLOCK_MS) {
+    if (!tracking && mode === 'mini' && Date.now() - partnerMotionAt <= PARTNER_MOTION_IDLE_BLOCK_MS) {
       return;
     }
 
@@ -170,13 +183,29 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       return;
     }
 
-    const nextX = (Math.random() * 2 - 1) * WANDER_X_RANGE;
-    const nextY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
-    lookAt(nextX, nextY);
-    clearManagedTimer(lookResetTimer);
-    lookResetTimer = window.setTimeout(() => {
-      resetGaze();
-    }, randBetween(650, 1350));
+    // Only wander when not tracking a face
+    if (!tracking) {
+      const nextX = (Math.random() * 2 - 1) * WANDER_X_RANGE;
+      const nextY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
+      lookAt(nextX, nextY);
+      clearManagedTimer(lookResetTimer);
+      lookResetTimer = window.setTimeout(() => {
+        resetGaze();
+      }, randBetween(650, 1350));
+    }
+  }
+
+  function scheduleMicroSaccade(): void {
+    clearManagedTimer(microSaccadeTimer);
+    microSaccadeTimer = window.setTimeout(() => {
+      if (shouldAnimate() && hasTrackedFaces()) {
+        // Small involuntary eye movements while fixating on a face
+        saccadeOffsetX = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
+        saccadeOffsetY = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
+        lookAt(faceTrackBaseX + saccadeOffsetX, faceTrackBaseY + saccadeOffsetY);
+      }
+      scheduleMicroSaccade();
+    }, randBetween(MICRO_SACCADE_INTERVAL_MS, MICRO_SACCADE_MAX_INTERVAL_MS));
   }
 
   function blink(): void {
@@ -304,6 +333,13 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       velocityX = 0;
       velocityY = 0;
       lastTickMs = 0;
+
+      // Keep the loop alive while tracking faces so we pick up bounding box changes
+      if (hasTrackedFaces()) {
+        rafId = requestAnimationFrame(tick);
+        return;
+      }
+
       rafId = null;
       return;
     }
@@ -340,7 +376,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     const normalizedY = (centerY / frameHeight) * 2 - 1;
 
     // Camera feed is mirrored in the UI, so invert the horizontal target.
-    lookAt((-normalizedX) * 0.92, normalizedY * 0.68);
+    faceTrackBaseX = (-normalizedX) * 0.92;
+    faceTrackBaseY = normalizedY * 0.68;
+    lookAt(faceTrackBaseX + saccadeOffsetX, faceTrackBaseY + saccadeOffsetY);
     return true;
   }
 }

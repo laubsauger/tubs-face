@@ -90,14 +90,26 @@ a {
   display: grid;
   grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1.3fr) minmax(320px, 0.62fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
   margin-bottom: 20px;
 }
 
 .workspace-col {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 18px;
-  align-content: start;
+}
+
+.flex-column-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.flex-column-card>.panel-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .voice-panel-card {
@@ -1065,32 +1077,58 @@ a {
   color: rgba(229, 238, 252, 0.64);
 }
 
-.chat-log-list {
-  max-height: 460px;
+.chat-log-list,
+.event-log-list {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 12px;
+}
+
+.chat-log-list {
   gap: 6px;
 }
 
-.chat-log-list::-webkit-scrollbar {
+.chat-log-list::-webkit-scrollbar,
+.event-log-list::-webkit-scrollbar {
   width: 6px;
 }
 
-.chat-log-list::-webkit-scrollbar-thumb {
+.chat-log-list::-webkit-scrollbar-thumb,
+.event-log-list::-webkit-scrollbar-thumb {
   background: rgba(125, 211, 252, 0.2);
   border-radius: 999px;
 }
 
-.chat-log-list::-webkit-scrollbar-track {
+.chat-log-list::-webkit-scrollbar-track,
+.event-log-list::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.chat-log-list .chat-entry,
+.chat-log-list .chat-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  padding: 6px 10px;
+}
+
+.event-log-list .log,
 .debug-entry {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
+  align-items: stretch;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+}
+
+.chat-entry-meta,
+.log-meta {
+  display: flex;
+  justify-content: space-between;
   align-items: baseline;
-  padding: 6px 10px;
+  gap: 8px;
 }
 
 .chat-entry.is-draft {
@@ -1122,22 +1160,23 @@ a {
   background: rgba(18, 24, 34, 0.78);
 }
 
-.chat-time {
+.chat-time,
+.log-time {
   color: rgba(229, 238, 252, 0.52);
-  min-width: 58px;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
 }
 
-.chat-text {
+.chat-text,
+.log-text {
   color: rgba(229, 238, 252, 0.9);
   font-size: 0.85rem;
   line-height: 1.4;
 }
 
 .chat-speaker {
-  display: inline-block;
-  min-width: 3.2rem;
-  margin-right: 6px;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .chat-actor-user .chat-speaker {

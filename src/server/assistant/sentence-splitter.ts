@@ -13,7 +13,7 @@ export function createSentenceSplitter(onSentence: (sentence: string) => void): 
 
   function skipDelimiterRemainder(index: number): number {
     let cursor = index;
-    while (cursor < buffer.length && /\s/.test(buffer[cursor])) cursor += 1;
+    while (cursor < buffer.length && /\s/.test(buffer[cursor] ?? '')) cursor += 1;
     return cursor;
   }
 

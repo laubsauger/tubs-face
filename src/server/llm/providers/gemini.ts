@@ -49,12 +49,12 @@ async function streamContent(args: LlmStreamArgs): Promise<LlmStreamResult> {
     systemInstruction: args.systemInstruction,
     contents: args.contents,
     maxOutputTokens: args.maxOutputTokens,
-    temperature: args.temperature,
-    timeoutMs: args.timeoutMs,
-    responseMimeType: args.responseMimeType,
-    responseSchema: args.responseSchema,
+    ...(args.temperature !== undefined ? { temperature: args.temperature } : {}),
+    ...(args.timeoutMs !== undefined ? { timeoutMs: args.timeoutMs } : {}),
+    ...(args.responseMimeType !== undefined ? { responseMimeType: args.responseMimeType } : {}),
+    ...(args.responseSchema !== undefined ? { responseSchema: args.responseSchema } : {}),
     onChunk: args.onChunk,
-    abortSignal: args.abortSignal,
+    ...(args.abortSignal !== undefined ? { abortSignal: args.abortSignal } : {}),
   });
 }
 
