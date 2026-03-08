@@ -205,6 +205,17 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<void> 
     });
   }) as EventListener);
 
+  window.addEventListener('tubs:tts-request', ((event: Event) => {
+    const detail = (event as CustomEvent<{ text: string; voice?: string; turnId?: string }>).detail;
+    if (!detail?.text) return;
+    wsClient.send({
+      type: 'tts_request',
+      text: detail.text,
+      ...(detail.voice ? { voice: detail.voice } : {}),
+      ...(detail.turnId ? { turnId: detail.turnId } : {}),
+    });
+  }) as EventListener);
+
   proactiveRuntime?.init((message) => {
     wsClient.send(message);
   });

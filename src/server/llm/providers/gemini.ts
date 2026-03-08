@@ -1,5 +1,5 @@
-import { generateGeminiContent } from '../gemini-client.js';
-import type { LlmAuthState, LlmGenerateArgs, LlmGenerateResult, LlmProvider } from '../types.js';
+import { generateGeminiContent, streamGeminiContent } from '../gemini-client.js';
+import type { LlmAuthState, LlmGenerateArgs, LlmGenerateResult, LlmProvider, LlmStreamArgs, LlmStreamResult } from '../types.js';
 
 function getAuthState(): LlmAuthState {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
@@ -41,8 +41,26 @@ async function generateContent(args: LlmGenerateArgs): Promise<LlmGenerateResult
   return generateGeminiContent(request);
 }
 
+async function streamContent(args: LlmStreamArgs): Promise<LlmStreamResult> {
+  const apiKey = args.auth?.apiKey ?? process.env.GEMINI_API_KEY?.trim() ?? '';
+  return streamGeminiContent({
+    apiKey,
+    model: args.model,
+    systemInstruction: args.systemInstruction,
+    contents: args.contents,
+    maxOutputTokens: args.maxOutputTokens,
+    temperature: args.temperature,
+    timeoutMs: args.timeoutMs,
+    responseMimeType: args.responseMimeType,
+    responseSchema: args.responseSchema,
+    onChunk: args.onChunk,
+    abortSignal: args.abortSignal,
+  });
+}
+
 export const geminiProvider: LlmProvider = {
   id: 'gemini',
   getAuthState,
   generateContent,
+  streamContent,
 };

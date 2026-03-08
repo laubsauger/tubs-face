@@ -103,6 +103,14 @@ export interface WsAppearanceFrameClientMessage {
   count?: number;
 }
 
+export interface WsTtsRequestClientMessage {
+  type: 'tts_request';
+  text: string;
+  voice?: string;
+  turnId?: string;
+  requestId?: string;
+}
+
 export type WsClientMessage =
   | WsPingClientMessage
   | WsIncomingClientMessage
@@ -114,7 +122,8 @@ export type WsClientMessage =
   | WsFaceGreetingClientMessage
   | WsProactiveClientMessage
   | WsCameraFrameClientMessage
-  | WsAppearanceFrameClientMessage;
+  | WsAppearanceFrameClientMessage
+  | WsTtsRequestClientMessage;
 
 export interface WsPingServerMessage {
   type: 'ping';
@@ -168,6 +177,7 @@ export interface WsSpeakEndServerMessage {
 export interface WsAudioChunkServerMessage {
   type: 'audio_chunk';
   audio: string;
+  text?: string;
   mimeType?: string;
   chunkIndex?: number;
   isFinal?: boolean;

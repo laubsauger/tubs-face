@@ -65,15 +65,16 @@ a {
 }
 
 .button-compact {
-  padding: 6px 14px;
-  font-size: 0.78rem;
-  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
 }
 
 .visual-shell {
   position: relative;
   display: grid;
   justify-items: center;
+  align-content: start;
   margin-bottom: 20px;
   padding: 28px 24px 36px;
   min-height: 320px;
@@ -93,12 +94,10 @@ a {
   margin-bottom: 20px;
 }
 
-.chat-log-row {
+.workspace-col {
   display: grid;
-  grid-template-columns: 7fr 3fr;
   gap: 18px;
-  align-items: start;
-  margin-bottom: 20px;
+  align-content: start;
 }
 
 .voice-panel-card {
@@ -554,12 +553,13 @@ a {
   align-items: center;
   justify-content: center;
   white-space: nowrap;
-  border-radius: 999px;
-  padding: 12px 18px;
+  border-radius: 10px;
+  padding: 8px 16px;
   background: linear-gradient(135deg, #38bdf8, #0ea5e9);
   color: #04111f;
   text-decoration: none;
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 0.85rem;
   border: 0;
   cursor: pointer;
   transition:
@@ -811,29 +811,31 @@ a {
 .face-name-input {
   flex: 2 1 200px;
   min-width: 140px;
-  border-radius: 999px;
+  border-radius: 10px;
   border: 1px solid rgba(125, 211, 252, 0.22);
   background: rgba(5, 12, 22, 0.88);
   color: #e5eefc;
-  padding: 12px 16px;
+  padding: 8px 14px;
   font: inherit;
+  font-size: 0.85rem;
 }
 
 .mini-select,
 .manual-textarea {
   width: 100%;
-  border-radius: 16px;
+  border-radius: 10px;
   border: 1px solid rgba(125, 211, 252, 0.22);
   background: rgba(5, 12, 22, 0.88);
   color: #e5eefc;
-  padding: 12px 14px;
+  padding: 8px 14px;
   font: inherit;
+  font-size: 0.85rem;
 }
 
 .manual-textarea {
   resize: vertical;
   min-height: 104px;
-  border-radius: 18px;
+  border-radius: 12px;
 }
 
 .manual-beats-row {
@@ -1063,13 +1065,32 @@ a {
   color: rgba(229, 238, 252, 0.64);
 }
 
+.chat-log-list {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 12px;
+  gap: 6px;
+}
+
+.chat-log-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-log-list::-webkit-scrollbar-thumb {
+  background: rgba(125, 211, 252, 0.2);
+  border-radius: 999px;
+}
+
+.chat-log-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .chat-log-list .chat-entry,
 .debug-entry {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: baseline;
-  padding: 8px 0;
-  border-bottom: 1px solid rgba(125, 211, 252, 0.08);
+  padding: 6px 10px;
 }
 
 .chat-entry.is-draft {
@@ -1077,8 +1098,7 @@ a {
 }
 
 .chat-entry {
-  padding: 12px 14px;
-  border-radius: 16px;
+  border-radius: 10px;
   background: rgba(10, 18, 34, 0.72);
 }
 
@@ -1104,18 +1124,20 @@ a {
 
 .chat-time {
   color: rgba(229, 238, 252, 0.52);
-  min-width: 72px;
-  font-size: 0.82rem;
+  min-width: 58px;
+  font-size: 0.75rem;
 }
 
 .chat-text {
   color: rgba(229, 238, 252, 0.9);
+  font-size: 0.85rem;
+  line-height: 1.4;
 }
 
 .chat-speaker {
   display: inline-block;
-  min-width: 3.9rem;
-  margin-right: 8px;
+  min-width: 3.2rem;
+  margin-right: 6px;
 }
 
 .chat-actor-user .chat-speaker {

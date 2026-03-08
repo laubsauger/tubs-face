@@ -131,8 +131,23 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
 
   if (request.method === 'POST' && url.pathname === '/voice') {
     try {
-      const turnTimer = createTurnTimer({ side: 'backend', source: 'voice' });
-      turnTimer.mark('Voice request received');
+      const startedAtStr = url.searchParams.get('startedAt');
+      const stoppedAtStr = url.searchParams.get('stoppedAt');
+      const requestReceivedAt = Date.now();
+
+      const turnTimer = createTurnTimer({
+        side: 'backend',
+        source: 'voice',
+        ...(startedAtStr ? { startedAt: Number(startedAtStr) } : {}),
+      });
+
+      if (startedAtStr) {
+        turnTimer.mark('User started speaking', Number(startedAtStr));
+      }
+      if (stoppedAtStr) {
+        turnTimer.mark('User stopped speaking', Number(stoppedAtStr));
+      }
+      turnTimer.mark('Voice request received', requestReceivedAt);
       if (runtimeConfig.muted) {
         turnTimer.mark('Ignored (muted)');
         sendJson(response, 200, {
@@ -147,10 +162,13 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
 
       const wakeWord = url.searchParams.get('wakeWord') === 'true';
       const audioBuffer = await readRawBody(request);
-      turnTimer.mark('STT started');
+      const endSttSpan = turnTimer.span('STT');
       const transcription = await transcribeAudio(audioBuffer, request.headers['content-type']);
-      turnTimer.mark('STT completed');
+      endSttSpan();
       const text = String((transcription as { text?: string }).text ?? '').trim();
+      if (text) {
+        turnTimer.setMeta('User', text);
+      }
 
       if (!text || isWhisperHallucination(text)) {
         turnTimer.mark(`Ignored (${!text ? 'empty' : 'hallucination'}: "${text}")`);
@@ -214,9 +232,12 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
         type: 'thinking',
       } satisfies WsThinkingServerMessage);
 
-      turnTimer.mark('Assistant turn started');
-      const result = await runAssistantTurn(text, broadcast);
-      turnTimer.mark(result.superseded ? 'Assistant turn superseded' : 'Assistant turn completed');
+      const endAssistantSpan = turnTimer.span('LLM Generation');
+      const result = await runAssistantTurn(text, broadcast, turnTimer);
+      endAssistantSpan();
+      if (result.superseded) {
+        turnTimer.mark('Assistant turn superseded');
+      }
 
       sendJson(response, 200, {
         ok: true,
@@ -246,9 +267,9 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
         ...(ttsRequest.turnId ? { turnId: ttsRequest.turnId } : {}),
       });
       turnTimer.mark('TTS request received');
-      turnTimer.mark('Python TTS started');
+      const endTtsSpan = turnTimer.span('Kokoro TTS');
       const proxied = await proxyTts(rawBody.toString('utf8'));
-      turnTimer.mark(`Python TTS completed (${proxied.statusCode})`);
+      endTtsSpan();
       if (proxied.statusCode >= 400) {
         turnTimer.mark('Python TTS failed');
       }

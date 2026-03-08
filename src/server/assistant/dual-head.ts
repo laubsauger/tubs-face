@@ -17,7 +17,6 @@ const SUPPORTED_EMOJIS = ['🙂', '😄', '😏', '🥺', '😢', '😤', '🤖'
 
 export const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
   type: 'OBJECT',
-  additionalProperties: false,
   properties: {
     beats: {
       type: 'ARRAY',
@@ -25,7 +24,6 @@ export const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
       maxItems: DUAL_HEAD_MAX_BEATS,
       items: {
         type: 'OBJECT',
-        additionalProperties: false,
         properties: {
           actor: { type: 'STRING', enum: ['main', 'small'] },
           action: { type: 'STRING', enum: ['speak', 'react'] },

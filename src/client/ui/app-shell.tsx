@@ -65,13 +65,15 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
     <main className={`shell ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
       <TopBar store={store} />
       <section className="visual-workspace">
-        <VoicePanel store={store} {...(controls?.voice ? { controls: controls.voice } : {})} />
+        <div className="workspace-col">
+          <VoicePanel store={store} {...(controls?.voice ? { controls: controls.voice } : {})} />
+          <ChatPanel store={store} />
+        </div>
         <VisualShell store={store} mode="main" />
-        <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
-      </section>
-      <section className="chat-log-row">
-        <ChatPanel store={store} />
-        <EventLogPanel store={store} />
+        <div className="workspace-col">
+          <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
+          <EventLogPanel store={store} />
+        </div>
       </section>
       <section className="grid">
         <ConnectionPanel store={store} />
@@ -679,9 +681,6 @@ function AssistantPanel({ store }: { store: AppStore }): JSX.Element {
     moodPos: current.moodPos,
     moodNeg: current.moodNeg,
     moodArousal: current.moodArousal,
-    currentIncomingText: current.currentIncomingText,
-    currentSpeechText: current.currentSpeechText,
-    currentDonationSignal: current.currentDonationSignal,
   }));
 
   return (
@@ -696,11 +695,6 @@ function AssistantPanel({ store }: { store: AppStore }): JSX.Element {
           <div><dt>Turn</dt><dd id="assistant-turn-value">{state.currentTurnId ?? 'n/a'}</dd></div>
           <div><dt>Mood</dt><dd id="assistant-mood-value">{state.moodPos.toFixed(2)} / {state.moodNeg.toFixed(2)} / {state.moodArousal.toFixed(2)}</dd></div>
         </dl>
-        <div className="assistant-copy">
-          <p><strong>User</strong> <span id="assistant-user-copy">{state.currentIncomingText || 'No incoming text yet.'}</span></p>
-          <p><strong>Tubs</strong> <span id="assistant-speech-copy">{state.currentSpeechText || 'No spoken output yet.'}</span></p>
-          <p><strong>Donation</strong> <span id="assistant-donation-copy">{formatDonationFromSignal(state.currentDonationSignal)}</span></p>
-        </div>
       </div>
     </article>
   );
@@ -730,7 +724,7 @@ function ControlsPanel({
           <div className="face-action-row">
             <button
               id="chat-verbosity-toggle"
-              className={`button button-secondary ${state.chatVerbosity === 'all' ? 'is-active' : ''}`}
+              className={`button button-secondary button-compact ${state.chatVerbosity === 'all' ? 'is-active' : ''}`}
               type="button"
               onClick={() => {
                 store.setState((current) => ({
@@ -747,7 +741,7 @@ function ControlsPanel({
             </button>
             <button
               id="ambient-toggle"
-              className={`button button-secondary ${state.ambientAudioEnabled ? 'is-active' : ''}`}
+              className={`button button-secondary button-compact ${state.ambientAudioEnabled ? 'is-active' : ''}`}
               type="button"
               onClick={async () => {
                 await controls?.ambient?.toggleEnabled();
@@ -755,11 +749,9 @@ function ControlsPanel({
             >
               Ambient {state.ambientAudioEnabled ? 'On' : 'Off'}
             </button>
-          </div>
-          <div className="face-action-row">
             <button
               id="action-wake"
-              className="button button-secondary"
+              className="button button-secondary button-compact"
               type="button"
               onClick={async () => {
                 await runControlAction(store, 'Wake', () => postJson<undefined, OkResponse>('/wake'));
@@ -769,7 +761,7 @@ function ControlsPanel({
             </button>
             <button
               id="action-sleep"
-              className="button button-secondary"
+              className="button button-secondary button-compact"
               type="button"
               onClick={async () => {
                 await runControlAction(store, 'Sleep', () => postJson<undefined, OkResponse>('/sleep'));
@@ -783,6 +775,7 @@ function ControlsPanel({
               id="action-speak-text"
               className="face-name-input"
               type="text"
+              placeholder="Inject statement"
               value={state.controlSpeakText}
               onChange={(event) => {
                 const value = event.currentTarget.value;
@@ -794,7 +787,7 @@ function ControlsPanel({
             />
             <button
               id="action-speak"
-              className="button"
+              className="button button-compact"
               type="button"
               onClick={async () => {
                 const text = store.getState().controlSpeakText.trim();
@@ -813,12 +806,11 @@ function ControlsPanel({
             >
               Speak
             </button>
-          </div>
-          <div className="face-action-row">
             <input
               id="action-donation-amount"
               className="face-name-input"
               type="text"
+              placeholder="$ Amount"
               value={state.controlDonationAmount}
               onChange={(event) => {
                 const value = event.currentTarget.value;
@@ -830,7 +822,7 @@ function ControlsPanel({
             />
             <button
               id="action-donate"
-              className="button"
+              className="button button-compact"
               type="button"
               onClick={async () => {
                 const amount = store.getState().controlDonationAmount.trim();

@@ -1,6 +1,7 @@
 import type { Server as HttpServer } from 'node:http';
 import type { IncomingMessage } from 'node:http';
 import type {
+  WsAudioChunkServerMessage,
   WsClientMessage,
   WsConfigServerMessage,
   WsFaceBlinkServerMessage,
@@ -9,12 +10,14 @@ import type {
   WsInterruptServerMessage,
   WsPingServerMessage,
   WsServerMessage,
+  WsSpeakEndServerMessage,
   WsSystemServerMessage,
 } from '../../shared/contracts/ws.js';
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
+import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
 const WS_PATH = '/ws';
@@ -189,6 +192,9 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.durationMs !== undefined ? { durationMs: message.durationMs } : {}),
       } satisfies WsHeadSpeechStateServerMessage);
       return;
+    case 'tts_request':
+      handleTtsStreamRequest(socket, message);
+      return;
     default:
       return;
   }
@@ -200,6 +206,64 @@ function broadcastInterrupt(turnId?: string | null, source?: WsInterruptServerMe
     ...(turnId !== undefined ? { turnId } : {}),
     ...(source ? { source } : {}),
   } satisfies WsInterruptServerMessage);
+}
+
+function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMessage, { type: 'tts_request' }>): void {
+  const text = String(message.text || '').trim();
+  if (!text) return;
+
+  const turnId = message.turnId;
+  const voice = message.voice || runtimeConfig.kokoroVoice || 'af_heart';
+  let chunkIndex = 0;
+
+  const ttsSession = openTtsStream({
+    onChunk(chunk) {
+      if (socket.readyState !== socket.OPEN) {
+        ttsSession.close();
+        return;
+      }
+      send(socket, {
+        type: 'audio_chunk',
+        audio: chunk.audio,
+        text: chunk.text || text,
+        turnId,
+        chunkIndex: chunkIndex++,
+      } satisfies WsAudioChunkServerMessage);
+    },
+    onSentenceDone() {
+      if (socket.readyState !== socket.OPEN) return;
+      send(socket, {
+        type: 'speak_end',
+        turnId,
+      } satisfies WsSpeakEndServerMessage);
+    },
+    onError(error) {
+      console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS request error: ${error.message}`);
+    },
+    onClose() {
+      console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request done — ${chunkIndex} chunks sent${turnId ? ` (turn: ${turnId})` : ''}`);
+    },
+  });
+
+  // Wait for connection, then send
+  const waitAndSend = () => {
+    if (ttsSession.ready) {
+      ttsSession.send(text, voice);
+      return;
+    }
+    if (ttsSession.closed) {
+      console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS closed before ready — text "${text.slice(0, 40)}..."`);
+      return;
+    }
+    setTimeout(waitAndSend, 10);
+  };
+  waitAndSend();
+  // Safety timeout
+  setTimeout(() => {
+    if (!ttsSession.closed) {
+      ttsSession.close();
+    }
+  }, 30_000);
 }
 
 function send(socket: WebSocket, message: WsServerMessage): void {

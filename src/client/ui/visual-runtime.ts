@@ -6,6 +6,7 @@ export interface VisualRuntime {
 }
 
 export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): VisualRuntime {
+  let lastDonationQrSrc = '';
   return {
     bind(root: HTMLElement): void {
       const face = root.querySelector<HTMLElement>('#visual-face');
@@ -60,13 +61,14 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
         liveTranscript.classList.toggle('is-draft', state.liveTranscriptDraft);
       }
 
-      syncDonationCard(
+      lastDonationQrSrc = syncDonationCard(
         donationCard,
         donationHandle,
         donationAmount,
         donationQr,
         state.currentDonationSignal,
         state.sleeping,
+        lastDonationQrSrc,
       );
     },
   };
@@ -79,14 +81,15 @@ function syncDonationCard(
   qrNode: HTMLImageElement | null,
   signal: DonationSignalPayload | null,
   sleeping: boolean,
-): void {
+  prevQrSrc: string,
+): string {
   if (!card || !handleNode || !amountNode || !qrNode) {
-    return;
+    return prevQrSrc;
   }
 
   if (!signal || sleeping) {
     card.classList.remove('is-visible');
-    return;
+    return '';
   }
 
   const venmoHandle = sanitizeHandle(signal.source === 'ts-client-shell' ? 'TubsBot' : 'TubsBot');
@@ -94,8 +97,12 @@ function syncDonationCard(
 
   handleNode.textContent = `Venmo ${venmoHandle}`;
   amountNode.textContent = `${signal.certainty.toUpperCase()}${signal.donor ? ` · ${signal.donor}` : ''}${amount ? ` · ${amount}` : ''}`;
-  qrNode.src = `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(`https://venmo.com/${venmoHandle.replace(/^@/, '')}`)}`;
+  const nextQrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(`https://venmo.com/${venmoHandle.replace(/^@/, '')}`)}`;
+  if (nextQrSrc !== prevQrSrc) {
+    qrNode.src = nextQrSrc;
+  }
   card.classList.add('is-visible');
+  return nextQrSrc;
 }
 
 function sanitizeHandle(handle: string): string {

@@ -203,12 +203,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         ...appendChatEntry(current, {
           type: 'out',
           actor: 'main',
-          text: message.text,
+          text: `${message.emotion?.emoji ? `${message.emotion.emoji} ` : ''}${message.text}`,
           ts: Date.now(),
         }),
         currentSpeechText: message.text,
         subtitleText: message.text,
-        currentExpression: nextExpression(current.currentExpression, 'speaking'),
+        currentExpression: nextExpression(current.currentExpression, message.emotion?.expression ?? 'speaking'),
       }));
       store.appendLog('info', `Speak: ${message.text}`);
       return;
@@ -312,6 +312,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ts: Date.now(),
         }),
         currentExpression: nextExpression(current.currentExpression, 'speaking'),
+        ...(message.text ? {
+          currentSpeechText: message.text,
+          subtitleText: message.text,
+        } : {}),
       }));
       return;
     case 'donation_signal':

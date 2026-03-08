@@ -102,7 +102,7 @@ export function commitChatDraft(state: AppState, type: ChatEntry['type']): AppSt
     ...state,
     chatEntries: state.chatEntries.map((entry) => (
       entry.draft && entry.type === type
-        ? { ...entry, draft: false }
+        ? { ...entry, draft: false, id: `${entry.ts}-${Math.random().toString(16).slice(2, 8)}` }
         : entry
     )),
   };

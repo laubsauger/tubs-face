@@ -1,7 +1,8 @@
 import { randomBytes } from 'node:crypto';
 import type { TurnBeat, TurnContextMeta, TurnDonation, TurnEmotion } from '../../shared/contracts/turn-script.js';
-import type { SpeechEmotionPayload, WsServerMessage, WsSpeakServerMessage, WsStatsServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
+import type { SpeechEmotionPayload, WsAudioChunkServerMessage, WsServerMessage, WsSpeakEndServerMessage, WsSpeakServerMessage, WsStatsServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig, sessionStats } from '../config/runtime.js';
+import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
@@ -9,6 +10,8 @@ import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge }
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, stripFormatting } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
+import { createSentenceSplitter } from './sentence-splitter.js';
+import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
 import {
   DUAL_HEAD_RESPONSE_SCHEMA,
   hasRequiredDualHeadCoverage,
@@ -106,7 +109,7 @@ function emitIfActive(
   return true;
 }
 
-export async function generateAssistantReply(userText: string): Promise<AssistantReply> {
+export async function generateAssistantReply(userText: string, turnTimer?: TurnTimer): Promise<AssistantReply> {
   const normalized = userText.trim();
   const startedAt = Date.now();
   const context = buildContents(normalized);
@@ -161,6 +164,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
   }
 
   try {
+    const endLlmSpan = turnTimer?.span('LLM API Call');
     const result = await provider.generateContent({
       auth: authState.auth,
       model: runtimeConfig.llmModel,
@@ -170,6 +174,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
       temperature: 1,
       timeoutMs: 12_000,
     });
+    endLlmSpan?.();
     let cleaned = stripFormatting(result.text);
     const repaired = await maybeRepairPersonaDrift({
       draftText: cleaned,
@@ -178,6 +183,7 @@ export async function generateAssistantReply(userText: string): Promise<Assistan
       auth: authState.auth,
       maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
       phase: 'reply',
+      ...(turnTimer ? { turnTimer } : {}),
     });
     if (repaired.repaired) {
       cleaned = repaired.text;
@@ -232,16 +238,14 @@ async function maybeRepairPersonaDrift(args: {
   auth: Record<string, string> | null;
   maxOutputTokens: number;
   phase: 'reply' | 'dual';
+  turnTimer?: TurnTimer;
 }): Promise<{ text: string; usageIn: number; usageOut: number; repaired: boolean }> {
   const normalizedDraft = normalizeInput(args.draftText);
-  const driftDetected = Boolean(
-    normalizedDraft
-      && (
-        isPersonaDrift(normalizedDraft)
-        || isLanguageDrift(normalizedDraft, args.userInput)
-      ),
-  );
-  if (!normalizedDraft || !driftDetected) {
+  const personaDriftReason = isPersonaDrift(normalizedDraft);
+  const langDriftReason = isLanguageDrift(normalizedDraft, args.userInput);
+  const driftReason = langDriftReason || personaDriftReason;
+
+  if (!normalizedDraft || !driftReason) {
     return {
       text: normalizedDraft,
       usageIn: 0,
@@ -250,15 +254,16 @@ async function maybeRepairPersonaDrift(args: {
     };
   }
 
-  console.warn(`[LLM:${args.phase}] Persona drift detected; requesting strict rewrite.`);
+  console.warn(`\x1b[33m\x1b[1m[LLM:${args.phase}] Persona drift detected (${driftReason}); requesting strict rewrite.\x1b[0m`);
+  args.turnTimer?.mark(`LLM Rewrite triggered (${driftReason})`);
   const strictSystemInstruction = [
     buildAssistantSystemInstruction(getVisualContext()),
     'STRICT STYLE OVERRIDE:',
-    '- Rewrite in Tubs voice: playful, slightly unhinged, never corporate.',
-    '- 1-2 sentences max, concise and punchy.',
-    '- End with a hook or question.',
-    '- Never use these phrases: "certainly", "however", "it\'s important to remember", "do you have any other questions".',
-    '- Return only the rewritten reply text.',
+    '- Rewrite the draft in Tubs voice: dry, chaotic, sharp, entirely natural.',
+    '- Absolute maximum 1-2 punchy sentences. BE EXTREMELY BRIEF.',
+    '- Never use these phrases: "certainly", "however", "it\'s important to remember", "do you have any other questions", "any other questions or topics".',
+    '- End with a hook, a judgment, or a question.',
+    '- Return only the rewritten reply text. No quotes. No introductory text.',
   ].join('\n');
   const rewritePrompt = [
     `User said: "${normalizeInput(args.userInput)}"`,
@@ -370,31 +375,36 @@ async function maybeRepairDualHeadScript(args: {
   };
 }
 
-function isPersonaDrift(text: string): boolean {
+function isPersonaDrift(text: string): string | null {
   const normalized = normalizeInput(text).toLowerCase();
   if (!normalized) {
-    return false;
+    return null;
   }
   if (PERSONA_DRIFT_PHRASE_RE.test(normalized)) {
-    return true;
+    const match = normalized.match(PERSONA_DRIFT_PHRASE_RE)?.[1] || 'forbidden phrase';
+    return `forbidden phrase: "${match}"`;
   }
   if (PERSONA_DRIFT_FORMAL_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
-    return true;
+    const match = normalized.match(PERSONA_DRIFT_FORMAL_RE)?.[1] || 'formal word';
+    return `formal word: "${match}"`;
   }
   if (normalized.length > 110 && !normalized.includes('?')) {
-    return true;
+    return 'too long and lacking questions';
   }
   if (normalized.length > 90 && !PERSONA_MARKER_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
-    return true;
+    return 'too long and lacking persona markers';
   }
-  return false;
+  return null;
 }
 
-function isLanguageDrift(text: string, userInput: string): boolean {
+function isLanguageDrift(text: string, userInput: string): string | null {
   if (!isMostlyAsciiEnglish(userInput)) {
-    return false;
+    return null;
   }
-  return CJK_RE.test(String(text || ''));
+  if (CJK_RE.test(String(text || ''))) {
+    return 'cjk characters detected';
+  }
+  return null;
 }
 
 function isMostlyAsciiEnglish(text: string): boolean {
@@ -438,7 +448,7 @@ function logDualHeadInvalidScript(rawText: string, reason: string): void {
   process.stderr.write(`${block}\n`);
 }
 
-export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult> {
+export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void, turnTimer?: TurnTimer): Promise<AssistantTurnResult> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
   broadcast({
@@ -447,7 +457,20 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
   } satisfies WsTurnStartServerMessage);
 
   if (shouldUseDualHeadDirectedMode()) {
-    const dualHead = await generateDualHeadReply(userText);
+    const dualHead = await generateDualHeadReply(userText, turnTimer);
+
+    if (turnTimer) {
+      if (dualHead.contextMeta?.imageAttached) {
+        turnTimer.setMeta('Image', 'attached');
+      }
+      for (const beat of dualHead.beats) {
+        if (beat.action === 'speak' && beat.text?.trim()) {
+          const actor = beat.actor === 'small' ? 'Mini' : 'Tubs';
+          const emoji = beat.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
+          turnTimer.setMeta(actor, `${emoji}${beat.text.trim()}`);
+        }
+      }
+    }
 
     if (!isAssistantTurnActive(turnId, epoch)) {
       return {
@@ -533,7 +556,42 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
     };
   }
 
-  const reply = await generateAssistantReply(userText);
+  // Try streaming path: LLM stream → sentence split → TTS WS → audio chunks
+  const provider = resolveLlmProvider();
+  const authState = provider.getAuthState();
+  const useStreaming = runtimeConfig.ttsStreamingEnabled && authState.ready && provider.streamContent;
+
+  if (useStreaming) {
+    const streamResult = await runStreamingAssistantTurn({
+      userText,
+      turnId,
+      epoch,
+      broadcast,
+      turnTimer,
+      provider,
+      authState,
+    });
+    if (streamResult) {
+      return streamResult;
+    }
+    console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m streaming path returned null — falling through to sequential mode');
+  } else {
+    const reasons: string[] = [];
+    if (!runtimeConfig.ttsStreamingEnabled) reasons.push('ttsStreamingEnabled=false');
+    if (!authState.ready) reasons.push('LLM auth not ready');
+    if (!provider.streamContent) reasons.push(`provider "${provider.id}" has no streamContent`);
+    console.warn(`\x1b[33m\x1b[1m[Streaming]\x1b[0m skipped — ${reasons.join(', ')}`);
+  }
+
+  const reply = await generateAssistantReply(userText, turnTimer);
+
+  if (turnTimer) {
+    if (reply.contextMeta?.imageAttached) {
+      turnTimer.setMeta('Image', 'attached');
+    }
+    const emoji = reply.emotion?.emoji ? `${reply.emotion.emoji} ` : '';
+    turnTimer.setMeta('Tubs', `${emoji}${reply.text}`);
+  }
 
   if (!isAssistantTurnActive(turnId, epoch)) {
     return { turnId, reply, superseded: true };
@@ -577,6 +635,277 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
   } satisfies WsStatsServerMessage);
 
   return { turnId, reply };
+}
+
+/**
+ * Streaming assistant turn: LLM tokens stream in via SSE, get split into sentences,
+ * each sentence is sent to Python TTS via WebSocket, and audio chunks are broadcast
+ * to clients as they arrive. This creates overlap between LLM generation, TTS
+ * synthesis, and audio playback.
+ */
+async function runStreamingAssistantTurn(args: {
+  userText: string;
+  turnId: string;
+  epoch: number;
+  broadcast: (message: WsServerMessage) => void;
+  turnTimer?: TurnTimer;
+  provider: ReturnType<typeof resolveLlmProvider>;
+  authState: ReturnType<ReturnType<typeof resolveLlmProvider>['getAuthState']>;
+}): Promise<AssistantTurnResult | null> {
+  const { userText, turnId, epoch, broadcast, turnTimer, provider, authState } = args;
+  const normalized = userText.trim();
+  const startedAt = Date.now();
+  const context = buildContents(normalized);
+
+  if (!normalized) {
+    console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m empty input — falling through to sequential');
+    return null;
+  }
+
+  const greeting = pickGreetingResponse(normalized);
+  if (greeting) {
+    console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m greeting detected — falling through to sequential');
+    return null;
+  }
+
+  if (!provider.streamContent) {
+    console.warn(`\x1b[33m\x1b[1m[Streaming]\x1b[0m provider "${provider.id}" has no streamContent — falling through`);
+    return null;
+  }
+
+  const abortController = new AbortController();
+  let ttsWs: TtsStreamSession | null = null;
+  let ttsWsReady = false;
+  let pendingTtsSentences = 0;
+  let llmDone = false;
+  let chunkIndex = 0;
+  let fullText = '';
+  let rawEmotion: SpeechEmotionPayload | null = null;
+  let emotionExtracted = false;
+  let ttsWsResolve: (() => void) | null = null;
+  const ttsWsDone = new Promise<void>((resolve) => { ttsWsResolve = resolve; });
+  let currentTtsSentence = '';
+
+  emitIfActive(turnId, epoch, broadcast, {
+    type: 'turn_context',
+    turnId,
+    meta: context.meta,
+  });
+
+  function checkCloseWs(): void {
+    if (llmDone && pendingTtsSentences <= 0 && ttsWs && ttsWs.ready) {
+      ttsWs.close();
+    }
+  }
+
+  // Open TTS WebSocket connection in parallel with LLM call
+  const endTtsStreamSpan = turnTimer?.span('TTS Stream');
+  try {
+    ttsWs = openTtsStream({
+      onChunk(chunk) {
+        if (!isAssistantTurnActive(turnId, epoch)) return;
+        broadcast({
+          type: 'audio_chunk',
+          audio: chunk.audio,
+          text: chunk.text || currentTtsSentence,
+          turnId,
+          chunkIndex: chunkIndex++,
+        } satisfies WsAudioChunkServerMessage);
+      },
+      onSentenceDone() {
+        pendingTtsSentences = Math.max(0, pendingTtsSentences - 1);
+        checkCloseWs();
+      },
+      onError(error) {
+        console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WS error: ${error.message}`);
+        ttsWsReady = false;
+      },
+      onClose() {
+        ttsWsReady = false;
+        endTtsStreamSpan?.();
+        ttsWsResolve?.();
+      },
+    });
+    // Wait briefly for the WS to connect
+    await new Promise<void>((resolve) => {
+      const check = () => {
+        if (ttsWs!.ready || ttsWs!.closed) {
+          ttsWsReady = ttsWs!.ready;
+          resolve();
+          return;
+        }
+        setTimeout(check, 10);
+      };
+      check();
+      setTimeout(() => { resolve(); }, 500); // max wait 500ms for connection
+    });
+    ttsWsReady = ttsWs.ready;
+  } catch (error) {
+    console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WebSocket failed to open: ${error instanceof Error ? error.message : 'unknown'} — falling through to sequential`);
+    ttsWsResolve?.();
+    return null;
+  }
+
+  if (!ttsWsReady) {
+    console.warn('\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WebSocket did not connect within 500ms — falling through to sequential');
+    ttsWs?.close();
+    ttsWsResolve?.();
+    return null;
+  }
+
+  const kokoroVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+
+  const splitter = createSentenceSplitter((sentence) => {
+    let text = sentence;
+    if (!emotionExtracted) {
+      const parsed = splitTrailingEmotionEmoji(text);
+      if (parsed.emotion) {
+        rawEmotion = parsed.emotion;
+        emotionExtracted = true;
+      }
+      text = parsed.text;
+    }
+    text = stripFormatting(text);
+    if (!text) return;
+
+    fullText += (fullText ? ' ' : '') + text;
+
+    if (ttsWsReady && ttsWs && ttsWs.ready) {
+      pendingTtsSentences++;
+      currentTtsSentence = text;
+      ttsWs.send(text, kokoroVoice);
+    } else {
+      console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m TTS WS unavailable mid-stream — sending speak_chunk for client-side TTS fallback');
+      broadcast({
+        type: 'speak_chunk',
+        text,
+        chunkIndex: chunkIndex++,
+        turnId,
+      });
+    }
+  });
+
+  try {
+    const endLlmStreamSpan = turnTimer?.span('LLM Stream');
+    const llmResult = await provider.streamContent({
+      auth: authState.auth,
+      model: runtimeConfig.llmModel,
+      systemInstruction: buildAssistantSystemInstruction(getVisualContext()),
+      contents: context.contents,
+      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      temperature: 1,
+      timeoutMs: 12_000,
+      onChunk: (delta) => {
+        if (!isAssistantTurnActive(turnId, epoch)) {
+          abortController.abort();
+          return;
+        }
+        splitter.push(delta);
+      },
+      abortSignal: abortController.signal,
+    });
+    endLlmStreamSpan?.();
+    splitter.flush();
+    llmDone = true;
+    checkCloseWs();
+
+    // If no chunks were sent (very short response), send full text
+    if (chunkIndex === 0 && llmResult.text) {
+      const parsed = splitTrailingEmotionEmoji(stripFormatting(llmResult.text));
+      rawEmotion = parsed.emotion;
+      fullText = parsed.text;
+      if (fullText && ttsWsReady && ttsWs && ttsWs.ready) {
+        pendingTtsSentences++;
+        ttsWs.send(fullText, kokoroVoice);
+      }
+    }
+
+    // Wait for TTS to finish sending all audio
+    if (pendingTtsSentences > 0) {
+      await Promise.race([
+        ttsWsDone,
+        new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
+      ]);
+    } else {
+      ttsWs?.close();
+    }
+
+    if (!fullText) {
+      fullText = clampOutput(stripFormatting(llmResult.text));
+    }
+
+    if (!fullText) {
+      console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m LLM stream produced empty text — falling through to sequential');
+      return null;
+    }
+
+    const donationSignal = extractDonationSignal(fullText);
+    const nudged = maybeInjectDonationNudge(donationSignal.text, Boolean(donationSignal.donation.show), assistantReplyCount);
+    const donation = nudged.forcedQr
+      ? buildDonationPayload(true, 'periodic_nudge')
+      : donationSignal.donation;
+    fullText = clampOutput(nudged.text);
+
+    // Send speak_end to finalize streaming on the client
+    emitIfActive(turnId, epoch, broadcast, {
+      type: 'speak_end',
+      turnId,
+      emotion: rawEmotion,
+      donation,
+      fullText,
+    } satisfies WsSpeakEndServerMessage);
+
+    const tokensIn = Number(llmResult.usage.promptTokenCount || 0) || estimateTokens(normalized);
+    const tokensOut = Number(llmResult.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
+    assistantReplyCount += 1;
+    pushHistory('user', normalized);
+    pushHistory('model', fullText);
+
+    const reply: AssistantReply = {
+      text: fullText,
+      model: llmResult.model || runtimeConfig.llmModel,
+      latencyMs: Date.now() - startedAt,
+      source: 'llm',
+      donation,
+      emotion: rawEmotion,
+      contextMeta: context.meta,
+      tokens: { in: tokensIn, out: tokensOut },
+      costUsd: estimateCostUsd(tokensIn, tokensOut),
+    };
+
+    sessionStats.messagesOut += 1;
+    sessionStats.lastActivity = Date.now();
+    sessionStats.tokensIn += reply.tokens.in;
+    sessionStats.tokensOut += reply.tokens.out;
+    sessionStats.costUsd += reply.costUsd;
+    sessionStats.model = reply.model;
+
+    emitIfActive(turnId, epoch, broadcast, {
+      type: 'stats',
+      tokens: reply.tokens,
+      totals: {
+        in: sessionStats.tokensIn,
+        out: sessionStats.tokensOut,
+        cost: sessionStats.costUsd,
+      },
+      latency: reply.latencyMs,
+      model: reply.model,
+      cost: reply.costUsd,
+    } satisfies WsStatsServerMessage);
+
+    console.log(`\x1b[32m\x1b[1m[Streaming]\x1b[0m completed — ${chunkIndex} audio chunks, ${reply.latencyMs}ms total`);
+
+    return {
+      turnId,
+      reply,
+      superseded: !isAssistantTurnActive(turnId, epoch),
+    };
+  } catch (error) {
+    ttsWs?.close();
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`\x1b[31m\x1b[1m[Streaming]\x1b[0m streaming turn threw: ${msg} — falling through to sequential`);
+    return null;
+  }
 }
 
 export async function runProactiveTurn(context: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult | null> {
@@ -708,7 +1037,7 @@ export async function runProactiveTurn(context: string, broadcast: (message: WsS
   };
 }
 
-async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
+async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
   const context = buildContents(normalized);
@@ -750,6 +1079,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
     const dualHeadModel = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel;
     let repairUsageIn = 0;
     let repairUsageOut = 0;
+    const endLlmSpan = turnTimer?.span('LLM API Call');
     const result = await provider.generateContent({
       auth: authState.auth,
       model: dualHeadModel,
@@ -761,6 +1091,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
     });
+    endLlmSpan?.();
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
@@ -769,6 +1100,7 @@ async function generateDualHeadReply(userText: string): Promise<DualHeadReply> {
       if (rescued && hasRequiredDualHeadCoverage(rescued.beats)) {
         script = rescued;
       } else {
+        turnTimer?.mark('LLM Rewrite triggered (dual-head JSON repair)');
         const repaired = await maybeRepairDualHeadScript({
           rawText: result.text,
           userInput: normalized,

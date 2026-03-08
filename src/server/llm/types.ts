@@ -41,8 +41,18 @@ export interface LlmGenerateResult {
   model: string;
 }
 
+export interface LlmStreamArgs extends LlmGenerateArgs {
+  onChunk: (delta: string) => void;
+  abortSignal?: AbortSignal;
+}
+
+export interface LlmStreamResult extends LlmGenerateResult {
+  aborted: boolean;
+}
+
 export interface LlmProvider {
   id: 'gemini' | 'realtime';
   getAuthState(): LlmAuthState;
   generateContent(args: LlmGenerateArgs): Promise<LlmGenerateResult>;
+  streamContent?(args: LlmStreamArgs): Promise<LlmStreamResult>;
 }

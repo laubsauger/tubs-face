@@ -32,7 +32,7 @@ interface BrowserSpeechRecognition extends EventTarget {
 }
 
 interface BrowserSpeechRecognitionCtor {
-  new (): BrowserSpeechRecognition;
+  new(): BrowserSpeechRecognition;
 }
 
 export interface VoiceRuntime {
@@ -60,12 +60,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let recordingStartedAt = 0;
   let speechDetectedAt = 0;
   let silenceDetectedAt = 0;
+  let lastSpeechStart = 0;
+  let lastSpeechStop = 0;
   let vadProvider: VadProvider | null = null;
   let vadModelId: VadModelId = 'rms';
   let unlockHandlerBound = false;
   const unlockHandler = () => {
     if (audioContext?.state === 'suspended') {
-      void audioContext.resume().catch(() => {});
+      void audioContext.resume().catch(() => { });
     }
   };
 
@@ -107,7 +109,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       }
       micStream = null;
       if (audioContext && audioContext.state !== 'closed') {
-        void audioContext.close().catch(() => {});
+        void audioContext.close().catch(() => { });
       }
       if (speechRecognitionRunning) {
         speechRecognition?.abort();
@@ -141,7 +143,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         },
       });
       audioContext = new AudioContext();
-      await audioContext.resume().catch(() => {});
+      await audioContext.resume().catch(() => { });
       const source = audioContext.createMediaStreamSource(micStream);
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
@@ -225,12 +227,15 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     if (audioContext?.state === 'suspended') {
-      await audioContext.resume().catch(() => {});
+      await audioContext.resume().catch(() => { });
     }
 
     chunks = [];
     recordingMode = mode;
     recordingStartedAt = Date.now();
+    if (mode === 'manual') {
+      lastSpeechStart = recordingStartedAt;
+    }
     speechDetectedAt = 0;
     silenceDetectedAt = 0;
     mediaRecorder.start(250);
@@ -266,14 +271,20 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
     stopLiveRecognition();
     mediaRecorder.stop();
+    lastSpeechStop = Date.now();
     recordingMode = null;
   }
 
   async function uploadRecording(blob: Blob): Promise<void> {
     const wakeWord = store.getState().voiceWakeWordEnabled ? 'true' : 'false';
+    const qs = new URLSearchParams({
+      wakeWord,
+      startedAt: String(lastSpeechStart),
+      stoppedAt: String(lastSpeechStop),
+    }).toString();
     store.appendLog('info', `Uploading voice clip (${Math.round(blob.size / 1024)} KB)`);
     try {
-      const response = await fetch(`/voice?wakeWord=${wakeWord}`, {
+      const response = await fetch(`/voice?${qs}`, {
         method: 'POST',
         body: blob,
         headers: {
@@ -501,6 +512,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       if (isVoice) {
         speechDetectedAt = speechDetectedAt || now;
         if (now - speechDetectedAt >= 180) {
+          lastSpeechStart = speechDetectedAt;
           speechDetectedAt = 0;
           void startRecording('handsfree');
         }

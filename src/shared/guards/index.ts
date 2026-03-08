@@ -13,6 +13,7 @@ const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'proactive',
   'camera_frame',
   'appearance_frame',
+  'tts_request',
 ]);
 
 const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
