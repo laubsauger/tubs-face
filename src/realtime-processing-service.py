@@ -64,6 +64,14 @@ def pcm_to_wav_bytes(pcm_float32, sample_rate=24000):
     buf.write(pcm_int16.tobytes())
     return buf.getvalue()
 
+def _safe_numpy(audio_obj):
+    if hasattr(audio_obj, "cpu"):
+        audio_obj = audio_obj.cpu()
+    if hasattr(audio_obj, "numpy"):
+        return audio_obj.numpy()
+    return np.array(audio_obj)
+
+
 
 def ensure_stt_model():
     global stt_model
@@ -630,7 +638,7 @@ def _tts_kokoro(text, voice):
                 speed=1.0,
                 lang_code="a",
             ):
-                segments.append(np.array(result.audio))
+                segments.append(_safe_numpy(result.audio))
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
         audio = np.concatenate(segments)
@@ -690,7 +698,7 @@ def tts_stream(ws):
                 # MLX/Kokoro is not thread-safe: serialize generator use to prevent native crashes.
                 with _gpu_lock:
                     for result in m.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                        audio_np = np.array(result.audio)
+                        audio_np = _safe_numpy(result.audio)
                         wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
                         ws.send(json.dumps({
                             "text": text,

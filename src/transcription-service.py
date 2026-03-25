@@ -121,6 +121,14 @@ def pcm_to_wav_bytes(pcm_float32, sample_rate=24000):
 
     return buf.getvalue()
 
+def _safe_numpy(audio_obj):
+    if hasattr(audio_obj, "cpu"):
+        audio_obj = audio_obj.cpu()
+    if hasattr(audio_obj, "numpy"):
+        return audio_obj.numpy()
+    return np.array(audio_obj)
+
+
 @app.route('/tts', methods=['POST'])
 def tts():
     data = request.json
@@ -148,11 +156,11 @@ def _tts_kokoro(text, voice):
                     speed=1.0,
                     lang_code="a",
                 ):
-                    segments.append(np.array(result.audio))
+                    segments.append(_safe_numpy(result.audio))
         else:
             # Windows / Linux: kokoro KPipeline
             for _, _, audio in tts_model(text, voice=voice, speed=1.0):
-                segments.append(np.array(audio))
+                segments.append(_safe_numpy(audio))
 
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
@@ -242,7 +250,7 @@ def tts_stream(ws):
                     # macOS: mlx_audio - GPU lock required (Metal not thread-safe)
                     with _gpu_lock:
                         for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                            audio_np = np.array(result.audio)
+                            audio_np = _safe_numpy(result.audio)
                             wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
                             ws.send(json.dumps({
                                 "text": text,
@@ -252,7 +260,7 @@ def tts_stream(ws):
                 else:
                     # Windows / Linux: kokoro KPipeline
                     for _, _, audio in tts_model(text, voice=voice, speed=1.0):
-                        audio_np = np.array(audio)
+                        audio_np = _safe_numpy(audio)
                         wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
                         ws.send(json.dumps({
                             "text": text,
