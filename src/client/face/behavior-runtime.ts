@@ -259,8 +259,19 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       if (typeof detail.x !== 'number' || typeof detail.y !== 'number') {
         return;
       }
+      // De-sync: Only occasionally mirror motion (20% of the time), OR do it with a large delay
+      if (Math.random() > 0.2) {
+        return;
+      }
       partnerMotionAt = Number(detail.ts) || Date.now();
-      lookAt(detail.x, detail.y);
+      
+      // Delay it playfully
+      window.setTimeout(() => {
+         // Add some jitter so they don't look EXACTLY at the same coordinate footprint
+         const jitterX = (Math.random() - 0.5) * 0.15;
+         const jitterY = (Math.random() - 0.5) * 0.15;
+         lookAt(detail.x! + jitterX, detail.y! + jitterY);
+      }, randBetween(400, 1800));
     };
 
     partnerBlinkHandler = (event: Event) => {
@@ -272,7 +283,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       if (now - lastPartnerBlinkAt < PARTNER_BLINK_MIN_GAP_MS) {
         return;
       }
-      if (Math.random() < 0.35) {
+      
+      // De-sync: Extremely rarely blink in sync (10% chance instead of 65%)
+      if (Math.random() < 0.90) {
         return;
       }
       clearManagedTimer(partnerBlinkTimer);
@@ -280,7 +293,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
         partnerBlinkTimer = null;
         lastPartnerBlinkAt = Date.now();
         blink();
-      }, randBetween(90, 420));
+      }, randBetween(150, 750));
     };
 
     window.addEventListener('tubs:partner-face-motion', partnerMotionHandler as EventListener);

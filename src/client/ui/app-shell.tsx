@@ -385,6 +385,7 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
         voiceHandsFreeEnabled={state.voiceHandsFreeEnabled}
         hidden={state.sleeping}
       />
+      <CompactAssistantStatus store={store} />
       <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
         <img id="visual-donation-qr" alt="Donation QR" />
         <div className="visual-donation-copy">
@@ -478,6 +479,40 @@ function resolveWaveformLabel(
     return props.voiceWakeWordEnabled ? 'Always Listening' : 'Always On';
   }
   return 'Push To Talk';
+}
+
+function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
+  const state = useAppSelector(store, (current) => ({
+    sleeping: current.sleeping,
+    currentExpression: current.currentExpression,
+    lastMessageType: current.lastMessageType,
+    config: current.config,
+    conversationActive: current.conversationActive,
+  }));
+
+  if (state.sleeping || !state.config) return <></>;
+
+  const dualEnabled = state.config.dualHeadEnabled && state.config.dualHeadMode !== 'off';
+  const miniStatus = state.conversationActive ? 'active' : 'idle';
+
+  return (
+    <div className="compact-sys-status">
+      <span className="compact-sys-badge">
+        <span className="compact-sys-label">LV</span>
+        <span className="compact-sys-value">{state.lastMessageType}</span>
+      </span>
+      <span className="compact-sys-badge">
+        <span className="compact-sys-label">MN</span>
+        <span className="compact-sys-value">{state.currentExpression}</span>
+      </span>
+      {dualEnabled && (
+        <span className="compact-sys-badge">
+          <span className="compact-sys-label">SM</span>
+          <span className="compact-sys-value">{miniStatus}</span>
+        </span>
+      )}
+    </div>
+  );
 }
 
 function FacePanel({

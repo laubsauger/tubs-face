@@ -90,8 +90,13 @@ export function computeFrameState(
   const burstPhase = (now - startTime) % (slice.interval + slice.burstDuration);
   const inBurst = slice.enabled && burstPhase > slice.interval;
   let nextGlitchBurstSeed = glitchBurstSeed;
-  if (inBurst && !lastBurstState) {
-    nextGlitchBurstSeed = Math.random() * 1000;
+  if (inBurst) {
+    // Dynamically animate the burst seed throughout the duration of the glitch.
+    // This feeds the WebGPU shader to recreate a rapidly fluctuating distortion animation 
+    // rather than staying frozen on one offset seed.
+    if (!lastBurstState || Math.random() > 0.15) {
+      nextGlitchBurstSeed = Math.random() * 1000;
+    }
   }
 
   const flicker = config.glitch;
