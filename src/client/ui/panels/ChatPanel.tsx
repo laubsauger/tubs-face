@@ -1,5 +1,7 @@
-import type { JSX } from 'react';
+import { useRef, useState, type FormEvent, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 import type { AppStore } from '../../state/app-state.js';
+import type { IncomingRequest, IncomingResponse } from '../../../shared/contracts/http.js';
+import { postJson } from '../../transport/http.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import { isChatEntryVisible, formatTimestamp, renderChatPrefix, resolveChatActor } from '../utils/formatters.js';
@@ -8,22 +10,71 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.chat),
     chatPanelWidth: current.chatPanelWidth,
+    chatComposerText: current.chatComposerText,
     chatEntries: current.chatEntries,
     chatVerbosity: current.chatVerbosity,
   }));
+  const cardRef = useRef<HTMLElement | null>(null);
+  const [sending, setSending] = useState(false);
 
   const entries = state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type));
+  const panelWidth = state.chatPanelWidth ?? 420;
+
+  function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = cardRef.current?.getBoundingClientRect().width ?? panelWidth;
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const maxWidth = Math.min(window.innerWidth - 32, 720);
+      const nextWidth = Math.max(320, Math.min(maxWidth, startWidth + (moveEvent.clientX - startX)));
+      store.setState((current) => ({
+        ...current,
+        chatPanelWidth: nextWidth,
+      }));
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp, { once: true });
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const text = state.chatComposerText.trim();
+    if (!text || sending) {
+      return;
+    }
+
+    setSending(true);
+    try {
+      await postJson<IncomingRequest, IncomingResponse>('/incoming', { text });
+      store.setState((current) => ({
+        ...current,
+        chatComposerText: '',
+      }));
+    } catch (error) {
+      store.appendLog('error', error instanceof Error ? error.message : 'Failed to send text turn');
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
     <section
       id="chat-panel-card"
-      className={`bg-slate-900/90 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden transition-all flex flex-col relative max-w-[100vw] ${state.collapsed ? 'h-11' : 'h-[40vh]'}`}
-      style={state.chatPanelWidth ? { width: state.chatPanelWidth } : { width: '420px' }}
+      ref={cardRef}
+      className={`panel-surface panel-surface-chat flex flex-col relative max-w-[calc(100vw-32px)] ${state.collapsed ? 'is-collapsed h-11' : ''}`}
+      style={state.collapsed ? undefined : { width: panelWidth }}
     >
       <PanelHeader store={store} panelKey="chat" title="Chat Log" meta={`${state.chatEntries.length} msgs`} />
       
-      <div className={`flex flex-col flex-1 min-h-0 overflow-hidden relative ${state.collapsed ? 'hidden' : ''}`}>
-        <ul id="chat-log-list" className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3 font-mono text-xs">
+      <div className={`panel-body panel-chat-body flex flex-col flex-1 min-h-0 overflow-hidden relative ${state.collapsed ? 'hidden' : ''}`}>
+        <ul id="chat-log-list" className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 font-mono text-xs">
           {entries.length === 0
             ? <li className="text-slate-500 italic text-center mt-4">No chat yet.</li>
             : entries.map((entry) => {
@@ -43,8 +94,41 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
               );
             })}
         </ul>
-        {/* Resize handle expected by window-runtime event listener */}
-        <div id="chat-panel-resize" className="panel-resize-handle absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-slate-500/20 active:bg-slate-500/40 transition-colors z-10" aria-hidden="true" />
+
+        <form className="chat-panel-compose" onSubmit={(event) => { void handleSubmit(event); }}>
+          <input
+            id="chat-panel-input"
+            className="chat-panel-input"
+            type="text"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Type to Tubs and press Enter"
+            value={state.chatComposerText}
+            onChange={(event) => {
+              const value = event.currentTarget.value;
+              store.setState((current) => ({
+                ...current,
+                chatComposerText: value,
+              }));
+            }}
+          />
+          <button className="button button-compact" type="submit" disabled={sending || !state.chatComposerText.trim()}>
+            {sending ? 'Sending' : 'Send'}
+          </button>
+        </form>
+
+        <div
+          id="chat-panel-resize"
+          className="panel-resize-handle"
+          aria-hidden="true"
+          onDoubleClick={() => {
+            store.setState((current) => ({
+              ...current,
+              chatPanelWidth: null,
+            }));
+          }}
+          onPointerDown={handleResizeStart}
+        />
       </div>
     </section>
   );

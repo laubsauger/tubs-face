@@ -114,6 +114,7 @@ export interface AppState {
   faceDraftName: string;
   controlSpeakText: string;
   controlDonationAmount: string;
+  chatComposerText: string;
   uiHidden: boolean;
   debugOverlayActive?: boolean;
   fullscreenActive: boolean;
@@ -219,6 +220,7 @@ export function createAppStore(serverUrl: string): AppStore {
     faceDraftName: '',
     controlSpeakText: 'Hello from the TypeScript shell.',
     controlDonationAmount: '5.00',
+    chatComposerText: '',
     uiHidden: false,
     fullscreenActive: false,
     collapsedPanels: {},

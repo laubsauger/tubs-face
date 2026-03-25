@@ -1,0 +1,33 @@
+flask
+flask-sock
+faster-whisper
+pyttsx3
+lightning-whisper-mlx
+
+# mlx-audio 0.2.10 currently publishes a recursive `mlx-audio[all]`
+# requirement. On macOS we install its actual runtime deps explicitly and
+# install mlx-audio itself with `--no-deps` from setup-python.sh.
+mlx>=0.25.2
+numpy>=1.26.4
+huggingface_hub>=0.27.0
+transformers>=4.49.0,<5.0.0
+hf_transfer
+mlx-lm>=0.18.0,<0.30.0
+tqdm>=4.67.1
+sounddevice>=0.5.1
+soundfile>=0.13.1
+pyloudnorm>=0.1.1
+librosa==0.11.0
+
+# Kokoro / Misaki TTS dependencies used by mlx-audio on macOS.
+misaki[en]
+loguru>=0.7.3
+num2words>=0.5.14
+spacy>=3.8.4
+phonemizer-fork>=3.3.2
+espeakng-loader>=0.2.4
+sentencepiece>=0.2.0
+einops>=0.8.1
+omegaconf==2.3.0
+einx==0.3.0
+dacite>=1.9.2

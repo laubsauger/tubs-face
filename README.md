@@ -13,6 +13,18 @@ npm start          # Production: compiled server (port 3000)
 
 Open `http://localhost:5173` (dev) or `http://localhost:3000` (production).
 
+### macOS Python Setup
+
+`npm install` now uses `requirements-macos.txt` plus a separate `mlx-audio` install step on macOS. That avoids a broken resolver path in `mlx-audio==0.2.10`'s published dependency metadata.
+
+If you need to bootstrap the Python side manually on macOS, run:
+
+```bash
+python3.11 -m venv venv
+./venv/bin/pip install -r requirements-macos.txt
+./venv/bin/pip install --no-deps mlx-audio==0.2.10
+```
+
 ### Windows Support
 
 On Windows, `npm install` gracefully defers to `scripts/setup-python.ps1` to establish the `.venv` and install backend packages. 

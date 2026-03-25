@@ -30,7 +30,7 @@ export function FacePanel({
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
 
   return (
-    <article id="face-panel-card" className={`face-panel-card relative transition-all ${state.collapsed ? 'hidden' : ''}`}>
+    <article id="face-panel-card" className={`panel-surface panel-surface-face face-panel-card relative transition-all w-full ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
       <PanelHeader store={store} panelKey="face" title="Face Worker" meta="" />
       
       {state.debugOverlayActive && (
@@ -68,10 +68,10 @@ export function FacePanel({
         </div>
       )}
 
-      <div className="panel-body">
+      <div className={`panel-body panel-face-body ${state.collapsed ? 'hidden' : ''}`}>
         <div className={`camera-shell relative w-[320px] aspect-video rounded-3xl overflow-hidden shadow-2xl border-4 ${state.faceCameraActive ? 'border-slate-800' : 'border-slate-900/50 bg-slate-950/80'} transition-colors`}>
           <video id="face-camera-video" className={`absolute inset-0 w-full h-full object-cover ${state.faceCameraActive ? '' : 'hidden'}`} autoPlay muted playsInline />
-          <canvas id="face-camera-overlay" className={`absolute inset-0 w-full h-full object-cover mix-blend-screen transition-opacity ${state.faceCameraActive ? (state.debugOverlayActive ? 'opacity-100' : 'opacity-0') : 'opacity-0'}`} />
+          <canvas id="face-camera-overlay" className={`absolute inset-0 w-full h-full object-cover mix-blend-screen transition-opacity ${state.faceCameraActive && (state.debugOverlayActive || state.faceLastDetectedCount > 0) ? 'opacity-100' : 'opacity-0'}`} />
           
           <div className={`absolute inset-0 flex items-center justify-center text-sm font-semibold text-slate-500 ${state.faceCameraActive ? 'hidden' : ''}`}>
             Camera Inactive

@@ -271,7 +271,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
 
     for (const face of faces) {
       const [x1, y1, x2, y2] = face.box;
-      const left = overlayEl.width - (x2 * scaleX);
+      const left = x1 * scaleX;
       const top = y1 * scaleY;
       const width = (x2 - x1) * scaleX;
       const height = (y2 - y1) * scaleY;

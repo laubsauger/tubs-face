@@ -38,6 +38,16 @@ export interface SpeakResponse extends OkResponse {
   reason?: string;
 }
 
+export interface IncomingRequest {
+  text: string;
+}
+
+export interface IncomingResponse extends OkResponse {
+  turnId?: string;
+  ignored?: boolean;
+  reason?: string;
+}
+
 export interface ManualTurnScriptRequest {
   beats?: TurnBeat[];
   donation?: TurnDonation | null;

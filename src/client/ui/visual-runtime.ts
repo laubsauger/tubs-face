@@ -1,5 +1,6 @@
 import type { DonationSignalPayload } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
+import { renderFaceVisualMarkup } from './face-visual.js';
 
 export interface VisualRuntime {
   bind(root: HTMLElement): void;
@@ -7,6 +8,7 @@ export interface VisualRuntime {
 
 export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): VisualRuntime {
   let lastDonationQrSrc = '';
+  let lastFaceMarkup = '';
   return {
     bind(root: HTMLElement): void {
       const face = root.querySelector<HTMLElement>('#visual-face');
@@ -22,10 +24,15 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
 
       if (face) {
         const config = state.config;
+        const nextMarkup = renderFaceVisualMarkup(state);
         const chromaticOffset = Math.max(
           Math.abs(config?.glitchChromaticOffsetX ?? 0),
           Math.abs(config?.glitchChromaticOffsetY ?? 4.5),
         );
+        if (nextMarkup !== lastFaceMarkup) {
+          face.innerHTML = nextMarkup;
+          lastFaceMarkup = nextMarkup;
+        }
         face.dataset.expression = state.currentExpression;
         face.dataset.idleVariant = state.idleVariant;
         face.dataset.renderMode = config?.faceRenderMode ?? 'css';

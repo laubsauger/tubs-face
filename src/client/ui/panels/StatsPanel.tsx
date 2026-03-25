@@ -13,9 +13,9 @@ export function StatsPanel({ store }: { store: AppStore }): JSX.Element {
   }));
 
   return (
-    <article className={`bg-slate-900/90 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden transition-all text-left ${state.collapsed ? 'h-11' : ''}`}>
+    <article className={`panel-surface panel-surface-compact transition-all text-left ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
       <PanelHeader store={store} panelKey="stats" title="Bot Stats" meta={`$${(state.stats?.costUsd ?? 0).toFixed(4)}`} />
-      <div className={`p-4 flex flex-col gap-3 ${state.collapsed ? 'hidden' : ''}`}>
+      <div className={`panel-body panel-content flex flex-col gap-3 ${state.collapsed ? 'hidden' : ''}`}>
         <div className="flex items-center gap-3 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
           <div className="flex-1 font-mono text-xs text-slate-300">
             Expression: <span className="font-bold text-cyan-400 ml-1">{state.currentExpression || 'idle'}</span>

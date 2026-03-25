@@ -16,9 +16,9 @@ export function ConnectionPanel({ store }: { store: AppStore }): JSX.Element {
   }));
 
   return (
-    <article className={`bg-slate-900/90 backdrop-blur-xl border border-slate-700 shadow-2xl rounded-2xl overflow-hidden transition-all ${state.collapsed ? 'h-11' : ''}`}>
+    <article className={`panel-surface panel-surface-compact transition-all ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
       <PanelHeader store={store} panelKey="connection" title="System Vitals" meta={state.connected ? 'Online' : 'Offline'} />
-      <div className={`p-4 flex flex-col gap-4 ${state.collapsed ? 'hidden' : ''}`}>
+      <div className={`panel-body panel-content flex flex-col gap-4 ${state.collapsed ? 'hidden' : ''}`}>
         <div className="flex items-center gap-3 bg-slate-950/50 p-3 rounded-xl border border-slate-800">
           <div className={`w-3 h-3 rounded-full shadow-[0_0_12px_rgba(0,0,0,0.5)] ${state.connected ? 'bg-emerald-500 shadow-emerald-500/50' : 'bg-red-500 shadow-red-500/50'} animate-pulse`} />
           <div className="flex-1 font-mono text-xs text-slate-300">

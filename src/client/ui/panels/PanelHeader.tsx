@@ -14,6 +14,8 @@ export function PanelHeader(props: {
     <button
       className="panel-header"
       data-panel-toggle={props.panelKey}
+      data-collapsed={collapsed ? 'true' : 'false'}
+      aria-expanded={!collapsed}
       type="button"
       onClick={() => {
         props.store.setState((current) => ({

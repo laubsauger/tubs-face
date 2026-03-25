@@ -17,6 +17,8 @@ import type {
   IngestDoneRequest,
   IngestDoneResponse,
   IngestListResponse,
+  IncomingRequest,
+  IncomingResponse,
   ManualTurnScriptRequest,
   ManualTurnScriptResponse,
   PayPalCaptureRequest,
@@ -126,6 +128,72 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Invalid speak payload';
       sendJson(response, 400, { error: message } satisfies ErrorResponse);
+    }
+    return true;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/incoming') {
+    const turnTimer = createTurnTimer({
+      side: 'backend',
+      source: 'text',
+      startedAt: Date.now(),
+    });
+    try {
+      const body = await readJsonBody<IncomingRequest>(request);
+      const text = body.text?.trim();
+      if (!text) {
+        throw badRequest('text is required');
+      }
+
+      turnTimer.setMeta('User', text);
+      sessionStats.messagesIn += 1;
+      sessionStats.lastActivity = Date.now();
+      lastConversationAt = Date.now();
+
+      const interruptedTurnId = interruptAssistantTurns();
+      broadcast({
+        type: 'interrupt',
+        ...(interruptedTurnId ? { turnId: interruptedTurnId } : {}),
+        source: 'user',
+      });
+
+      broadcast({
+        type: 'incoming',
+        text,
+      } satisfies WsIncomingServerMessage);
+      broadcast({
+        type: 'conversation_mode',
+        active: true,
+        expiresIn: CONVERSATION_WINDOW_MS,
+      } satisfies WsConversationModeServerMessage);
+      broadcast({
+        type: 'thinking',
+      } satisfies WsThinkingServerMessage);
+
+      const endAssistantSpan = turnTimer.span('LLM Generation');
+      const result = await runAssistantTurn(text, broadcast, turnTimer);
+      endAssistantSpan();
+      if (result.superseded) {
+        turnTimer.mark('Assistant turn superseded');
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        ...(result.turnId ? { turnId: result.turnId } : {}),
+        ...(result.superseded ? { ignored: true, reason: 'superseded' } : {}),
+      } satisfies IncomingResponse);
+      turnTimer.mark('HTTP response sent');
+      turnTimer.log({ title: '[Turn Timing]' });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Text request failed';
+      const statusCode = error instanceof Error && error.name === 'BadRequestError' ? 400 : 500;
+      sendJson(response, statusCode, { error: message } satisfies ErrorResponse);
+      if (statusCode >= 500) {
+        broadcast({
+          type: 'error',
+          text: message,
+        });
+      }
     }
     return true;
   }

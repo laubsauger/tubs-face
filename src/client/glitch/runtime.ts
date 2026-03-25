@@ -234,6 +234,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   }
 
   function setCanvasVisible(active: boolean): void {
+    if (faceEl) {
+      faceEl.classList.toggle('is-glitch-active', active);
+    }
     if (!canvas) return;
     canvas.style.display = active ? 'block' : 'none';
   }

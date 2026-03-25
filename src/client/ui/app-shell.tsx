@@ -127,39 +127,28 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
   }));
 
   return (
-    <main className={`shell relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 font-sans ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
-      
-      {/* Background Visual Face */}
-      <div className="absolute inset-0 z-0 flex flex-col justify-end items-center pb-8">
-        <VisualShell store={store} mode="main" />
-      </div>
+    <main className={`shell shell-main ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
+      <VisualShell store={store} mode="main" />
 
-      {/* 4-Corner UI HUD */}
-      {!shellState.uiHidden && !shellState.fullscreenActive && (
-        <div className="absolute inset-0 z-10 p-6 pointer-events-none grid grid-cols-[380px_1fr_380px] grid-rows-[max-content_1fr_max-content] gap-6">
-          
-          {/* Top-Left: Vitals + Input Status */}
-          <div className="col-start-1 row-start-1 flex flex-col gap-4 pointer-events-auto max-h-full overflow-y-auto overflow-x-hidden pt-2 pl-2">
+      {!shellState.uiHidden && (
+        <div className="hud-layer">
+          <div className="hud-stack hud-stack-top-left">
             <ConnectionPanel store={store} />
             <VoicePanel store={store} controls={controls} />
           </div>
 
-          {/* Bottom-Left: Chat Log */}
-          <div className="col-start-1 row-start-3 pointer-events-auto h-full flex flex-col justify-end pb-2 pl-2">
+          <div className="hud-corner hud-corner-bottom-left">
             <ChatPanel store={store} />
           </div>
 
-          {/* Top-Right: TopBar / Controls */}
-          <div className="col-start-3 row-start-1 flex flex-col items-end pointer-events-auto pr-2 pt-2">
+          <div className="hud-corner hud-corner-top-right">
             <TopBar store={store} />
           </div>
 
-          {/* Bottom-Right: Stats + Camera PIP */}
-          <div className="col-start-3 row-start-3 flex flex-col justify-end gap-4 pointer-events-auto pr-2 pb-2">
+          <div className="hud-stack hud-stack-bottom-right">
             <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
             <StatsPanel store={store} />
           </div>
-
         </div>
       )}
 
@@ -190,8 +179,10 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
   return (
     <main className="mini-shell">
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
-        {/* Face div is static — visual-runtime.ts manages all attributes imperatively */}
-        <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
+        <div className="visual-stage">
+          {/* Face div is static — visual-runtime.ts manages all attributes imperatively */}
+          <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
+        </div>
         <div
           className={`mini-reaction ${state.currentReactionEmoji ? 'is-visible' : ''}`}
           aria-hidden={!state.currentReactionEmoji}
@@ -311,7 +302,7 @@ const StableFaceContainer = memo(
 );
 
 /** Overlays that sit on top of the face (transcript, waveform, donation) */
-function VisualOverlays({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }): JSX.Element {
+function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     sleeping: current.sleeping,
     liveTranscriptText: current.liveTranscriptText,
@@ -327,29 +318,34 @@ function VisualOverlays({ store, mode }: { store: AppStore; mode: 'main' | 'mini
 
   return (
     <>
-      <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
-      <div
-        id="visual-live-transcript"
-        className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
-      >
-        {state.liveTranscriptText}
-      </div>
-      <VoiceWaveformIndicator
-        micLevel={state.micLevel}
-        recording={state.recording}
-        listenState={state.listenState}
-        conversationActive={state.conversationActive}
-        voiceWakeWordEnabled={state.voiceWakeWordEnabled}
-        voiceHandsFreeEnabled={state.voiceHandsFreeEnabled}
-        hidden={state.sleeping}
-      />
-      <CompactAssistantStatus store={store} />
-      <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
-        <img id="visual-donation-qr" alt="Donation QR" />
-        <div className="visual-donation-copy">
-          <strong id="visual-donation-handle">Venmo @TubsBot</strong>
-          <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
+      <div className="visual-overlay visual-overlay-top-left">
+        <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
+          <img id="visual-donation-qr" alt="Donation QR" />
+          <div className="visual-donation-copy">
+            <strong id="visual-donation-handle">Venmo @TubsBot</strong>
+            <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
+          </div>
         </div>
+      </div>
+
+      <div className="visual-overlay visual-overlay-bottom">
+        <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
+        <div
+          id="visual-live-transcript"
+          className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
+        >
+          {state.liveTranscriptText}
+        </div>
+        <VoiceWaveformIndicator
+          micLevel={state.micLevel}
+          recording={state.recording}
+          listenState={state.listenState}
+          conversationActive={state.conversationActive}
+          voiceWakeWordEnabled={state.voiceWakeWordEnabled}
+          voiceHandsFreeEnabled={state.voiceHandsFreeEnabled}
+          hidden={state.sleeping}
+        />
+        <CompactAssistantStatus store={store} />
       </div>
     </>
   );
@@ -357,13 +353,16 @@ function VisualOverlays({ store, mode }: { store: AppStore; mode: 'main' | 'mini
 
 function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }): JSX.Element {
   const sleeping = useAppSelector(store, (current) => current.sleeping);
+  const shellClassName = mode === 'mini' ? 'visual-shell mini-visual-shell' : 'visual-shell main-visual-shell';
+  const faceClassName = mode === 'mini' ? 'visual-face mini-visual-face' : 'visual-face main-visual-face';
 
   return (
-    <section className={`visual-shell ${sleeping ? 'is-sleeping' : ''}`}>
-      {/* Face div is completely isolated — no re-renders from overlay state changes */}
-      <StableFaceContainer id="visual-face" className="visual-face" />
-      {/* Overlays re-render independently without touching the face DOM */}
-      <VisualOverlays store={store} mode={mode} />
+    <section className={`${shellClassName} ${sleeping ? 'is-sleeping' : ''}`}>
+      <div className="visual-stage">
+        {/* Face div is completely isolated — no re-renders from overlay state changes */}
+        <StableFaceContainer id="visual-face" className={faceClassName} />
+      </div>
+      {mode === 'main' ? <VisualOverlays store={store} /> : null}
     </section>
   );
 }

@@ -5,6 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VENV_DIR="$PROJECT_DIR/venv"
 REQ_FILE="$PROJECT_DIR/requirements.txt"
+IS_MACOS=0
+
+if [ "$(uname -s)" = "Darwin" ]; then
+    IS_MACOS=1
+    REQ_FILE="$PROJECT_DIR/requirements-macos.txt"
+fi
 
 # MLX/spacy/misaki wheels only exist for 3.11 and 3.12.
 # Prefer 3.11 (tested), accept 3.12, reject anything else.
@@ -56,12 +62,24 @@ if [ ! -f "$VENV_DIR/bin/python" ]; then
     "$PYTHON" -m venv "$VENV_DIR"
 fi
 
-# Install/update deps if requirements.txt is newer than the stamp file
+# Install/update deps if requirements or installer logic changed since the stamp.
 STAMP="$VENV_DIR/.deps-installed"
-if [ ! -f "$STAMP" ] || [ "$REQ_FILE" -nt "$STAMP" ]; then
+NEEDS_INSTALL=0
+if [ ! -f "$STAMP" ] || [ "$REQ_FILE" -nt "$STAMP" ] || [ "$0" -nt "$STAMP" ]; then
+    NEEDS_INSTALL=1
+fi
+
+if [ "$NEEDS_INSTALL" -eq 1 ]; then
     echo "[setup-python] Installing Python dependencies..."
     "$VENV_DIR/bin/pip" install --upgrade pip -q
     "$VENV_DIR/bin/pip" install -r "$REQ_FILE"
+    if [ "$IS_MACOS" -eq 1 ]; then
+        # mlx-audio 0.2.10 currently declares `mlx-audio[all]` as an
+        # unconditional dependency, which sends pip down a broken resolver path
+        # on fresh macOS installs. Install the package itself without deps after
+        # installing the runtime set explicitly.
+        "$VENV_DIR/bin/pip" install --no-deps mlx-audio==0.2.10
+    fi
     touch "$STAMP"
 else
     echo "[setup-python] Python dependencies up to date."
