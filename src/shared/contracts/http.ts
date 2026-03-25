@@ -162,6 +162,15 @@ export interface FaceCreateResponse extends OkResponse {
   face?: EnrolledFace;
 }
 
+export interface FaceUpdateRequest {
+  id: string;
+  name: string;
+}
+
+export interface FaceUpdateResponse extends OkResponse {
+  face?: EnrolledFace;
+}
+
 export interface FaceDeleteResponse extends OkResponse {
   removed?: boolean;
 }

@@ -47,6 +47,19 @@ export function deleteFace(id: string): boolean {
   return before !== library.faces.length;
 }
 
+export function updateFace(id: string, patch: { name?: string }): EnrolledFace | null {
+  const library = readFaceLibrary();
+  const target = library.faces.find((face) => face.id === id);
+  if (!target) {
+    return null;
+  }
+  if (typeof patch.name === 'string' && patch.name.trim()) {
+    target.name = patch.name.trim();
+  }
+  writeFaceLibrary(library);
+  return target;
+}
+
 function createFaceId(): string {
   return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }

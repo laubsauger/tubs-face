@@ -1,7 +1,7 @@
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
-import { createFaceEntry, loadFaceLibrary } from './library.js';
+import { createFaceEntry, deleteFaceEntry, loadFaceLibrary, updateFaceEntry } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
 import { createFaceWorkerClient, type FaceWorkerClient } from './worker-client.js';
 
@@ -13,6 +13,8 @@ export interface FaceShellRuntime {
   detectFile(file: File): Promise<void>;
   saveDetectedFace(): Promise<void>;
   refreshLibrary(): Promise<void>;
+  renameFace(id: string, name: string): Promise<void>;
+  deleteFace(id: string): Promise<void>;
   dispose(): void;
   attachSender(sender: ((message: WsClientMessage) => void) | null): void;
 }
@@ -132,6 +134,12 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     },
     refreshLibrary(): Promise<void> {
       return refreshFaceLibraryState(store);
+    },
+    renameFace(id: string, name: string): Promise<void> {
+      return renameFaceEntry(store, id, name, refreshFaceLibraryState);
+    },
+    deleteFace(id: string): Promise<void> {
+      return removeFaceEntry(store, id, refreshFaceLibraryState);
     },
     dispose(): void {
       stopCamera(store);
@@ -308,6 +316,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       faceLibrary = faces;
       appStore.setState((current) => ({
         ...current,
+        faceLibraryFaces: faces,
         faceLibraryEmbeddings: faces.length,
         faceLibraryPeople: names.size,
       }));
@@ -407,6 +416,75 @@ async function saveDetectedFace(
     store.setState((current) => ({
       ...current,
       faceStatus: 'Save failed',
+    }));
+    store.appendLog('error', message);
+  }
+}
+
+async function renameFaceEntry(
+  store: AppStore,
+  id: string,
+  name: string,
+  refreshFaceLibraryState: (store: AppStore) => Promise<void>,
+): Promise<void> {
+  const normalized = name.trim();
+  if (!id || !normalized) {
+    store.appendLog('error', 'Face rename requires an id and name');
+    return;
+  }
+
+  try {
+    store.setState((current) => ({
+      ...current,
+      faceStatus: `Renaming ${normalized}`,
+    }));
+    await updateFaceEntry({ id, name: normalized });
+    store.appendLog('info', `Renamed face to ${normalized}`);
+    await refreshFaceLibraryState(store);
+    store.setState((current) => ({
+      ...current,
+      faceStatus: `Renamed ${normalized}`,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Face rename failed';
+    store.setState((current) => ({
+      ...current,
+      faceStatus: 'Rename failed',
+    }));
+    store.appendLog('error', message);
+  }
+}
+
+async function removeFaceEntry(
+  store: AppStore,
+  id: string,
+  refreshFaceLibraryState: (store: AppStore) => Promise<void>,
+): Promise<void> {
+  if (!id) {
+    store.appendLog('error', 'Face delete requires an id');
+    return;
+  }
+
+  try {
+    store.setState((current) => ({
+      ...current,
+      faceStatus: 'Removing face',
+    }));
+    const result = await deleteFaceEntry(id);
+    if (!result.removed) {
+      throw new Error('Face entry not found');
+    }
+    store.appendLog('info', `Removed face ${id}`);
+    await refreshFaceLibraryState(store);
+    store.setState((current) => ({
+      ...current,
+      faceStatus: 'Face removed',
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Face delete failed';
+    store.setState((current) => ({
+      ...current,
+      faceStatus: 'Delete failed',
     }));
     store.appendLog('error', message);
   }

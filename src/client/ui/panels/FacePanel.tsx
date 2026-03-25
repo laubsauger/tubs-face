@@ -1,4 +1,5 @@
-import { useRef, type JSX } from 'react';
+import { useRef, useState, type JSX } from 'react';
+import type { DetectedFace } from '../../../shared/contracts/faces.js';
 import type { AppStore } from '../../state/app-state.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
@@ -13,7 +14,6 @@ export function FacePanel({
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.face),
-    debugOverlayActive: current.debugOverlayActive,
     faceWorkerReady: current.faceWorkerReady,
     faceWorkerBusy: current.faceWorkerBusy,
     faceCameraActive: current.faceCameraActive,
@@ -22,83 +22,279 @@ export function FacePanel({
     faceLastInferenceMs: current.faceLastInferenceMs,
     faceLastEmbeddingsExtracted: current.faceLastEmbeddingsExtracted,
     faceLastEmbeddingsReused: current.faceLastEmbeddingsReused,
+    faceLibraryFaces: current.faceLibraryFaces,
     faceLibraryEmbeddings: current.faceLibraryEmbeddings,
     faceLibraryPeople: current.faceLibraryPeople,
     faceDraftName: current.faceDraftName,
     faceLastFaces: current.faceLastFaces,
+    debugOverlayActive: current.debugOverlayActive,
   }));
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [editingFaceId, setEditingFaceId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState('');
 
   return (
-    <article id="face-panel-card" className={`panel-surface panel-surface-face face-panel-card relative transition-all w-full ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
-      <PanelHeader store={store} panelKey="face" title="Face Worker" meta="" />
-      
-      {state.debugOverlayActive && (
-        <div className="absolute bottom-full mb-4 right-0 w-80 bg-slate-900/95 backdrop-blur-xl border border-slate-700/50 p-5 rounded-2xl shadow-2xl z-50 pointer-events-auto flex flex-col gap-4 text-left">
-          <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider mb-2">Debug Interface</h3>
-          <dl className="grid grid-cols-[100px_1fr] gap-2 text-xs font-mono text-slate-400">
-            <dt className="text-slate-500">Status</dt><dd id="face-status-value" className="text-emerald-400 font-bold">{state.faceStatus}</dd>
-            <dt className="text-slate-500">Inference</dt><dd id="face-inference-value">{state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`}</dd>
-            <dt className="text-slate-500">Embeddings</dt><dd id="face-embeddings-value">{state.faceLastEmbeddingsExtracted} new / {state.faceLastEmbeddingsReused} cached</dd>
-            <dt className="text-slate-500">Library</dt><dd id="face-library-value">{state.faceLibraryEmbeddings} embs / {state.faceLibraryPeople} ppl</dd>
-          </dl>
-          <div className="flex flex-col gap-2 mt-2">
-            <button className="button w-full justify-center" disabled={state.faceWorkerBusy} onClick={() => uploadInputRef.current?.click()}>
-              {state.faceWorkerBusy ? 'Processing...' : 'Detect Frame'}
-            </button>
-            <button className="button button-secondary w-full justify-center" onClick={() => controls?.refreshLibrary()}>
-              Reload Library
-            </button>
+    <article
+      id="face-panel-card"
+      className={`panel-surface panel-surface-face face-panel-card transition-all ${state.collapsed ? 'is-collapsed h-11' : ''}`}
+    >
+      <PanelHeader store={store} panelKey="face" title="Face Worker" meta={formatFaceSummary(state)} />
+
+      <div className={`panel-body panel-face-body ${state.collapsed ? 'hidden' : ''}`}>
+        <p id="face-summary-metric" className={`metric ${state.faceWorkerReady ? 'is-good' : 'is-bad'}`}>
+          {formatFaceSummary(state)}
+        </p>
+
+        <div className={`camera-shell ${state.faceCameraActive ? '' : 'is-inactive-shell'}`}>
+          <div className="camera-stage">
+            <video id="face-camera-video" className={`camera-video ${state.faceCameraActive ? '' : 'is-hidden'}`} autoPlay muted playsInline />
+            <canvas
+              id="face-camera-overlay"
+              className={`camera-overlay ${state.faceCameraActive && (state.debugOverlayActive || state.faceLastDetectedCount > 0) ? '' : 'is-hidden'}`}
+            />
+            <div className={`camera-placeholder ${state.faceCameraActive ? 'is-hidden' : ''}`}>Camera inactive</div>
           </div>
-          
-          <div className="mt-2">
-            <h4 className="text-xs font-bold text-slate-400 mb-2">Matches</h4>
-            <ul id="face-results-list" className="flex flex-col gap-1">
+        </div>
+
+        <div className="face-panel-stack">
+          <dl className="kv">
+            <div><dt>Status</dt><dd id="face-status-value">{state.faceStatus}</dd></div>
+            <div><dt>Inference</dt><dd id="face-inference-value">{state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`}</dd></div>
+            <div><dt>Embeddings</dt><dd id="face-embeddings-value">{state.faceLastEmbeddingsExtracted} new / {state.faceLastEmbeddingsReused} cached</dd></div>
+            <div><dt>Library</dt><dd id="face-library-value">{state.faceLibraryEmbeddings} embeddings / {state.faceLibraryPeople} people</dd></div>
+          </dl>
+
+          <div className="face-actions">
+            <input
+              ref={uploadInputRef}
+              id="face-upload-input"
+              className="sr-only"
+              type="file"
+              accept="image/png,image/jpeg,image/jpg"
+              onChange={async (event) => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (!file) {
+                  return;
+                }
+                await controls?.detectFile(file);
+              }}
+            />
+
+            <div className="face-action-row">
+              <button
+                id="face-camera-toggle"
+                className={`button ${state.faceCameraActive ? 'is-active' : ''}`}
+                type="button"
+                onClick={async () => {
+                  await controls?.toggleCamera();
+                }}
+              >
+                {state.faceCameraActive ? 'Stop Camera' : 'Start Camera'}
+              </button>
+              <button
+                id="face-upload-trigger"
+                className="button"
+                type="button"
+                disabled={state.faceWorkerBusy}
+                onClick={() => {
+                  uploadInputRef.current?.click();
+                }}
+              >
+                {state.faceWorkerBusy ? 'Processing...' : 'Detect From Image'}
+              </button>
+              <button
+                id="face-refresh-trigger"
+                className="button button-secondary"
+                type="button"
+                onClick={async () => {
+                  await controls?.refreshLibrary();
+                }}
+              >
+                Refresh Library
+              </button>
+            </div>
+
+            <div className="face-action-row">
+              <input
+                id="face-enroll-name"
+                className="face-name-input"
+                type="text"
+                placeholder="Name this face"
+                value={state.faceDraftName}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  store.setState((current) => ({
+                    ...current,
+                    faceDraftName: value,
+                  }));
+                }}
+              />
+              <button
+                id="face-save-trigger"
+                className="button"
+                type="button"
+                disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
+                onClick={async () => {
+                  await controls?.saveDetectedFace();
+                }}
+              >
+                Save First Face
+              </button>
+            </div>
+          </div>
+
+          <section className="face-panel-section">
+            <div className="face-section-head">
+              <h3>Current Detections</h3>
+              <span>{state.faceLastDetectedCount} live</span>
+            </div>
+            <ul id="face-results-list" className="face-list">
               {state.faceLastFaces.length === 0
-                ? <li className="text-xs text-slate-500">No detections yet.</li>
+                ? <li className="face-item face-item-empty">No detections yet.</li>
                 : state.faceLastFaces.map((face, index) => (
-                  <li key={`${face.name ?? face.match?.name ?? 'face'}-${index}`} className="flex justify-between items-center text-xs bg-slate-800/50 p-1.5 rounded">
-                    <strong>{face.name ?? face.match?.name ?? `Face ${index + 1}`}</strong>
-                    <span className="text-emerald-400">{Math.round((face.match?.score ?? face.confidence ?? face.score) * 100)}%</span>
+                  <li key={`${face.name ?? face.match?.name ?? 'face'}-${index}`} className="face-item face-item-detailed">
+                    <div className="face-item-copy">
+                      <strong>{face.name ?? face.match?.name ?? `Face ${index + 1}`}</strong>
+                      <span>{renderFaceMeta(face)}</span>
+                      {face.matches && face.matches.length > 0 && (
+                        <div className="face-match-strip">
+                          {face.matches.map((match) => (
+                            <span key={`${match.id ?? match.name ?? 'match'}-${match.score.toFixed(4)}`} className={`face-match-chip ${match.id === face.match?.id ? 'is-primary' : ''}`}>
+                              {match.name ?? 'Unknown'} {Math.round(match.score * 100)}%
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span>{Math.round((face.match?.score ?? face.confidence ?? face.score) * 100)}%</span>
                   </li>
                 ))}
             </ul>
-          </div>
-          
-        </div>
-      )}
+          </section>
 
-      <div className={`panel-body panel-face-body ${state.collapsed ? 'hidden' : ''}`}>
-        <div className={`camera-shell relative w-[320px] aspect-video rounded-3xl overflow-hidden shadow-2xl border-4 ${state.faceCameraActive ? 'border-slate-800' : 'border-slate-900/50 bg-slate-950/80'} transition-colors`}>
-          <video id="face-camera-video" className={`absolute inset-0 w-full h-full object-cover ${state.faceCameraActive ? '' : 'hidden'}`} autoPlay muted playsInline />
-          <canvas id="face-camera-overlay" className={`absolute inset-0 w-full h-full object-cover mix-blend-screen transition-opacity ${state.faceCameraActive && (state.debugOverlayActive || state.faceLastDetectedCount > 0) ? 'opacity-100' : 'opacity-0'}`} />
-          
-          <div className={`absolute inset-0 flex items-center justify-center text-sm font-semibold text-slate-500 ${state.faceCameraActive ? 'hidden' : ''}`}>
-            Camera Inactive
-          </div>
-
-          {state.faceCameraActive && state.faceLastDetectedCount > 0 && (
-            <div className="absolute top-3 left-3 bg-slate-950/80 backdrop-blur-md px-3 py-1.5 rounded-lg text-xs font-bold border border-emerald-500/30 text-emerald-400 shadow-lg flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              {state.faceLastFaces.map(f => f.name || f.match?.name).filter(Boolean).join(', ') || `${state.faceLastDetectedCount} unknown`}
+          <section className="face-panel-section">
+            <div className="face-section-head">
+              <h3>Face Library</h3>
+              <span>{state.faceLibraryFaces.length} saved</span>
             </div>
-          )}
+            <ul className="face-library-list">
+              {state.faceLibraryFaces.length === 0
+                ? <li className="face-item face-item-empty">No enrolled faces yet.</li>
+                : state.faceLibraryFaces.map((face) => {
+                  const editing = editingFaceId === face.id;
+                  return (
+                    <li key={face.id} className="face-library-item">
+                      <div className="face-library-item-main">
+                        {editing ? (
+                          <div className="face-inline-form">
+                            <input
+                              className="face-name-input"
+                              type="text"
+                              value={editingName}
+                              onChange={(event) => {
+                                setEditingName(event.currentTarget.value);
+                              }}
+                            />
+                            <button
+                              className="button"
+                              type="button"
+                              onClick={async () => {
+                                await controls?.renameFace(face.id, editingName);
+                                setEditingFaceId(null);
+                                setEditingName('');
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button
+                              className="button button-secondary"
+                              type="button"
+                              onClick={() => {
+                                setEditingFaceId(null);
+                                setEditingName('');
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="face-item-copy">
+                              <strong>{face.name}</strong>
+                              <span>{face.createdAt ? `Saved ${formatFaceTimestamp(face.createdAt)}` : face.id}</span>
+                            </div>
+                            <div className="face-library-actions">
+                              <button
+                                className="button button-secondary"
+                                type="button"
+                                onClick={() => {
+                                  setEditingFaceId(face.id);
+                                  setEditingName(face.name);
+                                }}
+                              >
+                                Rename
+                              </button>
+                              <button
+                                className="button button-danger"
+                                type="button"
+                                onClick={async () => {
+                                  if (!window.confirm(`Delete face "${face.name}"?`)) {
+                                    return;
+                                  }
+                                  await controls?.deleteFace(face.id);
+                                  if (editingFaceId === face.id) {
+                                    setEditingFaceId(null);
+                                    setEditingName('');
+                                  }
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+            </ul>
+          </section>
         </div>
-
-        <input
-          ref={uploadInputRef}
-          id="face-upload-input"
-          className="sr-only"
-          type="file"
-          accept="image/png,image/jpeg,image/jpg"
-          onChange={async (event) => {
-            const file = event.currentTarget.files?.[0];
-            event.currentTarget.value = '';
-            if (!file) return;
-            await controls?.detectFile(file);
-          }}
-        />
       </div>
     </article>
   );
+}
+
+function formatFaceSummary(state: {
+  faceWorkerBusy: boolean;
+  faceWorkerReady: boolean;
+  faceLastDetectedCount: number;
+}): string {
+  if (state.faceWorkerBusy) return 'Running';
+  if (!state.faceWorkerReady) return 'Loading worker';
+  return state.faceLastDetectedCount > 0 ? `${state.faceLastDetectedCount} detected` : 'Ready';
+}
+
+function renderFaceMeta(face: DetectedFace): string {
+  if (face.name) {
+    return 'Recognized from library';
+  }
+  if (face.match?.name) {
+    return `Closest match: ${face.match.name}`;
+  }
+  return 'No confident match';
+}
+
+function formatFaceTimestamp(ts: number): string {
+  try {
+    return new Date(ts).toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return String(ts);
+  }
 }

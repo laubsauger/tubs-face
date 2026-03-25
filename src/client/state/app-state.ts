@@ -3,7 +3,7 @@ import { createStore } from 'zustand/vanilla';
 import type { ExpressionName } from '../../shared/contracts/config.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../../shared/contracts/http.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
-import type { DetectedFace } from '../../shared/contracts/faces.js';
+import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { DonationSignalPayload } from '../../shared/contracts/ws.js';
 import type { TurnAction, TurnActor } from '../../shared/contracts/turn-script.js';
 
@@ -109,6 +109,7 @@ export interface AppState {
   faceFrameWidth: number | null;
   faceFrameHeight: number | null;
   faceLastFaces: DetectedFace[];
+  faceLibraryFaces: EnrolledFace[];
   faceLibraryEmbeddings: number;
   faceLibraryPeople: number;
   faceDraftName: string;
@@ -215,6 +216,7 @@ export function createAppStore(serverUrl: string): AppStore {
     faceFrameWidth: null,
     faceFrameHeight: null,
     faceLastFaces: [],
+    faceLibraryFaces: [],
     faceLibraryEmbeddings: 0,
     faceLibraryPeople: 0,
     faceDraftName: '',

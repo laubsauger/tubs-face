@@ -286,10 +286,15 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
             .filter(Boolean)
             .join(' '),
         );
+        const previewText = summarizeTurnScript(message, targetActor);
         store.setState((current) => {
           let next: AppState = {
             ...current,
             currentTurnId: message.turnId ?? current.currentTurnId,
+            ...(previewText ? {
+              currentSpeechText: previewText,
+              subtitleText: previewText,
+            } : {}),
           };
           for (const beat of message.beats) {
             if (beat.action !== 'speak' || !beat.text?.trim()) {

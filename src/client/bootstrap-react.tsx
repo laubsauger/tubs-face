@@ -56,6 +56,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const faceBehaviorRuntime = createFaceBehaviorRuntime(store, messageMode);
   const faceRuntime = isController ? createFaceShellRuntime(store) : null;
   const windowRuntime = createWindowRuntime(store, messageMode);
+  let unlockAudioOnGesture: ((event: Event) => void) | null = null;
+  let spectatorUnlockHandler: (() => void) | null = null;
 
   const controls: AppShellControls | undefined = isController
     ? {
@@ -81,6 +83,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
           detectFile: (file: File) => faceRuntime.detectFile(file),
           saveDetectedFace: () => faceRuntime.saveDetectedFace(),
           refreshLibrary: () => faceRuntime.refreshLibrary(),
+          renameFace: (id: string, name: string) => faceRuntime.renameFace(id, name),
+          deleteFace: (id: string) => faceRuntime.deleteFace(id),
         },
       } : {}),
     }
@@ -134,7 +138,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
 
   store.appendLog('info', `${options.mode} client booting`);
 
-  window.setInterval(() => {
+  const awakeTimer = window.setInterval(() => {
     store.setState((current) => {
       if (current.sleeping) {
         return current;
@@ -199,6 +203,12 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   });
 
   if (!isSpectator) {
+    unlockAudioOnGesture = () => {
+      speechRuntime.unlockAudio();
+    };
+    window.addEventListener('pointerdown', unlockAudioOnGesture, true);
+    window.addEventListener('keydown', unlockAudioOnGesture, true);
+
     faceBehaviorRuntime.attachSender((message) => {
       wsClient.send(message);
     });
@@ -245,15 +255,24 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
 
   // Spectator tap-to-unlock: pre-create and resume the streaming AudioContext
   if (isSpectator) {
-    window.addEventListener('tubs:unlock-audio', () => {
+    spectatorUnlockHandler = () => {
       speechRuntime.unlockAudio();
-    });
+    };
+    window.addEventListener('tubs:unlock-audio', spectatorUnlockHandler);
   }
 
   wsClient.connect();
 
   return {
     dispose() {
+      window.clearInterval(awakeTimer);
+      if (unlockAudioOnGesture) {
+        window.removeEventListener('pointerdown', unlockAudioOnGesture, true);
+        window.removeEventListener('keydown', unlockAudioOnGesture, true);
+      }
+      if (spectatorUnlockHandler) {
+        window.removeEventListener('tubs:unlock-audio', spectatorUnlockHandler);
+      }
       wsClient.disconnect();
       speechRuntime.dispose();
       ambientRuntime?.dispose?.();

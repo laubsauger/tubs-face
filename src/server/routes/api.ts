@@ -12,6 +12,8 @@ import type {
   FaceCreateResponse,
   FaceDeleteResponse,
   FaceLibraryResponse,
+  FaceUpdateRequest,
+  FaceUpdateResponse,
   GreetingsResponse,
   HealthResponse,
   IngestDoneRequest,
@@ -52,7 +54,7 @@ import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '.
 import { getTtsProxyTarget, restartTranscriptionService, transcribeAudio } from '../processing/mode-manager.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
-import { addFace, deleteFace, readFaceLibrary } from '../faces/library.js';
+import { addFace, deleteFace, readFaceLibrary, updateFace } from '../faces/library.js';
 import { captureOrder, createOrder } from '../paypal/client.js';
 import { emitDonationSignal, isDonationWebhookAuthorized, normalizeCurrencyCode, normalizeDonationSignalCertainty, toDonationSignalFromPayPalCapture, toDonationSignalFromPaypalEvent, toSafeAmount } from '../donations.js';
 
@@ -501,6 +503,34 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     } catch (error) {
       sendJson(response, 400, {
         error: error instanceof Error ? error.message : 'Invalid face payload',
+      } satisfies ErrorResponse);
+    }
+    return true;
+  }
+
+  if (request.method === 'PATCH' && url.pathname === '/faces') {
+    try {
+      const payload = await readJsonBody<FaceUpdateRequest>(request);
+      if (!payload.id?.trim() || !payload.name?.trim()) {
+        throw badRequest('Missing id or name');
+      }
+      const face = updateFace(payload.id.trim(), {
+        name: payload.name.trim(),
+      });
+      if (!face) {
+        sendJson(response, 404, {
+          error: 'Face not found',
+        } satisfies ErrorResponse);
+        return true;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        face,
+      } satisfies FaceUpdateResponse);
+    } catch (error) {
+      const statusCode = error instanceof Error && error.name === 'BadRequestError' ? 400 : 500;
+      sendJson(response, statusCode, {
+        error: error instanceof Error ? error.message : 'Invalid face update payload',
       } satisfies ErrorResponse);
     }
     return true;

@@ -54,6 +54,8 @@ export interface AppShellControls {
     detectFile(file: File): Promise<void>;
     saveDetectedFace(): Promise<void>;
     refreshLibrary(): Promise<void>;
+    renameFace(id: string, name: string): Promise<void>;
+    deleteFace(id: string): Promise<void>;
   } | undefined;
 }
 

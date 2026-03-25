@@ -117,6 +117,7 @@ a {
 }
 
 .main-visual-shell {
+  --visual-bottom-band: clamp(132px, 17vh, 220px);
   z-index: 1;
 }
 
@@ -126,6 +127,13 @@ a {
   display: grid;
   place-items: center;
   padding: 12px;
+}
+
+.main-visual-shell .visual-stage {
+  padding:
+    clamp(14px, 2vw, 26px)
+    12px
+    calc(var(--visual-bottom-band) + 8px);
 }
 
 .visual-workspace {
@@ -212,8 +220,8 @@ a {
 }
 
 .main-visual-face {
-  width: min(calc(100vw - 24px), 160vh, 1520px);
-  height: min(calc(100vh - 24px), 62.5vw, 950px);
+  width: min(calc((100vh - var(--visual-bottom-band) - 32px) * 1.6), calc(100vw - 24px), 1520px);
+  height: min(calc(100vh - var(--visual-bottom-band) - 32px), 62.5vw, 920px);
   max-width: none;
   max-height: none;
 }
@@ -435,24 +443,25 @@ a {
   left: 50%;
   bottom: clamp(18px, 2vw, 28px);
   transform: translateX(-50%);
-  width: min(720px, calc(100vw - 32px));
+  width: min(760px, calc(100vw - 32px));
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .visual-subtitle {
-  width: min(100%, 680px);
+  width: min(100%, 760px);
   text-align: center;
   min-height: 40px;
-  padding: 12px 18px;
+  padding: 12px 18px 11px;
   border-radius: 18px;
-  background: rgba(3, 8, 18, 0.78);
-  border: 1px solid rgba(125, 211, 252, 0.16);
+  background: rgba(3, 8, 18, 0.84);
+  border: 1px solid rgba(125, 211, 252, 0.18);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
   color: #f8fafc;
-  font-size: 1.08rem;
-  backdrop-filter: blur(10px);
+  font-size: 1.04rem;
+  line-height: 1.35;
+  backdrop-filter: blur(12px);
 }
 
 .visual-subtitle.is-hidden {
@@ -460,14 +469,17 @@ a {
 }
 
 .visual-live-transcript {
-  width: min(100%, 620px);
+  width: min(100%, 680px);
   text-align: center;
-  padding: 10px 16px;
+  min-height: 42px;
+  padding: 10px 16px 9px;
   border-radius: 16px;
   background: rgba(4, 10, 20, 0.84);
   border: 1px solid rgba(125, 211, 252, 0.22);
   box-shadow: 0 14px 34px rgba(2, 6, 23, 0.26);
   color: rgba(248, 250, 252, 0.82);
+  font-size: 0.95rem;
+  line-height: 1.35;
   opacity: 0;
   transform: translateY(8px);
   transition: opacity 140ms ease, transform 140ms ease;
@@ -483,7 +495,7 @@ a {
   --wave-color: #7c8798;
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 8px;
   width: min(100%, 360px);
 }
 
@@ -775,7 +787,8 @@ a {
 }
 
 .panel-surface-face {
-  width: min(360px, calc(100vw - 32px));
+  width: min(420px, calc(100vw - 32px));
+  max-height: min(78vh, 860px);
 }
 
 .panel-surface-chat {
@@ -859,8 +872,10 @@ a {
 }
 
 .panel-face-body {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  overflow-y: auto;
 }
 
 .panel-chat-body {
@@ -1053,6 +1068,12 @@ a {
   border: 1px solid rgba(125, 211, 252, 0.24);
 }
 
+.button-danger {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fecaca;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
 .face-name-input {
   flex: 2 1 200px;
   min-width: 140px;
@@ -1229,13 +1250,7 @@ a {
 }
 
 .camera-shell.is-inactive-shell {
-  height: 0;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-  border: none;
+  opacity: 0.96;
 }
 
 .camera-stage {
@@ -1303,6 +1318,104 @@ a {
 .face-item-copy span {
   font-size: 0.82rem;
   color: rgba(229, 238, 252, 0.64);
+}
+
+.face-item-detailed {
+  align-items: flex-start;
+}
+
+.face-panel-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.face-panel-section {
+  display: grid;
+  gap: 10px;
+}
+
+.face-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.face-section-head h3 {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(229, 238, 252, 0.72);
+}
+
+.face-section-head span {
+  font-size: 0.75rem;
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.face-match-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.face-match-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid rgba(71, 85, 105, 0.34);
+  color: rgba(226, 232, 240, 0.88);
+  font-size: 0.74rem;
+}
+
+.face-match-chip.is-primary {
+  border-color: rgba(52, 211, 153, 0.38);
+  color: #bbf7d0;
+}
+
+.face-library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  max-height: min(30vh, 280px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.face-library-item {
+  display: grid;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(125, 211, 252, 0.06);
+  border: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.face-library-item-main {
+  display: grid;
+  gap: 10px;
+}
+
+.face-library-actions,
+.face-inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.face-library-actions .button,
+.face-inline-form .button {
+  flex: 0 0 auto;
+}
+
+.face-inline-form .face-name-input {
+  flex: 1 1 180px;
 }
 
 .face-item-empty {
@@ -1481,6 +1594,7 @@ a {
 }
 
 .mini-visual-shell {
+  --mini-bottom-band: clamp(86px, 22vh, 154px);
   flex: 1;
   min-height: 100vh;
   padding: 0;
@@ -1488,12 +1602,16 @@ a {
   border: none;
 }
 
+.mini-visual-shell .visual-stage {
+  padding: 10px 10px calc(var(--mini-bottom-band) + 8px);
+}
+
 .mini-visual-face {
-  width: 100%;
+  width: min(calc((100vh - var(--mini-bottom-band) - 20px) * 1.6), calc(100vw - 16px));
   max-width: none;
-  aspect-ratio: unset;
-  height: 100%;
-  min-height: 100vh;
+  aspect-ratio: 16 / 10;
+  height: min(calc(100vh - var(--mini-bottom-band) - 20px), calc((100vw - 16px) / 1.6));
+  min-height: 0;
   border-radius: 0;
 }
 
@@ -1506,13 +1624,13 @@ a {
 }
 
 .mini-visual-shell .visual-live-transcript {
-  bottom: 84px;
-  width: min(92vw, 620px);
+  bottom: 20px;
+  width: min(calc(100vw - 20px), 620px);
 }
 
 .mini-visual-shell .visual-subtitle {
-  bottom: 20px;
-  width: min(92vw, 680px);
+  bottom: 72px;
+  width: min(calc(100vw - 20px), 680px);
 }
 
 .mini-reaction {
@@ -1570,8 +1688,8 @@ a {
   }
 
   .main-visual-face {
-    width: min(calc(100vw - 12px), 160vh);
-    height: min(calc(100vh - 18px), 62.5vw);
+    width: min(calc((100vh - var(--visual-bottom-band) - 20px) * 1.6), calc(100vw - 12px));
+    height: min(calc(100vh - var(--visual-bottom-band) - 20px), 62.5vw);
   }
 
   .hud-stack-top-left {
@@ -1599,7 +1717,7 @@ a {
 
 .compact-sys-status {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   justify-content: center;
   margin-top: 0;
   flex-wrap: wrap;

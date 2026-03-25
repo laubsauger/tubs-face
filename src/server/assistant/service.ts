@@ -1028,7 +1028,23 @@ async function streamDualHeadBeatAudio(
 
   console.log(`\x1b[36m[DualHead TTS]\x1b[0m streaming ${speakBeats.length} speak beat(s)`);
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    let streamError: Error | null = null;
+    const finishResolve = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+    const finishReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    };
     const ttsSession = openTtsStream({
       onChunk(chunk) {
         if (!isAssistantTurnActive(turnId, epoch)) {
@@ -1061,25 +1077,38 @@ async function streamDualHeadBeatAudio(
       },
       onError(error) {
         console.warn(`\x1b[31m\x1b[1m[DualHead TTS]\x1b[0m error: ${error.message}`);
+        streamError = error;
       },
       onClose() {
         console.log(`\x1b[36m[DualHead TTS]\x1b[0m done — ${chunkIndex} chunks, ${Date.now() - startedAt}ms`);
+        if (chunkIndex === 0) {
+          if (!isAssistantTurnActive(turnId, epoch)) {
+            finishResolve();
+            return;
+          }
+          finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS ended without audio chunks for turn ${turnId}`));
+          return;
+        }
         // Always send speak_end if audio chunks were broadcast — the client
         // needs it to finalize streaming even if the turn was interrupted.
-        if (chunkIndex > 0 || isAssistantTurnActive(turnId, epoch)) {
+        if (chunkIndex > 0) {
           broadcast({
             type: 'speak_end',
             turnId,
           } satisfies WsSpeakEndServerMessage);
         }
-        resolve();
+        finishResolve();
       },
     });
 
     // Wait for TTS WS to connect, then send all beats
     const waitAndSend = () => {
       if (ttsSession.closed) {
-        resolve();
+        if (!isAssistantTurnActive(turnId, epoch) || chunkIndex > 0) {
+          finishResolve();
+          return;
+        }
+        finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for turn ${turnId}`));
         return;
       }
       if (!ttsSession.ready) {
@@ -1112,6 +1141,7 @@ async function streamDualHeadBeatAudio(
     setTimeout(() => {
       if (!ttsSession.closed) {
         console.warn(`\x1b[33m[DualHead TTS]\x1b[0m safety timeout — closing`);
+        streamError ??= assistantUnavailable(`[streaming] Dual-head TTS timed out for turn ${turnId}`);
         ttsSession.close();
       }
     }, 30_000);
