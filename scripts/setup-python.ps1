@@ -1,7 +1,7 @@
-# setup-python.ps1 — Windows equivalent of setup-python.sh
+# setup-python.ps1 - Windows equivalent of setup-python.sh
 # MLX packages are Apple-Silicon-only; on Windows, Kokoro runs via KPipeline (ONNX/CPU).
 #
-# PREREQUISITE — espeak-ng (required by Kokoro KPipeline for phonemization):
+# PREREQUISITE - espeak-ng (required by Kokoro KPipeline for phonemization):
 #   Download the .msi installer from https://github.com/espeak-ng/espeak-ng/releases
 #   and run it before starting the server for the first time.
 
@@ -46,7 +46,7 @@ $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
 if (Test-Path $VenvPython) {
     $VenvPy = & $VenvPython -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
     if ($VenvPy -ne $PyVersion) {
-        Write-Host "[setup-python] Venv has Python $VenvPy but need $PyVersion — recreating..."
+        Write-Host "[setup-python] Venv has Python $VenvPy but need $PyVersion - recreating..."
         Remove-Item -Recurse -Force $VenvDir
     }
 }

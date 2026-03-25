@@ -13,7 +13,7 @@ const isWindows = process.platform === 'win32';
 
 if (isWindows) {
   const ps1 = path.join(__dirname, 'setup-python.ps1');
-  console.log('[setup-python] Detected Windows — running setup-python.ps1');
+  console.log('[setup-python] Detected Windows - running setup-python.ps1');
   execFileSync(
     'powershell.exe',
     ['-ExecutionPolicy', 'Bypass', '-File', ps1],
@@ -21,6 +21,6 @@ if (isWindows) {
   );
 } else {
   const sh = path.join(__dirname, 'setup-python.sh');
-  console.log('[setup-python] Detected Unix — running setup-python.sh');
+  console.log('[setup-python] Detected Unix - running setup-python.sh');
   execFileSync('bash', [sh], { stdio: 'inherit' });
 }
