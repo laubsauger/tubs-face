@@ -13,17 +13,29 @@ $VenvDir    = Join-Path $ProjectDir "venv"
 $ReqFile    = Join-Path $ProjectDir "requirements-windows.txt"
 
 # Prefer python3.11 then 3.12 then any python3/python in PATH
+$OldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+
 $Python = $null
 foreach ($candidate in @("python3.11", "python3.12", "python3", "python")) {
     $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
     if ($cmd) {
-        $minor = & $cmd.Source -c "import sys; print(sys.version_info.minor)" 2>$null
-        if ($minor -eq "11" -or $minor -eq "12") {
-            $Python = $cmd.Source
-            break
+        try {
+            # Microsoft Store aliases exist but fail when executed without an actual install.
+            # 2>&1 merges stderr to stdout so we can check the string without throwing.
+            $minor = & $cmd.Source -c "import sys; print(sys.version_info.minor)" 2>&1
+            $minorStr = "$minor".Trim()
+            if ($minorStr -eq "11" -or $minorStr -eq "12") {
+                $Python = $cmd.Source
+                break
+            }
+        } catch {
+            # Ignore failures from stubs
         }
     }
 }
+
+$ErrorActionPreference = $OldEAP
 
 if (-not $Python) {
     Write-Host ""
@@ -41,6 +53,9 @@ $PyVersion = & $Python -c "import sys; print(f'{sys.version_info.major}.{sys.ver
 Write-Host "[setup-python] Using $Python ($PyVersion)"
 
 $VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+
+$OldEAP = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 
 # If venv exists but was created with a different Python, recreate it
 if (Test-Path $VenvPython) {
@@ -74,7 +89,14 @@ if ($needsInstall) {
     Write-Host "[setup-python] Installing Python dependencies..."
     & $VenvPip install --upgrade pip -q
     & $VenvPip install -r $ReqFile
-    New-Item -ItemType File -Force $StampFile | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        New-Item -ItemType File -Force $StampFile | Out-Null
+    } else {
+        Write-Host "[setup-python] WARNING: Pip install failed with exit code $LASTEXITCODE."
+        exit 1
+    }
 } else {
     Write-Host "[setup-python] Python dependencies up to date."
 }
+
+$ErrorActionPreference = $OldEAP
