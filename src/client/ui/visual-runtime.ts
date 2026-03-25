@@ -51,7 +51,6 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       }
 
       if (subtitle) {
-        subtitle.textContent = state.subtitleText || state.currentSpeechText || '';
         subtitle.classList.toggle('is-hidden', state.sleeping);
       }
 

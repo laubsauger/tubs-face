@@ -1,6 +1,6 @@
 import http from 'node:http';
 import path from 'node:path';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { runtimeConfig } from '../config/runtime.js';
 
 const DEFAULT_REALTIME_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
@@ -21,7 +21,10 @@ export interface PythonServiceController {
 }
 
 export function createPythonServiceController(definition: PythonServiceDefinition): PythonServiceController {
-  const pythonPath = path.join(process.cwd(), 'venv', 'bin', 'python');
+  const isWindows = process.platform === 'win32';
+  const pythonPath = isWindows
+    ? path.join(process.cwd(), 'venv', 'Scripts', 'python.exe')
+    : path.join(process.cwd(), 'venv', 'bin', 'python');
   const scriptPath = path.join(process.cwd(), 'src', definition.scriptName);
   let processRef: ChildProcessWithoutNullStreams | null = null;
 
@@ -74,7 +77,12 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
         });
 
         try {
-          child.kill('SIGTERM');
+          // Windows does not support POSIX signals — use taskkill for reliable tree kill.
+          if (process.platform === 'win32' && child.pid !== undefined) {
+            try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F']); } catch { /* ignore */ }
+          } else {
+            child.kill('SIGTERM');
+          }
         } catch {
           finalize(false);
           return;
@@ -83,7 +91,11 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
         setTimeout(() => {
           if (finished) return;
           try {
-            child.kill('SIGKILL');
+            if (process.platform === 'win32' && child.pid !== undefined) {
+              try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F']); } catch { /* ignore */ }
+            } else {
+              child.kill('SIGKILL');
+            }
           } catch {
             // ignore
           }

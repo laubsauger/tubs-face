@@ -5,7 +5,7 @@
   "type": "module",
   "main": "dist/server/index.js",
   "scripts": {
-    "postinstall": "bash scripts/setup-python.sh",
+    "postinstall": "node scripts/setup-python.js",
     "start": "node dist/server/index.js",
     "dev": "concurrently -k -n server,client -c blue,magenta \"npm:dev:server\" \"npm:dev:client\"",
     "dev:server": "tsx watch src/server/index.ts",
@@ -15,7 +15,7 @@
     "build:server": "tsc -p tsconfig.node.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
-    "setup-python": "bash scripts/setup-python.sh",
+    "setup-python": "node scripts/setup-python.js",
     "bench:llm": "tsx src/scripts/benchmark-llm.ts"
   },
   "dependencies": {

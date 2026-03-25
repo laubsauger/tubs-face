@@ -1,0 +1,15 @@
+# Windows-compatible requirements.
+# Excluded (Apple Silicon / macOS only): mlx-audio, lightning-whisper-mlx
+# STT: faster-whisper (cross-platform CPU Whisper)
+# TTS: kokoro KPipeline (cross-platform ONNX Kokoro — requires espeak-ng installed separately)
+#      pyttsx3 is kept as fallback for TTS_BACKEND=system
+#
+# espeak-ng required for Kokoro on Windows:
+#   https://github.com/espeak-ng/espeak-ng/releases (download the .msi installer)
+flask
+flask-sock
+faster-whisper
+kokoro>=0.9.4
+misaki[en]
+soundfile
+pyttsx3

@@ -31,7 +31,9 @@ const STREAMING_SUBTITLE_HOLD_SEC = 12;
 export interface SpeechRuntime {
   init(): void;
   bind(root: HTMLElement): void;
-  handleServerMessage(message: WsServerMessage): void;
+  handleServerMessage(message: WsServerMessage, targetActor?: 'main' | 'small'): void;
+  /** Pre-create and unlock the streaming AudioContext during a user gesture. */
+  unlockAudio(): void;
   dispose(): void;
 }
 
@@ -71,6 +73,21 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let subtitleClearTimer: number | null = null;
   let stopSpeechHandler: ((event: Event) => void) | null = null;
   let lastEmotion: TurnEmotion | null = null;
+  // Beat metadata from turn_script for syncing expressions with server-streamed audio
+  let pendingBeatMeta: Array<{
+    index: number;
+    actor: 'main' | 'small';
+    action: string;
+    emotion: TurnEmotion | null;
+    text: string;
+  }> = [];
+  let lastStreamingBeatIndex = -1;
+
+  // Decoded buffers waiting to be scheduled, keyed by chunk index.
+  // Chunks decode in parallel but schedule in order.
+  let pendingBuffers: Map<number, { buffer: AudioBuffer; turnId: string | null }> = new Map();
+  let nextScheduleIdx = 0;
+  let chunkReceiveCount = 0;
 
   return {
     init(): void {
@@ -81,7 +98,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     bind(root: HTMLElement): void {
       subtitles = createSubtitleController(root.querySelector<HTMLElement>('#visual-subtitle'));
     },
-    handleServerMessage(message: WsServerMessage): void {
+    handleServerMessage(message: WsServerMessage, targetActor?: 'main' | 'small'): void {
       if (disposed) {
         return;
       }
@@ -103,9 +120,18 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           enqueueSpeak(message.text, message.turnId);
           return;
         case 'audio_chunk':
+          // When targeting a specific actor (spectator), skip chunks for other actors
+          if (targetActor && message.actor && message.actor !== targetActor) {
+            return;
+          }
           try {
-            console.log(`[Stream] audio_chunk received | audioLen=${message.audio?.length ?? 0} | turnId=${message.turnId ?? '?'} | chunkIndex=${(message as { chunkIndex?: number }).chunkIndex ?? '?'} | sessionActive=${streamingSessionActive} | receiveCount=${chunkReceiveCount}`);
-            playStreamingAudioChunk(message.audio, message.turnId);
+            console.log(`[STREAM-v2] chunk_in #${message.chunkIndex ?? '?'} | len=${message.audio?.length ?? 0} | turn=${message.turnId ?? '?'} | actor=${message.actor ?? '-'} | beat=${message.beatIndex ?? '-'} | session=${streamingSessionActive} | rxCount=${chunkReceiveCount} | t=${Date.now()}`);
+            // Sync expressions when beat changes (server-streamed dual-head)
+            if (message.beatIndex != null && message.beatIndex !== lastStreamingBeatIndex) {
+              lastStreamingBeatIndex = message.beatIndex;
+              applyStreamingBeatExpression(message.beatIndex, message.actor);
+            }
+            playStreamingAudioChunk(message.audio, message.turnId, message.actor);
           } catch (err) {
             console.error('[Stream] playStreamingAudioChunk THREW:', err);
           }
@@ -125,6 +151,37 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         default:
           return;
       }
+    },
+    unlockAudio(): void {
+      // iOS Safari requires AudioContext creation + resume + buffer playback all
+      // within the same user-gesture call stack. We also play a tiny silent WAV
+      // via HTMLAudioElement as a second unlock vector (some WebKit builds need it).
+      if (!streamingAudioContext) {
+        streamingAudioContext = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      }
+      if (streamingAudioContext.state === 'suspended') {
+        void streamingAudioContext.resume();
+      }
+      try {
+        const silentBuffer = streamingAudioContext.createBuffer(1, 1, streamingAudioContext.sampleRate);
+        const src = streamingAudioContext.createBufferSource();
+        src.buffer = silentBuffer;
+        src.connect(streamingAudioContext.destination);
+        src.start();
+      } catch {
+        // ignore — best-effort unlock
+      }
+      // Fallback: play a tiny silent WAV via <audio> element (helps unlock on
+      // some iOS/WebKit versions that gate Web Audio on HTMLMediaElement playback).
+      try {
+        const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+        const el = new Audio(silentWav);
+        el.volume = 0.01;
+        void el.play().catch(() => { /* ignore */ });
+      } catch {
+        // ignore
+      }
+      console.log('[Spectator] Audio unlocked — AudioContext state:', streamingAudioContext.state);
     },
     dispose(): void {
       disposed = true;
@@ -151,13 +208,27 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   function enqueueTurnScript(beats: TurnBeat[], turnId?: string): void {
     const isDualHead = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
+    const serverStreaming = Boolean(store.getState().config?.ttsStreamingEnabled);
 
     // In main mode with dual-head, play ALL actors' beats (small uses secondary voice)
     if (mode === 'main' && isDualHead) {
+      // When server TTS streaming is enabled, audio arrives via audio_chunk
+      // messages — skip speak beats here (they'd cause double playback).
+      // Store beat metadata so audio_chunk handler can sync expressions.
+      if (serverStreaming) {
+        pendingBeatMeta = beats.map((beat, i) => ({
+          index: i,
+          actor: (beat.actor === 'small' ? 'small' : 'main') as 'main' | 'small',
+          action: beat.action,
+          emotion: beat.emotion ?? null,
+          text: beat.text ?? '',
+        }));
+      }
       for (const beat of beats) {
         if (!beat) continue;
         const beatActor = beat.actor === 'small' ? 'small' : 'main';
         if (beat.action === 'speak' && beat.text?.trim()) {
+          if (serverStreaming) continue; // audio comes via audio_chunk
           queue.push({
             type: 'speak',
             actor: beatActor,
@@ -188,7 +259,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
     const actor = mode === 'mini' ? 'small' : 'main';
     const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait: false });
-    const suppressTts = mode === 'mini' && isMainWindowActive();
+    // When server TTS streaming is enabled and we're in mini mode, audio arrives
+    // via audio_chunk — skip speak beats to avoid trying to generate TTS we can't send
+    // (spectators have no WS sender wired up, so tts_request events go nowhere).
+    const suppressTts = mode === 'mini' && (isMainWindowActive() || serverStreaming);
     const hasSpeakBeat = !suppressTts && timeline.some((item) => item.action === 'speak' && item.text?.trim());
     let promotedReactToSpeak = false;
     for (const item of timeline) {
@@ -264,7 +338,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
     if (item.type === 'react') {
       processing = true;
-      applyBeatVisuals(item.text ?? '', item.emotion, false);
+      // Don't change main face expression for small actor's react beats
+      if (!(item.actor === 'small' && mode === 'main')) {
+        applyBeatVisuals(item.text ?? '', item.emotion, false);
+      }
       if (mode === 'mini') {
         const subtitlesEnabled = store.getState().config?.secondarySubtitleEnabled !== false;
         if (subtitlesEnabled && item.text?.trim()) {
@@ -295,6 +372,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     processing = true;
     lastEmotion = item.emotion ?? null;
     clearSubtitleClearTimer();
+    // Show text in subtitle immediately as preview before audio loads
+    subtitles.setText(item.text);
     // For small beats in main mode, only update subtitle — don't change main face expression
     if (item.actor === 'small' && mode === 'main') {
       store.setState((current) => ({
@@ -323,6 +402,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
     activeSpeechTurnId = effectiveTurnId;
     activeSpeechActor = actor ?? (mode === 'mini' ? 'small' : 'main');
+    // When main plays a small beat, don't set audioPlaying on this window —
+    // the mini window drives its own face via the head_speech_state signal.
+    const isLocalBeat = !(mode === 'main' && activeSpeechActor === 'small');
     const turnTimer = createTurnTimer({
       side: 'frontend',
       source: 'tts',
@@ -332,7 +414,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
     const useBrowserFallback = store.getState().config?.ttsBackend === 'system';
     if (useBrowserFallback) {
-      updatePlaybackState(true, 'Speaking');
+      if (isLocalBeat) updatePlaybackState(true, 'Speaking');
       emitHeadSpeechState('start', effectiveTurnId, actor);
       turnTimer.mark('Browser TTS fallback selected');
       await speakWithBrowserTts(text, effectiveTurnId, turnTimer);
@@ -389,7 +471,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
 
     // Non-streaming: HTTP /tts fetch
-    updatePlaybackState(true, 'Speaking');
+    if (isLocalBeat) updatePlaybackState(true, 'Speaking');
     emitHeadSpeechState('start', effectiveTurnId, actor);
     try {
       store.setState((current) => pushStreamDebugEntry(current, 'tts_request_start', {
@@ -543,15 +625,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     });
   }
 
-  // Decoded buffers waiting to be scheduled, keyed by chunk index.
-  // Chunks decode in parallel but schedule in order.
-  let pendingBuffers: Map<number, { buffer: AudioBuffer; turnId: string | null }> = new Map();
-  let nextScheduleIdx = 0;
-  let chunkReceiveCount = 0;
-
-  function playStreamingAudioChunk(audioBase64: string, turnId?: string): void {
+  function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small'): void {
     const idx = chunkReceiveCount++;
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    const effectiveActor = actor ?? (mode === 'mini' ? 'small' : 'main');
 
     clearStreamingFinalizeTimer();
 
@@ -560,7 +637,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       endStreamingSession(streamingSessionTurnId);
     }
     if (!streamingSessionActive) {
-      beginStreamingSession(effectiveTurnId);
+      beginStreamingSession(effectiveTurnId, effectiveActor);
     }
     updateStreamingSubtitle(store.getState().currentSpeechText || 'Streaming audio');
 
@@ -572,7 +649,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   async function decodeAndQueue(audioBase64: string, idx: number, turnId: string | null): Promise<void> {
     if (!streamingAudioContext) {
-      streamingAudioContext = new AudioContext();
+      streamingAudioContext = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     }
     if (streamingAudioContext.state === 'suspended') {
       await streamingAudioContext.resume();
@@ -629,32 +706,58 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         ts: Date.now(),
       }));
 
-      source.onended = () => {
+      let chunkEnded = false;
+      const onChunkEnd = () => {
+        if (chunkEnded) return;
+        chunkEnded = true;
         streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
         console.log(`[Stream] chunk #${chunkIdx} ended | remaining=${streamingActiveNodes} | speakEndReceived=${streamingSpeakEndReceived}`);
-        if (streamingSpeakEndReceived && streamingActiveNodes === 0) {
-          console.log(`[Stream] last chunk done after speak_end — finalizing`);
-          endStreamingSession(entry.turnId);
+        if (streamingActiveNodes === 0) {
+          if (streamingSpeakEndReceived) {
+            console.log(`[Stream] last chunk done after speak_end — finalizing`);
+            endStreamingSession(entry.turnId);
+          } else {
+            // All audio finished but no speak_end yet — schedule a grace period
+            // in case speak_end is in-flight, then force-finalize
+            console.log(`[Stream] all audio done but no speak_end — scheduling grace finalize`);
+            streamingFinalizeAttempts = 0;
+            tryFinalizeStreaming(entry.turnId);
+          }
         }
       };
+      source.onended = onChunkEnd;
+      // Safety: if the AudioContext is suspended (e.g. iOS autoplay policy),
+      // onended will never fire. Set a fallback timeout that accounts for both
+      // the wait until the chunk is scheduled to start AND its playback duration.
+      const waitUntilStartMs = Math.max(0, (scheduledAt - now) * 1000);
+      const safetyMs = waitUntilStartMs + entry.buffer.duration * 1000 + 3000;
+      window.setTimeout(() => {
+        if (!chunkEnded) {
+          console.warn(`[Stream] chunk #${chunkIdx} safety timeout (${safetyMs.toFixed(0)}ms) — onended never fired, ctx.state=${streamingAudioContext?.state ?? '?'}`);
+          onChunkEnd();
+        }
+      }, safetyMs);
     }
   }
 
-  function beginStreamingSession(turnId: string | null): void {
+  function beginStreamingSession(turnId: string | null, actor?: 'main' | 'small'): void {
     if (streamingSessionActive) {
       return;
     }
     streamingSessionActive = true;
     streamingSpeakEndReceived = false;
     streamingChunkLog = [];
+    lastStreamingBeatIndex = -1;
     // Don't reset pendingBuffers/nextScheduleIdx/chunkReceiveCount here —
     // the first chunk already incremented chunkReceiveCount before calling us.
     // These are reset in endStreamingSession/stopAllPlayback instead.
     streamingSessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
     activeSpeechTurnId = streamingSessionTurnId;
-    console.log(`[Stream] session begin | turn=${streamingSessionTurnId} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'}`);
-    updatePlaybackState(true, 'Speaking (Stream)');
-    emitHeadSpeechState('start', streamingSessionTurnId);
+    activeSpeechActor = actor ?? (mode === 'mini' ? 'small' : 'main');
+    const isLocalBeat = !(mode === 'main' && activeSpeechActor === 'small');
+    console.log(`[Stream] session begin | turn=${streamingSessionTurnId} | actor=${activeSpeechActor} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'}`);
+    if (isLocalBeat) updatePlaybackState(true, 'Speaking (Stream)');
+    emitHeadSpeechState('start', streamingSessionTurnId, activeSpeechActor);
   }
 
   function endStreamingSession(turnId: string | null): void {
@@ -685,12 +788,47 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     pendingBuffers = new Map();
     nextScheduleIdx = 0;
     chunkReceiveCount = 0;
+    pendingBeatMeta = [];
+    lastStreamingBeatIndex = -1;
     finishSpeech(effectiveTurnId);
 
     // Signal any waiting playTts that streaming is done
     window.dispatchEvent(new CustomEvent('tubs:tts-stream-done', {
       detail: { turnId: effectiveTurnId },
     }));
+  }
+
+  /** Apply expression/head_speech_state when a new beat starts in server-streamed dual-head audio. */
+  function applyStreamingBeatExpression(beatIndex: number, actor?: 'main' | 'small'): void {
+    const beatMeta = pendingBeatMeta.find((b) => b.index === beatIndex);
+    const effectiveActor = actor ?? beatMeta?.actor ?? (mode === 'mini' ? 'small' : 'main');
+    const isLocalBeat = !(mode === 'main' && effectiveActor === 'small');
+
+    // Emit head_speech_state for the new actor so mini face syncs
+    emitHeadSpeechState('start', streamingSessionTurnId, effectiveActor);
+    activeSpeechActor = effectiveActor;
+
+    if (beatMeta?.emotion) {
+      lastEmotion = beatMeta.emotion;
+    }
+
+    if (isLocalBeat) {
+      updatePlaybackState(true, 'Speaking (Stream)');
+      const expression = beatMeta?.emotion?.expression ?? 'speaking';
+      store.setState((current) => ({
+        ...current,
+        currentExpression: expression,
+        ...(beatMeta?.text ? { currentSpeechText: beatMeta.text, subtitleText: beatMeta.text } : {}),
+      }));
+    } else {
+      // Small beat on main — only update subtitle, not main face
+      if (beatMeta?.text) {
+        store.setState((current) => ({
+          ...current,
+          subtitleText: beatMeta.text,
+        }));
+      }
+    }
   }
 
   function logStreamingTimeline(): void {
@@ -754,22 +892,38 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   function scheduleStreamingEnd(turnId?: string): void {
     streamingSpeakEndReceived = true;
+    streamingFinalizeAttempts = 0;
     const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
     console.log(`[Stream] speak_end received | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes} | sessionActive=${streamingSessionActive} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'} | nextStart=${streamingNextStartTime.toFixed(3)}`);
     tryFinalizeStreaming(turnId ?? null);
   }
 
+  let streamingFinalizeAttempts = 0;
+  const FINALIZE_MAX_ATTEMPTS = 40; // ~40 * 280ms ≈ 11s hard limit
+
   function tryFinalizeStreaming(turnId: string | null): void {
     clearStreamingFinalizeTimer();
     streamingFinalizeTimer = window.setTimeout(() => {
+      streamingFinalizeTimer = null;
+      streamingFinalizeAttempts += 1;
+
+      // Hard cap: force-end after max attempts regardless of pending state
+      if (streamingFinalizeAttempts >= FINALIZE_MAX_ATTEMPTS) {
+        const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
+        console.warn(`[Stream] forcing session end after ${streamingFinalizeAttempts} attempts | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes}`);
+        endStreamingSession(turnId);
+        return;
+      }
+
       const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
       if (pendingDecodes > 0) {
-        console.log(`[Stream] ${pendingDecodes} chunk(s) still decoding — retrying finalize`);
+        console.log(`[Stream] ${pendingDecodes} chunk(s) still decoding — retrying finalize (attempt ${streamingFinalizeAttempts})`);
         tryFinalizeStreaming(turnId);
         return;
       }
       if (streamingActiveNodes > 0) {
-        console.log(`[Stream] ${streamingActiveNodes} node(s) still playing — waiting for onended`);
+        console.log(`[Stream] ${streamingActiveNodes} node(s) still playing — retrying (attempt ${streamingFinalizeAttempts})`);
+        tryFinalizeStreaming(turnId);
         return;
       }
       console.log(`[Stream] finalizing session`);
@@ -787,7 +941,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       ? store.getState().config?.secondarySubtitleEnabled !== false
       : true;
     if (subtitlesEnabled) {
-      subtitles.start(normalized, STREAMING_SUBTITLE_HOLD_SEC);
+      subtitles.streamSentence(normalized);
     } else {
       subtitles.stop();
     }
@@ -812,11 +966,12 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   function finishSpeech(turnId: string | null): void {
     clearSpeechSafetyTimer();
     const endActor = activeSpeechActor;
+    const wasLocalBeat = !(mode === 'main' && endActor === 'small');
     if (turnId == null || activeSpeechTurnId === turnId) {
       activeSpeechTurnId = null;
       activeSpeechActor = null;
     }
-    updatePlaybackState(false, 'Idle');
+    if (wasLocalBeat) updatePlaybackState(false, 'Idle');
     subtitles.finish();
     emitHeadSpeechState('end', turnId, endActor ?? undefined);
     scheduleSubtitleClear();
@@ -905,6 +1060,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     pendingBuffers = new Map();
     nextScheduleIdx = 0;
     chunkReceiveCount = 0;
+    pendingBeatMeta = [];
+    lastStreamingBeatIndex = -1;
     remoteActorSpeaking = false;
     remoteActorSpeakingUntil = 0;
     clearReactionResetTimer();
@@ -996,11 +1153,12 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       mainHandlingOurBeats = true;
     }
 
-    // If the main window signals it is speaking for our actor,
+    // If another window signals it is speaking for our actor,
     // suppress our own TTS to avoid double playback.
+    // In main mode, head_speech_state for actor 'main' is our own echo — ignore it.
     if (message.actor === localActor) {
-      if (message.state === 'start') {
-        // Interrupt any in-progress audio and convert pending speak items to react-only
+      if (mode === 'mini' && message.state === 'start') {
+        // Only mini should defer to another window claiming its actor
         if (store.getState().audioPlaying) {
           stopAllPlayback();
         }
@@ -1161,6 +1319,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       pendingBuffers = new Map();
       nextScheduleIdx = 0;
       chunkReceiveCount = 0;
+      pendingBeatMeta = [];
+      lastStreamingBeatIndex = -1;
       activeSpeechTurnId = null;
       remoteActorSpeaking = false;
       remoteActorSpeakingUntil = 0;

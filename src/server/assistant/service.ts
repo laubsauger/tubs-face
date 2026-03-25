@@ -69,7 +69,7 @@ let activeTurnEpoch = 0;
 let activeTurnId: string | null = null;
 const PERSONA_DRIFT_PHRASE_RE = /\b(certainly|however|it's important to remember|do you have any other questions|any other questions or topics you'd like to discuss|let me know if you|in conclusion)\b/i;
 const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|additionally|furthermore|moreover)\b/i;
-const PERSONA_MARKER_RE = /\b(tubs|rapha|wheel|wheels|venmo|thailand|robot|plastic tubs?)\b/i;
+const PERSONA_MARKER_RE = /\b(tubs|wheel|wheels|venmo|robot|plastic tubs?)\b/i;
 const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
 const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
 
@@ -520,6 +520,12 @@ export async function runAssistantTurn(userText: string, broadcast: (message: Ws
       };
     }
 
+    // Stream TTS for speak beats server-side so clients get audio_chunk
+    // messages immediately instead of per-beat tts_request round-trips.
+    if (runtimeConfig.ttsStreamingEnabled) {
+      await streamDualHeadBeatAudio(dualHead.beats, turnId, epoch, broadcast, turnTimer);
+    }
+
     sessionStats.messagesOut += 1;
     sessionStats.lastActivity = Date.now();
     sessionStats.tokensIn += dualHead.tokens.in;
@@ -917,14 +923,17 @@ async function runStreamingAssistantTurn(args: {
       turnTimer.setMeta('Tubs', `${emoji}${fullText}`);
     }
 
-    // Send speak_end to finalize streaming on the client
-    emitIfActive(turnId, epoch, broadcast, {
-      type: 'speak_end',
-      turnId,
-      emotion: rawEmotion,
-      donation,
-      fullText,
-    } satisfies WsSpeakEndServerMessage);
+    // Always send speak_end if we sent any audio chunks — the client needs it
+    // to finalize streaming state even if the turn was interrupted/superseded.
+    if (chunkIndex > 0 || isAssistantTurnActive(turnId, epoch)) {
+      broadcast({
+        type: 'speak_end',
+        turnId,
+        emotion: rawEmotion,
+        donation,
+        fullText,
+      } satisfies WsSpeakEndServerMessage);
+    }
 
     const tokensIn = Number(llmResult.usage.promptTokenCount || 0) || estimateTokens(normalized);
     const tokensOut = Number(llmResult.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
@@ -975,8 +984,138 @@ async function runStreamingAssistantTurn(args: {
     ttsWs?.close();
     const msg = error instanceof Error ? error.message : String(error);
     console.error(`\x1b[31m\x1b[1m[Streaming]\x1b[0m streaming turn threw: ${msg} — falling through to sequential`);
+    // If any audio chunks were already broadcast, send speak_end so the
+    // client can finalize its streaming session instead of getting stuck.
+    if (chunkIndex > 0) {
+      broadcast({
+        type: 'speak_end',
+        turnId,
+      } satisfies WsSpeakEndServerMessage);
+      console.log(`\x1b[36m[Streaming]\x1b[0m sent speak_end after error (${chunkIndex} chunks were in flight)`);
+    }
     return null;
   }
+}
+
+/**
+ * Stream TTS audio for dual-head speak beats server-side, broadcasting
+ * audio_chunk messages so clients can play them immediately via the
+ * streaming audio pipeline instead of per-beat tts_request round-trips.
+ */
+async function streamDualHeadBeatAudio(
+  beats: TurnBeat[],
+  turnId: string,
+  epoch: number,
+  broadcast: (message: WsServerMessage) => void,
+  turnTimer?: TurnTimer,
+): Promise<void> {
+  const speakBeats = beats
+    .map((beat, index) => ({ beat, index }))
+    .filter(({ beat }) => beat.action === 'speak' && beat.text?.trim());
+
+  if (speakBeats.length === 0) return;
+
+  const mainVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+  const smallVoice = runtimeConfig.secondaryVoice ?? mainVoice;
+  let chunkIndex = 0;
+  let pendingSentences = 0;
+  const startedAt = Date.now();
+
+  // Queue of beat metadata so onChunk/onSentenceDone know which beat is active.
+  // TTS stream processes sentences in FIFO order.
+  const beatQueue: Array<{ actor: 'main' | 'small'; beatIndex: number }> = [];
+  let activeBeat: { actor: 'main' | 'small'; beatIndex: number } = { actor: 'main', beatIndex: 0 };
+
+  console.log(`\x1b[36m[DualHead TTS]\x1b[0m streaming ${speakBeats.length} speak beat(s)`);
+
+  await new Promise<void>((resolve) => {
+    const ttsSession = openTtsStream({
+      onChunk(chunk) {
+        if (!isAssistantTurnActive(turnId, epoch)) {
+          ttsSession.close();
+          return;
+        }
+        if (chunkIndex === 0) {
+          turnTimer?.mark('First audio chunk sent');
+          console.log(`\x1b[36m[DualHead TTS]\x1b[0m first chunk in ${Date.now() - startedAt}ms`);
+        }
+        broadcast({
+          type: 'audio_chunk',
+          audio: chunk.audio,
+          text: chunk.text || '',
+          turnId,
+          chunkIndex: chunkIndex++,
+          actor: activeBeat.actor,
+          beatIndex: activeBeat.beatIndex,
+        } satisfies WsAudioChunkServerMessage);
+      },
+      onSentenceDone() {
+        pendingSentences = Math.max(0, pendingSentences - 1);
+        // Advance to next beat for subsequent chunks
+        if (beatQueue.length > 0) {
+          activeBeat = beatQueue.shift()!;
+        }
+        if (pendingSentences <= 0) {
+          ttsSession.close();
+        }
+      },
+      onError(error) {
+        console.warn(`\x1b[31m\x1b[1m[DualHead TTS]\x1b[0m error: ${error.message}`);
+      },
+      onClose() {
+        console.log(`\x1b[36m[DualHead TTS]\x1b[0m done — ${chunkIndex} chunks, ${Date.now() - startedAt}ms`);
+        // Always send speak_end if audio chunks were broadcast — the client
+        // needs it to finalize streaming even if the turn was interrupted.
+        if (chunkIndex > 0 || isAssistantTurnActive(turnId, epoch)) {
+          broadcast({
+            type: 'speak_end',
+            turnId,
+          } satisfies WsSpeakEndServerMessage);
+        }
+        resolve();
+      },
+    });
+
+    // Wait for TTS WS to connect, then send all beats
+    const waitAndSend = () => {
+      if (ttsSession.closed) {
+        resolve();
+        return;
+      }
+      if (!ttsSession.ready) {
+        setTimeout(waitAndSend, 10);
+        return;
+      }
+      let first = true;
+      for (const { beat, index } of speakBeats) {
+        const actor = beat.actor === 'small' ? 'small' as const : 'main' as const;
+        const voice = actor === 'small' ? smallVoice : mainVoice;
+        const text = sanitizeForTts(stripFormatting(beat.text!.trim()));
+        if (!text) continue;
+        const meta = { actor, beatIndex: index };
+        if (first) {
+          activeBeat = meta;
+          first = false;
+        } else {
+          beatQueue.push(meta);
+        }
+        pendingSentences++;
+        ttsSession.send(text, voice);
+      }
+      if (pendingSentences <= 0) {
+        ttsSession.close();
+      }
+    };
+    waitAndSend();
+
+    // Safety timeout
+    setTimeout(() => {
+      if (!ttsSession.closed) {
+        console.warn(`\x1b[33m[DualHead TTS]\x1b[0m safety timeout — closing`);
+        ttsSession.close();
+      }
+    }, 30_000);
+  });
 }
 
 /**

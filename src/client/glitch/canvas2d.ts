@@ -86,7 +86,8 @@ export function sizeCanvasLayout(args: {
   const rect = containerEl.getBoundingClientRect();
   if (!rect.width || !rect.height) return null;
 
-  const dpr = window.devicePixelRatio || 1;
+  const isSpectator = containerEl.closest('.spectator-shell') !== null;
+  const dpr = isSpectator ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
   const pw = Math.round(rect.width * dpr);
   const ph = Math.round(rect.height * dpr);
   const sizeChanged = canvas.width !== pw || canvas.height !== ph;

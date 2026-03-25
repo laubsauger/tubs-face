@@ -21,6 +21,8 @@ import type { WsServerMessage } from '../shared/contracts/ws.js';
 export interface BootstrapOptions {
   mode: 'main' | 'mini' | 'spectator';
   root: HTMLElement;
+  /** Which face to follow in spectator mode. Defaults to 'main'. */
+  actor?: 'main' | 'small';
 }
 
 export interface BootstrapHandle {
@@ -31,20 +33,29 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const store = createAppStore(resolveServerLabel());
   const isController = options.mode === 'main';
   const isSpectator = options.mode === 'spectator';
-  // Spectator reuses mini runtime configs (no input, display-only)
-  const runtimeMode: 'main' | 'mini' = isSpectator ? 'mini' : (options.mode === 'main' ? 'main' : 'mini');
+  // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
+  // uses 'mini' for speech runtime (don't generate own TTS — only play broadcast audio_chunks).
+  const messageMode: 'main' | 'mini' = options.mode === 'mini' ? 'mini' : 'main';
+  // Speech runtime: spectator uses 'mini' to skip speak/speak_chunk TTS generation.
+  // Audio still plays via audio_chunk handler which has no mode check.
+  const speechMode: 'main' | 'mini' = isSpectator ? 'mini' : messageMode;
+  // Which actor the spectator follows. Defaults to 'main'. In dual-head, each
+  // spectator URL targets one face (?actor=main or ?actor=small).
+  const targetActor: 'main' | 'small' | undefined = isSpectator
+    ? (options.actor ?? 'main')
+    : undefined;
 
-  const ambientRuntime = isSpectator ? null : createAmbientRuntime(store, runtimeMode);
+  const ambientRuntime = isSpectator ? null : createAmbientRuntime(store, messageMode);
   const emotionRuntime = isController ? createEmotionRuntime(store) : null;
   const fxRuntime = isController ? createFxRuntime(store) : null;
-  const glitchRuntime = createGlitchRuntime(store, runtimeMode);
+  const glitchRuntime = createGlitchRuntime(store, messageMode);
   const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
-  const speechRuntime = createSpeechRuntime(store, runtimeMode);
-  const visualRuntime = createVisualRuntime(store, runtimeMode);
+  const speechRuntime = createSpeechRuntime(store, speechMode);
+  const visualRuntime = createVisualRuntime(store, messageMode);
   const voiceRuntime = isController ? createVoiceRuntime(store) : null;
-  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, runtimeMode);
+  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, messageMode);
   const faceRuntime = isController ? createFaceShellRuntime(store) : null;
-  const windowRuntime = createWindowRuntime(store, runtimeMode);
+  const windowRuntime = createWindowRuntime(store, messageMode);
 
   const controls: AppShellControls | undefined = isController
     ? {
@@ -181,8 +192,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       if (message.type === 'donation_signal') {
         emotionRuntime?.pushImpulse({ pos: 1, neg: 0, arousal: 0.85 }, 'system');
       }
-      speechRuntime.handleServerMessage(message);
-      applyServerMessage(store, message, runtimeMode);
+      applyServerMessage(store, message, messageMode, targetActor);
+      speechRuntime.handleServerMessage(message, targetActor);
       proactiveRuntime?.onPresenceChanged();
     },
   });
@@ -231,6 +242,14 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       wsClient.send(message);
     });
   }
+
+  // Spectator tap-to-unlock: pre-create and resume the streaming AudioContext
+  if (isSpectator) {
+    window.addEventListener('tubs:unlock-audio', () => {
+      speechRuntime.unlockAudio();
+    });
+  }
+
   wsClient.connect();
 
   return {
@@ -279,8 +298,6 @@ function selectVisualSlice(state: AppState) {
     currentExpression: state.currentExpression,
     idleVariant: state.idleVariant,
     blinkActive: state.blinkActive,
-    subtitleText: state.subtitleText,
-    currentSpeechText: state.currentSpeechText,
     liveTranscriptText: state.liveTranscriptText,
     liveTranscriptDraft: state.liveTranscriptDraft,
     currentDonationSignal: state.currentDonationSignal,

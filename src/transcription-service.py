@@ -12,17 +12,34 @@ import numpy as np
 from flask import Flask, request, jsonify, Response
 from flask_sock import Sock
 
+import platform as _platform
+
 app = Flask(__name__)
 sock = Sock(app)
 
-# Metal/MLX is not thread-safe — serialize all GPU operations
+# Metal/MLX is not thread-safe — serialize all GPU operations.
+# On non-MLX platforms this lock is still used but has no real effect.
 _gpu_lock = threading.Lock()
+
+_IS_MACOS = _platform.system() == "Darwin"
 
 # Configuration
 MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
 STT_BACKEND = os.environ.get("STT_BACKEND", "mlx")
 TTS_BACKEND = os.environ.get("TTS_BACKEND", "kokoro")
 KOKORO_VOICE = os.environ.get("KOKORO_VOICE", "af_heart")
+
+# STT backend resolution: lightning-whisper-mlx is Apple Silicon only.
+# Fall back to faster-whisper automatically on non-macOS.
+if STT_BACKEND == "mlx" and not _IS_MACOS:
+    print("[STT] WARNING: STT_BACKEND=mlx is Apple Silicon only — falling back to faster-whisper.")
+    STT_BACKEND = "faster-whisper"
+
+# Kokoro can run on any platform:
+#   macOS       → mlx_audio (MLX-accelerated, fast)
+#   Windows/Linux → kokoro PyPI package (KPipeline, ONNX/CPU)
+# _KOKORO_BACKEND tracks which implementation is active.
+_KOKORO_BACKEND = "mlx" if _IS_MACOS else "native"
 
 stt_model = None
 tts_model = None
@@ -65,17 +82,30 @@ if TTS_BACKEND == "vibevoice":
         print(f"[TTS] Error loading VibeVoice: {e}")
         raise
 elif TTS_BACKEND == "kokoro":
-    from mlx_audio.tts.utils import load_model as load_tts_model
-
-    print(f"[TTS] Loading Kokoro (voice={KOKORO_VOICE})...")
-    try:
-        tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
-        print(f"[TTS] Kokoro loaded successfully.")
-    except Exception as e:
-        print(f"[TTS] Error loading Kokoro: {e}")
-        raise
+    if _KOKORO_BACKEND == "mlx":
+        # macOS: use MLX-accelerated mlx_audio backend
+        from mlx_audio.tts.utils import load_model as load_tts_model
+        print(f"[TTS] Loading Kokoro via mlx_audio (voice={KOKORO_VOICE})...")
+        try:
+            tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
+            print(f"[TTS] Kokoro (mlx_audio) loaded successfully.")
+        except Exception as e:
+            print(f"[TTS] Error loading Kokoro (mlx_audio): {e}")
+            raise
+    else:
+        # Windows / Linux: use kokoro PyPI package (KPipeline, ONNX/CPU)
+        from kokoro import KPipeline
+        print(f"[TTS] Loading Kokoro via KPipeline (voice={KOKORO_VOICE})...")
+        try:
+            tts_model = KPipeline(lang_code="a")
+            print(f"[TTS] Kokoro (KPipeline) loaded successfully.")
+        except Exception as e:
+            print(f"[TTS] Error loading Kokoro (KPipeline): {e}")
+            raise
 else:
-    print(f"[TTS] Using macOS system TTS (say)")
+    print(f"[TTS] Using system TTS (pyttsx3 / macOS say)")
+
+
 
 
 def pcm_to_wav_bytes(pcm_float32, sample_rate=24000):
@@ -149,15 +179,22 @@ def _tts_vibevoice(text):
 def _tts_kokoro(text, voice):
     t0 = time.time()
     try:
-        with _gpu_lock:
-            segments = []
-            for result in tts_model.generate(
-                text=text,
-                voice=voice,
-                speed=1.0,
-                lang_code="a",
-            ):
-                segments.append(np.array(result.audio))
+        segments = []
+
+        if _KOKORO_BACKEND == "mlx":
+            # macOS: mlx_audio — GPU lock required (Metal not thread-safe)
+            with _gpu_lock:
+                for result in tts_model.generate(
+                    text=text,
+                    voice=voice,
+                    speed=1.0,
+                    lang_code="a",
+                ):
+                    segments.append(np.array(result.audio))
+        else:
+            # Windows / Linux: kokoro KPipeline
+            for _, _, audio in tts_model(text, voice=voice, speed=1.0):
+                segments.append(np.array(audio))
 
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
@@ -165,7 +202,8 @@ def _tts_kokoro(text, voice):
         audio = np.concatenate(segments)
         wav_bytes = pcm_to_wav_bytes(audio, sample_rate=24000)
         elapsed = int((time.time() - t0) * 1000)
-        print(f"[TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms (Kokoro, voice={voice}, lang=a)")
+        backend_label = f"Kokoro/{_KOKORO_BACKEND}"
+        print(f"[TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms ({backend_label}, voice={voice})")
         return Response(wav_bytes, mimetype="audio/wav")
 
     except Exception as e:
@@ -174,34 +212,55 @@ def _tts_kokoro(text, voice):
 
 
 def _tts_system(text):
-    filename = f"tts_{uuid.uuid4().hex}"
-    aiff_path = os.path.join(tempfile.gettempdir(), filename + ".aiff")
-    wav_path = os.path.join(tempfile.gettempdir(), filename + ".wav")
+    """Cross-platform system TTS.
+    On macOS: prefers the native say/afconvert pipeline for best quality.
+    Everywhere else (or on macOS fallback): uses pyttsx3 (Windows SAPI5 / espeak).
+    """
+    import platform
+    wav_path = os.path.join(tempfile.gettempdir(), f"tts_{uuid.uuid4().hex}.wav")
 
     try:
-        subprocess.run(["say", "-o", aiff_path, text], check=True, timeout=10)
-        subprocess.run(["afconvert", "-f", "WAVE", "-d", "LEI16", "-r", "22050", aiff_path, wav_path], check=True, timeout=5)
+        if platform.system() == "Darwin":
+            aiff_path = wav_path.replace(".wav", ".aiff")
+            try:
+                subprocess.run(["say", "-o", aiff_path, text], check=True, timeout=10)
+                subprocess.run(
+                    ["afconvert", "-f", "WAVE", "-d", "LEI16", "-r", "22050", aiff_path, wav_path],
+                    check=True, timeout=5,
+                )
+                with open(wav_path, 'rb') as f:
+                    audio_data = f.read()
+                print(f"[TTS] Generated {len(audio_data)} bytes (macOS say)")
+                return Response(audio_data, mimetype="audio/wav")
+            except Exception as e:
+                print(f"[TTS] macOS say failed ({e}), falling back to pyttsx3")
+            finally:
+                if os.path.exists(aiff_path):
+                    os.remove(aiff_path)
 
-        if not os.path.exists(wav_path):
-            return jsonify({"error": "TTS conversion failed"}), 500
+        # Cross-platform: pyttsx3
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.save_to_file(text, wav_path)
+        engine.runAndWait()
+        engine.stop()
+
+        if not os.path.exists(wav_path) or os.path.getsize(wav_path) == 0:
+            return jsonify({"error": "pyttsx3 TTS produced no audio"}), 500
 
         with open(wav_path, 'rb') as f:
             audio_data = f.read()
 
-        print(f"[TTS] Generated {len(audio_data)} bytes (system)")
+        print(f"[TTS] Generated {len(audio_data)} bytes (pyttsx3)")
         return Response(audio_data, mimetype="audio/wav")
 
-    except subprocess.CalledProcessError as e:
-        print(f"[TTS] System process error: {e}")
-        return jsonify({"error": "TTS generation failed"}), 500
     except Exception as e:
         print(f"[TTS] System error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
-        if os.path.exists(aiff_path):
-            os.remove(aiff_path)
         if os.path.exists(wav_path):
             os.remove(wav_path)
+
 
 @sock.route('/tts/stream')
 def tts_stream(ws):
@@ -252,10 +311,21 @@ def tts_stream(ws):
                 ws.send(json.dumps({"text": text, "done": True}))
                 
             elif TTS_BACKEND == "kokoro":
-                # MLX/Kokoro is not thread-safe: serialize generator use to prevent native crashes.
-                with _gpu_lock:
-                    for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                        audio_np = np.array(result.audio)
+                if _KOKORO_BACKEND == "mlx":
+                    # macOS: mlx_audio — GPU lock required (Metal not thread-safe)
+                    with _gpu_lock:
+                        for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
+                            audio_np = np.array(result.audio)
+                            wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+                            ws.send(json.dumps({
+                                "text": text,
+                                "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                                "chunk": True
+                            }))
+                else:
+                    # Windows / Linux: kokoro KPipeline
+                    for _, _, audio in tts_model(text, voice=voice, speed=1.0):
+                        audio_np = np.array(audio)
                         wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
                         ws.send(json.dumps({
                             "text": text,

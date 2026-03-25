@@ -1,4 +1,4 @@
-import { useRef, type JSX } from 'react';
+import { useCallback, useRef, useState, type JSX } from 'react';
 import type {
   DonationConfirmRequest,
   DonationConfirmResponse,
@@ -100,8 +100,6 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
     currentReactionEmoji: current.currentReactionEmoji,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
-    subtitleText: current.subtitleText,
-    currentSpeechText: current.currentSpeechText,
     config: current.config,
   }));
   const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
@@ -130,9 +128,7 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
         <div
           id="visual-subtitle"
           className={`visual-subtitle ${state.config?.secondarySubtitleEnabled === false ? 'is-hidden' : ''}`}
-        >
-          {state.subtitleText || state.currentSpeechText || ''}
-        </div>
+        />
       </section>
     </main>
   );
@@ -142,14 +138,28 @@ function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     currentExpression: current.currentExpression,
     sleeping: current.sleeping,
-    subtitleText: current.subtitleText,
-    currentSpeechText: current.currentSpeechText,
     connected: current.connected,
     config: current.config,
   }));
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const unlockFiredRef = useRef(false);
+
+  const handleTap = useCallback(() => {
+    // Guard with ref so we fire exactly once, even if React state hasn't re-rendered yet.
+    if (unlockFiredRef.current) return;
+    unlockFiredRef.current = true;
+    // Dispatch event so bootstrap can unlock the speech runtime's AudioContext.
+    // This is synchronous, keeping us inside the user-gesture call stack.
+    window.dispatchEvent(new CustomEvent('tubs:unlock-audio'));
+    setAudioUnlocked(true);
+  }, []);
 
   return (
-    <main className="mini-shell spectator-shell">
+    <main
+      className="mini-shell spectator-shell"
+      onClick={handleTap}
+      onTouchEnd={handleTap}
+    >
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
         <div
           id="visual-face"
@@ -160,11 +170,12 @@ function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
         <div
           id="visual-subtitle"
           className="visual-subtitle spectator-subtitle"
-        >
-          {state.subtitleText || state.currentSpeechText || ''}
-        </div>
+        />
         {!state.connected && (
           <div className="spectator-status">Connecting...</div>
+        )}
+        {state.connected && !audioUnlocked && (
+          <div className="spectator-tap-prompt">Tap to enable audio</div>
         )}
       </section>
     </main>
@@ -339,8 +350,6 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
     currentExpression: current.currentExpression,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
-    subtitleText: current.subtitleText,
-    currentSpeechText: current.currentSpeechText,
     currentDonationSignal: current.currentDonationSignal,
     config: current.config,
     micLevel: current.micLevel,
@@ -360,9 +369,7 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
         data-expression={state.currentExpression}
         data-render-mode="glitch"
       />
-      <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`}>
-        {state.subtitleText || state.currentSpeechText || ''}
-      </div>
+      <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
       <div
         id="visual-live-transcript"
         className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}

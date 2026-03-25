@@ -198,7 +198,7 @@ export function createAppStore(serverUrl: string): AppStore {
     micLevel: 0,
     recording: false,
     listenState: 'Idle',
-    voiceWakeWordEnabled: true,
+    voiceWakeWordEnabled: false,
     voiceHandsFreeEnabled: true,
     voiceLastTranscript: '',
     ambientAudioEnabled: true,

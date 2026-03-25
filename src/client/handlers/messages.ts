@@ -12,7 +12,13 @@ let donationJoyUntil = 0;
 let donationJoyResetTimer: number | null = null;
 let donationPromptTimer: number | null = null;
 
-export function applyServerMessage(store: AppStore, message: WsServerMessage, mode: 'main' | 'mini'): void {
+/**
+ * @param targetActor When set (spectator mode), filters actor-specific messages
+ * (face_motion, face_blink, head_speech_state, audio_chunk) to only this actor.
+ */
+export function applyServerMessage(store: AppStore, message: WsServerMessage, mode: 'main' | 'mini', targetActor?: 'main' | 'small'): void {
+  // Resolve which actor we care about: explicit targetActor > mode-derived default
+  const myActor: 'main' | 'small' = targetActor ?? (mode === 'mini' ? 'small' : 'main');
   store.setState((current) => ({
     ...current,
     lastMessageType: message.type,
@@ -302,6 +308,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         return;
       }
     case 'audio_chunk':
+      // When targeting a specific actor (spectator), skip chunks for other actors
+      if (targetActor && message.actor && message.actor !== targetActor) {
+        return;
+      }
       if (mode === 'main') {
         clearLiveTranscript(store);
       }
@@ -336,7 +346,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.appendLog('info', `${message.stage ?? 'stream'}: ${message.detail ?? 'update'}`);
       return;
     case 'face_motion':
-      if (mode === 'mini' && message.actor === 'main') {
+      if (mode === 'mini' && !targetActor && message.actor === 'main') {
         window.dispatchEvent(new CustomEvent('tubs:partner-face-motion', {
           detail: {
             x: message.x,
@@ -346,7 +356,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }));
         return;
       }
-      if (message.actor !== (mode === 'mini' ? 'small' : 'main')) {
+      if (message.actor !== myActor) {
         return;
       }
       store.setState((current) => ({
@@ -356,7 +366,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       }));
       return;
     case 'face_blink':
-      if (mode === 'mini' && message.actor === 'main') {
+      if (mode === 'mini' && !targetActor && message.actor === 'main') {
         window.dispatchEvent(new CustomEvent('tubs:partner-face-blink', {
           detail: {
             ts: message.ts,
@@ -364,7 +374,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }));
         return;
       }
-      if (message.actor !== (mode === 'mini' ? 'small' : 'main')) {
+      if (message.actor !== myActor) {
         return;
       }
       store.setState((current) => ({
@@ -380,12 +390,16 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       }, 140);
       return;
     case 'head_speech_state':
-      if (message.actor !== (mode === 'mini' ? 'small' : 'main')) {
+      if (message.actor !== myActor) {
         return;
       }
       store.setState((current) => ({
         ...current,
         audioPlaying: message.state === 'start',
+        // Drive face expression in sync with speech state
+        ...(message.state === 'start'
+          ? { currentExpression: 'speaking' as const }
+          : (current.currentExpression === 'speaking' ? { currentExpression: 'idle' as const } : {})),
         ...(message.turnId !== undefined ? { currentTurnId: message.turnId ?? current.currentTurnId } : {}),
       }));
       return;

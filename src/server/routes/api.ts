@@ -621,13 +621,31 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     const serverPort = Number.parseInt(process.env.PORT ?? '3000', 10);
     const actor = url.searchParams.get('actor') || undefined;
     const baseUrl = `http://${localIp}:${serverPort}/spectator.html`;
-    const spectatorUrl = actor ? `${baseUrl}?actor=${actor}` : baseUrl;
-    sendJson(response, 200, {
-      url: spectatorUrl,
-      ip: localIp,
-      port: serverPort,
-      spectators: getSpectatorCount(),
-    });
+    const isDualHead = runtimeConfig.dualHeadEnabled === true && runtimeConfig.dualHeadMode !== 'off';
+    // When dual-head is active and no specific actor requested, return URLs for both faces
+    if (isDualHead && !actor) {
+      sendJson(response, 200, {
+        urls: {
+          main: `${baseUrl}?actor=main`,
+          small: `${baseUrl}?actor=small`,
+        },
+        dualHead: true,
+        ip: localIp,
+        port: serverPort,
+        spectators: getSpectatorCount(),
+      });
+    } else {
+      const effectiveActor = actor ?? 'main';
+      const spectatorUrl = `${baseUrl}?actor=${effectiveActor}`;
+      sendJson(response, 200, {
+        url: spectatorUrl,
+        actor: effectiveActor,
+        dualHead: isDualHead,
+        ip: localIp,
+        port: serverPort,
+        spectators: getSpectatorCount(),
+      });
+    }
     return true;
   }
 

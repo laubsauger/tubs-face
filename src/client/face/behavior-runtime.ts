@@ -65,6 +65,10 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       }
 
       rootEl.onpointermove = (event) => {
+        // Face bounding box takes priority over mouse cursor
+        if (hasTrackedFaces()) {
+          return;
+        }
         const rect = rootEl?.getBoundingClientRect();
         if (!rect) {
           return;
@@ -76,6 +80,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       };
 
       rootEl.onpointerleave = () => {
+        if (hasTrackedFaces()) {
+          return;
+        }
         resetGaze();
       };
     },
@@ -85,6 +92,18 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       scheduleBehavior();
       scheduleMicroSaccade();
       resetGaze();
+
+      // Start face tracking animation immediately when faces appear
+      store.subscribeSelector(
+        (state) => state.faceLastFaces,
+        () => {
+          if (hasTrackedFaces()) {
+            steerTowardDetectedFace();
+            startAnimationLoop();
+          }
+        },
+        { fireImmediately: false },
+      );
     },
     attachSender(nextSender): void {
       sender = nextSender;
@@ -299,7 +318,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   }
 
   function tick(nowMs: number): void {
-    if (Date.now() - lastPointerAt > 1200) {
+    // Always steer toward detected face when camera has one;
+    // fall back to face tracking when mouse has been idle for 1.2s.
+    if (hasTrackedFaces() || Date.now() - lastPointerAt > 1200) {
       steerTowardDetectedFace();
     }
 

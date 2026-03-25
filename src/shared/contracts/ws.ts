@@ -182,6 +182,10 @@ export interface WsAudioChunkServerMessage {
   chunkIndex?: number;
   isFinal?: boolean;
   turnId?: string;
+  /** Which actor this audio belongs to (for dual-head server-side TTS). */
+  actor?: 'main' | 'small';
+  /** Beat index within the turn script (for expression sync). */
+  beatIndex?: number;
 }
 
 export interface WsTurnStartServerMessage {

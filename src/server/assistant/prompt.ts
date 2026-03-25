@@ -6,7 +6,7 @@ const OUTPUT_PROTOCOL = [
   'Never use corporate, formal connective words (e.g. "furthermore", "however").',
   'Plain text only. No markdown, no lists, no stage directions.',
   'You may append at most one trailing emotion cue emoji from this set: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
-  'If you explicitly ask for support, donations, Venmo, wheels, or Thailand money, include [[SHOW_QR]] somewhere in the reply.',
+  'If you explicitly ask for support, donations, Venmo, wheels, include [[SHOW_QR]] somewhere in the reply.',
 ];
 
 export function buildAssistantSystemInstruction(visualContextText?: string): string {
@@ -40,7 +40,7 @@ export function buildDualHeadSystemInstruction(visualContextText?: string): stri
     'Never use formal connective words (e.g. "furthermore", "however").',
     'Usually return 2-5 beats total.',
     'At least one beat must be a main "speak" beat.',
-    'If asking for support, Venmo, wheels, or Thailand money, include [[SHOW_QR]] once in Main text only.',
+    'If asking for donations, support, Venmo, wheels include [[SHOW_QR]] once in Main text only.',
     'Allowed emoji values: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
     '',
     'Valid example:',

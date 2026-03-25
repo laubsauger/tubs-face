@@ -26,7 +26,12 @@ function segmentText(text: string, maxSegmentChars = DEFAULT_MAX_SEGMENT_CHARS):
 }
 
 export interface SubtitleController {
+  /** Start timed word-by-word highlight for known text (audio playback or fixed duration). */
   start(text: string, source?: HTMLAudioElement | number): void;
+  /** Show plain text immediately (no word animation). */
+  setText(text: string): void;
+  /** Push a new sentence for streaming display — words appear progressively. */
+  streamSentence(text: string): void;
   stop(): void;
   finish(): void;
 }
@@ -34,6 +39,11 @@ export interface SubtitleController {
 export function createSubtitleController(element: HTMLElement | null, maxSegmentChars = DEFAULT_MAX_SEGMENT_CHARS): SubtitleController {
   let rafId = 0;
   let audioRef: HTMLAudioElement | null = null;
+  // Streaming state
+  let streamingActive = false;
+  let streamedWords: string[] = [];
+  let streamRevealIndex = -1;
+  let streamRevealTimer = 0;
 
   function renderSegment(words: string[]): void {
     if (!element) {
@@ -43,12 +53,23 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
     element.classList.add('is-visible');
   }
 
+  function stopStreaming(): void {
+    streamingActive = false;
+    streamedWords = [];
+    streamRevealIndex = -1;
+    if (streamRevealTimer) {
+      clearTimeout(streamRevealTimer);
+      streamRevealTimer = 0;
+    }
+  }
+
   function stop(): void {
     if (rafId) {
       cancelAnimationFrame(rafId);
       rafId = 0;
     }
     audioRef = null;
+    stopStreaming();
     if (!element) {
       return;
     }
@@ -62,6 +83,9 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
       rafId = 0;
     }
     audioRef = null;
+    if (streamingActive) {
+      stopStreaming();
+    }
     if (!element) {
       return;
     }
@@ -69,6 +93,106 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
       node.classList.remove('is-active');
       node.classList.add('is-spoken');
     });
+  }
+
+  function setText(text: string): void {
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    audioRef = null;
+    stopStreaming();
+    if (!element) {
+      return;
+    }
+    const normalized = String(text || '').trim();
+    if (!normalized) {
+      element.classList.remove('is-visible');
+      element.innerHTML = '';
+      return;
+    }
+    element.textContent = normalized;
+    element.classList.add('is-visible');
+  }
+
+  /**
+   * Push a new sentence for streaming display. Words from the sentence appear
+   * one by one with a brief stagger, producing the "typewriter" reveal effect
+   * the legacy implementation had. Each call replaces the previous sentence.
+   */
+  function streamSentence(text: string): void {
+    if (!element) {
+      return;
+    }
+    const normalized = String(text || '').trim();
+    if (!normalized) {
+      return;
+    }
+
+    // Cancel any timed playback animation
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    audioRef = null;
+
+    // If we were already streaming, mark all previous words as spoken
+    if (streamingActive) {
+      element.querySelectorAll<HTMLElement>('.subtitle-word').forEach((node) => {
+        node.classList.remove('is-active');
+        node.classList.add('is-spoken');
+      });
+      if (streamRevealTimer) {
+        clearTimeout(streamRevealTimer);
+        streamRevealTimer = 0;
+      }
+    }
+
+    streamingActive = true;
+    const words = normalized.split(/\s+/).filter(Boolean);
+    streamedWords = words;
+    streamRevealIndex = -1;
+
+    // Segment so we only show a manageable chunk at a time
+    const segments = segmentText(normalized, maxSegmentChars);
+    const lastSegment = segments[segments.length - 1] ?? words;
+
+    // Render the last segment's words as the visible line
+    element.innerHTML = lastSegment.map((word) =>
+      `<span class="subtitle-word">${escapeHtml(word)}</span>`,
+    ).join(' ');
+    element.classList.add('is-visible');
+
+    // Progressively reveal words with a stagger
+    const wordNodes = element.querySelectorAll<HTMLElement>('.subtitle-word');
+    let revealIdx = 0;
+
+    function revealNext(): void {
+      if (revealIdx > 0 && wordNodes[revealIdx - 1]) {
+        wordNodes[revealIdx - 1]!.classList.remove('is-active');
+        wordNodes[revealIdx - 1]!.classList.add('is-spoken');
+      }
+      if (revealIdx < wordNodes.length) {
+        wordNodes[revealIdx]!.classList.add('is-active');
+        revealIdx += 1;
+        // Character-weighted delay: longer words get a bit more time
+        const word = lastSegment[revealIdx - 1] ?? '';
+        const baseMs = 60;
+        const charMs = Math.min(word.length * 12, 120);
+        streamRevealTimer = window.setTimeout(revealNext, baseMs + charMs);
+      } else {
+        // All words revealed — mark the last one as spoken after a beat
+        streamRevealTimer = window.setTimeout(() => {
+          if (wordNodes[wordNodes.length - 1]) {
+            wordNodes[wordNodes.length - 1]!.classList.remove('is-active');
+            wordNodes[wordNodes.length - 1]!.classList.add('is-spoken');
+          }
+          streamRevealTimer = 0;
+        }, 400);
+      }
+    }
+
+    revealNext();
   }
 
   function start(text: string, source?: HTMLAudioElement | number): void {
@@ -186,6 +310,8 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
 
   return {
     start,
+    setText,
+    streamSentence,
     stop,
     finish,
   };
