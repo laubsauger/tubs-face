@@ -241,6 +241,7 @@ export function buildLegacyServiceEnv(sttModel = runtimeConfig.sttModel): NodeJS
     TTS_BACKEND: runtimeConfig.ttsBackend,
     STT_BACKEND: runtimeConfig.sttBackend,
     KOKORO_VOICE: runtimeConfig.kokoroVoice,
+    HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
   };
 }
 
@@ -255,5 +256,6 @@ export function buildRealtimeServiceEnv(sttModel = runtimeConfig.sttModel): Node
     STT_BACKEND: runtimeConfig.sttBackend,
     TTS_BACKEND: runtimeConfig.ttsBackend,
     KOKORO_VOICE: runtimeConfig.kokoroVoice,
+    HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
   };
 }

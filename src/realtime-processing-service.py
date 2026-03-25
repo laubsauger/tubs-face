@@ -87,17 +87,7 @@ def ensure_tts_model():
     if tts_model is not None:
         return tts_model
 
-    if TTS_BACKEND == "vibevoice":
-        from vibevoice import VibeVoiceStreamingForConditionalGenerationInference, VibeVoiceStreamingProcessor
-        print("[Realtime TTS] Loading VibeVoice-Realtime-0.5B")
-        processor = VibeVoiceStreamingProcessor.from_pretrained("microsoft/VibeVoice-Realtime-0.5B")
-        model = VibeVoiceStreamingForConditionalGenerationInference.from_pretrained(
-            "microsoft/VibeVoice-Realtime-0.5B",
-            device_map="auto",
-        )
-        tts_model = (model, processor)
-        print("[Realtime TTS] VibeVoice ready")
-    elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
+    if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         from mlx_audio.tts.utils import load_model as load_tts_model
         print(f"[Realtime TTS] Loading Kokoro (voice={KOKORO_VOICE})")
         tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
@@ -570,14 +560,14 @@ def transcribe():
                             capture_output=True,
                         )
                     except subprocess.CalledProcessError as err:
-                        print(f"[Realtime STT] ffmpeg decode failed (code={err.returncode}) — empty segment")
+                        print(f"[Realtime STT] ffmpeg decode failed (code={err.returncode}) - empty segment")
                         return jsonify({
                             "text": "",
                             "language": "en",
                             "probability": 0.0,
                         })
                     except subprocess.TimeoutExpired:
-                        print("[Realtime STT] ffmpeg decode timeout — empty segment")
+                        print("[Realtime STT] ffmpeg decode timeout - empty segment")
                         return jsonify({
                             "text": "",
                             "language": "en",
@@ -621,48 +611,12 @@ def tts():
     if not text:
         return jsonify({"error": "No text provided"}), 400
 
-    if TTS_BACKEND == "vibevoice":
-        return _tts_vibevoice(text)
-    elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
+    if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         return _tts_kokoro(text, voice)
     else:
         return _tts_system(text)
 
-def _tts_vibevoice(text):
-    t0 = time.time()
-    try:
-        model_holder = ensure_tts_model()
-        m, p = model_holder
-        import copy
-        import torch
-        
-        global _vibevoice_cached_prompt
-        if getattr(m, '_vibevoice_cached_prompt', None) is None:
-            m._vibevoice_cached_prompt = torch.load("demo/voices/sp-Spk1_man.pt", map_location=m.device if hasattr(m, 'device') else 'cpu', weights_only=False)
-            
-        prefilled_outputs = copy.deepcopy(m._vibevoice_cached_prompt)
-        inputs = p.process_input_with_cached_prompt(text=text, cached_prompt=prefilled_outputs, padding=True, return_tensors="pt", return_attention_mask=True)
-        if hasattr(m, "device"):
-            inputs = {k: v.to(m.device) for k,v in inputs.items() if hasattr(v, "to")}
-        
-        with _gpu_lock:
-            # For non-streaming, we can just use normal generate
-            out = m.generate(**inputs, tokenizer=p.tokenizer, all_prefilled_outputs=prefilled_outputs)
-            audio_tensor = out.speech_outputs[0]
-        
-        if audio_tensor is None:
-            raise ValueError("VibeVoice generated no audio")
-            
-        audio_np = audio_tensor.cpu().view(-1).numpy()
-        wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-        elapsed = int((time.time() - t0) * 1000)
-        print(f"[Realtime TTS] Generated {len(wav_bytes)} bytes in {elapsed}ms (VibeVoice)")
-        return Response(wav_bytes, mimetype="audio/wav")
 
-    except Exception as err:
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(err)}), 500
 
 def _tts_kokoro(text, voice):
     t0 = time.time()
@@ -731,44 +685,7 @@ def tts_stream(ws):
             if not text:
                 continue
             
-            if TTS_BACKEND == "vibevoice":
-                m, p = model_holder
-                import copy
-                import torch
-                
-                global _vibevoice_cached_prompt
-                if getattr(m, '_vibevoice_cached_prompt', None) is None:
-                    m._vibevoice_cached_prompt = torch.load("demo/voices/sp-Spk1_man.pt", map_location=m.device if hasattr(m, 'device') else 'cpu', weights_only=False)
-                
-                prefilled_outputs = copy.deepcopy(m._vibevoice_cached_prompt)
-                
-                inputs = p.process_input_with_cached_prompt(text=text, cached_prompt=prefilled_outputs, padding=True, return_tensors="pt", return_attention_mask=True)
-                if hasattr(m, "device"):
-                    inputs = {k: v.to(m.device) for k,v in inputs.items() if hasattr(v, "to")}
-                from vibevoice.modular.streamer import AudioStreamer
-                streamer = AudioStreamer(batch_size=1, timeout=12.0)
-                
-                def generate_task():
-                    try:
-                        m.generate(**inputs, streamer=streamer, tokenizer=p.tokenizer, all_prefilled_outputs=prefilled_outputs)
-                    except Exception as e:
-                        print(f"[VibeVoice] Generation error: {e}")
-                        streamer.end()
-                threading.Thread(target=generate_task, daemon=True).start()
-                
-                for audio_batch in streamer:
-                    audio_tensor = audio_batch[0].cpu().view(-1)
-                    audio_np = audio_tensor.numpy()
-                    wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                    ws.send(json.dumps({
-                        "text": text,
-                        "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                        "chunk": True
-                    }))
-                
-                ws.send(json.dumps({"text": text, "done": True}))
-
-            elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
+            if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder
                 # MLX/Kokoro is not thread-safe: serialize generator use to prevent native crashes.
                 with _gpu_lock:

@@ -59,7 +59,7 @@ export const runtimeConfig: RuntimeConfig = {
   ttsBackend: pickOne(TTS_BACKENDS, resolveProcessingEnv({
     legacy: process.env.TTS_BACKEND,
     realtime: process.env.REALTIME_TTS_BACKEND,
-  }), 'vibevoice'),
+  }), 'kokoro'),
   sttBackend: pickOne(STT_BACKENDS, resolveProcessingEnv({
     legacy: process.env.STT_BACKEND,
     realtime: process.env.REALTIME_STT_BACKEND,
