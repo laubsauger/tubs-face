@@ -1,6 +1,7 @@
 import type { AppStore } from '../state/app-state.js';
 import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
+import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, reconcileIncomingChat, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
 import { detectDonationSignal, inferDonationPrompt } from '../message-handler-utils.js';
 
@@ -11,6 +12,9 @@ const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'c
 let donationJoyUntil = 0;
 let donationJoyResetTimer: number | null = null;
 let donationPromptTimer: number | null = null;
+let activeTurnScriptId: string | null = null;
+let activeTurnScriptBeats: TurnBeat[] = [];
+let streamedBeatChatKeys = new Set<string>();
 
 /**
  * @param targetActor When set (spectator mode), filters actor-specific messages
@@ -19,6 +23,7 @@ let donationPromptTimer: number | null = null;
 export function applyServerMessage(store: AppStore, message: WsServerMessage, mode: 'main' | 'mini', targetActor?: 'main' | 'small'): void {
   // Resolve which actor we care about: explicit targetActor > mode-derived default
   const myActor: 'main' | 'small' = targetActor ?? (mode === 'mini' ? 'small' : 'main');
+  const dualHeadActive = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
   store.setState((current) => ({
     ...current,
     lastMessageType: message.type,
@@ -130,6 +135,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       return;
     case 'turn_start':
       clearLiveTranscript(store);
+      activeTurnScriptId = message.turnId;
+      activeTurnScriptBeats = [];
+      streamedBeatChatKeys = new Set();
       store.setState((current) => {
         if (current.currentTurnId && current.currentTurnId !== message.turnId && (current.audioPlaying || current.currentSpeechText)) {
           window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
@@ -240,6 +248,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       }));
       return;
     case 'speak_end':
+      if (message.actor && message.actor !== myActor) {
+        return;
+      }
       if (mode === 'mini') {
         return;
       }
@@ -247,10 +258,24 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       applyDonationPrompt(store, message.donation ?? null, message.fullText ?? message.text ?? '');
       // Don't reset expression here — let speech runtime's finishSpeech handle it
       // when audio actually finishes playing (speak_end arrives before audio ends).
-      store.setState((current) => ({
-        ...commitChatDraft(current, 'out'),
-        subtitleText: current.currentSpeechText,
-      }));
+      store.setState((current) => {
+        const finalizedText = (message.fullText ?? message.text ?? current.currentSpeechText ?? '').trim();
+        const hasOutDraft = current.chatEntries.some((entry) => entry.type === 'out' && entry.draft);
+        const nextState = hasOutDraft
+          ? commitChatDraft(current, 'out')
+          : ((!dualHeadActive && finalizedText)
+              ? appendChatEntry(current, {
+                type: 'out',
+                actor: 'main',
+                text: finalizedText,
+                ts: Date.now(),
+              })
+              : current);
+        return {
+          ...nextState,
+          subtitleText: current.currentSpeechText,
+        };
+      });
       return;
     case 'backchannel':
       if (mode === 'mini') {
@@ -272,11 +297,14 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'turn_script':
       {
         clearLiveTranscript(store);
-        const targetActor = mode === 'mini' ? 'small' : 'main';
-        const hasRelevantBeat = message.beats.some((beat) => beat.actor === targetActor);
-        if (!hasRelevantBeat) {
+        activeTurnScriptId = message.turnId ?? store.getState().currentTurnId;
+        activeTurnScriptBeats = Array.isArray(message.beats) ? message.beats : [];
+        streamedBeatChatKeys = new Set();
+        if (mode === 'mini') {
           return;
         }
+        const targetActor = 'main';
+        const hasRelevantBeat = message.beats.some((beat) => beat.actor === targetActor);
         applyDonationPrompt(
           store,
           message.donation ?? null,
@@ -291,11 +319,14 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           let next: AppState = {
             ...current,
             currentTurnId: message.turnId ?? current.currentTurnId,
-            ...(previewText ? {
+            ...(!dualHeadActive && hasRelevantBeat && previewText ? {
               currentSpeechText: previewText,
               subtitleText: previewText,
             } : {}),
           };
+          if (dualHeadActive) {
+            return next;
+          }
           for (const beat of message.beats) {
             if (beat.action !== 'speak' || !beat.text?.trim()) {
               continue;
@@ -313,26 +344,39 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         return;
       }
     case 'audio_chunk':
-      // When targeting a specific actor (spectator), skip chunks for other actors
-      if (targetActor && message.actor && message.actor !== targetActor) {
+      if (dualHeadActive && mode === 'main' && message.actor && message.beatIndex != null) {
+        maybeAppendTimedDualHeadChat(store, message.turnId ?? store.getState().currentTurnId ?? null, message.actor, message.beatIndex, message.text);
+      }
+      if (message.actor && message.actor !== myActor) {
+        return;
+      }
+      if (mode === 'mini' && !message.actor) {
         return;
       }
       if (mode === 'main') {
         clearLiveTranscript(store);
       }
-      store.setState((current) => ({
-        ...pushStreamDebugEntry(current, 'audio_chunk_ws_in', {
+      store.setState((current) => {
+        let next = pushStreamDebugEntry(current, 'audio_chunk_ws_in', {
           turnId: message.turnId ?? current.currentTurnId,
           chunkIndex: message.chunkIndex,
           audioBytes: Math.round(((message.audio || '').length * 3) / 4),
           ts: Date.now(),
-        }),
-        currentExpression: nextExpression(current.currentExpression, 'speaking'),
-        ...(message.text ? {
-          currentSpeechText: message.text,
-          subtitleText: message.text,
-        } : {}),
-      }));
+        });
+        if (!dualHeadActive && mode === 'main' && message.text?.trim()) {
+          next = upsertChatDraft(next, 'out', message.text.trim(), 'main');
+        }
+        return {
+          ...next,
+          ...(message.text ? {
+            currentSpeechText: message.text,
+            subtitleText: message.text,
+          } : {}),
+          ...((!message.actor || message.actor === myActor)
+            ? { currentExpression: nextExpression(current.currentExpression, 'speaking') }
+            : {}),
+        };
+      });
       return;
     case 'donation_signal':
       triggerDonationJoy(store);
@@ -518,6 +562,36 @@ function summarizeTurnScript(
     .map((beat) => beat.text?.trim() ?? '')
     .filter(Boolean)
     .join(' ');
+}
+
+function maybeAppendTimedDualHeadChat(
+  store: AppStore,
+  turnId: string | null,
+  actor: 'main' | 'small',
+  beatIndex: number,
+  fallbackText?: string,
+): void {
+  const key = `${turnId ?? activeTurnScriptId ?? 'turn'}:${actor}:${beatIndex}`;
+  if (streamedBeatChatKeys.has(key)) {
+    return;
+  }
+
+  const beat = turnId && activeTurnScriptId === turnId
+    ? activeTurnScriptBeats[beatIndex]
+    : activeTurnScriptBeats[beatIndex];
+  const text = (beat?.text ?? fallbackText ?? '').trim();
+  if (!text) {
+    return;
+  }
+
+  streamedBeatChatKeys.add(key);
+  const emoji = beat?.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
+  store.setState((current) => appendChatEntry(current, {
+    type: 'out',
+    actor,
+    text: `${emoji}${text}`,
+    ts: Date.now(),
+  }));
 }
 
 function compactDonationSignal(message: Extract<WsServerMessage, { type: 'donation_signal' }>) {

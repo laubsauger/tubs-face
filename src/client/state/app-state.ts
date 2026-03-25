@@ -225,7 +225,11 @@ export function createAppStore(serverUrl: string): AppStore {
     chatComposerText: '',
     uiHidden: false,
     fullscreenActive: false,
-    collapsedPanels: {},
+    collapsedPanels: {
+      connection: true,
+      voice: true,
+      stats: true,
+    },
     chatPanelWidth: null,
     chatVerbosity: 'all',
     manualComposerOpen: false,

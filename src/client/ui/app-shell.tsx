@@ -137,6 +137,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
           <div className="hud-stack hud-stack-top-left">
             <ConnectionPanel store={store} />
             <VoicePanel store={store} controls={controls} />
+            <StatsPanel store={store} />
           </div>
 
           <div className="hud-corner hud-corner-bottom-left">
@@ -149,7 +150,6 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
 
           <div className="hud-stack hud-stack-bottom-right">
             <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
-            <StatsPanel store={store} />
           </div>
         </div>
       )}
@@ -182,8 +182,10 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
     <main className="mini-shell">
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
         <div className="visual-stage">
-          {/* Face div is static — visual-runtime.ts manages all attributes imperatively */}
-          <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
+          <div className="visual-face-frame mini-visual-frame">
+            {/* Face div is static — visual-runtime.ts manages all attributes imperatively */}
+            <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
+          </div>
         </div>
         <div
           className={`mini-reaction ${state.currentReactionEmoji ? 'is-visible' : ''}`}
@@ -233,12 +235,16 @@ function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
       onTouchEnd={handleTap}
     >
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
-        <div
-          id="visual-face"
-          className="visual-face mini-visual-face"
-          data-expression={state.currentExpression}
-          data-render-mode="glitch"
-        />
+        <div className="visual-stage">
+          <div className="visual-face-frame mini-visual-frame">
+            <div
+              id="visual-face"
+              className="visual-face mini-visual-face"
+              data-expression={state.currentExpression}
+              data-render-mode="glitch"
+            />
+          </div>
+        </div>
         <div
           id="visual-subtitle"
           className="visual-subtitle spectator-subtitle"
@@ -361,8 +367,10 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
   return (
     <section className={`${shellClassName} ${sleeping ? 'is-sleeping' : ''}`}>
       <div className="visual-stage">
-        {/* Face div is completely isolated — no re-renders from overlay state changes */}
-        <StableFaceContainer id="visual-face" className={faceClassName} />
+        <div className={`visual-face-frame ${mode === 'mini' ? 'mini-visual-frame' : 'main-visual-frame'}`}>
+          {/* Face div is completely isolated — no re-renders from overlay state changes */}
+          <StableFaceContainer id="visual-face" className={faceClassName} />
+        </div>
       </div>
       {mode === 'main' ? <VisualOverlays store={store} /> : null}
     </section>

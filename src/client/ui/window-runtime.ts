@@ -10,10 +10,12 @@ export interface WindowRuntime {
 }
 
 let sharedMiniWindowRef: Window | null = null;
+let sharedMiniWindowCloseMonitor: number | null = null;
 
 export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): WindowRuntime {
   let keyHandler: ((event: KeyboardEvent) => void) | null = null;
   let clickHandler: (() => void) | null = null;
+  let beforeUnloadHandler: (() => void) | null = null;
 
   return {
     init(): void {
@@ -29,6 +31,13 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
       }
       if (clickHandler) {
         window.removeEventListener('click', clickHandler);
+      }
+      if (beforeUnloadHandler) {
+        window.removeEventListener('beforeunload', beforeUnloadHandler);
+      }
+      if (mode === 'main' && sharedMiniWindowCloseMonitor != null) {
+        window.clearInterval(sharedMiniWindowCloseMonitor);
+        sharedMiniWindowCloseMonitor = null;
       }
     },
   };
@@ -93,6 +102,23 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
       }
     };
     window.addEventListener('click', clickHandler);
+
+    beforeUnloadHandler = () => {
+      if (sharedMiniWindowRef && !sharedMiniWindowRef.closed) {
+        void syncDualHeadWindowMode(store, false);
+      }
+    };
+    window.addEventListener('beforeunload', beforeUnloadHandler);
+
+    if (sharedMiniWindowCloseMonitor == null) {
+      sharedMiniWindowCloseMonitor = window.setInterval(() => {
+        if (!sharedMiniWindowRef || !sharedMiniWindowRef.closed) {
+          return;
+        }
+        sharedMiniWindowRef = null;
+        void syncDualHeadWindowMode(store, false);
+      }, 600);
+    }
   }
 
   function initMiniSync(): void {
@@ -151,6 +177,7 @@ export async function toggleFullscreen(store: AppStore): Promise<void> {
 
 export function openMiniWindow(store: AppStore, focus: boolean): Window | null {
   if (sharedMiniWindowRef && !sharedMiniWindowRef.closed) {
+    void syncDualHeadWindowMode(store, true);
     if (focus) {
       sharedMiniWindowRef.focus();
     }
@@ -163,15 +190,16 @@ export function openMiniWindow(store: AppStore, focus: boolean): Window | null {
     return null;
   }
   sharedMiniWindowRef = opened;
-  void postJson('/config', {
-    dualHeadEnabled: true,
-    dualHeadMode: 'llm_directed',
-  }).catch((error) => {
-    store.appendLog('error', error instanceof Error ? error.message : 'Failed to enable dual-head mode');
-  });
+  void syncDualHeadWindowMode(store, true);
   if (focus) {
     opened.focus();
   }
+  opened.addEventListener('beforeunload', () => {
+    if (sharedMiniWindowRef === opened) {
+      sharedMiniWindowRef = null;
+      void syncDualHeadWindowMode(store, false);
+    }
+  });
   if (store.getState().fullscreenActive) {
     window.setTimeout(() => {
       syncMiniFullscreenIntentShared(store, true, false);
@@ -250,5 +278,23 @@ async function applyMiniFullscreen(enabled: boolean): Promise<void> {
     await requestFullscreen().catch(() => {});
   } else {
     await exitFullscreen().catch(() => {});
+  }
+}
+
+async function syncDualHeadWindowMode(store: AppStore, enabled: boolean): Promise<void> {
+  try {
+    await postJson('/config', enabled
+      ? {
+        dualHeadEnabled: true,
+        dualHeadMode: 'llm_directed',
+      }
+      : {
+        dualHeadEnabled: false,
+        dualHeadMode: 'off',
+      });
+  } catch (error) {
+    store.appendLog('error', error instanceof Error
+      ? error.message
+      : `Failed to ${enabled ? 'enable' : 'disable'} dual-head mode`);
   }
 }

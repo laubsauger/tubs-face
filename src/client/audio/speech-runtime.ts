@@ -67,8 +67,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let remoteActorSpeakingUntil = 0;
   let remoteWaitTimer: number | null = null;
   let reactionResetTimer: number | null = null;
-  let mainHandlingOurBeats = false;
-  let mainWindowLastSeenAt = 0;
   let speechSafetyTimer: number | null = null;
   let subtitleClearTimer: number | null = null;
   let stopSpeechHandler: ((event: Event) => void) | null = null;
@@ -102,6 +100,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       if (disposed) {
         return;
       }
+      const localActor: 'main' | 'small' = targetActor ?? (mode === 'mini' ? 'small' : 'main');
+      const dualHeadActive = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
 
       switch (message.type) {
         case 'speak':
@@ -120,8 +120,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           enqueueSpeak(message.text, message.turnId);
           return;
         case 'audio_chunk':
-          // When targeting a specific actor (spectator), skip chunks for other actors
-          if (targetActor && message.actor && message.actor !== targetActor) {
+          if (message.actor && message.actor !== localActor) {
+            return;
+          }
+          if (mode === 'mini' && !message.actor) {
             return;
           }
           try {
@@ -131,12 +133,15 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
               lastStreamingBeatIndex = message.beatIndex;
               applyStreamingBeatExpression(message.beatIndex, message.actor);
             }
-            playStreamingAudioChunk(message.audio, message.turnId, message.actor);
+            playStreamingAudioChunk(message.audio, message.turnId, message.actor, message.text);
           } catch (err) {
             console.error('[Stream] playStreamingAudioChunk THREW:', err);
           }
           return;
         case 'speak_end':
+          if (message.actor && message.actor !== localActor) {
+            return;
+          }
           scheduleStreamingEnd(message.turnId);
           return;
         case 'sleep':
@@ -210,23 +215,33 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const isDualHead = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
     const serverStreaming = Boolean(store.getState().config?.ttsStreamingEnabled);
 
-    // In main mode with dual-head, play ALL actors' beats (small uses secondary voice)
+    // In main mode with dual-head, only queue main beats locally. Small beats
+    // belong to the mini/spectator surface; otherwise the main face voices both
+    // sides when the mini window is closed.
     if (mode === 'main' && isDualHead) {
       // When server TTS streaming is enabled, audio arrives via audio_chunk
-      // messages — skip speak beats here (they'd cause double playback).
-      // Store beat metadata so audio_chunk handler can sync expressions.
+      // messages. Keep only main-beat metadata here because this runtime ignores
+      // small-actor audio chunks.
       if (serverStreaming) {
-        pendingBeatMeta = beats.map((beat, i) => ({
-          index: i,
-          actor: (beat.actor === 'small' ? 'small' : 'main') as 'main' | 'small',
-          action: beat.action,
-          emotion: beat.emotion ?? null,
-          text: beat.text ?? '',
-        }));
+        pendingBeatMeta = beats
+          .map((beat, i) => ({ beat, i }))
+          .filter(({ beat }) => (beat.actor === 'small' ? 'small' : 'main') === 'main')
+          .map(({ beat, i }) => ({
+            index: i,
+            actor: 'main' as const,
+            action: beat.action,
+            emotion: beat.emotion ?? null,
+            text: beat.text ?? '',
+          }));
+      } else {
+        pendingBeatMeta = [];
       }
       for (const beat of beats) {
         if (!beat) continue;
         const beatActor = beat.actor === 'small' ? 'small' : 'main';
+        if (beatActor !== 'main') {
+          continue;
+        }
         if (beat.action === 'speak' && beat.text?.trim()) {
           if (serverStreaming) continue; // audio comes via audio_chunk
           queue.push({
@@ -258,11 +273,25 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
 
     const actor = mode === 'mini' ? 'small' : 'main';
+    if (serverStreaming) {
+      pendingBeatMeta = beats
+        .map((beat, i) => ({ beat, i }))
+        .filter(({ beat }) => (beat.actor === 'small' ? 'small' : 'main') === actor)
+        .map(({ beat, i }) => ({
+          index: i,
+          actor,
+          action: beat.action,
+          emotion: beat.emotion ?? null,
+          text: beat.text ?? '',
+        }));
+    } else {
+      pendingBeatMeta = [];
+    }
     const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait: false });
     // When server TTS streaming is enabled and we're in mini mode, audio arrives
     // via audio_chunk — skip speak beats to avoid trying to generate TTS we can't send
     // (spectators have no WS sender wired up, so tts_request events go nowhere).
-    const suppressTts = mode === 'mini' && (isMainWindowActive() || serverStreaming);
+    const suppressTts = mode === 'mini' && serverStreaming;
     const hasSpeakBeat = !suppressTts && timeline.some((item) => item.action === 'speak' && item.text?.trim());
     let promotedReactToSpeak = false;
     for (const item of timeline) {
@@ -625,7 +654,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     });
   }
 
-  function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small'): void {
+  function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small', text?: string): void {
     const idx = chunkReceiveCount++;
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
     const effectiveActor = actor ?? (mode === 'mini' ? 'small' : 'main');
@@ -639,7 +668,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     if (!streamingSessionActive) {
       beginStreamingSession(effectiveTurnId, effectiveActor);
     }
-    updateStreamingSubtitle(store.getState().currentSpeechText || 'Streaming audio');
+    updateStreamingSubtitle(text || store.getState().currentSpeechText || 'Streaming audio');
 
     // Fire-and-forget decode — scheduleReadyChunks() handles ordering
     void decodeAndQueue(audioBase64, idx, effectiveTurnId).catch((error) => {
@@ -1031,13 +1060,17 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   function emitHeadSpeechState(state: 'start' | 'end', turnId: string | null, actorOverride?: 'main' | 'small'): void {
+    const detail = {
+      actor: actorOverride ?? (mode === 'mini' ? 'small' : 'main'),
+      state,
+      turnId,
+      ts: Date.now(),
+    };
     window.dispatchEvent(new CustomEvent('tubs:head-speech-state', {
-      detail: {
-        actor: actorOverride ?? (mode === 'mini' ? 'small' : 'main'),
-        state,
-        turnId,
-        ts: Date.now(),
-      },
+      detail,
+    }));
+    window.dispatchEvent(new CustomEvent('tubs:any-head-speech-state', {
+      detail,
     }));
   }
 
@@ -1140,23 +1173,23 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
   }
 
-  function isMainWindowActive(): boolean {
-    return mode === 'mini' && mainWindowLastSeenAt > 0 && (Date.now() - mainWindowLastSeenAt) < 60_000;
-  }
-
   function handleRemoteHeadSpeechState(message: Extract<WsServerMessage, { type: 'head_speech_state' }>): void {
     const localActor = mode === 'mini' ? 'small' : 'main';
-
-    // Track main window liveness from any head_speech_state it sends
-    if (mode === 'mini' && (message.actor === 'main' || message.actor === 'small')) {
-      mainWindowLastSeenAt = Date.now();
-      mainHandlingOurBeats = true;
-    }
+    const isLocalEcho = message.actor === localActor
+      && activeSpeechActor === localActor
+      && (
+        !message.turnId
+        || activeSpeechTurnId === message.turnId
+        || activeQueueTurnId === message.turnId
+      );
 
     // If another window signals it is speaking for our actor,
     // suppress our own TTS to avoid double playback.
     // In main mode, head_speech_state for actor 'main' is our own echo — ignore it.
     if (message.actor === localActor) {
+      if (isLocalEcho) {
+        return;
+      }
       if (mode === 'mini' && message.state === 'start') {
         // Only mini should defer to another window claiming its actor
         if (store.getState().audioPlaying) {
@@ -1168,9 +1201,27 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
 
     if (message.state === 'start') {
+      window.dispatchEvent(new CustomEvent('tubs:any-head-speech-state', {
+        detail: {
+          actor: message.actor,
+          state: message.state,
+          turnId: message.turnId ?? null,
+          ts: message.ts,
+          durationMs: message.durationMs,
+        },
+      }));
       markRemoteActorSpeaking(true, message.ts, message.durationMs);
       return;
     }
+    window.dispatchEvent(new CustomEvent('tubs:any-head-speech-state', {
+      detail: {
+        actor: message.actor,
+        state: message.state,
+        turnId: message.turnId ?? null,
+        ts: message.ts,
+        durationMs: message.durationMs,
+      },
+    }));
     markRemoteActorSpeaking(false, message.ts);
     if (!store.getState().audioPlaying && queue.length > 0) {
       clearRemoteWaitTimer();

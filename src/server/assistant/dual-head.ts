@@ -8,7 +8,7 @@ import {
   pickSupportedEmotionEmoji,
   splitTrailingEmotionEmoji,
 } from './emotion.js';
-import { clampOutput, extractJsonBlock, normalizeInput, stripEmojiClusters, stripFormatting } from './text.js';
+import { clampOutput, extractJsonBlock, normalizeInput, stripEmojiClusters, stripFormatting, stripSpeakerLabels } from './text.js';
 
 const DUAL_HEAD_ACTORS = new Set(['main', 'small']);
 const DUAL_HEAD_ACTIONS = new Set(['speak', 'react']);
@@ -63,7 +63,7 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
     : 'speak';
   const rawText = normalizeInput(String(record.text ?? ''));
   const parsed = splitTrailingEmotionEmoji(rawText);
-  const strippedText = stripFormatting(parsed.text || stripEmojiClusters(rawText));
+  const strippedText = stripSpeakerLabels(stripFormatting(parsed.text || stripEmojiClusters(rawText)));
   const hadDonationMarker = DONATION_MARKER_RE.test(strippedText);
   const text = clampOutput(stripDonationMarkers(strippedText));
   const emojiFromField = pickSupportedEmotionEmoji(String(record.emoji ?? ''));
@@ -180,7 +180,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
     if (!rawBeatText || rawBeatText.length < 2) {
       continue;
     }
-    const cleanText = clampOutput(stripFormatting(stripDonationMarkers(rawBeatText)));
+    const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(stripDonationMarkers(rawBeatText))));
     if (!cleanText) {
       continue;
     }
@@ -207,7 +207,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
     let lineMatch: RegExpExecArray | null = null;
     while ((lineMatch = linePattern.exec(text)) !== null) {
       const actor = String(lineMatch[1] ?? 'main').toLowerCase() === 'small' ? 'small' : 'main';
-      const cleanText = clampOutput(stripFormatting(decodeJsonString(lineMatch[2] ?? '')));
+      const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(decodeJsonString(lineMatch[2] ?? ''))));
       if (!cleanText) {
         continue;
       }

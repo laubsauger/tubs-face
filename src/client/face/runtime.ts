@@ -130,7 +130,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       return detectUploadedFile(worker, file, store);
     },
     saveDetectedFace(): Promise<void> {
-      return saveDetectedFace(store, refreshFaceLibraryState);
+      return saveDetectedFace(store, refreshFaceLibraryState, captureCanvas);
     },
     refreshLibrary(): Promise<void> {
       return refreshFaceLibraryState(store);
@@ -279,9 +279,9 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
 
     for (const face of faces) {
       const [x1, y1, x2, y2] = face.box;
-      const left = x1 * scaleX;
-      const top = y1 * scaleY;
       const width = (x2 - x1) * scaleX;
+      const left = overlayEl.width - (x2 * scaleX);
+      const top = y1 * scaleY;
       const height = (y2 - y1) * scaleY;
       const label = face.name ?? face.match?.name ?? 'Unknown';
       const confidence = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
@@ -382,6 +382,7 @@ async function detectUploadedFile(worker: FaceWorkerClient, file: File, store: A
 async function saveDetectedFace(
   store: AppStore,
   refreshFaceLibraryState: (store: AppStore) => Promise<void>,
+  captureCanvas: HTMLCanvasElement,
 ): Promise<void> {
   const state = store.getState();
   const name = state.faceDraftName.trim();
@@ -400,9 +401,11 @@ async function saveDetectedFace(
       ...current,
       faceStatus: `Saving ${name}`,
     }));
+    const thumbnail = captureFaceThumbnail(captureCanvas, face);
     await createFaceEntry({
       name,
       embedding: face.embedding,
+      ...(thumbnail ? { thumbnail } : {}),
     });
     store.setState((current) => ({
       ...current,
@@ -419,6 +422,34 @@ async function saveDetectedFace(
     }));
     store.appendLog('error', message);
   }
+}
+
+function captureFaceThumbnail(sourceCanvas: HTMLCanvasElement, face: DetectedFace): string | null {
+  if (!sourceCanvas.width || !sourceCanvas.height) {
+    return null;
+  }
+  const [x1, y1, x2, y2] = face.box;
+  const padX = Math.max(12, Math.round((x2 - x1) * 0.18));
+  const padY = Math.max(12, Math.round((y2 - y1) * 0.18));
+  const sx = Math.max(0, Math.round(x1 - padX));
+  const sy = Math.max(0, Math.round(y1 - padY));
+  const sw = Math.min(sourceCanvas.width - sx, Math.round((x2 - x1) + padX * 2));
+  const sh = Math.min(sourceCanvas.height - sy, Math.round((y2 - y1) + padY * 2));
+  if (sw <= 0 || sh <= 0) {
+    return null;
+  }
+
+  const canvas = document.createElement('canvas');
+  const longestSide = Math.max(sw, sh);
+  const scale = 112 / Math.max(1, longestSide);
+  canvas.width = Math.max(72, Math.round(sw * scale));
+  canvas.height = Math.max(72, Math.round(sh * scale));
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return null;
+  }
+  context.drawImage(sourceCanvas, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.76);
 }
 
 async function renameFaceEntry(

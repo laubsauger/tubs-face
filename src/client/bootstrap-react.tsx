@@ -58,6 +58,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const windowRuntime = createWindowRuntime(store, messageMode);
   let unlockAudioOnGesture: ((event: Event) => void) | null = null;
   let spectatorUnlockHandler: (() => void) | null = null;
+  let headSpeechStateHandler: ((event: Event) => void) | null = null;
+  let requestInterruptHandler: ((event: Event) => void) | null = null;
+  let ttsRequestHandler: ((event: Event) => void) | null = null;
 
   const controls: AppShellControls | undefined = isController
     ? {
@@ -217,7 +220,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       wsClient.send(message);
     });
 
-    window.addEventListener('tubs:head-speech-state', ((event: Event) => {
+    headSpeechStateHandler = (event: Event) => {
       const detail = (event as CustomEvent<{ actor?: 'main' | 'small'; state?: 'start' | 'end'; turnId?: string | null; ts?: number; durationMs?: number }>).detail;
       wsClient.send({
         type: 'head_speech_state',
@@ -227,17 +230,19 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         ts: detail?.ts ?? Date.now(),
         ...(detail?.durationMs !== undefined ? { durationMs: detail.durationMs } : {}),
       });
-    }) as EventListener);
+    };
+    window.addEventListener('tubs:head-speech-state', headSpeechStateHandler as EventListener);
 
-    window.addEventListener('tubs:request-interrupt', ((event: Event) => {
+    requestInterruptHandler = (event: Event) => {
       const detail = (event as CustomEvent<{ turnId?: string | null }>).detail;
       wsClient.send({
         type: 'interrupt',
         ...(detail?.turnId ? { turnId: detail.turnId } : {}),
       });
-    }) as EventListener);
+    };
+    window.addEventListener('tubs:request-interrupt', requestInterruptHandler as EventListener);
 
-    window.addEventListener('tubs:tts-request', ((event: Event) => {
+    ttsRequestHandler = (event: Event) => {
       const detail = (event as CustomEvent<{ text: string; voice?: string; turnId?: string }>).detail;
       if (!detail?.text) return;
       wsClient.send({
@@ -246,7 +251,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         ...(detail.voice ? { voice: detail.voice } : {}),
         ...(detail.turnId ? { turnId: detail.turnId } : {}),
       });
-    }) as EventListener);
+    };
+    window.addEventListener('tubs:tts-request', ttsRequestHandler as EventListener);
 
     proactiveRuntime?.init((message) => {
       wsClient.send(message);
@@ -272,6 +278,15 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       }
       if (spectatorUnlockHandler) {
         window.removeEventListener('tubs:unlock-audio', spectatorUnlockHandler);
+      }
+      if (headSpeechStateHandler) {
+        window.removeEventListener('tubs:head-speech-state', headSpeechStateHandler as EventListener);
+      }
+      if (requestInterruptHandler) {
+        window.removeEventListener('tubs:request-interrupt', requestInterruptHandler as EventListener);
+      }
+      if (ttsRequestHandler) {
+        window.removeEventListener('tubs:tts-request', ttsRequestHandler as EventListener);
       }
       wsClient.disconnect();
       speechRuntime.dispose();

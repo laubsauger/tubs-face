@@ -1,4 +1,4 @@
-import { useRef, useState, type FormEvent, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
 import type { AppStore } from '../../state/app-state.js';
 import type { IncomingRequest, IncomingResponse } from '../../../shared/contracts/http.js';
 import { postJson } from '../../transport/http.js';
@@ -15,10 +15,19 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
     chatVerbosity: current.chatVerbosity,
   }));
   const cardRef = useRef<HTMLElement | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
   const [sending, setSending] = useState(false);
 
   const entries = state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type));
   const panelWidth = state.chatPanelWidth ?? 420;
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || state.collapsed) {
+      return;
+    }
+    list.scrollTop = list.scrollHeight;
+  }, [entries.length, state.collapsed]);
 
   function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
     event.preventDefault();
@@ -51,13 +60,17 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
     }
 
     setSending(true);
+    store.setState((current) => ({
+      ...current,
+      chatComposerText: '',
+    }));
     try {
       await postJson<IncomingRequest, IncomingResponse>('/incoming', { text });
+    } catch (error) {
       store.setState((current) => ({
         ...current,
-        chatComposerText: '',
+        chatComposerText: current.chatComposerText ? current.chatComposerText : text,
       }));
-    } catch (error) {
       store.appendLog('error', error instanceof Error ? error.message : 'Failed to send text turn');
     } finally {
       setSending(false);
@@ -74,7 +87,11 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
       <PanelHeader store={store} panelKey="chat" title="Chat Log" meta={`${state.chatEntries.length} msgs`} />
       
       <div className={`panel-body panel-chat-body flex flex-col flex-1 min-h-0 overflow-hidden relative ${state.collapsed ? 'hidden' : ''}`}>
-        <ul id="chat-log-list" className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 font-mono text-xs">
+        <ul
+          id="chat-log-list"
+          ref={listRef}
+          className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col justify-end gap-3 font-mono text-xs"
+        >
           {entries.length === 0
             ? <li className="text-slate-500 italic text-center mt-4">No chat yet.</li>
             : entries.map((entry) => {

@@ -47,6 +47,7 @@ import type {
 } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { createTurnId, interruptAssistantTurns, runAssistantTurn } from '../assistant/service.js';
+import { sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from '../assistant/text.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, sessionStats, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
@@ -172,20 +173,27 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
         type: 'thinking',
       } satisfies WsThinkingServerMessage);
 
-      const endAssistantSpan = turnTimer.span('LLM Generation');
-      const result = await runAssistantTurn(text, broadcast, turnTimer);
-      endAssistantSpan();
-      if (result.superseded) {
-        turnTimer.mark('Assistant turn superseded');
-      }
-
       sendJson(response, 200, {
         ok: true,
-        ...(result.turnId ? { turnId: result.turnId } : {}),
-        ...(result.superseded ? { ignored: true, reason: 'superseded' } : {}),
       } satisfies IncomingResponse);
       turnTimer.mark('HTTP response sent');
-      turnTimer.log({ title: '[Turn Timing]' });
+      void (async () => {
+        try {
+          const endAssistantSpan = turnTimer.span('LLM Generation');
+          const result = await runAssistantTurn(text, broadcast, turnTimer);
+          endAssistantSpan();
+          if (result.superseded) {
+            turnTimer.mark('Assistant turn superseded');
+          }
+          turnTimer.log({ title: '[Turn Timing]' });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Text request failed';
+          broadcast({
+            type: 'error',
+            text: message,
+          });
+        }
+      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Text request failed';
       const statusCode = error instanceof Error && error.name === 'BadRequestError' ? 400 : 500;
@@ -342,7 +350,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       });
       turnTimer.mark('TTS request received');
       const endTtsSpan = turnTimer.span('Kokoro TTS');
-      const proxied = await proxyTts(rawBody.toString('utf8'));
+      const proxied = await proxyTts(buildNormalizedTtsRequestBody(rawBody));
       endTtsSpan();
       if (proxied.statusCode >= 400) {
         turnTimer.mark('Python TTS failed');
@@ -797,6 +805,23 @@ function parseTtsRequest(rawBody: Buffer): Partial<TtsRequest> {
   } catch {
     return {};
   }
+}
+
+function buildNormalizedTtsRequestBody(rawBody: Buffer): string {
+  const parsed = parseTtsRequest(rawBody);
+  if (typeof parsed.text !== 'string') {
+    return rawBody.toString('utf8');
+  }
+
+  const normalizedText = sanitizeForTts(stripFormatting(unwrapJsonSpeechText(parsed.text)));
+  if (!normalizedText) {
+    return rawBody.toString('utf8');
+  }
+
+  return JSON.stringify({
+    ...parsed,
+    text: normalizedText,
+  } satisfies Partial<TtsRequest>);
 }
 
 function badRequest(message: string): Error {

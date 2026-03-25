@@ -22,8 +22,10 @@ export function createManagedWsClient(options: WsClientOptions): ManagedWsClient
   let socket: WebSocket | null = null;
   let pingTimer: number | null = null;
   let reconnectTimer: number | null = null;
+  let closedByClient = false;
 
   function connect(): void {
+    closedByClient = false;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const roleParam = options.role === 'spectator' ? '?role=spectator' : '';
     socket = new WebSocket(`${protocol}://${window.location.host}/ws${roleParam}`);
@@ -48,7 +50,9 @@ export function createManagedWsClient(options: WsClientOptions): ManagedWsClient
     socket.addEventListener('close', () => {
       stopPing();
       options.onClose?.();
-      reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
+      if (!closedByClient) {
+        reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
+      }
     });
 
     socket.addEventListener('error', (event) => {
@@ -58,6 +62,7 @@ export function createManagedWsClient(options: WsClientOptions): ManagedWsClient
   }
 
   function disconnect(): void {
+    closedByClient = true;
     if (reconnectTimer !== null) {
       window.clearTimeout(reconnectTimer);
       reconnectTimer = null;

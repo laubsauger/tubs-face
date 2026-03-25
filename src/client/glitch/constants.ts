@@ -92,10 +92,10 @@ export const GAZE_MOUTH_RANGE_Y = 0.04;
 export const GAZE_LERP = 0.12;
 
 export const GLOW_ALPHA = 0.65;
-export const FEATURE_BOX_GLOBAL_SCALE_X = 0.92;
-export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.92;
-export const FEATURE_MOUTH_SCALE_X = 0.92;
-export const FEATURE_MOUTH_SCALE_Y = 0.9;
+export const FEATURE_BOX_GLOBAL_SCALE_X = 0.84;
+export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.88;
+export const FEATURE_MOUTH_SCALE_X = 0.88;
+export const FEATURE_MOUTH_SCALE_Y = 0.88;
 export const FEATURE_BOX_MAIN_BOOST = 0.07;
 export const GLITCH_DIAG = true;
 

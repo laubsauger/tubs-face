@@ -25,11 +25,15 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       if (face) {
         const config = state.config;
         const nextMarkup = renderFaceVisualMarkup(state);
+        const usingGlitchCanvas = config?.faceRenderMode === 'glitch' && Boolean(config?.glitchFxEnabled);
         const chromaticOffset = Math.max(
           Math.abs(config?.glitchChromaticOffsetX ?? 0),
           Math.abs(config?.glitchChromaticOffsetY ?? 4.5),
         );
-        if (nextMarkup !== lastFaceMarkup) {
+        if (usingGlitchCanvas) {
+          syncGlitchFaceChildren(face);
+          lastFaceMarkup = '';
+        } else if (nextMarkup !== lastFaceMarkup) {
           face.innerHTML = nextMarkup;
           lastFaceMarkup = nextMarkup;
         }
@@ -78,6 +82,18 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       );
     },
   };
+}
+
+function syncGlitchFaceChildren(face: HTMLElement): void {
+  for (const node of Array.from(face.childNodes)) {
+    if (
+      node instanceof HTMLCanvasElement
+      && node.classList.contains('glitch-face-canvas')
+    ) {
+      continue;
+    }
+    face.removeChild(node);
+  }
 }
 
 function syncDonationCard(

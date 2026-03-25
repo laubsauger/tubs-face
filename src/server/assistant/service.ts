@@ -8,7 +8,7 @@ import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
-import { clampOutput, estimateCostUsd, estimateTokens, extractJsonBlock, normalizeInput, sanitizeForTts, stripFormatting } from './text.js';
+import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -175,6 +175,7 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       timeoutMs: 12_000,
     });
     endLlmSpan?.();
+    logRawModelOutput('reply', result.text);
     let cleaned = stripFormatting(result.text);
     const repaired = await maybeRepairPersonaDrift({
       draftText: cleaned,
@@ -189,13 +190,13 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       cleaned = repaired.text;
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
-    const donationSignal = extractDonationSignal(parsed.text);
+    const donationSignal = extractDonationSignal(unwrapJsonSpeechText(parsed.text));
     const nudged = maybeInjectDonationNudge(
       donationSignal.text,
       Boolean(donationSignal.donation.show),
       assistantReplyCount,
     );
-    const text = clampOutput(nudged.text);
+    const text = clampOutput(stripSpeakerLabels(nudged.text));
     if (!text) {
       throw assistantUnavailable('[assistant] LLM returned empty reply text');
     }
@@ -262,7 +263,7 @@ async function maybeRepairPersonaDrift(args: {
     '- Rewrite the draft in Tubs voice: dry, chaotic, sharp, entirely natural.',
     '- Absolute maximum 1-2 punchy sentences. BE EXTREMELY BRIEF.',
     '- Never use these phrases: "certainly", "however", "it\'s important to remember", "do you have any other questions", "any other questions or topics".',
-    '- End with a hook, a judgment, or a question.',
+    '- End with a hook or a judgment when it fits. A question is optional.',
     '- Return only the rewritten reply text. No quotes. No introductory text.',
   ].join('\n');
   const rewritePrompt = [
@@ -375,7 +376,7 @@ async function maybeRepairDualHeadScript(args: {
   };
 }
 
-function isPersonaDrift(text: string): string | null {
+export function isPersonaDrift(text: string): string | null {
   const normalized = normalizeInput(text).toLowerCase();
   if (!normalized) {
     return null;
@@ -387,9 +388,6 @@ function isPersonaDrift(text: string): string | null {
   if (PERSONA_DRIFT_FORMAL_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
     const match = normalized.match(PERSONA_DRIFT_FORMAL_RE)?.[1] || 'formal word';
     return `formal word: "${match}"`;
-  }
-  if (normalized.length > 110 && !normalized.includes('?')) {
-    return 'too long and lacking questions';
   }
   if (normalized.length > 90 && !PERSONA_MARKER_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
     return 'too long and lacking persona markers';
@@ -438,6 +436,24 @@ function formatDualHeadRawForLog(rawText: string): string {
   return limited;
 }
 
+function logAssistantUserInput(userText: string): void {
+  const block = [
+    '[LLM] User input begin',
+    formatDualHeadRawForLog(userText),
+    '[LLM] User input end',
+  ].join('\n');
+  process.stdout.write(`${block}\n`);
+}
+
+function logRawModelOutput(channel: 'reply' | 'stream' | 'dual' | 'proactive' | 'dual-proactive', rawText: string): void {
+  const block = [
+    `[LLM:${channel}] Raw model output begin`,
+    formatDualHeadRawForLog(rawText),
+    `[LLM:${channel}] Raw model output end`,
+  ].join('\n');
+  process.stdout.write(`${block}\n`);
+}
+
 function logDualHeadInvalidScript(rawText: string, reason: string): void {
   const block = [
     `[LLM:dual] ${reason}`,
@@ -451,6 +467,10 @@ function logDualHeadInvalidScript(rawText: string, reason: string): void {
 export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void, turnTimer?: TurnTimer): Promise<AssistantTurnResult> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
+  const normalizedUserText = normalizeInput(userText);
+  if (normalizedUserText) {
+    logAssistantUserInput(normalizedUserText);
+  }
   broadcast({
     type: 'turn_start',
     turnId,
@@ -873,13 +893,14 @@ async function runStreamingAssistantTurn(args: {
       abortSignal: abortController.signal,
     });
     endLlmStreamSpan?.();
+    logRawModelOutput('stream', llmResult.text);
     splitter.flush();
     llmDone = true;
     checkCloseWs();
 
     // If no chunks were sent (very short response), send full text
     if (chunkIndex === 0 && llmResult.text) {
-      const unwrapped = unwrapJsonText(llmResult.text);
+      const unwrapped = unwrapJsonSpeechText(llmResult.text);
       const parsed = splitTrailingEmotionEmoji(stripFormatting(unwrapped));
       rawEmotion = parsed.emotion;
       fullText = sanitizeForTts(parsed.text);
@@ -900,7 +921,7 @@ async function runStreamingAssistantTurn(args: {
     }
 
     if (!fullText) {
-      fullText = clampOutput(sanitizeForTts(stripFormatting(unwrapJsonText(llmResult.text))));
+      fullText = clampOutput(sanitizeForTts(stripFormatting(unwrapJsonSpeechText(llmResult.text))));
     }
 
     if (!fullText) {
@@ -983,7 +1004,7 @@ async function runStreamingAssistantTurn(args: {
   } catch (error) {
     ttsWs?.close();
     const msg = error instanceof Error ? error.message : String(error);
-    console.error(`\x1b[31m\x1b[1m[Streaming]\x1b[0m streaming turn threw: ${msg} — falling through to sequential`);
+    console.error(`\x1b[31m\x1b[1m[Streaming]\x1b[0m streaming turn failed hard: ${msg}`);
     // If any audio chunks were already broadcast, send speak_end so the
     // client can finalize its streaming session instead of getting stuck.
     if (chunkIndex > 0) {
@@ -993,7 +1014,9 @@ async function runStreamingAssistantTurn(args: {
       } satisfies WsSpeakEndServerMessage);
       console.log(`\x1b[36m[Streaming]\x1b[0m sent speak_end after error (${chunkIndex} chunks were in flight)`);
     }
-    return null;
+    throw error instanceof Error
+      ? error
+      : assistantUnavailable('[streaming] Assistant streaming turn failed');
   }
 }
 
@@ -1009,34 +1032,105 @@ async function streamDualHeadBeatAudio(
   broadcast: (message: WsServerMessage) => void,
   turnTimer?: TurnTimer,
 ): Promise<void> {
-  const speakBeats = beats
-    .map((beat, index) => ({ beat, index }))
-    .filter(({ beat }) => beat.action === 'speak' && beat.text?.trim());
-
-  if (speakBeats.length === 0) return;
-
   const mainVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
   const smallVoice = runtimeConfig.secondaryVoice ?? mainVoice;
+  const startedAt = Date.now();
   let chunkIndex = 0;
-  let pendingSentences = 0;
+  let firstChunkSent = false;
+
+  console.log(`\x1b[36m[DualHead TTS]\x1b[0m scheduling ${beats.length} beat(s)`);
+
+  for (const [index, beat] of beats.entries()) {
+    if (!isAssistantTurnActive(turnId, epoch)) {
+      break;
+    }
+
+    if (beat.action === 'wait') {
+      const waitMs = clampBeatDelay(beat.delayMs, 320);
+      await waitForBeatDelay(waitMs);
+      continue;
+    }
+
+    if (beat.action === 'react') {
+      if (beat.delayMs != null) {
+        await waitForBeatDelay(clampBeatDelay(beat.delayMs, 420));
+      }
+      continue;
+    }
+
+    const actor = beat.actor === 'small' ? 'small' as const : 'main' as const;
+    const voice = actor === 'small' ? smallVoice : mainVoice;
+    const text = sanitizeForTts(stripFormatting(beat.text?.trim() ?? ''));
+    if (!text) {
+      continue;
+    }
+
+    const beatChunks = await streamDualHeadSpeakBeat({
+      turnId,
+      epoch,
+      broadcast,
+      actor,
+      beatIndex: index,
+      text,
+      voice,
+      nextChunkIndex: chunkIndex,
+      onFirstChunk: () => {
+        if (!firstChunkSent) {
+          firstChunkSent = true;
+          turnTimer?.mark('First audio chunk sent');
+          console.log(`\x1b[36m[DualHead TTS]\x1b[0m first chunk in ${Date.now() - startedAt}ms`);
+        }
+      },
+    });
+    chunkIndex += beatChunks;
+
+    if (!isAssistantTurnActive(turnId, epoch)) {
+      break;
+    }
+
+    if (beat.delayMs != null) {
+      await waitForBeatDelay(clampBeatDelay(beat.delayMs, 320));
+    }
+  }
+}
+
+async function streamDualHeadSpeakBeat(args: {
+  turnId: string;
+  epoch: number;
+  broadcast: (message: WsServerMessage) => void;
+  actor: 'main' | 'small';
+  beatIndex: number;
+  text: string;
+  voice: string;
+  nextChunkIndex: number;
+  onFirstChunk?: () => void;
+}): Promise<number> {
+  const {
+    turnId,
+    epoch,
+    broadcast,
+    actor,
+    beatIndex,
+    text,
+    voice,
+    nextChunkIndex,
+    onFirstChunk,
+  } = args;
   const startedAt = Date.now();
 
-  // Queue of beat metadata so onChunk/onSentenceDone know which beat is active.
-  // TTS stream processes sentences in FIFO order.
-  const beatQueue: Array<{ actor: 'main' | 'small'; beatIndex: number }> = [];
-  let activeBeat: { actor: 'main' | 'small'; beatIndex: number } = { actor: 'main', beatIndex: 0 };
-
-  console.log(`\x1b[36m[DualHead TTS]\x1b[0m streaming ${speakBeats.length} speak beat(s)`);
-
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<number>((resolve, reject) => {
     let settled = false;
     let streamError: Error | null = null;
+    let chunkCount = 0;
+    let sentenceDone = false;
+    let firstChunkLogged = false;
+
     const finishResolve = () => {
       if (settled) {
         return;
       }
       settled = true;
-      resolve();
+      resolve(chunkCount);
     };
     const finishReject = (error: Error) => {
       if (settled) {
@@ -1045,106 +1139,96 @@ async function streamDualHeadBeatAudio(
       settled = true;
       reject(error);
     };
+
     const ttsSession = openTtsStream({
       onChunk(chunk) {
         if (!isAssistantTurnActive(turnId, epoch)) {
           ttsSession.close();
           return;
         }
-        if (chunkIndex === 0) {
-          turnTimer?.mark('First audio chunk sent');
-          console.log(`\x1b[36m[DualHead TTS]\x1b[0m first chunk in ${Date.now() - startedAt}ms`);
+        if (!firstChunkLogged) {
+          firstChunkLogged = true;
+          onFirstChunk?.();
         }
         broadcast({
           type: 'audio_chunk',
           audio: chunk.audio,
-          text: chunk.text || '',
+          text,
           turnId,
-          chunkIndex: chunkIndex++,
-          actor: activeBeat.actor,
-          beatIndex: activeBeat.beatIndex,
+          chunkIndex: nextChunkIndex + chunkCount,
+          actor,
+          beatIndex,
         } satisfies WsAudioChunkServerMessage);
+        chunkCount += 1;
       },
       onSentenceDone() {
-        pendingSentences = Math.max(0, pendingSentences - 1);
-        // Advance to next beat for subsequent chunks
-        if (beatQueue.length > 0) {
-          activeBeat = beatQueue.shift()!;
-        }
-        if (pendingSentences <= 0) {
-          ttsSession.close();
-        }
+        sentenceDone = true;
+        ttsSession.close();
       },
       onError(error) {
-        console.warn(`\x1b[31m\x1b[1m[DualHead TTS]\x1b[0m error: ${error.message}`);
+        console.warn(`\x1b[31m\x1b[1m[DualHead TTS]\x1b[0m error (${actor} beat ${beatIndex}): ${error.message}`);
         streamError = error;
       },
       onClose() {
-        console.log(`\x1b[36m[DualHead TTS]\x1b[0m done — ${chunkIndex} chunks, ${Date.now() - startedAt}ms`);
-        if (chunkIndex === 0) {
+        console.log(`\x1b[36m[DualHead TTS]\x1b[0m beat ${beatIndex} ${actor} done — ${chunkCount} chunks, ${Date.now() - startedAt}ms`);
+        if (chunkCount === 0) {
           if (!isAssistantTurnActive(turnId, epoch)) {
             finishResolve();
             return;
           }
-          finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS ended without audio chunks for turn ${turnId}`));
+          finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head beat ${beatIndex} ended without audio chunks for turn ${turnId}`));
           return;
         }
-        // Always send speak_end if audio chunks were broadcast — the client
-        // needs it to finalize streaming even if the turn was interrupted.
-        if (chunkIndex > 0) {
-          broadcast({
-            type: 'speak_end',
-            turnId,
-          } satisfies WsSpeakEndServerMessage);
+        broadcast({
+          type: 'speak_end',
+          turnId,
+          actor,
+          text,
+          fullText: text,
+        } satisfies WsSpeakEndServerMessage);
+        if (!sentenceDone && streamError) {
+          finishReject(streamError);
+          return;
         }
         finishResolve();
       },
     });
 
-    // Wait for TTS WS to connect, then send all beats
     const waitAndSend = () => {
       if (ttsSession.closed) {
-        if (!isAssistantTurnActive(turnId, epoch) || chunkIndex > 0) {
+        if (!isAssistantTurnActive(turnId, epoch) || chunkCount > 0) {
           finishResolve();
           return;
         }
-        finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for turn ${turnId}`));
+        finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for beat ${beatIndex} (${turnId})`));
         return;
       }
       if (!ttsSession.ready) {
         setTimeout(waitAndSend, 10);
         return;
       }
-      let first = true;
-      for (const { beat, index } of speakBeats) {
-        const actor = beat.actor === 'small' ? 'small' as const : 'main' as const;
-        const voice = actor === 'small' ? smallVoice : mainVoice;
-        const text = sanitizeForTts(stripFormatting(beat.text!.trim()));
-        if (!text) continue;
-        const meta = { actor, beatIndex: index };
-        if (first) {
-          activeBeat = meta;
-          first = false;
-        } else {
-          beatQueue.push(meta);
-        }
-        pendingSentences++;
-        ttsSession.send(text, voice);
-      }
-      if (pendingSentences <= 0) {
-        ttsSession.close();
-      }
+      ttsSession.send(text, voice);
     };
     waitAndSend();
 
-    // Safety timeout
     setTimeout(() => {
       if (!ttsSession.closed) {
-        console.warn(`\x1b[33m[DualHead TTS]\x1b[0m safety timeout — closing`);
-        streamError ??= assistantUnavailable(`[streaming] Dual-head TTS timed out for turn ${turnId}`);
+        console.warn(`\x1b[33m[DualHead TTS]\x1b[0m beat ${beatIndex} safety timeout — closing`);
+        streamError ??= assistantUnavailable(`[streaming] Dual-head beat ${beatIndex} timed out for turn ${turnId}`);
         ttsSession.close();
       }
     }, 30_000);
+  });
+}
+
+function clampBeatDelay(value: number | undefined, fallbackMs: number): number {
+  const normalized = Number.isFinite(value) ? Number(value) : fallbackMs;
+  return Math.max(120, Math.min(8_000, normalized));
+}
+
+async function waitForBeatDelay(delayMs: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
   });
 }
 
@@ -1152,23 +1236,6 @@ async function streamDualHeadBeatAudio(
  * If the LLM returned a JSON object like {"text":"..."} or {"main":"..."},
  * extract just the text value. Otherwise return the input unchanged.
  */
-function unwrapJsonText(raw: string): string {
-  const jsonBlock = extractJsonBlock(raw);
-  if (!jsonBlock) return raw;
-  try {
-    const parsed = JSON.parse(jsonBlock) as Record<string, unknown>;
-    // Try common keys the model might use
-    for (const key of ['text', 'main', 'response', 'message', 'content']) {
-      if (typeof parsed[key] === 'string' && parsed[key]) {
-        return parsed[key] as string;
-      }
-    }
-  } catch {
-    // Not valid JSON — return raw
-  }
-  return raw;
-}
-
 export async function runProactiveTurn(context: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult | null> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
@@ -1353,6 +1420,7 @@ async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): P
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
     });
     endLlmSpan?.();
+    logRawModelOutput('dual', result.text);
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
@@ -1406,7 +1474,7 @@ async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): P
       fullText = `${fullText} ${nudgeText}`.trim();
     }
 
-    fullText = clampOutput(fullText);
+    fullText = clampOutput(stripSpeakerLabels(fullText));
     if (!fullText) {
       throw new Error('Dual-head script produced empty output');
     }
@@ -1463,6 +1531,7 @@ async function generateProactiveReply(context: string): Promise<AssistantReply |
       temperature: 1,
       timeoutMs: 12_000,
     });
+    logRawModelOutput('proactive', result.text);
 
     let cleaned = stripFormatting(result.text);
     const repaired = await maybeRepairPersonaDrift({
@@ -1477,8 +1546,8 @@ async function generateProactiveReply(context: string): Promise<AssistantReply |
       cleaned = repaired.text;
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
-    const donationSignal = extractDonationSignal(parsed.text);
-    const text = clampOutput(donationSignal.text);
+    const donationSignal = extractDonationSignal(unwrapJsonSpeechText(parsed.text));
+    const text = clampOutput(stripSpeakerLabels(donationSignal.text));
     if (!text) {
       return null;
     }
@@ -1535,6 +1604,7 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
     });
+    logRawModelOutput('dual-proactive', result.text);
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
@@ -1584,7 +1654,7 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
       fullText = `${fullText} ${nudgeText}`.trim();
     }
 
-    fullText = clampOutput(fullText);
+    fullText = clampOutput(stripSpeakerLabels(fullText));
     if (!fullText) {
       return null;
     }

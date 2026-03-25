@@ -168,6 +168,7 @@ export interface WsSpeakChunkServerMessage {
 export interface WsSpeakEndServerMessage {
   type: 'speak_end';
   turnId?: string;
+  actor?: 'main' | 'small';
   text?: string;
   emotion?: SpeechEmotionPayload | null;
   donation?: TurnDonation | null;
