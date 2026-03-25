@@ -18,14 +18,25 @@ from flask_sock import Sock
 app = Flask(__name__)
 sock = Sock(app)
 
+import platform
+_IS_MACOS = platform.system() == "Darwin"
 _gpu_lock = threading.Lock()
 
 PORT = int(os.environ.get("REALTIME_PROCESSING_PORT", "3002"))
 STT_MODEL = os.environ.get("REALTIME_STT_MODEL", os.environ.get("WHISPER_MODEL", "small"))
 STT_BACKEND = os.environ.get("REALTIME_STT_BACKEND", os.environ.get("STT_BACKEND", "mlx")).strip().lower()
+
+# Auto-fallback: mlx STT is Apple Silicon only
+if STT_BACKEND == "mlx" and not _IS_MACOS:
+    print("[Realtime STT] WARNING: STT_BACKEND=mlx is Apple Silicon only - falling back to faster-whisper.")
+    STT_BACKEND = "faster-whisper"
+
 TTS_BACKEND = os.environ.get("REALTIME_TTS_BACKEND", os.environ.get("TTS_BACKEND", "kokoro")).strip().lower()
 KOKORO_VOICE = os.environ.get("REALTIME_KOKORO_VOICE", os.environ.get("KOKORO_VOICE", "hm_omega"))
 LLM_PROVIDER = os.environ.get("REALTIME_LLM_PROVIDER", "ollama").strip().lower()
+
+# Kokoro backend: mlx_audio on macOS, KPipeline (ONNX) everywhere else
+_KOKORO_BACKEND = "mlx" if _IS_MACOS else "native"
 def get_ollama_base_url():
     url = os.environ.get("REALTIME_LLM_BASE_URL", "").strip()
     if url: return url.rstrip("/")
@@ -96,12 +107,20 @@ def ensure_tts_model():
         return tts_model
 
     if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
-        from mlx_audio.tts.utils import load_model as load_tts_model
-        print(f"[Realtime TTS] Loading Kokoro (voice={KOKORO_VOICE})")
-        tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
-        print("[Realtime TTS] Kokoro ready")
+        if _KOKORO_BACKEND == "mlx":
+            # macOS: MLX-accelerated
+            from mlx_audio.tts.utils import load_model as load_tts_model
+            print(f"[Realtime TTS] Loading Kokoro via mlx_audio (voice={KOKORO_VOICE})")
+            tts_model = load_tts_model("mlx-community/Kokoro-82M-bf16")
+            print("[Realtime TTS] Kokoro (mlx_audio) ready")
+        else:
+            # Windows / Linux: KPipeline (ONNX/CPU, requires espeak-ng)
+            from kokoro import KPipeline
+            print(f"[Realtime TTS] Loading Kokoro via KPipeline (voice={KOKORO_VOICE})")
+            tts_model = KPipeline(lang_code="a")
+            print("[Realtime TTS] Kokoro (KPipeline) ready")
     else:
-        print("[Realtime TTS] Using macOS system TTS (say)")
+        print("[Realtime TTS] Using system TTS")
         tts_model = "system"
     return tts_model
 
@@ -630,21 +649,30 @@ def _tts_kokoro(text, voice):
     t0 = time.time()
     try:
         model = ensure_tts_model()
-        with _gpu_lock:
-            segments = []
-            for result in model.generate(
-                text=text,
-                voice=voice,
-                speed=1.0,
-                lang_code="a",
-            ):
-                segments.append(_safe_numpy(result.audio))
+        segments = []
+
+        if _KOKORO_BACKEND == "mlx":
+            # macOS: mlx_audio — GPU lock required (Metal not thread-safe)
+            with _gpu_lock:
+                for result in model.generate(
+                    text=text,
+                    voice=voice,
+                    speed=1.0,
+                    lang_code="a",
+                ):
+                    segments.append(_safe_numpy(result.audio))
+        else:
+            # Windows / Linux: kokoro KPipeline
+            for _, _, audio in model(text, voice=voice, speed=1.0):
+                segments.append(_safe_numpy(audio))
+
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
         audio = np.concatenate(segments)
         wav_bytes = pcm_to_wav_bytes(audio, sample_rate=24000)
         elapsed = int((time.time() - t0) * 1000)
-        print(f"[Realtime TTS] Kokoro generated {len(wav_bytes)} bytes in {elapsed}ms (voice={voice}, lang=a)")
+        backend_label = f"Kokoro/{_KOKORO_BACKEND}"
+        print(f"[Realtime TTS] {backend_label} generated {len(wav_bytes)} bytes in {elapsed}ms (voice={voice})")
         return Response(wav_bytes, mimetype="audio/wav")
     except Exception as err:
         print(f"[Realtime TTS] Kokoro error (voice={voice}): {err}")
@@ -695,10 +723,21 @@ def tts_stream(ws):
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder
-                # MLX/Kokoro is not thread-safe: serialize generator use to prevent native crashes.
-                with _gpu_lock:
-                    for result in m.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                        audio_np = _safe_numpy(result.audio)
+                if _KOKORO_BACKEND == "mlx":
+                    # macOS: mlx_audio — GPU lock required
+                    with _gpu_lock:
+                        for result in m.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
+                            audio_np = _safe_numpy(result.audio)
+                            wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
+                            ws.send(json.dumps({
+                                "text": text,
+                                "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                                "chunk": True
+                            }))
+                else:
+                    # Windows / Linux: kokoro KPipeline
+                    for _, _, audio in m(text, voice=voice, speed=1.0):
+                        audio_np = _safe_numpy(audio)
                         wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
                         ws.send(json.dumps({
                             "text": text,

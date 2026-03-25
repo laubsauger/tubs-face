@@ -41,7 +41,7 @@ const DEFAULT_STT_MODEL = resolveProcessingEnv({
   legacy: process.env.WHISPER_MODEL,
   realtime: process.env.REALTIME_STT_MODEL,
 })?.trim() || 'small';
-const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.0-flash';
+const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3-flash';
 const DEFAULT_GLITCH_RENDERER: GlitchRenderer = pickOne(GLITCH_RENDERERS, process.env.GLITCH_RENDERER, 'auto');
 
 export const runtimeConfig: RuntimeConfig = {

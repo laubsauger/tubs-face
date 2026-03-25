@@ -1,3 +1,5 @@
+@import "tailwindcss";
+
 :root {
   color-scheme: dark;
   font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
@@ -213,7 +215,7 @@ a {
   filter:
     drop-shadow(calc(var(--fx-chromatic-offset) * -1) 0 0 rgba(255, 0, 102, 0.38)) drop-shadow(var(--fx-chromatic-offset) 0 0 rgba(0, 221, 255, 0.34)) drop-shadow(0 0 var(--fx-glow-strength) color-mix(in srgb, var(--fx-base-color) 70%, transparent));
   opacity: calc(0.38 + var(--fx-flicker-depth));
-  animation: fx-flicker 2.4s steps(2, end) infinite;
+  animation: fx-flicker 0.8s infinite ease-in-out;
 }
 
 .face-svg {

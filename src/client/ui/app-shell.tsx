@@ -1,4 +1,12 @@
-import { useCallback, useRef, useState, type JSX } from 'react';
+
+import { ConnectionPanel } from './panels/ConnectionPanel.js';
+import { VoicePanel } from './panels/VoicePanel.js';
+import { FacePanel } from './panels/FacePanel.js';
+import { StatsPanel } from './panels/StatsPanel.js';
+import { ChatPanel } from './panels/ChatPanel.js';
+import { PanelHeader } from './panels/PanelHeader.js';
+import { formatCurrency, formatUptime, formatAwakeElapsed, formatTimestamp, resolveChatActor, renderChatPrefix, isChatEntryVisible } from './utils/formatters.js';
+import { useCallback, useRef, useState, useEffect, memo, type JSX } from 'react';
 import type {
   DonationConfirmRequest,
   DonationConfirmResponse,
@@ -22,7 +30,7 @@ import {
   previewExpression,
 } from '../fx/runtime.js';
 import { GLITCH_PRESETS } from '../fx/presets.js';
-import { renderFaceVisualMarkup } from './face-visual.js';
+
 import { useAppSelector } from './react-store.js';
 import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
 
@@ -59,60 +67,131 @@ export function AppShell(props: AppShellProps): JSX.Element {
 }
 
 function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls }): JSX.Element {
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      
+      const key = e.key.toLowerCase();
+
+      // Non-input strict binds
+      if (!inInput) {
+        if (key === 's') {
+          e.preventDefault();
+          const isSleep = store.getState().sleeping;
+          void postJson(isSleep ? '/wake' : '/sleep', {});
+        } else if (key === 'c') {
+          e.preventDefault();
+          void controls?.face?.toggleCamera();
+        } else if (key === 'f') {
+          e.preventDefault();
+          if (!store.getState().faceCameraActive) return;
+          const name = window.prompt("Enter name for Face Enrollment:");
+          if (name?.trim()) {
+             store.setState(s => ({ ...s, faceDraftName: name.trim() }));
+             void controls?.face?.saveDetectedFace();
+          }
+        } else if (key === 'd') {
+          e.preventDefault();
+          store.setState(s => ({ ...s, debugOverlayActive: !s.debugOverlayActive }));
+        } else if (key === 'enter') {
+           // Allow starting to type immediately by focusing the chat input?
+           // The user says "Type any characters, then Enter". 
+           // If they hit Enter while NOT in input, maybe we focus logic?
+           document.getElementById('chat-panel-input')?.focus();
+        }
+      }
+    };
+    
+    // Key presses on letter keys (if not in input) should focus the chat so users can just type text.
+    const handleTypeFocus = (e: KeyboardEvent) => {
+      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
+      if (!inInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ' && e.key !== 'c' && e.key !== 'f' && e.key !== 'd' && e.key !== 's' && e.key !== 'z' && e.key !== 'x') {
+        const input = document.getElementById('chat-panel-input') as HTMLInputElement | null;
+        if (input) {
+          input.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKey);
+    window.addEventListener('keydown', handleTypeFocus);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      window.removeEventListener('keydown', handleTypeFocus);
+    };
+  }, [store, controls]);
+
   const shellState = useAppSelector(store, (state) => ({
     uiHidden: state.uiHidden,
     fullscreenActive: state.fullscreenActive,
   }));
 
   return (
-    <main className={`shell ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
-      <TopBar store={store} />
-      <section className="visual-workspace">
-        <div className="workspace-col">
-          <VoicePanel store={store} {...(controls?.voice ? { controls: controls.voice } : {})} />
-          <ChatPanel store={store} />
-        </div>
+    <main className={`shell relative w-screen h-screen overflow-hidden bg-slate-950 text-slate-100 font-sans ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
+      
+      {/* Background Visual Face */}
+      <div className="absolute inset-0 z-0 flex flex-col justify-end items-center pb-8">
         <VisualShell store={store} mode="main" />
-        <div className="workspace-col">
-          <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
-          <EventLogPanel store={store} />
+      </div>
+
+      {/* 4-Corner UI HUD */}
+      {!shellState.uiHidden && !shellState.fullscreenActive && (
+        <div className="absolute inset-0 z-10 p-6 pointer-events-none grid grid-cols-[380px_1fr_380px] grid-rows-[max-content_1fr_max-content] gap-6">
+          
+          {/* Top-Left: Vitals + Input Status */}
+          <div className="col-start-1 row-start-1 flex flex-col gap-4 pointer-events-auto max-h-full overflow-y-auto overflow-x-hidden pt-2 pl-2">
+            <ConnectionPanel store={store} />
+            <VoicePanel store={store} controls={controls} />
+          </div>
+
+          {/* Bottom-Left: Chat Log */}
+          <div className="col-start-1 row-start-3 pointer-events-auto h-full flex flex-col justify-end pb-2 pl-2">
+            <ChatPanel store={store} />
+          </div>
+
+          {/* Top-Right: TopBar / Controls */}
+          <div className="col-start-3 row-start-1 flex flex-col items-end pointer-events-auto pr-2 pt-2">
+            <TopBar store={store} />
+          </div>
+
+          {/* Bottom-Right: Stats + Camera PIP */}
+          <div className="col-start-3 row-start-3 flex flex-col justify-end gap-4 pointer-events-auto pr-2 pb-2">
+            <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
+            <StatsPanel store={store} />
+          </div>
+
         </div>
-      </section>
-      <section className="grid">
-        <ConnectionPanel store={store} />
+      )}
+
+      {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
+      <div className="hidden">
         <HealthPanel store={store} />
         <ConfigPanel store={store} />
-        <StatsPanel store={store} />
         <AssistantPanel store={store} />
         <ControlsPanel store={store} {...(controls ? { controls } : {})} />
         <FxPanel store={store} />
         <ManualPanel store={store} />
         <StreamDebugPanel store={store} />
-      </section>
+        <EventLogPanel store={store} />
+      </div>
     </main>
   );
 }
 
 function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    currentExpression: current.currentExpression,
     sleeping: current.sleeping,
     currentReactionEmoji: current.currentReactionEmoji,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
     config: current.config,
   }));
-  const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
 
   return (
     <main className="mini-shell">
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
-        <div
-          id="visual-face"
-          className="visual-face mini-visual-face"
-          data-expression={state.currentExpression}
-          data-render-mode="glitch"
-        />
+        {/* Face div is static — visual-runtime.ts manages all attributes imperatively */}
+        <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
         <div
           className={`mini-reaction ${state.currentReactionEmoji ? 'is-visible' : ''}`}
           aria-hidden={!state.currentReactionEmoji}
@@ -210,148 +289,34 @@ function TopBar({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function VoicePanel({
-  store,
-  controls,
-}: {
-  store: AppStore;
-  controls?: AppShellControls['voice'];
-}): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.voice),
-    micReady: current.micReady,
-    micDenied: current.micDenied,
-    micLevel: current.micLevel,
-    recording: current.recording,
-    listenState: current.listenState,
-    voiceWakeWordEnabled: current.voiceWakeWordEnabled,
-    voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
-    audioPlaying: current.audioPlaying,
-    voiceLastTranscript: current.voiceLastTranscript,
-    vadModel: current.config?.vadModel ?? 'rms',
-  }));
+/**
+ * Absolutely stable face container — never re-renders.
+ * All visual attributes (expression, gaze, render-mode, sleep, blink)
+ * are managed imperatively by visual-runtime.ts and glitch/runtime.ts.
+ * Keeping this out of React's reconciliation tree prevents the canvas
+ * from being disrupted when overlays (transcript, waveform) update.
+ */
+const StableFaceContainer = memo(
+  function StableFaceContainer({ id, className }: { id: string; className: string }): JSX.Element {
+    return (
+      <div
+        id={id}
+        className={className}
+        data-render-mode="glitch"
+      />
+    );
+  },
+  // Never re-render — props don't change and all DOM updates are imperative
+  () => true,
+);
 
-  const pending = !state.recording && (state.listenState === 'Uploading...' || state.listenState === 'Thinking...');
-
-  return (
-    <article className={`${renderPanelCardClass(state.collapsed)} voice-panel-card`}>
-      <PanelHeader store={store} panelKey="voice" title="Voice" meta="" metaId="voice-panel-meta" />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Mic</dt><dd id="voice-mic-value">{state.micReady ? 'ready' : state.micDenied ? 'denied' : 'pending'}</dd></div>
-          <div><dt>State</dt><dd id="voice-state-value">{state.listenState}</dd></div>
-          <div><dt>Wake Word</dt><dd id="voice-wakeword-value">{state.voiceWakeWordEnabled ? 'on' : 'off'}</dd></div>
-          <div><dt>Mode</dt><dd id="voice-mode-value">{state.voiceHandsFreeEnabled ? 'hands-free' : 'push-to-talk'}</dd></div>
-          <div><dt>VAD</dt><dd id="voice-vad-value">{state.vadModel}</dd></div>
-          <div><dt>Playback</dt><dd id="voice-playback-value">{state.audioPlaying ? 'speaking' : 'idle'}</dd></div>
-        </dl>
-        <div className="voice-meter">
-          <span id="voice-meter-bar" className="voice-meter-bar" style={{ transform: `scaleX(${Math.max(0.05, state.micLevel).toFixed(3)})` }} />
-        </div>
-        <div className="face-actions">
-          <div className="face-action-row">
-            <button
-              id="voice-enable-mic"
-              className="button button-secondary"
-              type="button"
-              onClick={async () => {
-                await controls?.enableMic();
-              }}
-            >
-              Enable Mic
-            </button>
-            <button
-              id="voice-record-button"
-              className={`button ${state.recording ? 'button-live' : pending ? 'is-pending' : ''}`}
-              type="button"
-              onPointerDown={async (event) => {
-                event.preventDefault();
-                await controls?.startManualRecording();
-              }}
-              onPointerUp={(event) => {
-                event.preventDefault();
-                controls?.stopManualRecording();
-              }}
-              onPointerLeave={() => {
-                controls?.stopManualRecording();
-              }}
-            >
-              {state.recording ? 'Recording...' : pending ? state.listenState : 'Push to Talk'}
-            </button>
-          </div>
-          <label className="voice-toggle">
-            <input
-              id="voice-handsfree-toggle"
-              type="checkbox"
-              checked={state.voiceHandsFreeEnabled}
-              onChange={(event) => {
-                store.setState((current) => ({
-                  ...current,
-                  voiceHandsFreeEnabled: event.currentTarget.checked,
-                  listenState: current.recording
-                    ? current.listenState
-                    : event.currentTarget.checked
-                      ? 'Hands-free ready'
-                      : (current.micReady ? 'Mic ready' : current.listenState),
-                }));
-              }}
-            />
-            <span>Always listen</span>
-          </label>
-          <label className="voice-toggle">
-            <input
-              id="voice-wakeword-toggle"
-              type="checkbox"
-              checked={state.voiceWakeWordEnabled}
-              onChange={(event) => {
-                store.setState((current) => ({
-                  ...current,
-                  voiceWakeWordEnabled: event.currentTarget.checked,
-                }));
-              }}
-            />
-            <span>Require wake word</span>
-          </label>
-          <label className="voice-toggle">
-            <select
-              id="voice-vad-model"
-              className="select-inline"
-              value={state.vadModel}
-              onChange={(event) => {
-                const vadModel = event.currentTarget.value;
-                void fetch('/config', {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ vadModel }),
-                });
-                store.setState((current) => ({
-                  ...current,
-                  config: current.config ? { ...current.config, vadModel: vadModel as 'rms' | 'ten-vad' } : current.config,
-                }));
-              }}
-            >
-              <option value="rms">RMS (amplitude)</option>
-              <option value="ten-vad">TEN-VAD (neural)</option>
-            </select>
-            <span>VAD model</span>
-          </label>
-          <p id="voice-last-transcript" className="voice-copy">
-            {state.voiceLastTranscript || 'Speak naturally or use push-to-talk to send a voice turn.'}
-          </p>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }): JSX.Element {
+/** Overlays that sit on top of the face (transcript, waveform, donation) */
+function VisualOverlays({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     sleeping: current.sleeping,
-    currentExpression: current.currentExpression,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
     currentDonationSignal: current.currentDonationSignal,
-    config: current.config,
     micLevel: current.micLevel,
     recording: current.recording,
     listenState: current.listenState,
@@ -359,16 +324,9 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     conversationActive: current.conversationActive,
   }));
-  const initialFaceMarkup = useRef(renderFaceVisualMarkup(store.getState())).current;
 
   return (
-    <section className={`visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
-      <div
-        id="visual-face"
-        className="visual-face"
-        data-expression={state.currentExpression}
-        data-render-mode="glitch"
-      />
+    <>
       <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
       <div
         id="visual-live-transcript"
@@ -389,10 +347,23 @@ function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }
       <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
         <img id="visual-donation-qr" alt="Donation QR" />
         <div className="visual-donation-copy">
-          <strong id="visual-donation-handle">{mode === 'mini' ? 'Venmo @TubsBot' : 'Venmo @TubsBot'}</strong>
+          <strong id="visual-donation-handle">Venmo @TubsBot</strong>
           <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
         </div>
       </div>
+    </>
+  );
+}
+
+function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | 'mini' }): JSX.Element {
+  const sleeping = useAppSelector(store, (current) => current.sleeping);
+
+  return (
+    <section className={`visual-shell ${sleeping ? 'is-sleeping' : ''}`}>
+      {/* Face div is completely isolated — no re-renders from overlay state changes */}
+      <StableFaceContainer id="visual-face" className="visual-face" />
+      {/* Overlays re-render independently without touching the face DOM */}
+      <VisualOverlays store={store} mode={mode} />
     </section>
   );
 }
@@ -515,169 +486,6 @@ function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function FacePanel({
-  store,
-  controls,
-}: {
-  store: AppStore;
-  controls?: AppShellControls['face'];
-}): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.face),
-    faceWorkerReady: current.faceWorkerReady,
-    faceWorkerBusy: current.faceWorkerBusy,
-    faceCameraActive: current.faceCameraActive,
-    faceStatus: current.faceStatus,
-    faceLastDetectedCount: current.faceLastDetectedCount,
-    faceLastInferenceMs: current.faceLastInferenceMs,
-    faceLastEmbeddingsExtracted: current.faceLastEmbeddingsExtracted,
-    faceLastEmbeddingsReused: current.faceLastEmbeddingsReused,
-    faceLibraryEmbeddings: current.faceLibraryEmbeddings,
-    faceLibraryPeople: current.faceLibraryPeople,
-    faceDraftName: current.faceDraftName,
-    faceLastFaces: current.faceLastFaces,
-  }));
-  const uploadInputRef = useRef<HTMLInputElement | null>(null);
-
-  return (
-    <article id="face-panel-card" className={`${renderPanelCardClass(state.collapsed)} face-panel-card`}>
-      <PanelHeader store={store} panelKey="face" title="Face Worker" meta="" />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <div className={`camera-shell ${state.faceCameraActive ? '' : 'is-inactive-shell'}`}>
-          <div className="camera-stage">
-            <video id="face-camera-video" className={`camera-video ${state.faceCameraActive ? '' : 'is-hidden'}`} autoPlay muted playsInline />
-            <canvas id="face-camera-overlay" className={`camera-overlay ${state.faceCameraActive ? '' : 'is-hidden'}`} />
-            <div className={`camera-placeholder ${state.faceCameraActive ? 'is-hidden' : ''}`}>Camera inactive</div>
-          </div>
-        </div>
-        <div className="face-panel-secondary">
-          <dl className="kv">
-            <div><dt>Status</dt><dd id="face-status-value">{state.faceStatus}</dd></div>
-            <div><dt>Inference</dt><dd id="face-inference-value">{state.faceLastInferenceMs == null ? 'n/a' : `${state.faceLastInferenceMs} ms`}</dd></div>
-            <div><dt>Embeddings</dt><dd id="face-embeddings-value">{state.faceLastEmbeddingsExtracted} new / {state.faceLastEmbeddingsReused} cached</dd></div>
-            <div><dt>Library</dt><dd id="face-library-value">{state.faceLibraryEmbeddings} embeddings / {state.faceLibraryPeople} people</dd></div>
-          </dl>
-          <div className="face-actions">
-            <input
-              ref={uploadInputRef}
-              id="face-upload-input"
-              className="sr-only"
-              type="file"
-              accept="image/png,image/jpeg,image/jpg"
-              onChange={async (event) => {
-                const file = event.currentTarget.files?.[0];
-                event.currentTarget.value = '';
-                if (!file) {
-                  return;
-                }
-                await controls?.detectFile(file);
-              }}
-            />
-            <div className="face-action-row">
-              <button
-                id="face-camera-toggle"
-                className={`button ${state.faceCameraActive ? 'is-active' : ''}`}
-                type="button"
-                onClick={async () => {
-                  await controls?.toggleCamera();
-                }}
-              >
-                {state.faceCameraActive ? 'Stop Camera' : 'Start Camera'}
-              </button>
-              <button
-                id="face-upload-trigger"
-                className="button"
-                type="button"
-                disabled={state.faceWorkerBusy}
-                onClick={() => {
-                  uploadInputRef.current?.click();
-                }}
-              >
-                {state.faceWorkerBusy ? 'Processing…' : 'Detect From Image'}
-              </button>
-              <button
-                id="face-refresh-trigger"
-                className="button button-secondary"
-                type="button"
-                onClick={async () => {
-                  await controls?.refreshLibrary();
-                }}
-              >
-                Refresh Library
-              </button>
-            </div>
-            <div className="face-action-row">
-              <input
-                id="face-enroll-name"
-                className="face-name-input"
-                type="text"
-                placeholder="Name this face"
-                value={state.faceDraftName}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  store.setState((current) => ({
-                    ...current,
-                    faceDraftName: value,
-                  }));
-                }}
-              />
-              <button
-                id="face-save-trigger"
-                className="button"
-                type="button"
-                disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
-                onClick={async () => {
-                  await controls?.saveDetectedFace();
-                }}
-              >
-                Save First Face
-              </button>
-            </div>
-          </div>
-          <ul id="face-results-list" className="face-list">
-            {state.faceLastFaces.length === 0
-              ? <li className="face-item face-item-empty">No detections yet.</li>
-              : state.faceLastFaces.map((face, index) => (
-                <li key={`${face.name ?? face.match?.name ?? 'face'}-${index}`} className="face-item">
-                  <div className="face-item-copy">
-                    <strong>{face.name ?? face.match?.name ?? `Face ${index + 1}`}</strong>
-                    <span>{renderFaceMeta(face)}</span>
-                  </div>
-                  <span>{Math.round((face.match?.score ?? face.confidence ?? face.score) * 100)}%</span>
-                </li>
-              ))}
-          </ul>
-        </div>
-      </div>
-    </article>
-  );
-}
-
-function ConnectionPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.connection),
-    connectionLabel: current.connectionLabel,
-    connected: current.connected,
-    serverUrl: current.serverUrl,
-    lastMessageType: current.lastMessageType,
-    lastPingMs: current.lastPingMs,
-  }));
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="connection" title="Connection" meta={state.connectionLabel} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <p className={`metric ${state.connected ? 'is-good' : 'is-bad'}`}>{state.connectionLabel}</p>
-        <dl className="kv">
-          <div><dt>Server</dt><dd>{state.serverUrl}</dd></div>
-          <div><dt>Last WS</dt><dd>{state.lastMessageType}</dd></div>
-          <div><dt>Ping</dt><dd>{state.lastPingMs == null ? 'n/a' : `${state.lastPingMs} ms`}</dd></div>
-        </dl>
-      </div>
-    </article>
-  );
-}
-
 function HealthPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.health),
@@ -718,28 +526,6 @@ function ConfigPanel({ store }: { store: AppStore }): JSX.Element {
           <div><dt>Quality</dt><dd>{renderQuality}</dd></div>
           <div><dt>Muted</dt><dd>{state.config?.muted ? 'yes' : 'no'}</dd></div>
           <div><dt>Ambient</dt><dd>{state.ambientAudioEnabled ? 'on' : 'off'}</dd></div>
-        </dl>
-      </div>
-    </article>
-  );
-}
-
-function StatsPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.stats),
-    stats: current.stats,
-    config: current.config,
-  }));
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="stats" title="Stats" meta={`${state.stats?.tokensOut ?? 0} out`} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Tokens In</dt><dd>{state.stats?.tokensIn ?? 0}</dd></div>
-          <div><dt>Tokens Out</dt><dd>{state.stats?.tokensOut ?? 0}</dd></div>
-          <div><dt>Cost</dt><dd>{formatCurrency(state.stats?.costUsd)}</dd></div>
-          <div><dt>Model</dt><dd>{state.stats?.model ?? state.config?.model ?? 'n/a'}</dd></div>
         </dl>
       </div>
     </article>
@@ -1344,46 +1130,6 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function ChatPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.chat),
-    chatPanelWidth: current.chatPanelWidth,
-    chatEntries: current.chatEntries,
-    chatVerbosity: current.chatVerbosity,
-  }));
-
-  const entries = state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type));
-
-  return (
-    <section
-      id="chat-panel-card"
-      className={`${renderPanelCardClass(state.collapsed)} logs-card flex-column-card`}
-      style={state.chatPanelWidth ? { width: state.chatPanelWidth, maxWidth: '100%' } : undefined}
-    >
-      <PanelHeader store={store} panelKey="chat" title="Chat" meta={`${state.chatEntries.length} entries`} metaId="chat-panel-meta" />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <ul id="chat-log-list" className="logs chat-log-list">
-          {entries.length === 0
-            ? <li className="log"><span>No chat yet.</span></li>
-            : entries.map((entry) => {
-              const actor = resolveChatActor(entry);
-              return (
-                <li key={entry.id} className={`chat-entry chat-${entry.type} chat-actor-${actor} ${entry.draft ? 'is-draft' : ''}`}>
-                  <div className="chat-entry-meta">
-                    <strong className="chat-speaker">{renderChatPrefix(entry.type, entry.actor)}</strong>
-                    <span className="chat-time">{formatTimestamp(entry.ts)}</span>
-                  </div>
-                  <span className="chat-text">{entry.text}</span>
-                </li>
-              );
-            })}
-        </ul>
-        <div id="chat-panel-resize" className="panel-resize-handle" aria-hidden="true" />
-      </div>
-    </section>
-  );
-}
-
 function StreamDebugPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.streamDebug),
@@ -1501,38 +1247,6 @@ function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function PanelHeader(props: {
-  store: AppStore;
-  panelKey: PanelKey;
-  title: string;
-  meta: string;
-  metaId?: string;
-}): JSX.Element {
-  const collapsed = useAppSelector(props.store, (state) => Boolean(state.collapsedPanels[props.panelKey]));
-  return (
-    <button
-      className="panel-header"
-      data-panel-toggle={props.panelKey}
-      type="button"
-      onClick={() => {
-        props.store.setState((current) => ({
-          ...current,
-          collapsedPanels: {
-            ...current.collapsedPanels,
-            [props.panelKey]: !current.collapsedPanels[props.panelKey],
-          },
-        }));
-      }}
-    >
-      <span className="panel-title-wrap">
-        <h2>{props.title}</h2>
-        {props.meta ? <span className="panel-meta" {...(props.metaId ? { id: props.metaId } : {})}>{props.meta}</span> : null}
-      </span>
-      <span className="panel-toggle-copy">{collapsed ? 'Expand' : 'Collapse'}</span>
-    </button>
-  );
-}
-
 function FxRange(props: {
   label: string;
   dataKey: string;
@@ -1596,21 +1310,6 @@ function renderPanelCardClass(collapsed: boolean): string {
   return `card panel-card ${collapsed ? 'is-collapsed' : ''}`;
 }
 
-function formatCurrency(value: number | undefined): string {
-  if (typeof value !== 'number') return '$0.0000';
-  const precision = value >= 1 ? 2 : 4;
-  return `$${value.toFixed(precision)}`;
-}
-
-function formatUptime(health: AppState['health']): string {
-  if (!health?.uptime) return 'n/a';
-  return `${health.uptime}s`;
-}
-
-function formatTimestamp(ts: number): string {
-  return new Date(ts).toLocaleTimeString();
-}
-
 function formatFaceSummary(state: Pick<AppState, 'faceWorkerBusy' | 'faceWorkerReady' | 'faceLastDetectedCount'>): string {
   if (state.faceWorkerBusy) return 'Running';
   if (!state.faceWorkerReady) return 'Loading worker';
@@ -1631,36 +1330,6 @@ function formatDonationFromSignal(signal: AppState['currentDonationSignal']): st
   }
   const amount = signal.amount ? `${signal.amount}${signal.currency ? ` ${signal.currency}` : ''}` : null;
   return [signal.certainty, signal.source, amount, signal.donor].filter(Boolean).join(' · ');
-}
-
-function formatAwakeElapsed(totalSeconds: number): string {
-  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-  const seconds = String(totalSeconds % 60).padStart(2, '0');
-  return `${hours}:${minutes}:${seconds}`;
-}
-
-function renderChatPrefix(type: AppState['chatEntries'][number]['type'], actor?: AppState['chatEntries'][number]['actor']): string {
-  if (type === 'in') return 'User';
-  if (actor === 'small') return 'Mini';
-  if (actor === 'main') return 'Tubs';
-  if (type === 'sys' || actor === 'system') return 'System';
-  return 'Tubs';
-}
-
-function resolveChatActor(entry: AppState['chatEntries'][number]): 'user' | 'main' | 'small' | 'system' {
-  if (entry.actor === 'main' || entry.actor === 'small' || entry.actor === 'system' || entry.actor === 'user') {
-    return entry.actor;
-  }
-  if (entry.type === 'in') return 'user';
-  if (entry.type === 'sys') return 'system';
-  return 'main';
-}
-
-function isChatEntryVisible(verbosity: AppState['chatVerbosity'], type: AppState['chatEntries'][number]['type']): boolean {
-  if (verbosity === 'chat') return type !== 'sys';
-  if (verbosity === 'minimal') return type === 'in';
-  return true;
 }
 
 function renderFaceMeta(face: AppState['faceLastFaces'][number]): string {

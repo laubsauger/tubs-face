@@ -115,6 +115,7 @@ export interface AppState {
   controlSpeakText: string;
   controlDonationAmount: string;
   uiHidden: boolean;
+  debugOverlayActive?: boolean;
   fullscreenActive: boolean;
   collapsedPanels: Partial<Record<PanelKey, boolean>>;
   chatPanelWidth: number | null;

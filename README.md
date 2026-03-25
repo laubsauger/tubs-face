@@ -13,6 +13,13 @@ npm start          # Production: compiled server (port 3000)
 
 Open `http://localhost:5173` (dev) or `http://localhost:3000` (production).
 
+### Windows Support
+
+On Windows, `npm install` gracefully defers to `scripts/setup-python.ps1` to establish the `.venv` and install backend packages. 
+- You still need **Python 3.10+** (add to PATH).
+- You still need **C++ Build Tools** installed if you haven't (for some ML dependencies to compile).
+- If you face execution policy errors running the `.ps1` auto-setup script, you can run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` in an admin PowerShell, or manually create the venv: `python -m venv venv` and `.\venv\Scripts\Activate.ps1`, then `pip install -r requirements.txt`.
+
 ### Processing Modes
 
 - `PROCESSING_MODE` is selected at server startup and exposed by `/health` + `/config`.
