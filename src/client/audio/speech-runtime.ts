@@ -27,6 +27,7 @@ const REMOTE_WAIT_MAX_MS = 45_000;
 const SPEECH_SAFETY_MAX_MS = 60_000;
 const STREAMING_GAP_GRACE_MS = 280;
 const STREAMING_SUBTITLE_HOLD_SEC = 12;
+const STREAMING_FINALIZE_MAX_ATTEMPTS = 40; // ~40 * 280ms ≈ 11s hard limit
 
 export interface SpeechRuntime {
   init(): void;
@@ -47,6 +48,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let streamingNextStartTime = 0;
   let streamingActiveNodes = 0;
   let streamingFinalizeTimer: number | null = null;
+  let streamingFinalizeAttempts = 0;
   let streamingSessionActive = false;
   let streamingSessionTurnId: string | null = null;
   let streamingSpeakEndReceived = false;
@@ -927,9 +929,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     tryFinalizeStreaming(turnId ?? null);
   }
 
-  let streamingFinalizeAttempts = 0;
-  const FINALIZE_MAX_ATTEMPTS = 40; // ~40 * 280ms ≈ 11s hard limit
-
   function tryFinalizeStreaming(turnId: string | null): void {
     clearStreamingFinalizeTimer();
     streamingFinalizeTimer = window.setTimeout(() => {
@@ -937,7 +936,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       streamingFinalizeAttempts += 1;
 
       // Hard cap: force-end after max attempts regardless of pending state
-      if (streamingFinalizeAttempts >= FINALIZE_MAX_ATTEMPTS) {
+      if (streamingFinalizeAttempts >= STREAMING_FINALIZE_MAX_ATTEMPTS) {
         const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
         console.warn(`[Stream] forcing session end after ${streamingFinalizeAttempts} attempts | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes}`);
         endStreamingSession(turnId);

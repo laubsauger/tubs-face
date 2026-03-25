@@ -153,8 +153,12 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         broadcastInterrupt(interruptAssistantTurns(), 'system');
         sessionStats.messagesIn += 1;
         sessionStats.lastActivity = Date.now();
-        const names = message.faces && message.faces.length > 0 ? message.faces.join(' and ') : 'Someone';
-        const prompt = `${names} is nearby but has not spoken. Break the ice with something unexpected.`;
+        const names = Array.isArray(message.faces)
+          ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
+          : [];
+        const prompt = names.length > 0
+          ? `Known person nearby: ${names.join(' and ')}. Greet them by name and make it impossible not to reply.`
+          : 'Someone is nearby but has not spoken. Break the ice with something unexpected.';
         broadcast({ type: 'thinking' });
         void runProactiveTurn(prompt, broadcast).catch(console.error);
       }

@@ -261,9 +261,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.setState((current) => {
         const finalizedText = (message.fullText ?? message.text ?? current.currentSpeechText ?? '').trim();
         const hasOutDraft = current.chatEntries.some((entry) => entry.type === 'out' && entry.draft);
+        const alreadyAppended = hasRecentOutgoingAssistantEntry(current, finalizedText, 'main');
         const nextState = hasOutDraft
           ? commitChatDraft(current, 'out')
-          : ((!dualHeadActive && finalizedText)
+          : ((!dualHeadActive && finalizedText && !alreadyAppended)
               ? appendChatEntry(current, {
                 type: 'out',
                 actor: 'main',
@@ -605,4 +606,35 @@ function compactDonationSignal(message: Extract<WsServerMessage, { type: 'donati
     ...(message.reference ? { reference: message.reference } : {}),
     ...(message.ts ? { ts: message.ts } : {}),
   };
+}
+
+function hasRecentOutgoingAssistantEntry(
+  state: AppState,
+  text: string,
+  actor: 'main' | 'small',
+): boolean {
+  const normalized = normalizeChatComparisonText(text);
+  if (!normalized) {
+    return false;
+  }
+
+  for (let index = state.chatEntries.length - 1; index >= 0; index -= 1) {
+    const entry = state.chatEntries[index];
+    if (!entry || entry.type !== 'out' || entry.actor !== actor || entry.draft) {
+      continue;
+    }
+    if ((Date.now() - entry.ts) > 15_000) {
+      break;
+    }
+    return normalizeChatComparisonText(entry.text) === normalized;
+  }
+
+  return false;
+}
+
+function normalizeChatComparisonText(text: string): string {
+  return String(text ?? '')
+    .replace(/^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*\s*/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

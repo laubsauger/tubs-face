@@ -261,7 +261,7 @@ async function maybeRepairPersonaDrift(args: {
     buildAssistantSystemInstruction(getVisualContext()),
     'STRICT STYLE OVERRIDE:',
     '- Rewrite the draft in Tubs voice: dry, chaotic, sharp, entirely natural.',
-    '- Absolute maximum 1-2 punchy sentences. BE EXTREMELY BRIEF.',
+    '- Absolute maximum 1-2 punchy sentences. One short sentence is preferred. BE EXTREMELY BRIEF.',
     '- Never use these phrases: "certainly", "however", "it\'s important to remember", "do you have any other questions", "any other questions or topics".',
     '- End with a hook or a judgment when it fits. A question is optional.',
     '- Return only the rewritten reply text. No quotes. No introductory text.',
@@ -276,7 +276,7 @@ async function maybeRepairPersonaDrift(args: {
     model: runtimeConfig.llmModel,
     systemInstruction: strictSystemInstruction,
     contents: [{ role: 'user', parts: [{ text: rewritePrompt }] }],
-    maxOutputTokens: Math.min(220, Number(args.maxOutputTokens || runtimeConfig.llmMaxOutputTokens || 256)),
+    maxOutputTokens: Math.min(120, Number(args.maxOutputTokens || runtimeConfig.llmMaxOutputTokens || 256)),
     temperature: 0.95,
     timeoutMs: 15_000,
   });
@@ -350,7 +350,7 @@ async function maybeRepairDualHeadScript(args: {
     model: args.model,
     systemInstruction: repairSystemInstruction,
     contents: [{ role: 'user', parts: [{ text: repairPrompt }] }],
-    maxOutputTokens: Math.max(220, Math.min(runtimeConfig.llmMaxOutputTokens, 420)),
+    maxOutputTokens: Math.min(180, Number(runtimeConfig.llmMaxOutputTokens || 256)),
     temperature: 0,
     timeoutMs: 12_000,
     responseMimeType: 'application/json',
@@ -385,12 +385,17 @@ export function isPersonaDrift(text: string): string | null {
     const match = normalized.match(PERSONA_DRIFT_PHRASE_RE)?.[1] || 'forbidden phrase';
     return `forbidden phrase: "${match}"`;
   }
-  if (PERSONA_DRIFT_FORMAL_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
-    const match = normalized.match(PERSONA_DRIFT_FORMAL_RE)?.[1] || 'formal word';
-    return `formal word: "${match}"`;
+  const formalMatches = Array.from(normalized.matchAll(new RegExp(PERSONA_DRIFT_FORMAL_RE.source, 'gi')));
+  if (formalMatches.length >= 2 && !CONTRACTION_RE.test(normalized)) {
+    const match = formalMatches[0]?.[1] || formalMatches[0]?.[0] || 'formal wording';
+    return `multiple formal cues: "${match}"`;
   }
-  if (normalized.length > 90 && !PERSONA_MARKER_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
-    return 'too long and lacking persona markers';
+  const sentenceCount = (normalized.match(/[^.!?]+[.!?]?/g) ?? [])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .length;
+  if (normalized.length > 140 && sentenceCount >= 3 && !PERSONA_MARKER_RE.test(normalized) && !CONTRACTION_RE.test(normalized)) {
+    return 'overlong and generic';
   }
   return null;
 }

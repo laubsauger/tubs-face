@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppStore } from '../../state/app-state.js';
+import type { DetectedFace, EnrolledFace, RecognitionMatch } from '../../../shared/contracts/faces.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import type { AppShellControls } from '../app-shell.js';
@@ -54,6 +55,7 @@ export function FacePanel({
   const cameraAspectRatio = state.faceFrameWidth && state.faceFrameHeight
     ? `${state.faceFrameWidth} / ${state.faceFrameHeight}`
     : '4 / 3';
+  const groupedFaces = groupLibraryFaces(state.faceLibraryFaces);
 
   const libraryDialog = libraryManagerOpen && typeof document !== 'undefined'
     ? createPortal(
@@ -74,7 +76,7 @@ export function FacePanel({
               </div>
               <div className="face-library-dialog-actions">
                 <button
-                  className="button button-secondary"
+                  className="button button-secondary button-compact"
                   type="button"
                   onClick={async () => {
                     await controls?.refreshLibrary();
@@ -83,7 +85,7 @@ export function FacePanel({
                   Reload
                 </button>
                 <button
-                  className="button button-secondary"
+                  className="button button-secondary button-compact"
                   type="button"
                   onClick={() => {
                     setLibraryManagerOpen(false);
@@ -94,97 +96,131 @@ export function FacePanel({
               </div>
             </div>
             <div className="face-library-dialog-body">
-              <ul className="face-library-grid">
-                {state.faceLibraryFaces.length === 0
+              <ul className="face-library-groups">
+                {groupedFaces.length === 0
                   ? <li className="face-item face-item-empty">No enrolled faces yet.</li>
-                  : state.faceLibraryFaces.map((face) => {
-                    const editing = editingFaceId === face.id;
+                  : groupedFaces.map((group) => {
+                    const activeEditFace = group.faces.find((face) => face.id === editingFaceId) ?? null;
                     return (
-                      <li key={face.id} className="face-library-card">
-                        <div className="face-library-preview">
-                          {face.thumbnail ? (
-                            <img
-                              className="face-library-preview-image"
-                              src={face.thumbnail}
-                              alt={`${face.name} preview`}
-                            />
-                          ) : (
-                            <div className="face-library-preview-fallback" aria-hidden="true">
-                              {faceInitials(face.name)}
-                            </div>
-                          )}
-                        </div>
-                        <div className="face-library-item-main">
-                          {editing ? (
-                            <div className="face-inline-form">
-                              <input
-                                className="face-name-input"
-                                type="text"
-                                value={editingName}
-                                onChange={(event) => {
-                                  setEditingName(event.currentTarget.value);
-                                }}
-                              />
-                              <button
-                                className="button"
-                                type="button"
-                                onClick={async () => {
-                                  await controls?.renameFace(face.id, editingName);
+                      <li key={group.key} className="face-library-group-card">
+                        <div className="face-library-group-header">
+                          <div className="face-item-copy">
+                            <strong>{group.name}</strong>
+                            <span>{group.faces.length} embeddings</span>
+                          </div>
+                          <div className="face-library-actions">
+                            <button
+                              className="button button-danger button-compact"
+                              type="button"
+                              onClick={async () => {
+                                if (!window.confirm(`Delete all embeddings for "${group.name}"?`)) {
+                                  return;
+                                }
+                                for (const face of group.faces) {
+                                  await controls?.deleteFace(face.id);
+                                }
+                                if (activeEditFace) {
                                   setEditingFaceId(null);
                                   setEditingName('');
-                                }}
-                              >
-                                Save
-                              </button>
-                              <button
-                                className="button button-secondary"
-                                type="button"
-                                onClick={() => {
-                                  setEditingFaceId(null);
-                                  setEditingName('');
-                                }}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <>
-                              <div className="face-item-copy">
-                                <strong>{face.name}</strong>
-                                <span>{face.createdAt ? `Saved ${formatFaceTimestamp(face.createdAt)}` : 'Saved face'}</span>
-                                <span className="face-item-meta">{face.id}</span>
-                              </div>
-                              <div className="face-library-actions">
-                                <button
-                                  className="button button-secondary"
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingFaceId(face.id);
-                                    setEditingName(face.name);
-                                  }}
-                                >
-                                  Rename
-                                </button>
-                                <button
-                                  className="button button-danger"
-                                  type="button"
-                                  onClick={async () => {
-                                    if (!window.confirm(`Delete face "${face.name}"?`)) {
-                                      return;
-                                    }
-                                    await controls?.deleteFace(face.id);
-                                    if (editingFaceId === face.id) {
-                                      setEditingFaceId(null);
-                                      setEditingName('');
-                                    }
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            </>
-                          )}
+                                }
+                              }}
+                            >
+                              Delete All
+                            </button>
+                          </div>
                         </div>
+                        <ul className="face-library-embedding-list">
+                          {group.faces.map((face) => {
+                            const editing = editingFaceId === face.id;
+                            return (
+                              <li key={face.id} className="face-library-embedding-row">
+                                <div className="face-library-preview face-library-preview-small">
+                                  {face.thumbnail ? (
+                                    <img
+                                      className="face-library-preview-image"
+                                      src={face.thumbnail}
+                                      alt={`${face.name} preview`}
+                                    />
+                                  ) : (
+                                    <div className="face-library-preview-fallback" aria-hidden="true">
+                                      {faceInitials(face.name)}
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="face-library-item-main">
+                                  {editing ? (
+                                    <div className="face-inline-form">
+                                      <input
+                                        className="face-name-input"
+                                        type="text"
+                                        value={editingName}
+                                        onChange={(event) => {
+                                          setEditingName(event.currentTarget.value);
+                                        }}
+                                      />
+                                      <button
+                                        className="button button-compact"
+                                        type="button"
+                                        onClick={async () => {
+                                          await controls?.renameFace(face.id, editingName);
+                                          setEditingFaceId(null);
+                                          setEditingName('');
+                                        }}
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        className="button button-secondary button-compact"
+                                        type="button"
+                                        onClick={() => {
+                                          setEditingFaceId(null);
+                                          setEditingName('');
+                                        }}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <>
+                                      <div className="face-item-copy face-library-item-copy">
+                                        <span>{face.createdAt ? `Saved ${formatFaceTimestamp(face.createdAt)}` : 'Saved face'}</span>
+                                        <span className="face-item-meta" title={face.id}>{formatCompactFaceId(face.id)}</span>
+                                      </div>
+                                      <div className="face-library-actions">
+                                        <button
+                                          className="button button-secondary button-compact"
+                                          type="button"
+                                          onClick={() => {
+                                            setEditingFaceId(face.id);
+                                            setEditingName(face.name);
+                                          }}
+                                        >
+                                          Edit
+                                        </button>
+                                        <button
+                                          className="button button-danger button-compact"
+                                          type="button"
+                                          onClick={async () => {
+                                            if (!window.confirm(`Delete this embedding for "${face.name}"?`)) {
+                                              return;
+                                            }
+                                            await controls?.deleteFace(face.id);
+                                            if (editingFaceId === face.id) {
+                                              setEditingFaceId(null);
+                                              setEditingName('');
+                                            }
+                                          }}
+                                        >
+                                          Delete
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </li>
+                            );
+                          })}
+                        </ul>
                       </li>
                     );
                   })}
@@ -235,56 +271,63 @@ export function FacePanel({
 
           <div className="face-actions face-actions-hud">
             <div className="face-panel-toolbar">
-              <button
-                id="face-camera-toggle"
-                className={`button button-compact ${state.faceCameraActive ? 'is-active' : ''}`}
-                type="button"
-                onClick={async () => {
-                  await controls?.toggleCamera();
-                }}
-              >
-                {state.faceCameraActive ? 'Stop Cam' : 'Start Cam'}
-              </button>
-              <button
-                id="face-refresh-trigger"
-                className="button button-secondary button-compact"
-                type="button"
-                onClick={async () => {
-                  await controls?.refreshLibrary();
-                }}
-              >
-                Refresh
-              </button>
-              <button
-                className="button button-compact"
-                type="button"
-                disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
-                onClick={async () => {
-                  await controls?.saveDetectedFace();
-                }}
-              >
-                Onboard
-              </button>
-              <button
-                className="button button-secondary button-compact"
-                type="button"
-                onClick={() => {
-                  setLibraryManagerOpen(true);
-                }}
-              >
-                Library
-              </button>
-              <button
-                id="face-upload-trigger"
-                className="button button-secondary button-compact"
-                type="button"
-                disabled={state.faceWorkerBusy}
-                onClick={() => {
-                  uploadInputRef.current?.click();
-                }}
-              >
-                {state.faceWorkerBusy ? 'Processing...' : 'Detect'}
-              </button>
+              <div className="face-panel-toolbar-primary">
+                <button
+                  id="face-camera-toggle"
+                  className={`button button-compact ${state.faceCameraActive ? 'is-active' : ''}`}
+                  type="button"
+                  onClick={async () => {
+                    await controls?.toggleCamera();
+                  }}
+                >
+                  {state.faceCameraActive ? 'Stop Cam' : 'Start Cam'}
+                </button>
+                <button
+                  className="button button-compact"
+                  type="button"
+                  disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
+                  onClick={async () => {
+                    await controls?.saveDetectedFace();
+                  }}
+                >
+                  Onboard
+                </button>
+              </div>
+              <div className="face-panel-toolbar-utility">
+                <button
+                  id="face-refresh-trigger"
+                  className="button button-secondary button-compact"
+                  type="button"
+                  title="Reload face library"
+                  onClick={async () => {
+                    await controls?.refreshLibrary();
+                  }}
+                >
+                  Sync
+                </button>
+                <button
+                  className="button button-secondary button-compact"
+                  type="button"
+                  title="Open face library manager"
+                  onClick={() => {
+                    setLibraryManagerOpen(true);
+                  }}
+                >
+                  Library
+                </button>
+                <button
+                  id="face-upload-trigger"
+                  className="button button-secondary button-compact"
+                  type="button"
+                  title="Detect faces from an uploaded image"
+                  disabled={state.faceWorkerBusy}
+                  onClick={() => {
+                    uploadInputRef.current?.click();
+                  }}
+                >
+                  {state.faceWorkerBusy ? 'Working' : 'Upload'}
+                </button>
+              </div>
             </div>
 
             <div className="face-action-row">
@@ -320,22 +363,38 @@ export function FacePanel({
             {state.faceLastFaces.length === 0
               ? <p className="face-empty-copy">No detections yet.</p>
               : (
-                <div id="face-results-list" className="face-match-strip">
-                  {state.faceLastFaces.flatMap((face, index) => {
-                    const keyBase = `${face.name ?? face.match?.name ?? 'face'}-${index}`;
-                    if (face.matches && face.matches.length > 0) {
-                      return face.matches.map((match) => (
-                        <span key={`${keyBase}-${match.id ?? match.name ?? 'match'}-${match.score.toFixed(4)}`} className={`face-match-chip ${match.id === face.match?.id ? 'is-primary' : ''}`}>
-                          {match.name ?? `Face ${index + 1}`} {Math.round(match.score * 100)}%
+                <div id="face-results-list" className="face-detection-list">
+                  {state.faceLastFaces.map((face, index) => (
+                    <article key={`${face.name ?? face.match?.name ?? 'face'}-${index}`} className="face-detection-card">
+                      <div className="face-detection-header">
+                        <span className="face-detection-index">Face #{index + 1}</span>
+                        <span className="face-detection-confidence">
+                          Det {formatPercent(face.confidence ?? face.score)}
                         </span>
-                      ));
-                    }
-                    return (
-                      <span key={keyBase} className="face-match-chip">
-                        {face.name ?? face.match?.name ?? `Face ${index + 1}`} {Math.round((face.match?.score ?? face.confidence ?? face.score) * 100)}%
-                      </span>
-                    );
-                  })}
+                      </div>
+                      <div className="face-detection-identity">
+                        <strong>{resolvePrimaryFaceLabel(face, index)}</strong>
+                        <span>
+                          {face.match
+                            ? `Likely ${face.match.name ?? 'match'} at ${formatPercent(face.match.score)}`
+                            : 'No confident library match'}
+                        </span>
+                      </div>
+                      <div className="face-detection-candidates">
+                        {face.matches && face.matches.length > 0
+                          ? face.matches.map((match) => (
+                            <div
+                              key={`${match.id ?? match.name ?? 'match'}-${match.score.toFixed(4)}`}
+                              className={`face-candidate-row ${match.id === face.match?.id ? 'is-primary' : ''}`}
+                            >
+                              <span className="face-candidate-name">{match.name ?? 'Unknown'}</span>
+                              <span className="face-candidate-score">{formatPercent(match.score)}</span>
+                            </div>
+                          ))
+                          : <div className="face-candidate-empty">No library candidates yet.</div>}
+                      </div>
+                    </article>
+                  ))}
                 </div>
               )}
           </section>
@@ -370,10 +429,58 @@ function formatFaceTimestamp(ts: number): string {
   }
 }
 
+function formatCompactFaceId(id: string): string {
+  const value = id.trim();
+  if (value.length <= 12) {
+    return value;
+  }
+  return `${value.slice(0, 4)}…${value.slice(-4)}`;
+}
+
 function faceInitials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
   if (parts.length === 0) {
     return '??';
   }
   return parts.map((part) => part[0]?.toUpperCase() ?? '').join('').slice(0, 2);
+}
+
+function normalizeFacePersonKey(name: string | null | undefined): string {
+  return String(name ?? '').trim().toLowerCase();
+}
+
+function groupLibraryFaces(faces: EnrolledFace[]): Array<{ key: string; name: string; faces: EnrolledFace[] }> {
+  const groups = new Map<string, { key: string; name: string; faces: EnrolledFace[] }>();
+  for (const face of faces) {
+    const key = normalizeFacePersonKey(face.name) || face.id;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.faces.push(face);
+      continue;
+    }
+    groups.set(key, {
+      key,
+      name: face.name.trim() || 'Unnamed',
+      faces: [face],
+    });
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      faces: [...group.faces].sort((left, right) => (right.createdAt ?? 0) - (left.createdAt ?? 0)),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function resolvePrimaryFaceLabel(face: DetectedFace, index: number): string {
+  return face.match?.name ?? face.name ?? face.matches?.[0]?.name ?? `Unknown Face ${index + 1}`;
+}
+
+function formatPercent(score: number | null | undefined): string {
+  const numeric = Number(score);
+  if (!Number.isFinite(numeric)) {
+    return 'n/a';
+  }
+  return `${Math.round(numeric * 100)}%`;
 }

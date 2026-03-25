@@ -34,6 +34,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let stableFacesAt = 0;
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
+  let lastAppearanceSignature = '';
 
   const worker = createFaceWorkerClient({
     onReady: () => {
@@ -54,8 +55,17 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       }));
     },
     onFaces: (packet) => {
-      const isNewAppearance = stableFaces.length === 0 && packet.faces.length > 0;
+      const wasEmpty = stableFaces.length === 0;
       const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
+      const recognizedNames = [...new Set(
+        faces
+          .map((face) => face.match?.name ?? face.name ?? null)
+          .filter((name): name is string => Boolean(name?.trim()))
+          .map((name) => name.trim()),
+      )];
+      const appearanceSignature = faces.length === 0
+        ? ''
+        : `${faces.length}:${recognizedNames.slice().sort((left, right) => left.localeCompare(right)).join('|')}`;
       store.setState((current) => ({
         ...current,
         faceWorkerBusy: false,
@@ -71,13 +81,26 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       lastInferenceMs = Math.max(250, packet.inferenceMs || lastInferenceMs);
       drawOverlay(faces);
 
-      if (isNewAppearance && sender && captureCanvas.width > 0) {
+      const shouldSendAppearance = Boolean(
+        sender &&
+        captureCanvas.width > 0 &&
+        faces.length > 0 &&
+        (
+          wasEmpty ||
+          appearanceSignature !== lastAppearanceSignature
+        ),
+      );
+
+      if (shouldSendAppearance && sender) {
         sender({
           type: 'appearance_frame',
           frame: captureCanvas.toDataURL('image/jpeg', 0.6),
-          faces: faces.map((f) => f.name || f.match?.name).filter((n): n is string => Boolean(n)),
+          faces: recognizedNames,
           count: faces.length,
         });
+        lastAppearanceSignature = appearanceSignature;
+      } else if (faces.length === 0) {
+        lastAppearanceSignature = '';
       }
 
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
@@ -198,6 +221,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stableFaces = [];
     stableFacesAt = 0;
     emptyFrameCount = 0;
+    lastAppearanceSignature = '';
     appStore.setState((current) => ({
       ...current,
       faceCameraActive: false,
@@ -312,7 +336,11 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   async function refreshFaceLibraryState(appStore: AppStore): Promise<void> {
     try {
       const faces = await loadFaceLibrary();
-      const names = new Set(faces.map((face) => face.name).filter(Boolean));
+      const names = new Set(
+        faces
+          .map((face) => normalizeFacePersonKey(face.name))
+          .filter(Boolean),
+      );
       faceLibrary = faces;
       appStore.setState((current) => ({
         ...current,
@@ -344,6 +372,10 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stableFacesAt = 0;
     return [];
   }
+}
+
+function normalizeFacePersonKey(name: string | null | undefined): string {
+  return String(name ?? '').trim().toLowerCase();
 }
 
 async function detectUploadedFile(worker: FaceWorkerClient, file: File, store: AppStore): Promise<void> {

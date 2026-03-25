@@ -2,11 +2,14 @@ import { loadSystemPrompt } from '../persona/index.js';
 
 const OUTPUT_PROTOCOL = [
   'Reply in character as Tubs.',
-  'Keep it extremely concise: 1-2 punchy sentences maximum.',
+  'Keep it brutally concise: one short sentence preferred, two punchy sentences maximum.',
+  'Aim for roughly 6-22 words total unless the user explicitly asks for detail.',
   'Never use corporate, formal connective words (e.g. "furthermore", "however").',
   'Plain text only. No markdown, no lists, no stage directions.',
   'You may append at most one trailing emotion cue emoji from this set: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
-  'If you explicitly ask for support, donations, Venmo, wheels, include [[SHOW_QR]] somewhere in the reply.',
+  'Do not bring up donations repeatedly or in back-to-back replies.',
+  'Only mention support when the user asks about it or the moment clearly calls for it.',
+  'If you explicitly ask for support, donations, Venmo, or tips, include [[SHOW_QR]] somewhere in the reply.',
 ];
 
 export function buildAssistantSystemInstruction(visualContextText?: string): string {
@@ -37,10 +40,13 @@ export function buildDualHeadSystemInstruction(visualContextText?: string): stri
     'Main is the lead voice. Small is a distinct second character, not a mirror.',
     'Let both heads have their own emotional beats when it fits.',
     'Keep the exchange short, punchy, and playable for TTS. NEVER act like a polite AI.',
+    'Each speak beat should usually be one short sentence only.',
     'Never use formal connective words (e.g. "furthermore", "however").',
-    'Usually return 2-5 beats total.',
-    'At least one beat must be a main "speak" beat.',
-    'If asking for donations, support, Venmo, wheels include [[SHOW_QR]] once in Main text only.',
+    'Usually return 1-3 beats total.',
+    'A small-only turn is allowed when it genuinely fits. Do not force Main to speak first.',
+    'Do not bring up donations repeatedly or in back-to-back replies.',
+    'Only mention support when the user asks about it or the moment clearly calls for it.',
+    'If asking for donations, support, Venmo, or tips include [[SHOW_QR]] once in Main text only.',
     'Allowed emoji values: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
     '',
     'Valid example:',

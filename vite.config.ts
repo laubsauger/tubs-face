@@ -12,7 +12,7 @@ export default defineConfig({
   publicDir: path.resolve(rootDir, 'public'),
   server: {
     proxy: {
-      '^/(health|stats|config|speak|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script)': {
+      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script)': {
         target: 'http://127.0.0.1:3000',
         changeOrigin: true,
       },

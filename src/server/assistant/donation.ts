@@ -2,8 +2,7 @@ import type { TurnDonation } from '../../shared/contracts/turn-script.js';
 
 const DONATION_MARKER = '[[SHOW_QR]]';
 export const DONATION_MARKER_RE = /\[{1,2}\s*SHOW[\s_-]*QR\s*\]{1,2}/i;
-const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|donat(?:e|ion|ions|ing)|fundrais(?:er|ing)|wheel(?:s|chair)?(?:\s+fund)?|qr\s*code|chip\s*in|contribut(?:e|ion)|spare\s*change|support\s+(?:me|tubs|the\s+fund)|sponsor|tip(?:s|ping)?|money|fund(?:s|ing|ed)?|beg(?:ging)?|please\s+(?:help|support)\s+(?:me\s+)?money|help\s+(?:me|tubs|out)|need(?:s)?\s+(?:your\s+)?(?:help|money|support|funds))\b/i;
-const DONATION_NUDGE_INTERVAL = 6;
+const DONATION_KEYWORDS = /\b(venmo|paypal|cash\s*app|qr\s*code|donat(?:e|ion|ions|ing)|chip\s*in|contribut(?:e|ion)|sponsor|tip(?:s|ping)?|support\s+(?:me|tubs|the\s+(?:build|upgrade|upgrades|project))|help\s+fund|fund\s+(?:the\s+)?(?:build|upgrade|upgrades|project)|back\s+(?:the\s+)?(?:build|project))\b/i;
 const DEFAULT_VENMO_HANDLE = process.env.DONATION_VENMO || 'TubsBot';
 const DEFAULT_DONATION_QR_DATA = process.env.DONATION_QR_DATA || `https://venmo.com/${DEFAULT_VENMO_HANDLE}`;
 
@@ -51,14 +50,10 @@ export function extractDonationSignal(text: string): DonationSignalResult {
 }
 
 export function maybeInjectDonationNudge(text: string, alreadyShowingQr: boolean, replyCount: number): DonationNudgeResult {
-  if (alreadyShowingQr || replyCount === 0 || replyCount % DONATION_NUDGE_INTERVAL !== 0) {
-    return { text, forcedQr: false };
-  }
-
-  return {
-    text: `${text} Venmo @${DEFAULT_VENMO_HANDLE}.`,
-    forcedQr: true,
-  };
+  void text;
+  void alreadyShowingQr;
+  void replyCount;
+  return { text, forcedQr: false };
 }
 
 export function stripDonationMarkers(text: string): string {

@@ -956,11 +956,16 @@ a {
 }
 
 .panel-chat-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   padding-right: 22px;
 }
 
 .chat-panel-list {
+  min-height: 0;
   padding: 0 0 14px;
+  overscroll-behavior: contain;
 }
 
 .chat-panel-compose {
@@ -1136,8 +1141,21 @@ a {
 
 .face-panel-toolbar {
   display: grid;
+  gap: 6px;
+}
+
+.face-panel-toolbar-primary,
+.face-panel-toolbar-utility {
+  display: grid;
+  gap: 6px;
+}
+
+.face-panel-toolbar-primary {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+}
+
+.face-panel-toolbar-utility {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .face-action-row {
@@ -1147,15 +1165,30 @@ a {
 }
 
 .face-actions-hud .button {
-  min-height: 31px;
-  padding: 5px 7px;
-  border-radius: 9px;
-  font-size: 0.65rem;
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: 10px;
+  font-size: 0.64rem;
   line-height: 1.02;
   letter-spacing: 0.02em;
-  white-space: normal;
+  white-space: nowrap;
   text-align: center;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.face-panel-toolbar-primary .button {
+  min-height: 34px;
+  font-size: 0.68rem;
+}
+
+.face-panel-toolbar-utility .button {
+  min-height: 24px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .button-secondary {
@@ -1492,48 +1525,108 @@ a {
   color: rgba(148, 163, 184, 0.88);
 }
 
-.face-match-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.face-match-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 19px;
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.86);
-  border: 1px solid rgba(71, 85, 105, 0.34);
-  color: rgba(226, 232, 240, 0.88);
-  font-size: 0.66rem;
-}
-
-.face-match-chip.is-primary {
-  border-color: rgba(52, 211, 153, 0.38);
-  color: #bbf7d0;
-}
-
-.face-library-grid {
+.face-detection-list,
+.face-library-groups {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 14px;
+  gap: 12px;
 }
 
-.face-library-card {
+.face-detection-card,
+.face-library-group-card {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 12px;
-  border-radius: 18px;
+  border-radius: 16px;
   background:
     linear-gradient(180deg, rgba(15, 23, 42, 0.86), rgba(9, 14, 26, 0.9)),
     rgba(9, 14, 26, 0.88);
   border: 1px solid rgba(71, 85, 105, 0.34);
-  box-shadow: 0 12px 34px rgba(2, 6, 23, 0.22);
+}
+
+.face-detection-header,
+.face-library-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.face-detection-index,
+.face-detection-confidence {
+  font-size: 0.68rem;
+  color: rgba(191, 219, 254, 0.8);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.face-detection-identity {
+  display: grid;
+  gap: 2px;
+}
+
+.face-detection-identity strong {
+  font-size: 0.9rem;
+  color: rgba(236, 253, 245, 0.95);
+}
+
+.face-detection-identity span {
+  font-size: 0.76rem;
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.face-detection-candidates {
+  display: grid;
+  gap: 6px;
+}
+
+.face-candidate-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(71, 85, 105, 0.24);
+  font-size: 0.75rem;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.face-candidate-row.is-primary {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(8, 32, 24, 0.7);
+  color: #bbf7d0;
+}
+
+.face-candidate-name {
+  font-weight: 600;
+}
+
+.face-candidate-score,
+.face-candidate-empty {
+  color: rgba(148, 163, 184, 0.88);
+}
+
+.face-library-embedding-list {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.face-library-embedding-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(8, 15, 28, 0.78);
+  border: 1px solid rgba(71, 85, 105, 0.22);
 }
 
 .face-library-preview {
@@ -1544,6 +1637,12 @@ a {
   background:
     radial-gradient(circle at top, rgba(56, 189, 248, 0.16), transparent 46%),
     rgba(5, 12, 22, 0.92);
+}
+
+.face-library-preview-small {
+  width: 56px;
+  aspect-ratio: 1 / 1;
+  border-radius: 12px;
 }
 
 .face-library-preview-image,
@@ -1561,14 +1660,27 @@ a {
   display: grid;
   place-items: center;
   color: rgba(226, 232, 240, 0.86);
-  font-size: 1.7rem;
+  font-size: 1.25rem;
   font-weight: 700;
   letter-spacing: 0.08em;
 }
 
 .face-library-item-main {
   display: grid;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.face-library-item-copy {
+  min-width: 0;
+}
+
+.face-library-item-copy .face-item-meta {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .face-library-actions,
@@ -1585,6 +1697,15 @@ a {
 
 .face-inline-form .face-name-input {
   flex: 1 1 180px;
+}
+
+.face-library-group-card {
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.face-library-group-header {
+  align-items: flex-start;
 }
 
 .face-item-empty {
@@ -1613,14 +1734,17 @@ a {
   display: grid;
   place-items: center;
   padding: 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: rgba(2, 6, 23, 0.52);
   backdrop-filter: blur(10px);
 }
 
 .face-library-dialog {
   width: min(980px, calc(100vw - 32px));
-  max-height: min(78vh, 780px);
+  max-height: min(calc(100dvh - 48px), 780px);
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   padding: 20px;
   border-radius: 28px;
@@ -1962,6 +2086,39 @@ a {
   .visual-overlay-bottom {
     bottom: 12px;
     width: min(100vw - 24px, 560px);
+  }
+
+  .face-library-dialog-backdrop {
+    padding: 12px;
+    place-items: start center;
+  }
+
+  .face-library-dialog {
+    width: min(100%, calc(100vw - 24px));
+    max-height: calc(100dvh - 24px);
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .face-library-dialog-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .face-library-dialog-actions {
+    width: 100%;
+  }
+
+  .face-library-dialog-actions .button {
+    flex: 1 1 0;
+  }
+
+  .face-library-groups {
+    gap: 10px;
+  }
+
+  .face-library-embedding-list {
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   }
 }
 

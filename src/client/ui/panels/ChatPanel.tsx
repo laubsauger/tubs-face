@@ -90,7 +90,7 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
         <ul
           id="chat-log-list"
           ref={listRef}
-          className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col justify-end gap-3 font-mono text-xs"
+          className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 font-mono text-xs"
         >
           {entries.length === 0
             ? <li className="text-slate-500 italic text-center mt-4">No chat yet.</li>
