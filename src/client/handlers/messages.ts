@@ -55,6 +55,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'stats':
       store.setState((current) => ({
         ...current,
+        ...(typeof message.latency === 'number' ? { lastResponseMs: message.latency } : {}),
         stats: {
           messagesIn: current.stats?.messagesIn ?? 0,
           messagesOut: current.stats?.messagesOut ?? 0,

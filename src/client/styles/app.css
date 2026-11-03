@@ -622,6 +622,16 @@ a {
   --wave-color: #f472b6;
 }
 
+/* Main's push-to-talk pulse: the label breathes while the mic is recording. */
+.visual-wave-recording .visual-wave-label {
+  animation: pttPulse 1s ease-in-out infinite;
+}
+
+@keyframes pttPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .visual-live-transcript.is-draft {
   color: #7dd3fc;
   border-color: rgba(34, 211, 238, 0.34);
@@ -746,6 +756,7 @@ a {
 @media (prefers-reduced-motion: reduce) {
   .visual-zzz > span,
   .visual-thinking-bar > span,
+  .visual-wave-recording .visual-wave-label,
   .hud-stack > *,
   .hud-corner > * {
     animation: none;

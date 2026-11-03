@@ -8,6 +8,7 @@ export function StatsPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.stats),
     stats: current.stats,
+    lastResponseMs: current.lastResponseMs,
     config: current.config,
     currentExpression: current.currentExpression,
   }));
@@ -33,7 +34,7 @@ export function StatsPanel({ store }: { store: AppStore }): JSX.Element {
           <dd className="text-emerald-400 font-bold">{formatCurrency(state.stats?.costUsd)}</dd>
           
           <dt className="text-slate-500">Res. Time</dt>
-          <dd className="text-slate-300 font-bold">n/a</dd>
+          <dd className="text-slate-300 font-bold">{state.lastResponseMs == null ? '–' : `${(state.lastResponseMs / 1000).toFixed(1)} s`}</dd>
         </dl>
       </div>
     </article>

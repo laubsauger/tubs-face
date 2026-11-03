@@ -373,6 +373,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     if (canvas) {
       swapCanvas();
     }
+    publishBackend();
   }
 
   async function ensureRendererReady(): Promise<boolean> {
@@ -388,12 +389,20 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
           initCanvas2DRenderer: initCanvasBackend,
           sizeCanvas,
           buildPixelGrid: buildGrid,
-          setBackendStatus: () => { },
+          setBackendStatus: publishBackend,
           setGlitchVisualActive: setCanvasVisible,
         });
       },
-      setBackendStatus: () => { },
+      setBackendStatus: publishBackend,
     });
+  }
+
+  /** Shown in System Vitals, so a kiosk stuck on Canvas2D is visible at a glance. */
+  function publishBackend(): void {
+    const backend = rendererState.ready ? rendererState.kind : null;
+    if (store.getState().glitchBackend !== backend) {
+      store.setState((current) => ({ ...current, glitchBackend: backend }));
+    }
   }
 
   function startRenderLoop(): void {

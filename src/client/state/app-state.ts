@@ -65,6 +65,10 @@ export interface AppState {
   connectionLabel: string;
   serverUrl: string;
   lastMessageType: WsServerMessage['type'] | 'none';
+  /** Server-reported duration of the last reply, for Bot Stats. */
+  lastResponseMs: number | null;
+  /** Glitch renderer actually in use, once it is running. */
+  glitchBackend: 'webgpu' | 'canvas2d' | null;
   lastPingMs: number | null;
   health: HealthResponse | null;
   config: ConfigResponse | null;
@@ -208,6 +212,8 @@ export function createAppStore(serverUrl: string): AppStore {
     connectionLabel: 'Offline',
     serverUrl,
     lastMessageType: 'none',
+    lastResponseMs: null,
+    glitchBackend: null,
     lastPingMs: null,
     health: null,
     config: null,
