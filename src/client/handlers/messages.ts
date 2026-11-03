@@ -101,6 +101,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.setState((current) => ({
         ...current,
         conversationActive: message.active,
+        conversationUntil: message.active ? Date.now() + (message.expiresIn ?? 45_000) : 0,
       }));
       store.appendLog('info', message.active ? 'Conversation mode active' : 'Conversation mode cleared');
       return;

@@ -5,12 +5,13 @@ import { createSpeechRuntime } from './audio/speech-runtime.js';
 import { createVoiceRuntime } from './audio/voice-runtime.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
 import { createProactiveRuntime } from './behavior/proactive-runtime.js';
+import { createSleepRuntime } from './behavior/sleep-runtime.js';
 import { createFaceBehaviorRuntime } from './face/behavior-runtime.js';
 import { createFaceShellRuntime } from './face/runtime.js';
 import { createFxRuntime } from './fx/runtime.js';
 import { createGlitchRuntime } from './glitch/runtime.js';
 import { applyServerMessage } from './handlers/messages.js';
-import { createAppStore, type AppState, type AppStore } from './state/app-state.js';
+import { createAppStore, persistUiPrefs, type AppState, type AppStore } from './state/app-state.js';
 import { fetchJson } from './transport/http.js';
 import { createManagedWsClient } from './transport/ws-client.js';
 import { createVisualRuntime } from './ui/visual-runtime.js';
@@ -51,6 +52,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const fxRuntime = isController ? createFxRuntime(store) : null;
   const glitchRuntime = createGlitchRuntime(store, messageMode);
   const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
+  const sleepRuntime = isController ? createSleepRuntime(store) : null;
   const speechRuntime = createSpeechRuntime(store, speechMode);
   const visualRuntime = createVisualRuntime(store, messageMode);
   const voiceRuntime = isController ? createVoiceRuntime(store) : null;
@@ -155,6 +157,10 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     );
   }
 
+  if (isController) {
+    persistUiPrefs(store);
+  }
+
   store.appendLog('info', `${options.mode} client booting`);
 
   const awakeTimer = window.setInterval(() => {
@@ -184,6 +190,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   faceRuntime?.init();
   windowRuntime.init();
   emotionRuntime?.init();
+  sleepRuntime?.init();
 
   const wsClient = createManagedWsClient({
     ...(isSpectator ? { role: 'spectator' as const } : {}),
@@ -219,6 +226,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       if (message.type === 'donation_signal') {
         emotionRuntime?.pushImpulse({ pos: 1, neg: 0, arousal: 0.85 }, 'system');
       }
+      sleepRuntime?.onServerMessage(message);
       applyServerMessage(store, message, messageMode, targetActor);
       speechRuntime.handleServerMessage(message, targetActor);
       proactiveRuntime?.onPresenceChanged();
@@ -309,6 +317,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         window.removeEventListener('tubs:tts-request', ttsRequestHandler as EventListener);
       }
       wsClient.disconnect();
+      sleepRuntime?.dispose();
       speechRuntime.dispose();
       ambientRuntime?.dispose?.();
     },

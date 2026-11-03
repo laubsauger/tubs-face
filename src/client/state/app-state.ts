@@ -72,6 +72,8 @@ export interface AppState {
   sleeping: boolean;
   audioPlaying: boolean;
   conversationActive: boolean;
+  /** When the no-wake-word window ends (ms epoch); the server only sends its length. */
+  conversationUntil: number;
   awakeSinceTs: number;
   awakeElapsedSec: number;
   currentExpression: ExpressionName;
@@ -164,6 +166,38 @@ export interface AppStore {
 
 const MAX_LOGS = 10;
 const STREAM_DEBUG_STORAGE_KEY = 'tubs.streamDebugEnabled';
+const UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs';
+
+/** Layout choices an operator expects to survive a reload of the studio screen. */
+type UiPrefs = Pick<AppState, 'uiHidden' | 'collapsedPanels' | 'chatPanelWidth'>;
+
+function readStoredUiPrefs(): Partial<UiPrefs> {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(UI_PREFS_STORAGE_KEY) ?? '{}') as Partial<UiPrefs>;
+    return {
+      ...(typeof parsed.uiHidden === 'boolean' ? { uiHidden: parsed.uiHidden } : {}),
+      ...(parsed.collapsedPanels && typeof parsed.collapsedPanels === 'object' ? { collapsedPanels: parsed.collapsedPanels } : {}),
+      ...(typeof parsed.chatPanelWidth === 'number' ? { chatPanelWidth: parsed.chatPanelWidth } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** Saves uiHidden, collapsed panels and chat width whenever they change. */
+export function persistUiPrefs(store: AppStore): () => void {
+  return store.subscribeSelector(
+    (state): UiPrefs => ({ uiHidden: state.uiHidden, collapsedPanels: state.collapsedPanels, chatPanelWidth: state.chatPanelWidth }),
+    (prefs) => {
+      try {
+        window.localStorage.setItem(UI_PREFS_STORAGE_KEY, JSON.stringify(prefs));
+      } catch {
+        // Private mode or blocked storage: layout just won't persist.
+      }
+    },
+    { equalityFn: (a, b) => a.uiHidden === b.uiHidden && a.collapsedPanels === b.collapsedPanels && a.chatPanelWidth === b.chatPanelWidth },
+  );
+}
 
 export function createAppStore(serverUrl: string): AppStore {
   const streamDebugEnabled = readStoredStreamDebugEnabled();
@@ -179,6 +213,7 @@ export function createAppStore(serverUrl: string): AppStore {
     sleeping: false,
     audioPlaying: false,
     conversationActive: false,
+    conversationUntil: 0,
     awakeSinceTs: Date.now(),
     awakeElapsedSec: 0,
     currentExpression: 'idle',
@@ -266,6 +301,7 @@ export function createAppStore(serverUrl: string): AppStore {
     },
     logs: [],
   };
+  Object.assign(initialState, readStoredUiPrefs());
   const store = createStore<AppState>()(subscribeWithSelector(() => initialState));
 
   return {

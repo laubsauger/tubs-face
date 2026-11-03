@@ -49,6 +49,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const SPEECH_CAPTURE_COOLDOWN_MS = 650;
   const BARGE_IN_SETTLE_MS = 180;
   const THINKING_RESET_MS = 20_000;
+  const ASLEEP_SPEECH_WAKE_MS = 500;
   const HEAD_SPEECH_STALE_MS = 20_000;
   let micStream: MediaStream | null = null;
   let mediaRecorder: MediaRecorder | null = null;
@@ -73,6 +74,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let vadModelId: VadModelId = 'rms';
   let vadNoiseGateApplied = 0;
   let thinkingResetTimer: number | undefined;
+  let asleepSpeechSince = 0;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
   let anyHeadSpeechHandler: ((event: Event) => void) | null = null;
@@ -476,6 +478,33 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   }
 
   /**
+   * Asleep, nothing is recorded, but about half a second of speech wakes Tubs
+   * (sleep-runtime listens for the event). Only with always-listen on, so an
+   * operator can keep it asleep in a noisy room.
+   */
+  function detectSpeechWhileAsleep(state: ReturnType<AppStore['getState']>, rms: number, samples: Float32Array): void {
+    if (!state.voiceHandsFreeEnabled || !state.micReady) {
+      asleepSpeechSince = 0;
+      return;
+    }
+    const gate = Math.max(0.008, state.config?.vadNoiseGate ?? 0.008);
+    const isVoice = vadProvider && vadModelId !== 'rms'
+      ? vadProvider.process(samples).isVoice
+      : rms >= Math.max(0.018, gate * 2.5);
+    const now = Date.now();
+    if (isVoice) {
+      lastVoiceDetectedAt = now;
+      asleepSpeechSince = asleepSpeechSince || now;
+      if (now - asleepSpeechSince >= ASLEEP_SPEECH_WAKE_MS) {
+        asleepSpeechSince = 0;
+        window.dispatchEvent(new CustomEvent('tubs:voice-presence'));
+      }
+    } else if (now - lastVoiceDetectedAt > 300) {
+      asleepSpeechSince = 0;
+    }
+  }
+
+  /**
    * Hands-free waits while listenState is "Thinking...". Speech playback clears
    * it, but a turn that never speaks (superseded, dropped) would leave the mic
    * deaf, so give up after a while.
@@ -545,10 +574,11 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         sum += sample * sample;
       }
       const rms = Math.sqrt(sum / samples.length);
-      store.setState((current) => ({
-        ...current,
-        micLevel: Math.max(0, Math.min(1, rms * 8)),
-      }));
+      const micLevel = Math.max(0, Math.min(1, rms * 8));
+      // Every store write re-runs every subscriber; skip changes the meter can't show.
+      if (Math.abs(micLevel - store.getState().micLevel) >= 0.01) {
+        store.setState((current) => ({ ...current, micLevel }));
+      }
       handleHandsFreeVad(rms, samples);
       levelRaf = window.requestAnimationFrame(tick);
     };
@@ -613,6 +643,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
 
   function handleHandsFreeVad(rms: number, samples: Float32Array): void {
     const state = store.getState();
+    if (state.sleeping) {
+      detectSpeechWhileAsleep(state, rms, samples);
+    }
     if (!state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || state.audioPlaying || manualPressActive || isSpeechCaptureBlocked()) {
       if (state.recording && recordingMode === 'handsfree' && isSpeechCaptureBlocked()) {
         stopRecording('handsfree', { discard: true });
