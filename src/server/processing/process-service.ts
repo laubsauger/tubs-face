@@ -3,6 +3,9 @@ import path from 'node:path';
 import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { runtimeConfig } from '../config/runtime.js';
 
+const RESTART_BASE_DELAY_MS = 1000;
+const RESTART_MAX_DELAY_MS = 30_000;
+const STABLE_UPTIME_MS = 60_000;
 const DEFAULT_REALTIME_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
 
 export interface PythonServiceDefinition {
@@ -27,10 +30,34 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
     : path.join(process.cwd(), 'venv', 'bin', 'python');
   const scriptPath = path.join(process.cwd(), 'src', definition.scriptName);
   let processRef: ChildProcessWithoutNullStreams | null = null;
+  // STT and TTS live in this process. If it dies (OOM, a crash in MLX) the
+  // face goes deaf and mute until someone restarts the server, so bring it
+  // back with backoff unless we stopped it on purpose.
+  let stopRequested = false;
+  let restartTimer: NodeJS.Timeout | null = null;
+  let restartAttempt = 0;
+  let startedAt = 0;
 
-  return {
+  function scheduleRestart(controller: PythonServiceController, reason: string): void {
+    if (stopRequested || restartTimer) return;
+    // A process that stayed up a while counts as healthy again.
+    if (Date.now() - startedAt > STABLE_UPTIME_MS) {
+      restartAttempt = 0;
+    }
+    const delayMs = Math.min(RESTART_MAX_DELAY_MS, RESTART_BASE_DELAY_MS * 2 ** restartAttempt);
+    restartAttempt += 1;
+    console.error(`${definition.logPrefix} exited unexpectedly (${reason}); restarting in ${delayMs} ms (attempt ${restartAttempt})`);
+    restartTimer = setTimeout(() => {
+      restartTimer = null;
+      controller.start();
+    }, delayMs);
+  }
+
+  const controller: PythonServiceController = {
     start(): void {
       if (processRef) return;
+      stopRequested = false;
+      startedAt = Date.now();
 
       const child = spawn(pythonPath, ['-u', scriptPath], {
         env: definition.envFactory(),
@@ -45,9 +72,10 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
         console.error(`${definition.logPrefix} ${data.toString().trim()}`);
       });
 
-      child.on('close', () => {
+      child.on('close', (code, signal) => {
         if (processRef === child) {
           processRef = null;
+          scheduleRestart(controller, signal ? `signal ${signal}` : `code ${code}`);
         }
       });
 
@@ -57,6 +85,11 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
     },
 
     async stop(timeoutMs = 5000): Promise<boolean> {
+      stopRequested = true;
+      if (restartTimer) {
+        clearTimeout(restartTimer);
+        restartTimer = null;
+      }
       if (!processRef) return false;
       const child = processRef;
 
@@ -70,9 +103,6 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
         };
 
         child.once('close', () => {
-          if (processRef === child) {
-            processRef = null;
-          }
           finalize(true);
         });
 
@@ -110,6 +140,7 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
       if (processRef) {
         throw new Error(`Failed to stop ${definition.scriptName}`);
       }
+      restartAttempt = 0;
       this.start();
     },
 
@@ -135,6 +166,7 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
       });
     },
   };
+  return controller;
 }
 
 function proxyJsonRequest(input: {
