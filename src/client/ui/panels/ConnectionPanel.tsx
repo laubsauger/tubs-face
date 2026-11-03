@@ -69,6 +69,15 @@ function RuntimeControls({ store, config }: { store: AppStore; config: Config })
         <ButtonControl label="FX Editor (E)" text="Edit" onClick={() => toggleFxEditor(store)} />
       </ControlGroup>
 
+      <ControlGroup title="Brain">
+        <SelectControl
+          label="Model"
+          value={config.llmModel}
+          options={withCurrent(LLM_MODEL_CHOICES, config.llmModel)}
+          onChange={(llmModel) => void patchConfig(store, { llmModel })}
+        />
+      </ControlGroup>
+
       <ControlGroup title="Voice">
         <SelectControl label="Voice" value={config.kokoroVoice} options={KOKORO_VOICES} onChange={(kokoroVoice) => void patchConfig(store, { kokoroVoice })} />
         <RangeControl
@@ -111,4 +120,15 @@ function RuntimeControls({ store, config }: { store: AppStore; config: Config })
       </ControlGroup>
     </>
   );
+}
+
+// Gemini models benchmarked for live conversation (Nov 2026, avg time to first audio).
+const LLM_MODEL_CHOICES = [
+  { value: 'gemini-3.5-flash', label: '3.5 Flash · default, ~1.3 s' },
+  { value: 'gemini-3.8-flash', label: '3.8 Flash · sharper, ~1.9 s' },
+  { value: 'gemini-3.5-flash-lite', label: '3.5 Flash-Lite · fastest, no emotions' },
+];
+
+function withCurrent(choices: Array<{ value: string; label: string }>, current: string): Array<{ value: string; label: string }> {
+  return choices.some((choice) => choice.value === current) ? choices : [...choices, { value: current, label: current }];
 }

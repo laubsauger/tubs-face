@@ -39,4 +39,31 @@ describe('streamGeminiContent', () => {
     expect(result.text).toBe('Fun is just a chemical distraction and zip ties.');
     expect(deltas.join('')).toBe(result.text);
   });
+
+  // Newer Flash models (3.7+) reject thinking level MINIMAL with a 400. The
+  // turn must still work, and later turns should not pay for a failed request.
+  it('retries with thinking level LOW when the model rejects MINIMAL, and remembers it', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const levels: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+      const level = JSON.parse(String(init.body)).generationConfig.thinkingConfig.thinkingLevel as string;
+      levels.push(level);
+      if (level === 'MINIMAL') {
+        return new Response(JSON.stringify({ error: { message: 'Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.' } }), { status: 400 });
+      }
+      return sseResponse(['Still ', 'works.']);
+    }));
+    const args = {
+      apiKey: 'test-key',
+      model: 'gemini-future-flash',
+      systemInstruction: 'test',
+      contents: [{ role: 'user' as const, parts: [{ text: 'hi' }] }],
+      maxOutputTokens: 64,
+      onChunk: () => {},
+    };
+
+    expect((await streamGeminiContent(args)).text).toBe('Still works.');
+    expect((await streamGeminiContent(args)).text).toBe('Still works.');
+    expect(levels).toEqual(['MINIMAL', 'LOW', 'LOW']);
+  });
 });

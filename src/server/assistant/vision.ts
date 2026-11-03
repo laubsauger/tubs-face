@@ -1,5 +1,6 @@
 import { generateGeminiContent } from '../llm/gemini-client.js';
 import { updateVisualContext } from './context.js';
+import { runtimeConfig } from '../config/runtime.js';
 
 export async function processVisualContext(frameDataUrl: string, isVisionMode: boolean) {
   const mimeTypeMatch = String(frameDataUrl).match(/^data:(image\/\w+);base64,(.+)/);
@@ -14,7 +15,7 @@ export async function processVisualContext(frameDataUrl: string, isVisionMode: b
   try {
     const res = await generateGeminiContent({
       apiKey: process.env.GEMINI_API_KEY || '',
-      model: process.env.GEMINI_MODEL || 'gemini-3-flash',
+      model: runtimeConfig.llmModel,
       systemInstruction: "You are a visual context extraction tool.",
       contents: [
         {

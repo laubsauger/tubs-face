@@ -36,6 +36,32 @@ export interface StreamGeminiResult extends LlmGenerateResult {
   aborted: boolean;
 }
 
+type ThinkingLevel = 'MINIMAL' | 'LOW';
+
+// Thinking adds latency before the first word, so ask for the least the model
+// allows. Older Flash models accept MINIMAL; 3.7 and later reject it and need
+// LOW. The first rejection is remembered per model.
+const thinkingLevelByModel = new Map<string, ThinkingLevel>();
+
+function thinkingLevelFor(model: string): ThinkingLevel {
+  return thinkingLevelByModel.get(model) ?? 'MINIMAL';
+}
+
+async function fetchWithThinkingFallback(model: string, send: (level: ThinkingLevel) => Promise<Response>): Promise<Response> {
+  const level = thinkingLevelFor(model);
+  const response = await send(level);
+  if (response.ok || level !== 'MINIMAL' || response.status !== 400) {
+    return response;
+  }
+  const raw = await response.clone().text();
+  if (!/thinking level \w+ is not supported/i.test(raw)) {
+    return response;
+  }
+  console.log(`[Gemini] ${model} does not support thinking level MINIMAL; using LOW`);
+  thinkingLevelByModel.set(model, 'LOW');
+  return send('LOW');
+}
+
 export async function streamGeminiContent(args: StreamGeminiArgs): Promise<StreamGeminiResult> {
   if (!args.apiKey) {
     const error = new Error('Missing GEMINI_API_KEY');
@@ -60,7 +86,7 @@ export async function streamGeminiContent(args: StreamGeminiArgs): Promise<Strea
   let aborted = false;
 
   try {
-    const response = await fetch(endpoint, {
+    const response = await fetchWithThinkingFallback(args.model, (thinkingLevel) => fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -71,11 +97,11 @@ export async function streamGeminiContent(args: StreamGeminiArgs): Promise<Strea
           temperature: args.temperature ?? 1,
           ...(args.responseMimeType ? { responseMimeType: args.responseMimeType } : {}),
           ...(args.responseSchema ? { responseSchema: args.responseSchema } : {}),
-          thinkingConfig: { thinkingLevel: 'MINIMAL' },
+          thinkingConfig: { thinkingLevel },
         },
       }),
       signal: controller.signal,
-    });
+    }));
 
     if (!response.ok) {
       const raw = await response.text();
@@ -153,7 +179,7 @@ export async function generateGeminiContent(args: GenerateGeminiArgs): Promise<L
   let response: Response;
   let raw = '';
   try {
-    response = await fetch(endpoint, {
+    response = await fetchWithThinkingFallback(args.model, (thinkingLevel) => fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -168,13 +194,11 @@ export async function generateGeminiContent(args: GenerateGeminiArgs): Promise<L
           temperature: args.temperature ?? 1,
           ...(args.responseMimeType ? { responseMimeType: args.responseMimeType } : {}),
           ...(args.responseSchema ? { responseSchema: args.responseSchema } : {}),
-          thinkingConfig: {
-            thinkingLevel: 'MINIMAL',
-          },
+          thinkingConfig: { thinkingLevel },
         },
       }),
       signal: controller.signal,
-    });
+    }));
     raw = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
