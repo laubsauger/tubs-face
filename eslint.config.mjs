@@ -3,12 +3,13 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 
 export default [
   {
-    files: ['src/**/*.ts', 'vite.config.ts'],
+    files: ['src/**/*.ts', 'src/**/*.tsx', 'vite.config.ts'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',
+        ecmaFeatures: { jsx: true },
       },
     },
     plugins: {

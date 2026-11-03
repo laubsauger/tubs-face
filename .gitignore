@@ -31,3 +31,13 @@ thumbnails/
 venv
 mlx_models
 .openwebui-data
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Local face library (embeddings and names of real people)
+data/face-library.json
+
+# Ad-hoc TTS test output
+/*.wav

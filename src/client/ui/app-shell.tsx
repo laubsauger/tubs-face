@@ -18,6 +18,7 @@ import type {
 } from '../../shared/contracts/http.js';
 import type { TurnActor, TurnAction, TurnBeat } from '../../shared/contracts/turn-script.js';
 import type { EmotionCue, ExpressionName } from '../../shared/contracts/config.js';
+import type { FaceEnrollmentProgress, FaceEnrollmentResult } from '../face/runtime.js';
 import type { AppState, AppStore, PanelKey } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import {
@@ -53,7 +54,7 @@ export interface AppShellControls {
     toggleCamera(): Promise<void>;
     detectFile(file: File): Promise<void>;
     saveDetectedFace(): Promise<void>;
-    enrollFace(name: string, onProgress?: (progress: import('../face/runtime.js').FaceEnrollmentProgress) => void): Promise<import('../face/runtime.js').FaceEnrollmentResult>;
+    enrollFace(name: string, onProgress?: (progress: FaceEnrollmentProgress) => void): Promise<FaceEnrollmentResult>;
     refreshLibrary(): Promise<void>;
     renameFace(id: string, name: string): Promise<void>;
     deleteFace(id: string): Promise<void>;
