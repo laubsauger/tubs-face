@@ -276,7 +276,10 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     if (!stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
       return;
     }
-    const interval = Math.min(5000, Math.max(800, Math.round(lastInferenceMs * 1.5)));
+    const manualDelay = store.getState().faceDetectionDelayMs;
+    const interval = manualDelay > 0
+      ? manualDelay
+      : Math.min(5000, Math.max(800, Math.round(lastInferenceMs * 1.5)));
     loopTimer = window.setTimeout(() => {
       void runCameraDetection();
     }, interval);

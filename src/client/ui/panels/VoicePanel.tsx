@@ -33,7 +33,7 @@ export function VoicePanel({
     vadNoiseGate: current.config?.vadNoiseGate ?? 0.008,
     ambientAudioEnabled: current.ambientAudioEnabled,
     hasConfig: Boolean(current.config),
-    faceDetectionDelayMs: (current.config as any)?.faceDetectionDelayMs ?? 'auto',
+    faceDetectionDelayMs: current.faceDetectionDelayMs,
   }));
 
   const pending = !state.recording && (state.listenState === 'Uploading...' || state.listenState === 'Thinking...');
@@ -132,13 +132,10 @@ export function VoicePanel({
               type="range" 
               min="0" max="5000" step="100" 
               className="w-full accent-cyan-500 bg-slate-800"
-              value={state.faceDetectionDelayMs === 'auto' ? 0 : state.faceDetectionDelayMs}
+              value={state.faceDetectionDelayMs}
               onChange={(e) => {
                 const val = Number(e.target.value);
-                store.setState(s => ({ 
-                  ...s, 
-                  config: s.config ? { ...s.config, faceDetectionDelayMs: val === 0 ? 'auto' : val } : null 
-                }));
+                store.setState((s) => ({ ...s, faceDetectionDelayMs: val }));
               }}
             />
           </div>

@@ -5,21 +5,26 @@ const GPU_SCENE_FORMAT = 'rgba8unorm';
 const gpuTextureUsage = (globalThis as { GPUTextureUsage?: { RENDER_ATTACHMENT: number; TEXTURE_BINDING: number } }).GPUTextureUsage;
 const gpuBufferUsage = (globalThis as { GPUBufferUsage?: { STORAGE: number; COPY_DST: number; UNIFORM: number } }).GPUBufferUsage;
 
+// TypeScript 5.9's DOM lib has no WebGPU types (GPUDevice, GPUBuffer, ...),
+// so the GPU objects are untyped handles in one place.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type GpuHandle = any;
+
 export interface WebGpuState {
   gpuUniformData: Float32Array;
   gpuPostUniformData: Float32Array;
-  gpuContext: any;
-  gpuDevice: any;
-  gpuPixelPipeline: any;
-  gpuPostPipeline: any;
-  gpuUniformBuffer: any;
-  gpuPostUniformBuffer: any;
-  gpuInstanceBuffer: any;
-  gpuPixelBindGroup: any;
-  gpuPostBindGroup: any;
-  gpuSampler: any;
-  gpuSceneTexture: any;
-  gpuSceneTextureView: any;
+  gpuContext: GpuHandle;
+  gpuDevice: GpuHandle;
+  gpuPixelPipeline: GpuHandle;
+  gpuPostPipeline: GpuHandle;
+  gpuUniformBuffer: GpuHandle;
+  gpuPostUniformBuffer: GpuHandle;
+  gpuInstanceBuffer: GpuHandle;
+  gpuPixelBindGroup: GpuHandle;
+  gpuPostBindGroup: GpuHandle;
+  gpuSampler: GpuHandle;
+  gpuSceneTexture: GpuHandle;
+  gpuSceneTextureView: GpuHandle;
   gpuSceneWidth: number;
   gpuSceneHeight: number;
   gpuInstanceCount: number;
@@ -169,7 +174,7 @@ export function updateGpuInstanceBuffer(gpu: WebGpuState, pixelGrid: Array<{ x: 
   updateGpuPixelBindGroup(gpu);
 }
 
-async function createShaderModuleChecked(device: any, code: string, label: string): Promise<any> {
+async function createShaderModuleChecked(device: GpuHandle, code: string, label: string): Promise<GpuHandle> {
   const module = device.createShaderModule({ code, label });
   if (typeof module.getCompilationInfo !== 'function') return module;
   const info = await module.getCompilationInfo();
@@ -183,7 +188,7 @@ export async function initWebGpuRenderer(gpu: WebGpuState, canvas: HTMLCanvasEle
   if (!canvas || !('gpu' in navigator)) return false;
 
   try {
-    const navGpu = (navigator as Navigator & { gpu?: any }).gpu;
+    const navGpu = (navigator as Navigator & { gpu?: GpuHandle }).gpu;
     if (!navGpu) return false;
     const context = canvas.getContext('webgpu');
     if (!context) return false;

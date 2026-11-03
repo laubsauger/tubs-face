@@ -119,6 +119,8 @@ export interface AppState {
   faceLibraryEmbeddings: number;
   faceLibraryPeople: number;
   faceDraftName: string;
+  /** Pause between face detections in ms; 0 follows the measured inference time. */
+  faceDetectionDelayMs: number;
   /** Face onboarding wizard is open (F key or the Onboard button). */
   faceEnrollOpen: boolean;
   controlSpeakText: string;
@@ -264,6 +266,7 @@ export function createAppStore(serverUrl: string): AppStore {
     faceLibraryPeople: 0,
     faceDraftName: '',
     faceEnrollOpen: false,
+    faceDetectionDelayMs: 0,
     controlSpeakText: '',
     controlDonationAmount: '5.00',
     chatComposerText: '',

@@ -1,6 +1,7 @@
 import type { AppState } from '../state/app-state.js';
 import { GAZE_EYE_RANGE_X, GAZE_EYE_RANGE_Y, GAZE_MOUTH_RANGE_X, GAZE_MOUTH_RANGE_Y, GLOW_ALPHA, GPU_UNIFORM_FLOATS, type GlitchConfig } from './constants.js';
 import { clamp01 } from './utils.js';
+import type { GpuHandle } from './webgpu.js';
 
 export interface FrameState {
   t: number;
@@ -119,9 +120,9 @@ export function computeFrameState(
 export function writeGpuUniforms(
   frame: FrameState,
   args: {
-    gpuDevice: any;
-    gpuUniformBuffer: any;
-    gpuPostUniformBuffer: any;
+    gpuDevice: GpuHandle;
+    gpuUniformBuffer: GpuHandle;
+    gpuPostUniformBuffer: GpuHandle;
     gpuUniformData: Float32Array;
     gpuPostUniformData: Float32Array;
     config: GlitchConfig;
@@ -174,16 +175,16 @@ export function writeGpuUniforms(
 }
 
 export function renderFrameWebGpu(frame: FrameState, args: {
-  gpuDevice: any;
-  gpuContext: any;
-  gpuPixelPipeline: any;
-  gpuPostPipeline: any;
-  gpuPixelBindGroup: any;
-  gpuPostBindGroup: any;
-  gpuSceneTextureView: any;
+  gpuDevice: GpuHandle;
+  gpuContext: GpuHandle;
+  gpuPixelPipeline: GpuHandle;
+  gpuPostPipeline: GpuHandle;
+  gpuPixelBindGroup: GpuHandle;
+  gpuPostBindGroup: GpuHandle;
+  gpuSceneTextureView: GpuHandle;
   gpuInstanceCount: number;
-  gpuUniformBuffer: any;
-  gpuPostUniformBuffer: any;
+  gpuUniformBuffer: GpuHandle;
+  gpuPostUniformBuffer: GpuHandle;
   gpuUniformData: Float32Array;
   gpuPostUniformData: Float32Array;
   config: GlitchConfig;
