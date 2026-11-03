@@ -128,6 +128,10 @@ export interface RuntimeConfig {
   secondaryAudioGain: number;
   dualHeadTurnPolicy: DualHeadTurnPolicy;
   muted: boolean;
+  /** Venmo handle without the @, from DONATION_VENMO. Read-only. */
+  donationHandle: string;
+  /** What the donation QR encodes, from DONATION_QR_DATA (defaults to the Venmo link). Read-only. */
+  donationQrData: string;
   ambientAudioEnabled: boolean;
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;

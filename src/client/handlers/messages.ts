@@ -2,7 +2,7 @@ import type { AppStore } from '../state/app-state.js';
 import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
-import { appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, reconcileIncomingChat, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
+import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, reconcileIncomingChat, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
 import { detectDonationSignal, inferDonationPrompt } from '../message-handler-utils.js';
 
 const DONATION_JOY_DURATION_MS = 1_800;
@@ -278,8 +278,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         const finalizedText = (message.fullText ?? message.text ?? current.currentSpeechText ?? '').trim();
         const hasOutDraft = current.chatEntries.some((entry) => entry.type === 'out' && entry.draft);
         const alreadyAppended = hasRecentOutgoingAssistantEntry(current, finalizedText, 'main');
+        // The server's fullText is the whole reply; commit that rather than
+        // whatever sentences the draft happened to collect.
         const nextState = hasOutDraft
-          ? (alreadyAppended ? clearChatDraft(current, 'out') : commitChatDraft(current, 'out'))
+          ? (alreadyAppended
+            ? clearChatDraft(current, 'out')
+            : commitChatDraft(finalizedText ? upsertChatDraft(current, 'out', finalizedText, 'main') : current, 'out'))
           : ((!dualHeadActive && finalizedText && !alreadyAppended)
               ? appendChatEntry(current, {
                 type: 'out',
@@ -394,7 +398,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
             || hasRecentOutgoingAssistantEntry(current, current.currentSpeechText, 'main')
           : false;
         if (!dualHeadActive && mode === 'main' && chunkText && !alreadyAppended) {
-          next = upsertChatDraft(next, 'out', chunkText, 'main');
+          next = appendChatDraft(next, 'out', chunkText, 'main');
         }
         return {
           ...next,

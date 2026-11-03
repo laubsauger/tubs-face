@@ -59,4 +59,10 @@ describe('system instructions built from the persona template', () => {
       expect(prompt).not.toContain('BACKGROUND VISUAL CONTEXT');
     }
   });
+
+  // The handle comes from DONATION_VENMO so the studio can change it without
+  // editing the persona; the QR card and the spoken line must agree.
+  it('fills the donation handle from config', () => {
+    expect(buildAssistantSystemInstruction()).toContain(`Venmo: @${runtimeConfig.donationHandle}.`);
+  });
 });

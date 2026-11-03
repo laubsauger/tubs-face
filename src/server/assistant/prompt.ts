@@ -99,6 +99,7 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string, canSe
     // Memory facts were not ported from the JS version yet.
     MEMORY_CONTEXT: '',
     OUTPUT_FORMAT_HEADER: mode === 'dual' ? '(STRICT JSON ONLY)' : '(Text Only)',
+    DONATION_HANDLE: `@${runtimeConfig.donationHandle}`,
     OUTPUT_FORMAT_INSTRUCTIONS: outputInstructions,
   };
 

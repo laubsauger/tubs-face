@@ -43,6 +43,7 @@ const DEFAULT_STT_MODEL = resolveProcessingEnv({
 })?.trim() || 'small';
 // Benchmarked Nov 2026: 3.5 Flash is current, stable, about 1.3 s to first audio
 // and reliably sets the emotion emoji. Switch live from System Vitals > Brain.
+const DONATION_HANDLE = (process.env.DONATION_VENMO?.trim() || 'TubsBot').replace(/^@/, '');
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash';
 const DEFAULT_GLITCH_RENDERER: GlitchRenderer = pickOne(GLITCH_RENDERERS, process.env.GLITCH_RENDERER, 'auto');
 
@@ -79,6 +80,8 @@ export const runtimeConfig: RuntimeConfig = {
   dualHeadTurnPolicy: pickOne(DUAL_HEAD_TURN_POLICIES, process.env.DUAL_HEAD_TURN_POLICY, 'llm_order'),
   muted: parseBoolean(process.env.MUTED, false),
   ambientAudioEnabled: parseBoolean(process.env.AMBIENT_AUDIO_ENABLED, true),
+  donationHandle: DONATION_HANDLE,
+  donationQrData: process.env.DONATION_QR_DATA?.trim() || `https://venmo.com/${DONATION_HANDLE}`,
   glitchFxEnabled: true,
   glitchFxBaseColor: normalizeHexColor(process.env.GLITCH_FX_BASE_COLOR, '#a855f7'),
   glitchExpressionProfiles: structuredClone(DEFAULT_EXPRESSION_PROFILES),

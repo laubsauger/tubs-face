@@ -49,6 +49,30 @@ export function upsertChatDraft(
   };
 }
 
+/**
+ * Streamed replies arrive one sentence per audio chunk. Each chunk extends the
+ * draft; replacing it (as upsertChatDraft does) left only the last sentence.
+ */
+export function appendChatDraft(
+  state: AppState,
+  type: ChatEntry['type'],
+  text: string,
+  actor: ChatEntry['actor'] = 'main',
+): AppState {
+  const normalized = String(text || '').trim();
+  if (!normalized) {
+    return state;
+  }
+  const existing = state.chatEntries.find((entry) => entry.draft && entry.type === type);
+  if (!existing) {
+    return upsertChatDraft(state, type, normalized, actor);
+  }
+  if (existing.text === normalized || existing.text.endsWith(` ${normalized}`)) {
+    return state;
+  }
+  return upsertChatDraft(state, type, `${existing.text} ${normalized}`, actor);
+}
+
 export function reconcileIncomingChat(state: AppState, text: string): AppState {
   const normalized = String(text || '').trim();
   if (!normalized) {

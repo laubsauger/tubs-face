@@ -333,6 +333,8 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     conversationActive: current.conversationActive,
     thinking: current.currentExpression === 'thinking',
+    donationHandle: current.config?.donationHandle ?? 'TubsBot',
+    donationQrData: current.config?.donationQrData ?? '',
   }));
   const donationVisible = Boolean(state.currentDonationSignal) && !state.sleeping;
 
@@ -340,9 +342,9 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
     <>
       <div className="visual-overlay visual-overlay-top-left">
         <div id="visual-donation-card" className={`visual-donation-card ${donationVisible ? 'is-visible' : ''}`}>
-          {donationVisible ? <img id="visual-donation-qr" alt="Donation QR" src={DONATION_QR_SRC} /> : null}
+          {donationVisible && state.donationQrData ? <img id="visual-donation-qr" alt="Donation QR" src={donationQrSrc(state.donationQrData)} /> : null}
           <div className="visual-donation-copy">
-            <strong id="visual-donation-handle">Venmo {DONATION_VENMO_HANDLE}</strong>
+            <strong id="visual-donation-handle">Venmo @{state.donationHandle}</strong>
             <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
           </div>
         </div>
@@ -1126,9 +1128,9 @@ function formatDebugPayload(payload: Record<string, unknown>): string {
     .join(' ');
 }
 
-// TODO: the handle is hardcoded; main read it from the donation payload.
-const DONATION_VENMO_HANDLE = '@TubsBot';
-const DONATION_QR_SRC = `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(`https://venmo.com/${DONATION_VENMO_HANDLE.slice(1)}`)}`;
+function donationQrSrc(qrData: string): string {
+  return `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(qrData)}`;
+}
 
 function formatDonationFromSignal(signal: AppState['currentDonationSignal']): string {
   if (!signal) {

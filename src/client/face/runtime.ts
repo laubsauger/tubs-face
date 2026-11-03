@@ -343,27 +343,45 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       return;
     }
     context.clearRect(0, 0, overlayEl.width, overlayEl.height);
-    context.lineWidth = 3;
-    context.strokeStyle = '#34d399';
-    context.fillStyle = 'rgba(52, 211, 153, 0.14)';
-    context.font = '14px IBM Plex Sans, sans-serif';
     const scaleX = overlayEl.width / Math.max(1, captureCanvas.width || overlayEl.width);
     const scaleY = overlayEl.height / Math.max(1, captureCanvas.height || overlayEl.height);
 
+    // Main's styling: green for a recognised face, orange for an unknown one,
+    // glowing box with corner accents and a label pill.
     for (const face of faces) {
       const [x1, y1, x2, y2] = face.box;
       const width = (x2 - x1) * scaleX;
+      const height = (y2 - y1) * scaleY;
       const left = overlayEl.width - (x2 * scaleX);
       const top = y1 * scaleY;
-      const height = (y2 - y1) * scaleY;
-      const label = face.name ?? face.match?.name ?? 'Unknown';
-      const confidence = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
-      context.fillStyle = 'rgba(52, 211, 153, 0.14)';
-      context.fillRect(left, top, width, height);
+      const name = face.name ?? face.match?.name ?? null;
+      const color = name ? '#34d399' : '#fb923c';
+
+      context.shadowColor = color;
+      context.shadowBlur = 8;
+      context.lineWidth = 3;
+      context.strokeStyle = color;
       context.strokeRect(left, top, width, height);
-      context.fillStyle = '#d1fae5';
-      context.fillText(`${label} ${confidence}%`, left + 8, Math.max(18, top - 8));
-      context.fillStyle = 'rgba(52, 211, 153, 0.14)';
+      context.shadowBlur = 0;
+
+      const corner = Math.min(12, width * 0.2, height * 0.2);
+      context.lineWidth = 4;
+      context.beginPath();
+      context.moveTo(left, top + corner); context.lineTo(left, top); context.lineTo(left + corner, top);
+      context.moveTo(left + width - corner, top); context.lineTo(left + width, top); context.lineTo(left + width, top + corner);
+      context.moveTo(left, top + height - corner); context.lineTo(left, top + height); context.lineTo(left + corner, top + height);
+      context.moveTo(left + width - corner, top + height); context.lineTo(left + width, top + height); context.lineTo(left + width, top + height - corner);
+      context.stroke();
+
+      const score = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
+      const label = name ? `${name} ${score}%` : `${score}%`;
+      context.font = 'bold 12px Outfit, system-ui, sans-serif';
+      const labelWidth = context.measureText(label).width + 10;
+      const labelTop = Math.max(0, top - 20);
+      context.fillStyle = name ? 'rgba(52, 211, 153, 0.85)' : 'rgba(251, 146, 60, 0.8)';
+      context.fillRect(left, labelTop, labelWidth, 20);
+      context.fillStyle = '#04121c';
+      context.fillText(label, left + 5, labelTop + 15);
     }
   }
 
