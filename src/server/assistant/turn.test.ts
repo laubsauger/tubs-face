@@ -30,6 +30,7 @@ vi.mock('../tts/stream.js', () => ({
   openTtsStream(options: FakeTtsOptions) {
     let open = true;
     return {
+      opened: Promise.resolve(true),
       send(text: string) {
         fakes.ttsSent.push(text);
         if (fakes.ttsHang) return;

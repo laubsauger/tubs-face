@@ -819,20 +819,11 @@ async function runStreamingAssistantTurn(args: {
         ttsWsResolve?.();
       },
     });
-    // Wait briefly for the WS to connect
-    await new Promise<void>((resolve) => {
-      const check = () => {
-        if (ttsWs!.ready || ttsWs!.closed) {
-          ttsWsReady = ttsWs!.ready;
-          resolve();
-          return;
-        }
-        setTimeout(check, 10);
-      };
-      check();
-      setTimeout(() => { resolve(); }, 500); // max wait 500ms for connection
-    });
-    ttsWsReady = ttsWs.ready;
+    // Wait up to 500 ms for the TTS socket; otherwise fall back to sequential.
+    ttsWsReady = await Promise.race([
+      ttsWs.opened,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 500)),
+    ]) && ttsWs.ready;
   } catch (error) {
     console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m TTS WebSocket failed to open: ${error instanceof Error ? error.message : 'unknown'} — falling through to sequential`);
     if (ttsWsResolve) ttsWsResolve();
@@ -1294,22 +1285,17 @@ async function streamDualHeadSpeakBeat(args: {
       },
     });
 
-    const waitAndSend = () => {
-      if (ttsSession.closed) {
-        if (!isAssistantTurnActive(turnId, epoch) || chunkCount > 0) {
-          finishResolve();
-          return;
-        }
-        finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for beat ${beatIndex} (${turnId})`));
+    void ttsSession.opened.then((ok) => {
+      if (ok && ttsSession.ready) {
+        ttsSession.send(text, voice);
         return;
       }
-      if (!ttsSession.ready) {
-        setTimeout(waitAndSend, 10);
+      if (!isAssistantTurnActive(turnId, epoch) || chunkCount > 0) {
+        finishResolve();
         return;
       }
-      ttsSession.send(text, voice);
-    };
-    waitAndSend();
+      finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for beat ${beatIndex} (${turnId})`));
+    });
 
     setTimeout(() => {
       if (!ttsSession.closed) {

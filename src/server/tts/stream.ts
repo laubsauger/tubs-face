@@ -7,6 +7,8 @@ export interface TtsStreamChunk {
 }
 
 export interface TtsStreamSession {
+  /** Resolves true once the socket is open, false if it closes or errors first. */
+  readonly opened: Promise<boolean>;
   send(text: string, voice: string): void;
   close(): void;
   readonly ready: boolean;
@@ -29,11 +31,16 @@ export function openTtsStream(options: {
   const url = `ws://${target.hostname}:${target.port}/tts/stream`;
   let ready = false;
   let closed = false;
+  let settleOpened!: (ok: boolean) => void;
+  const opened = new Promise<boolean>((resolve) => {
+    settleOpened = resolve;
+  });
 
   const ws = new WebSocket(url);
 
   ws.on('open', () => {
     ready = true;
+    settleOpened(true);
   });
 
   ws.on('message', (data) => {
@@ -68,16 +75,19 @@ export function openTtsStream(options: {
 
   ws.on('error', (error) => {
     ready = false;
+    settleOpened(false);
     options.onError?.(error instanceof Error ? error : new Error(String(error)));
   });
 
   ws.on('close', () => {
     ready = false;
     closed = true;
+    settleOpened(false);
     options.onClose?.();
   });
 
   return {
+    opened,
     send(text: string, voice: string): void {
       if (ready && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ text, voice }));
@@ -88,6 +98,7 @@ export function openTtsStream(options: {
         ws.close();
       }
       closed = true;
+      settleOpened(false);
     },
     get ready() {
       return ready && ws.readyState === WebSocket.OPEN;

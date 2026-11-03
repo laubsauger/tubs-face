@@ -276,23 +276,17 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
     },
   });
 
-  // Wait for connection, then send
-  const waitAndSend = () => {
-    if (ttsSession.ready) {
+  void ttsSession.opened.then((ok) => {
+    if (ok && ttsSession.ready) {
       ttsSession.send(text, voice);
       return;
     }
-    if (ttsSession.closed) {
-      console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS closed before ready — text "${text.slice(0, 40)}..."`);
-      if (chunkIndex === 0) {
-        sendTtsError('stream closed before ready');
-      }
-      sendSpeakEnd();
-      return;
+    console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS closed before ready — text "${text.slice(0, 40)}..."`);
+    if (chunkIndex === 0) {
+      sendTtsError('stream closed before ready');
     }
-    setTimeout(waitAndSend, 10);
-  };
-  waitAndSend();
+    sendSpeakEnd();
+  });
   // Safety timeout
   setTimeout(() => {
     if (!ttsSession.closed) {
