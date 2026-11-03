@@ -1,6 +1,8 @@
 import type { WsInterruptServerMessage, WsServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
+import { logConversation, logTubsReply } from '../observability/conversation-log.js';
+import { captureTurnTrace } from '../observability/langfuse.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 
 /**
@@ -63,7 +65,13 @@ export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnRes
 
   const turnTimer = args.turnTimer ?? createTurnTimer({ side: 'backend', source, startedAt: Date.now() });
   turnTimer.setMeta('User', text);
+  const startedAt = Date.now();
+  void logConversation(source === 'voice' ? 'USER' : 'USER (typed)', text);
   return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer))
+    .then((result) => {
+      recordTurn(source, text, result, startedAt, turnTimer);
+      return result;
+    })
     .catch((error: unknown) => {
       // Someone just spoke to Tubs; silence reads as broken. TTS is local, so
       // a canned line still works when the LLM (network, quota) does not.
@@ -121,9 +129,22 @@ export function startProactiveTurn(context: string, broadcast: Broadcast): void 
   sessionStats.messagesIn += 1;
   sessionStats.lastActivity = Date.now();
   broadcast({ type: 'thinking' });
-  void runProactiveTurn(context, broadcast).catch((error: unknown) => {
-    console.error('[turn] proactive turn failed', error);
-  });
+  const startedAt = Date.now();
+  void runProactiveTurn(context, broadcast)
+    .then((result) => {
+      if (result) recordTurn('proactive', context, result, startedAt);
+    })
+    .catch((error: unknown) => {
+      console.error('[turn] proactive turn failed', error);
+    });
+}
+
+/** Transcript line and Langfuse trace for every reply that was actually given. */
+function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, result: AssistantTurnResult, startedAt: number, turnTimer?: TurnTimer): void {
+  if (!result.superseded) {
+    void logTubsReply(result.reply.text, result.beats);
+  }
+  captureTurnTrace({ source, userText: input, result, startedAt, ...(turnTimer ? { turnTimer } : {}) });
 }
 
 /**

@@ -5,6 +5,7 @@ import { handleApiRequest } from './routes/api.js';
 import { sendError } from './http/response.js';
 import { serveStatic } from './http/static.js';
 import { initWebSocketServer } from './ws/server.js';
+import { shutdownLangfuse } from './observability/langfuse.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -30,7 +31,7 @@ server.listen(port, () => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    void stopProcessingStack().finally(() => {
+    void Promise.allSettled([stopProcessingStack(), shutdownLangfuse()]).finally(() => {
       server.close(() => {
         process.exit(0);
       });

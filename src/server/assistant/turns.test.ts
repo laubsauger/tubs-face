@@ -13,6 +13,12 @@ const service = vi.hoisted(() => ({
   hasActiveAssistantTurn: vi.fn(() => service.active),
 }));
 vi.mock('./service.js', () => service);
+const recorded = vi.hoisted(() => ({ lines: [] as string[] }));
+vi.mock('../observability/conversation-log.js', () => ({
+  logConversation: async (speaker: string, text: string) => void recorded.lines.push(`${speaker}: ${text}`),
+  logTubsReply: async (text: string) => void recorded.lines.push(`TUBS: ${text}`),
+}));
+vi.mock('../observability/langfuse.js', () => ({ captureTurnTrace: () => {} }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
 const { cancelAppearanceGreeting, isInConversation, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS } = await import('./turns.js');
@@ -57,6 +63,12 @@ describe('turns', () => {
     // Typed chat counts too: the next spoken line needs no wake word.
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS - 1)).toBe(true);
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS + 1)).toBe(false);
+  });
+
+  it('writes both sides of the exchange to the conversation log', async () => {
+    recorded.lines.length = 0;
+    await startUserTurn({ text: 'nice hat', source: 'voice', broadcast: collect().broadcast });
+    expect(recorded.lines).toEqual(['USER: nice hat', 'TUBS: ok']);
   });
 
   it('says a short line out loud when the LLM fails, instead of going silent', async () => {

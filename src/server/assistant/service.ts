@@ -41,6 +41,8 @@ export interface AssistantReply {
 export interface AssistantTurnResult {
   turnId: string;
   reply: AssistantReply;
+  /** Dual-head turns: the beats that were played, for per-head logging. */
+  beats?: TurnBeat[];
   superseded?: boolean;
 }
 
@@ -636,6 +638,7 @@ async function runAssistantTurnBody(
         tokens: dualHead.tokens,
         costUsd: dualHead.costUsd,
       },
+      beats: dualHead.beats,
     };
   }
 
@@ -1490,6 +1493,7 @@ async function runProactiveTurnBody(
       tokens: reply.tokens,
       costUsd: reply.costUsd,
     },
+    ...(isDualHeadReply(reply) ? { beats: reply.beats } : {}),
   };
 }
 
