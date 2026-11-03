@@ -63,6 +63,8 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       try {
         const parsed = JSON.parse(String(raw));
         if (!isWsClientMessage(parsed)) {
+          const type = typeof parsed === 'object' && parsed !== null ? String((parsed as { type?: unknown }).type) : typeof parsed;
+          console.warn(`[ws] dropped invalid ${type} message`);
           return;
         }
 
