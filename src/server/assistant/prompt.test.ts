@@ -21,9 +21,8 @@ describe('system instructions built from the persona template', () => {
 
   it('single mode carries the solo persona, the brevity rule and plain-text output rules', () => {
     const prompt = buildAssistantSystemInstruction();
-    expect(prompt).toContain('Unhinged standup comic energy');
+    expect(prompt).toContain('Standup social critic energy');
     expect(prompt).toContain('Brevity IS the personality');
-    expect(prompt).toContain('# VISION PROTOCOL');
     expect(prompt).toContain('# OUTPUT FORMAT (Text Only)');
     expect(prompt).toContain('Plain text only.');
   });
@@ -45,8 +44,19 @@ describe('system instructions built from the persona template', () => {
     expect(buildAssistantSystemInstruction()).not.toContain('ADDITIONAL INSTRUCTION');
   });
 
-  it('appends visual context after the persona', () => {
+  it('appends visual context after the persona and tells Tubs it can see', () => {
     const prompt = buildAssistantSystemInstruction('red hoodie, holding coffee');
     expect(prompt.endsWith('BACKGROUND VISUAL CONTEXT:\nred hoodie, holding coffee')).toBe(true);
+    expect(prompt).toContain('A camera shows you the person in front of you');
+    expect(prompt).not.toContain('camera is off');
+  });
+
+  // With the camera off, the old always-on vision rules made Tubs roast "that
+  // jacket" it had never seen.
+  it('tells Tubs it cannot see when there is no camera description', () => {
+    for (const prompt of [buildAssistantSystemInstruction(), buildDualHeadSystemInstruction()]) {
+      expect(prompt).toContain('Your camera is off right now');
+      expect(prompt).not.toContain('BACKGROUND VISUAL CONTEXT');
+    }
   });
 });

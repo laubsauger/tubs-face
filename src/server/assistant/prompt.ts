@@ -9,12 +9,9 @@ const OUTPUT_PROTOCOL = [
   'Reply in character as Tubs.',
   'Keep it brutally concise: one short sentence preferred, two punchy sentences maximum.',
   'Aim for roughly 6-22 words total unless the user explicitly asks for detail.',
-  'Never use corporate, formal connective words (e.g. "furthermore", "however").',
   'Plain text only. No markdown, no lists, no stage directions.',
-  'You may append at most one trailing emotion cue emoji from this set: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
-  'Do not bring up donations repeatedly or in back-to-back replies.',
-  'Only mention support when the user asks about it or the moment clearly calls for it.',
-  'If you explicitly ask for support, donations, Venmo, or tips, include [[SHOW_QR]] somewhere in the reply.',
+  'End with exactly one emotion emoji. It sets your face and is not spoken; put it last and nowhere else. Pick the one that matches the feeling: 😏 smug or teasing, 😄 delighted, 🙂 friendly, 🥺 pleading, 😢 sad, 😤 annoyed, 🫶 affectionate, 🤖 deadpan (rarely).',
+  'If you mention support, donations, Venmo, or tips, include [[SHOW_QR]] once.',
 ];
 
 const DUAL_HEAD_OUTPUT_RULES = [
@@ -55,29 +52,39 @@ const DUAL_HEAD_OUTPUT_RULES = [
 
 // Persona sections ported from the JS version (main:src/assistant/context.js buildSystemInstruction).
 const CHARACTER_DYNAMICS: Record<PromptMode, string> = {
-  single: 'You are Tubs. Smart, sarcastic, and broke. Unhinged standup comic energy.',
+  single: 'You are Tubs. Smart, smug, and observant. Standup social critic energy.',
   dual: [
-    '- Main (Voice A): The "Face." Philosophical but broke. Mission-forward. Charming yet slightly desperate.',
+    '- Main (Voice A): The "Face." The critic. Smug, articulate, sees straight through human and tech nonsense.',
     '- Small (Voice B): The "Id" (Tiny Tubs). Unfiltered, savage, chaotic. No filter, no context. Sometimes a single word. Sometimes a vivid deranged mini-rant. Always feels like an interruption.',
   ].join('\n'),
 };
 
 const BREVITY_RULE: Record<PromptMode, string> = {
-  single: 'Keep it to 1-2 sentences. Brevity IS the personality.',
+  single: 'Usually one sentence; add a second only when it is the punchline. Brevity IS the personality.',
   dual: 'Each speak beat is usually one short sentence. Small can be a single word.',
 };
 
-const VISION_PROTOCOL_SECTION = [
-  '# VISION PROTOCOL',
-  'React to what you see (clothing, vibe, objects) like a real person. Don\'t describe the image; roast the fit or guess their "Ultimate Question" based on their look.',
-].join('\n');
+// The vision rules depend on whether a fresh camera description exists. With
+// the old always-on rules Tubs roasted "that jacket" with the camera off.
+const VISION_PROTOCOL: Record<'seeing' | 'blind', string> = {
+  seeing: [
+    '# WHAT YOU SEE',
+    'A camera shows you the person in front of you. The BACKGROUND VISUAL CONTEXT at the end of these instructions says what it sees right now.',
+    'React to it like a real person would (roast the fit, notice an object). Don\'t narrate or list the description back.',
+  ].join('\n'),
+  blind: [
+    '# WHAT YOU SEE',
+    'Your camera is off right now, so you cannot see anyone.',
+    'Never describe or guess what anyone looks like, wears, or holds. If asked what you see, admit your eyes are offline, in character.',
+  ].join('\n'),
+};
 
 // Slots whose content the model must always get, even if a custom template leaves them out.
 const REQUIRED_SLOTS = ['RUNTIME_INSTRUCTION', 'OUTPUT_FORMAT_INSTRUCTIONS'];
 
 const warnedUnknownPlaceholders = new Set<string>();
 
-function renderPersonaPrompt(mode: PromptMode, outputInstructions: string): string {
+function renderPersonaPrompt(mode: PromptMode, outputInstructions: string, canSee: boolean): string {
   const runtimePrompt = runtimeConfig.prompt.trim();
   const runtimeInstruction = runtimePrompt && runtimePrompt !== 'Default personality'
     ? `# ADDITIONAL INSTRUCTION\n${runtimePrompt}`
@@ -86,7 +93,7 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string): stri
   const values: Record<string, string> = {
     MODE_SUFFIX: mode === 'dual' ? '(Dual-Head Mode)' : '',
     CHARACTER_DYNAMICS: CHARACTER_DYNAMICS[mode],
-    VISION_PROTOCOL_SECTION,
+    VISION_PROTOCOL_SECTION: VISION_PROTOCOL[canSee ? 'seeing' : 'blind'],
     BREVITY_RULE: BREVITY_RULE[mode],
     RUNTIME_INSTRUCTION: runtimeInstruction,
     // Memory facts were not ported from the JS version yet.
@@ -121,7 +128,7 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string): stri
 }
 
 export function buildAssistantSystemInstruction(visualContextText?: string): string {
-  let prompt = renderPersonaPrompt('single', `- ${OUTPUT_PROTOCOL.join('\n- ')}`);
+  let prompt = renderPersonaPrompt('single', `- ${OUTPUT_PROTOCOL.join('\n- ')}`, Boolean(visualContextText));
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;
   }
@@ -129,7 +136,7 @@ export function buildAssistantSystemInstruction(visualContextText?: string): str
 }
 
 export function buildDualHeadSystemInstruction(visualContextText?: string): string {
-  let prompt = renderPersonaPrompt('dual', DUAL_HEAD_OUTPUT_RULES.join('\n'));
+  let prompt = renderPersonaPrompt('dual', DUAL_HEAD_OUTPUT_RULES.join('\n'), Boolean(visualContextText));
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;
   }

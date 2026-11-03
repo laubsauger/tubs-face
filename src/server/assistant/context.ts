@@ -13,13 +13,20 @@ interface HistoryEntry {
 }
 
 const conversationHistory: HistoryEntry[] = [];
+// The camera description is about whoever stood there when the frame was
+// taken. Without an expiry Tubs kept roasting a visitor who left long ago,
+// or one seen before the camera was switched off.
+const VISUAL_CONTEXT_TTL_MS = 60_000;
 let visualContextText = '';
-export function updateVisualContext(text: string): void {
+let visualContextAt = 0;
+
+export function updateVisualContext(text: string, now = Date.now()): void {
   visualContextText = text;
+  visualContextAt = now;
 }
 
-export function getVisualContext(): string {
-  return visualContextText;
+export function getVisualContext(now = Date.now()): string {
+  return now - visualContextAt <= VISUAL_CONTEXT_TTL_MS ? visualContextText : '';
 }
 
 export interface BuiltContentsResult {
@@ -46,7 +53,7 @@ export function buildContents(nextUserText: string): BuiltContentsResult {
     contents,
     meta: {
       mode: 'text',
-      imageAttached: Boolean(visualContextText),
+      imageAttached: Boolean(getVisualContext()),
       historyMessages: recent.length,
       historyChars,
     },
@@ -71,7 +78,7 @@ export function buildProactiveContents(context: string): BuiltContentsResult {
     contents,
     meta: {
       mode: 'proactive',
-      imageAttached: Boolean(visualContextText),
+      imageAttached: Boolean(getVisualContext()),
       historyMessages: recent.length,
       historyChars,
     },
