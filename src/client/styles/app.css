@@ -124,7 +124,6 @@ a {
 }
 
 .main-visual-shell {
-  --visual-bottom-band: clamp(126px, 15vh, 170px);
   z-index: 1;
   background:
     radial-gradient(circle at 18% 34%, rgba(168, 85, 247, 0.2), transparent 34%),
@@ -153,12 +152,13 @@ a {
   min-height: 0;
 }
 
-.main-visual-shell .visual-stage {
-  align-items: start;
-  padding:
-    clamp(8px, 1.4vh, 18px)
-    clamp(24px, 2.2vw, 42px)
-    calc(var(--visual-bottom-band) + 20px);
+.main-visual-shell .visual-stage,
+.mini-visual-shell .visual-stage {
+  /* The face is the whole screen at any size or aspect ratio; subtitle,
+     waveform and panels float over it. The renderer fits the eyes and mouth
+     inside whatever box it gets, keeping their proportions. */
+  padding: 0;
+  place-items: stretch;
 }
 
 .visual-face-frame {
@@ -265,12 +265,10 @@ a {
   box-shadow: none;
 }
 
-.main-visual-frame {
-  width: min(calc((100% - var(--visual-bottom-band) - 64px) * 1.6), calc(100% - 80px), 1600px);
-  height: min(calc(100% - var(--visual-bottom-band) - 38px), 940px);
-  max-width: calc(100% - 52px);
-  max-height: calc(100% - var(--visual-bottom-band) - 22px);
-  aspect-ratio: 16 / 10;
+.main-visual-frame,
+.mini-visual-frame {
+  width: 100%;
+  height: 100%;
 }
 
 .main-visual-face {
@@ -279,13 +277,10 @@ a {
 }
 
 .main-visual-face[data-render-mode="glitch"] {
-  border-radius: clamp(26px, 3vw, 44px);
+  border-radius: 0;
   background:
     linear-gradient(180deg, rgba(10, 16, 30, 0.44), rgba(8, 12, 22, 0.2)),
     radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.14), rgba(4, 8, 16, 0.01));
-  box-shadow:
-    0 18px 48px rgba(2, 6, 23, 0.18),
-    inset 0 0 0 1px rgba(125, 211, 252, 0.08);
 }
 
 .glitch-face-canvas {
@@ -2178,7 +2173,6 @@ a {
 }
 
 .mini-visual-shell {
-  --mini-bottom-band: clamp(18px, 4vh, 40px);
   flex: 1;
   min-height: 0;
   height: 100%;
@@ -2187,21 +2181,7 @@ a {
   border: none;
 }
 
-.mini-visual-shell .visual-stage {
-  align-items: center;
-  padding: 8px 8px calc(var(--mini-bottom-band) + 4px);
-}
-
-.mini-visual-frame {
-  width: min(calc(100% - 12px), calc((100% - var(--mini-bottom-band) - 12px) * 1.6));
-  max-width: calc(100% - 12px);
-  aspect-ratio: 16 / 10;
-  height: min(calc(100% - var(--mini-bottom-band) - 10px), calc((100% - 12px) / 1.6));
-  max-height: calc(100% - var(--mini-bottom-band) - 6px);
-}
-
 .mini-visual-face {
-  aspect-ratio: 16 / 10;
   min-height: 0;
   border-radius: 0;
 }
@@ -2264,11 +2244,6 @@ a {
   .face-actions>.face-action-row:first-of-type,
   .face-actions>.face-action-row:last-of-type {
     grid-template-columns: 1fr;
-  }
-
-  .main-visual-frame {
-    width: min(calc(100vw - 24px), calc((100vh - var(--visual-bottom-band) - 28px) * 1.52));
-    height: min(calc(100vh - var(--visual-bottom-band) - 28px), 69vw);
   }
 
   .hud-stack-top-left {
@@ -2599,4 +2574,10 @@ a {
 .control-switch:focus-visible {
   outline: 2px solid #7dd3fc;
   outline-offset: 2px;
+}
+
+/* With the UI hidden (Z) the screen is for the audience: keep the listening
+   indicator, drop the LV/MN debug readout. */
+.shell-ui-hidden .compact-sys-status {
+  display: none;
 }

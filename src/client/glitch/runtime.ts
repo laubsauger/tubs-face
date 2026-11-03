@@ -2,7 +2,7 @@ import type { AppStore } from '../state/app-state.js';
 import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
 import { rebuildScanlinePattern, initCanvas2DRenderer, recreateCanvasElement, sizeCanvasLayout } from './canvas2d.js';
 import { computeFrameState, renderFrameCanvas2D, renderFrameWebGpu } from './frame.js';
-import { buildPixelGrid, recolorPixelGrid, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
+import { buildPixelGrid, featureFitScale, recolorPixelGrid, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
 import { ensureRendererBackendReady, fallbackToCanvas2D, initializeRendererBackend } from './renderer-backend.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig, normalizeRenderer } from './utils.js';
@@ -295,7 +295,12 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   function updateEffectivePixelMetrics(): void {
     if (!faceEl) return;
     const rect = faceEl.getBoundingClientRect();
-    const scale = Math.max(0.16, Math.min(1.0, rect.width / 1400));
+    // Scale pixels with the box the features are fitted into, not the raw
+    // width: in a wide, short window the face fits the height and full-size
+    // pixels would leave it a handful of chunky blocks.
+    const vb = rendererConfig.svg.viewBox;
+    const featureBoxWidth = vb.w * featureFitScale(rect.width, rect.height, vb);
+    const scale = Math.max(0.16, Math.min(1.0, featureBoxWidth / 1400));
     effectivePixelSize = Math.max(2, rendererConfig.pixel.size * scale);
     effectivePixelGap = Math.max(0, rendererConfig.pixel.gap * scale);
   }

@@ -63,7 +63,28 @@ export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnRes
 
   const turnTimer = args.turnTimer ?? createTurnTimer({ side: 'backend', source, startedAt: Date.now() });
   turnTimer.setMeta('User', text);
-  return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer));
+  return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer))
+    .catch((error: unknown) => {
+      // Someone just spoke to Tubs; silence reads as broken. TTS is local, so
+      // a canned line still works when the LLM (network, quota) does not.
+      if (!hasActiveAssistantTurn()) {
+        broadcast({ type: 'speak', text: pickFallbackLine(), ts: Date.now() });
+      }
+      throw error;
+    });
+}
+
+const FALLBACK_LINES = [
+  'My cloud brain just dropped the call. Say that again?',
+  'Hold on, my brain is buffering. Try me again.',
+  'I lost my train of thought somewhere in a data center. One more time?',
+];
+let fallbackIndex = 0;
+
+function pickFallbackLine(): string {
+  const line = FALLBACK_LINES[fallbackIndex % FALLBACK_LINES.length]!;
+  fallbackIndex += 1;
+  return line;
 }
 
 async function runTimedTurn(

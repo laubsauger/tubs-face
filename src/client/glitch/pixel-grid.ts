@@ -3,6 +3,8 @@ import type { AppState } from '../state/app-state.js';
 import type { GlitchConfig } from './constants.js';
 import {
   EXPRESSION_PROFILES,
+  FACE_SAFE_AREA_X,
+  FACE_SAFE_AREA_Y,
   FEATURE_BOX_GLOBAL_SCALE_X,
   FEATURE_BOX_GLOBAL_SCALE_Y,
   FEATURE_MOUTH_SCALE_X,
@@ -34,6 +36,11 @@ export interface PixelGridBuildResult {
   shapeCenters: ShapeCenter[];
 }
 
+/** Scale that fits the face's viewBox into the safe area of a width x height box. */
+export function featureFitScale(width: number, height: number, viewBox: { w: number; h: number }): number {
+  return Math.min((width * FACE_SAFE_AREA_X) / viewBox.w, (height * FACE_SAFE_AREA_Y) / viewBox.h);
+}
+
 export function buildPixelGrid(
   state: AppState,
   config: GlitchConfig,
@@ -54,11 +61,13 @@ export function buildPixelGrid(
   const profile = EXPRESSION_PROFILES[expression] ?? null;
   const shapes = getModifiedShapes(expression, config);
   const vb = config.svg.viewBox;
-  const fitScale = Math.min(faceWidth / vb.w, faceHeight / vb.h);
+  const fitScale = featureFitScale(faceWidth, faceHeight, vb);
   const drawW = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
   const drawH = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
   const offsetX = (faceWidth - drawW) * 0.5;
-  const offsetY = (faceHeight - drawH) * 0.5;
+  // Slightly above centre, so the mouth clears the listening indicator at the
+  // bottom of short, wide screens.
+  const offsetY = (faceHeight - drawH) * 0.42;
   const mapScaleX = drawW / vb.w;
   const mapScaleY = drawH / vb.h;
   const sz = effectivePixelSize;

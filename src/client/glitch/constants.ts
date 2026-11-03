@@ -92,6 +92,13 @@ export const GAZE_MOUTH_RANGE_Y = 0.04;
 export const GAZE_LERP = 0.12;
 
 export const GLOW_ALPHA = 0.65;
+/**
+ * The face canvas fills the whole screen, so the eyes and mouth are fitted
+ * into this centred share of it. Leaves room for the subtitle above and the
+ * listening indicator below at any aspect ratio.
+ */
+export const FACE_SAFE_AREA_X = 0.86;
+export const FACE_SAFE_AREA_Y = 0.74;
 export const FEATURE_BOX_GLOBAL_SCALE_X = 0.84;
 export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.88;
 export const FEATURE_MOUTH_SCALE_X = 0.88;

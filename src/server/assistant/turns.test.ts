@@ -7,7 +7,7 @@ import type { WsServerMessage } from '../../shared/contracts/ws.js';
 
 const service = vi.hoisted(() => ({
   active: false,
-  runAssistantTurn: vi.fn(async () => ({ turnId: 't1', reply: { text: 'ok' } })),
+  runAssistantTurn: vi.fn(async (): Promise<unknown> => ({ turnId: 't1', reply: { text: 'ok' } })),
   runProactiveTurn: vi.fn(async () => null),
   interruptAssistantTurns: vi.fn(() => null),
   hasActiveAssistantTurn: vi.fn(() => service.active),
@@ -57,6 +57,18 @@ describe('turns', () => {
     // Typed chat counts too: the next spoken line needs no wake word.
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS - 1)).toBe(true);
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS + 1)).toBe(false);
+  });
+
+  it('says a short line out loud when the LLM fails, instead of going silent', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    service.runAssistantTurn.mockRejectedValueOnce(new Error('Gemini API error: quota'));
+    const ws = collect();
+
+    await expect(startUserTurn({ text: 'hello?', source: 'voice', broadcast: ws.broadcast })).rejects.toThrow('quota');
+
+    expect(ws.types().slice(-2)).toEqual(['error', 'speak']);
+    const speak = ws.messages.at(-1);
+    expect(speak?.type === 'speak' && speak.text.length > 0).toBe(true);
   });
 
   it('cancels a pending appearance greeting when someone speaks first', async () => {
