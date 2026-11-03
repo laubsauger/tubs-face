@@ -2,6 +2,8 @@ import type { VoiceResponse } from '../../shared/contracts/http.js';
 import type { AppStore } from '../state/app-state.js';
 import { upsertChatDraft } from '../chat/state.js';
 import { createVadProvider, type VadModelId, type VadProvider } from './vad/index.js';
+import { createClipBuffer, encodeWav16k, type ClipBuffer } from './pcm-clip.js';
+import { createPcmTap } from './pcm-tap.js';
 
 interface BrowserSpeechRecognitionAlternative {
   transcript: string;
@@ -54,6 +56,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const BARGE_IN_SETTLE_MS = 180;
   const THINKING_RESET_MS = 20_000;
   const ASLEEP_SPEECH_WAKE_MS = 500;
+  // Audio kept from before speech was detected, so the first word survives.
+  const PRE_ROLL_MS = 700;
+  const MAX_CLIP_MS = 12_000;
   const HEAD_SPEECH_STALE_MS = 20_000;
   let micStream: MediaStream | null = null;
   let mediaRecorder: MediaRecorder | null = null;
@@ -80,6 +85,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let thinkingResetTimer: number | undefined;
   let asleepSpeechSince = 0;
   let handsfreeVoicedMs = 0;
+  // Pre-roll capture; MediaRecorder is only the fallback when AudioWorklet fails.
+  let clipBuffer: ClipBuffer | null = null;
+  let stopPcmTap: (() => void) | null = null;
   let lastVadTickAt = 0;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
@@ -145,6 +153,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       }
       vadProvider?.dispose();
       vadProvider = null;
+      stopPcmTap?.();
+      stopPcmTap = null;
+      clipBuffer = null;
       unbindHeadSpeechObserver();
       speakingActors.clear();
       speechCaptureBlockedUntil = 0;
@@ -181,6 +192,18 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
+      try {
+        clipBuffer = createClipBuffer(audioContext.sampleRate, PRE_ROLL_MS, MAX_CLIP_MS);
+        stopPcmTap = await createPcmTap(audioContext, source, (chunk) => {
+          clipBuffer?.push(chunk);
+          // The VAD expects a continuous stream; the analyser in the meter loop
+          // only gives it 256-sample snippets with gaps between frames.
+          handleHandsFreeVad(rmsOf(chunk), chunk);
+        });
+      } catch (error) {
+        clipBuffer = null;
+        store.appendLog('error', `Pre-roll capture unavailable, first words may be cut: ${error instanceof Error ? error.message : String(error)}`);
+      }
       mediaRecorder = createRecorder(micStream);
       await ensureVadProvider(audioContext.sampleRate);
       store.setState((current) => ({
@@ -219,35 +242,43 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     recorder.onstop = () => {
       const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
       chunks = [];
-      const shouldDiscard = discardPendingRecording;
-      discardPendingRecording = false;
-      if (shouldDiscard) {
-        lastLiveTranscript = '';
-        store.setState((current) => ({
-          ...current,
-          recording: false,
-          currentIncomingText: '',
-          liveTranscriptText: '',
-          liveTranscriptDraft: false,
-          voiceLastTranscript: '',
-          listenState: current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle',
-        }));
-        store.appendLog('info', 'Discarded mic capture during local speech playback');
-        syncPassiveLiveRecognition();
-        return;
-      }
-      if (blob.size > 0) {
-        void uploadRecording(blob);
-      } else {
-        store.setState((current) => ({
-          ...current,
-          recording: false,
-          listenState: current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle',
-        }));
-        store.appendLog('error', 'Recorded clip was empty');
-      }
+      handleRecordedClip(blob);
     };
     return recorder;
+  }
+
+  function isCapturing(): boolean {
+    return Boolean(clipBuffer?.capturing) || mediaRecorder?.state === 'recording';
+  }
+
+  function handleRecordedClip(blob: Blob): void {
+    const shouldDiscard = discardPendingRecording;
+    discardPendingRecording = false;
+    if (shouldDiscard) {
+      lastLiveTranscript = '';
+      store.setState((current) => ({
+        ...current,
+        recording: false,
+        currentIncomingText: '',
+        liveTranscriptText: '',
+        liveTranscriptDraft: false,
+        voiceLastTranscript: '',
+        listenState: current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle',
+      }));
+      store.appendLog('info', 'Discarded mic capture during local speech playback');
+      syncPassiveLiveRecognition();
+      return;
+    }
+    if (blob.size > 0) {
+      void uploadRecording(blob);
+    } else {
+      store.setState((current) => ({
+        ...current,
+        recording: false,
+        listenState: current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle',
+      }));
+      store.appendLog('error', 'Recorded clip was empty');
+    }
   }
 
   async function startRecording(mode: 'manual' | 'handsfree'): Promise<void> {
@@ -256,7 +287,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
     await ensureMicrophone();
-    if (!mediaRecorder || mediaRecorder.state === 'recording' || !store.getState().micReady) {
+    if (isCapturing() || (!clipBuffer && !mediaRecorder) || !store.getState().micReady) {
       return;
     }
     if (mode === 'handsfree' && (store.getState().audioPlaying || store.getState().sleeping || isSpeechCaptureBlocked())) {
@@ -264,6 +295,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     const state = store.getState();
+    // Only audible playback matters for the pre-roll: it would hold Tubs's own
+    // voice. (currentSpeechText can linger after playback has ended.)
+    const tubsAudible = state.audioPlaying;
     if (state.audioPlaying || state.currentSpeechText) {
       stopLiveRecognition();
       lastLiveTranscript = '';
@@ -304,7 +338,11 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
     speechDetectedAt = 0;
     silenceDetectedAt = 0;
-    mediaRecorder.start(250);
+    if (clipBuffer) {
+      clipBuffer.begin({ preRoll: !tubsAudible });
+    } else {
+      mediaRecorder?.start(250);
+    }
     startLiveRecognition();
     store.setState((current) => ({
       ...current,
@@ -318,7 +356,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   }
 
   function stopRecording(mode: 'manual' | 'handsfree', options?: { discard?: boolean }): void {
-    if (!mediaRecorder || mediaRecorder.state !== 'recording') {
+    if (!isCapturing()) {
       return;
     }
     if (recordingMode && recordingMode !== mode) {
@@ -335,15 +373,23 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         ? (current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle')
         : 'Uploading...',
     }));
+    stopLiveRecognition();
+    lastSpeechStop = Date.now();
+    recordingMode = null;
+    if (clipBuffer?.capturing) {
+      const samples = clipBuffer.end();
+      const sampleRate = audioContext?.sampleRate ?? 48_000;
+      handleRecordedClip(samples.length > 0
+        ? new Blob([encodeWav16k(samples, sampleRate)], { type: 'audio/wav' })
+        : new Blob([], { type: 'audio/wav' }));
+      return;
+    }
     try {
-      mediaRecorder.requestData();
+      mediaRecorder?.requestData();
     } catch {
       // ignore
     }
-    stopLiveRecognition();
-    mediaRecorder.stop();
-    lastSpeechStop = Date.now();
-    recordingMode = null;
+    mediaRecorder?.stop();
   }
 
   async function uploadRecording(blob: Blob): Promise<void> {
@@ -585,7 +631,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       if (Math.abs(micLevel - store.getState().micLevel) >= 0.01) {
         store.setState((current) => ({ ...current, micLevel }));
       }
-      handleHandsFreeVad(rms, samples);
+      if (!stopPcmTap) {
+        handleHandsFreeVad(rms, samples);
+      }
       levelRaf = window.requestAnimationFrame(tick);
     };
     if (!levelRaf) {
@@ -653,7 +701,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       detectSpeechWhileAsleep(state, rms, samples);
     }
     if (!state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || state.audioPlaying || manualPressActive || isSpeechCaptureBlocked()) {
-      if (state.recording && recordingMode === 'handsfree' && isSpeechCaptureBlocked()) {
+      // Also when hands-free was switched off mid-clip: nothing else would end it,
+      // and the open recording blocked push-to-talk.
+      if (state.recording && recordingMode === 'handsfree' && (isSpeechCaptureBlocked() || !state.voiceHandsFreeEnabled)) {
         stopRecording('handsfree', { discard: true });
       }
       speechDetectedAt = 0;
@@ -725,6 +775,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     } else {
       silenceDetectedAt = 0;
     }
+  }
+
+  function rmsOf(samples: Float32Array): number {
+    let sum = 0;
+    for (const sample of samples) {
+      sum += sample * sample;
+    }
+    return Math.sqrt(sum / Math.max(1, samples.length));
   }
 
   function finishHandsFreeRecording(): void {
