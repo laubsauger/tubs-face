@@ -197,13 +197,13 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
         </div>
         <div
           id="visual-live-transcript"
-          className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
+          className={`visual-live-transcript ${state.liveTranscriptText.trim() ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
         >
           {state.liveTranscriptText}
         </div>
         <div
           id="visual-subtitle"
-          className={`visual-subtitle ${state.config?.secondarySubtitleEnabled === false ? 'is-hidden' : ''}`}
+          className={`visual-subtitle ${state.sleeping || state.config?.secondarySubtitleEnabled === false ? 'is-hidden' : ''}`}
         />
       </section>
     </main>
@@ -212,10 +212,8 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
 
 function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    currentExpression: current.currentExpression,
     sleeping: current.sleeping,
     connected: current.connected,
-    config: current.config,
   }));
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const unlockFiredRef = useRef(false);
@@ -239,17 +237,12 @@ function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
       <section className={`visual-shell mini-visual-shell ${state.sleeping ? 'is-sleeping' : ''}`}>
         <div className="visual-stage">
           <div className="visual-face-frame mini-visual-frame">
-            <div
-              id="visual-face"
-              className="visual-face mini-visual-face"
-              data-expression={state.currentExpression}
-              data-render-mode="glitch"
-            />
+            <StableFaceContainer id="visual-face" className="visual-face mini-visual-face" />
           </div>
         </div>
         <div
           id="visual-subtitle"
-          className="visual-subtitle spectator-subtitle"
+          className={`visual-subtitle spectator-subtitle ${state.sleeping ? 'is-hidden' : ''}`}
         />
         {!state.connected && (
           <div className="spectator-status">Connecting...</div>
@@ -325,14 +318,15 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     conversationActive: current.conversationActive,
   }));
+  const donationVisible = Boolean(state.currentDonationSignal) && !state.sleeping;
 
   return (
     <>
       <div className="visual-overlay visual-overlay-top-left">
-        <div id="visual-donation-card" className={`visual-donation-card ${state.currentDonationSignal ? 'is-visible' : ''}`}>
-          <img id="visual-donation-qr" alt="Donation QR" />
+        <div id="visual-donation-card" className={`visual-donation-card ${donationVisible ? 'is-visible' : ''}`}>
+          {donationVisible ? <img id="visual-donation-qr" alt="Donation QR" src={DONATION_QR_SRC} /> : null}
           <div className="visual-donation-copy">
-            <strong id="visual-donation-handle">Venmo @TubsBot</strong>
+            <strong id="visual-donation-handle">Venmo {DONATION_VENMO_HANDLE}</strong>
             <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
           </div>
         </div>
@@ -342,7 +336,7 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
         <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
         <div
           id="visual-live-transcript"
-          className={`visual-live-transcript ${state.liveTranscriptText ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
+          className={`visual-live-transcript ${state.liveTranscriptText.trim() ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
         >
           {state.liveTranscriptText}
         </div>
@@ -1335,12 +1329,16 @@ function formatDebugPayload(payload: Record<string, unknown>): string {
     .join(' ');
 }
 
+// TODO: the handle is hardcoded; main read it from the donation payload.
+const DONATION_VENMO_HANDLE = '@TubsBot';
+const DONATION_QR_SRC = `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(`https://venmo.com/${DONATION_VENMO_HANDLE.slice(1)}`)}`;
+
 function formatDonationFromSignal(signal: AppState['currentDonationSignal']): string {
   if (!signal) {
-    return 'No signal';
+    return '';
   }
-  const amount = signal.amount ? `${signal.amount}${signal.currency ? ` ${signal.currency}` : ''}` : null;
-  return [signal.certainty, signal.source, amount, signal.donor].filter(Boolean).join(' · ');
+  const amount = signal.amount ? `${signal.amount}${signal.currency ? ` ${signal.currency}` : ''}` : 'Wheel fund';
+  return [signal.certainty.toUpperCase(), signal.donor, amount].filter(Boolean).join(' · ');
 }
 
 function renderFaceMeta(face: AppState['faceLastFaces'][number]): string {

@@ -121,6 +121,14 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     fireImmediately: false,
   });
 
+  // Gaze changes every animation frame; only the two gaze CSS variables follow it.
+  store.subscribeSelector((state: AppState) => ({ x: state.gazeX, y: state.gazeY }), () => {
+    visualRuntime.syncGaze();
+  }, {
+    equalityFn: shallowEqual,
+    fireImmediately: false,
+  });
+
   store.subscribeSelector(selectGlitchSlice, () => {
     glitchRuntime.bind(options.root);
   }, {
@@ -337,11 +345,6 @@ function selectVisualSlice(state: AppState) {
     currentExpression: state.currentExpression,
     idleVariant: state.idleVariant,
     blinkActive: state.blinkActive,
-    liveTranscriptText: state.liveTranscriptText,
-    liveTranscriptDraft: state.liveTranscriptDraft,
-    currentDonationSignal: state.currentDonationSignal,
-    gazeX: state.gazeX,
-    gazeY: state.gazeY,
     moodPos: state.moodPos,
     moodNeg: state.moodNeg,
     moodArousal: state.moodArousal,

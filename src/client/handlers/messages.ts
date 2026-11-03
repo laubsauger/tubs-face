@@ -24,6 +24,13 @@ let streamedTurnActorChatEntryIds = new Map<string, string>();
 export function applyServerMessage(store: AppStore, message: WsServerMessage, mode: 'main' | 'mini', targetActor?: 'main' | 'small'): void {
   // Resolve which actor we care about: explicit targetActor > mode-derived default
   const myActor: 'main' | 'small' = targetActor ?? (mode === 'mini' ? 'small' : 'main');
+  // The server broadcasts face_motion back to the client that sent it. Only
+  // spectators (targetActor set) follow their actor's gaze; a face that drives
+  // itself would overwrite its live gaze with a stale echo and show the echo as
+  // the last message type, about 30 times a second.
+  if (message.type === 'face_motion' && !targetActor && message.actor === myActor) {
+    return;
+  }
   const dualHeadActive = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
   store.setState((current) => ({
     ...current,

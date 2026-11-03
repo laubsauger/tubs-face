@@ -20,6 +20,9 @@ const PARTNER_BLINK_MIN_GAP_MS = 900;
 const MICRO_SACCADE_INTERVAL_MS = 1200;
 const MICRO_SACCADE_MAX_INTERVAL_MS = 3200;
 const MICRO_SACCADE_AMPLITUDE = 0.045;
+// face_motion feeds the partner face and spectators over the network; ~30 Hz is
+// smooth there and halves the traffic of sending every animation frame.
+const MOTION_SEND_INTERVAL_MS = 33;
 
 export interface FaceBehaviorRuntime {
   bind(root: HTMLElement): void;
@@ -56,6 +59,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let saccadeOffsetY = 0;
   let faceTrackBaseX = 0;
   let faceTrackBaseY = 0;
+  let lastMotionSentAt = 0;
+  let lastSentX = Number.NaN;
+  let lastSentY = Number.NaN;
 
   return {
     bind(root: HTMLElement): void {
@@ -346,28 +352,28 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     [currentX, velocityX] = stepAxis(currentX, velocityX, targetX, deltaSeconds);
     [currentY, velocityY] = stepAxis(currentY, velocityY, targetY, deltaSeconds);
 
-    store.setState((current) => ({
-      ...current,
-      gazeX: currentX,
-      gazeY: currentY,
-    }));
-    sender?.({
-      type: 'face_motion',
-      actor: mode === 'mini' ? 'small' : 'main',
-      x: Number(currentX.toFixed(4)),
-      y: Number(currentY.toFixed(4)),
-      ts: Date.now(),
-    });
-
     const doneX = Math.abs(targetX - currentX) < STOP_POS_EPS && Math.abs(velocityX) < STOP_VEL_EPS;
     const doneY = Math.abs(targetY - currentY) < STOP_POS_EPS && Math.abs(velocityY) < STOP_VEL_EPS;
-    if (doneX && doneY) {
+    const settled = doneX && doneY;
+    if (settled) {
       currentX = targetX;
       currentY = targetY;
       velocityX = 0;
       velocityY = 0;
       lastTickMs = 0;
+    }
 
+    const state = store.getState();
+    if (state.gazeX !== currentX || state.gazeY !== currentY) {
+      store.setState((current) => ({
+        ...current,
+        gazeX: currentX,
+        gazeY: currentY,
+      }));
+    }
+    sendMotion(settled);
+
+    if (settled) {
       // Keep the loop alive while tracking faces so we pick up bounding box changes
       if (hasTrackedFaces()) {
         rafId = requestAnimationFrame(tick);
@@ -379,6 +385,32 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     }
 
     rafId = requestAnimationFrame(tick);
+  }
+
+  /** Throttled while moving; the resting point is always sent so remote faces land on it. */
+  function sendMotion(settled: boolean): void {
+    if (!sender) {
+      return;
+    }
+    const x = Number(currentX.toFixed(4));
+    const y = Number(currentY.toFixed(4));
+    if (x === lastSentX && y === lastSentY) {
+      return;
+    }
+    const now = Date.now();
+    if (!settled && now - lastMotionSentAt < MOTION_SEND_INTERVAL_MS) {
+      return;
+    }
+    lastMotionSentAt = now;
+    lastSentX = x;
+    lastSentY = y;
+    sender({
+      type: 'face_motion',
+      actor: mode === 'mini' ? 'small' : 'main',
+      x,
+      y,
+      ts: now,
+    });
   }
 
   function steerTowardDetectedFace(): boolean {
