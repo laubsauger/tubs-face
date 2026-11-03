@@ -1,8 +1,15 @@
 @import "tailwindcss";
 
+/* Main's typefaces (loaded in the HTML entries): Outfit for display text,
+   JetBrains Mono for panels and data. Tailwind's font-sans/font-mono follow. */
+@theme {
+  --font-sans: "Outfit", "Avenir Next", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, monospace;
+}
+
 :root {
   color-scheme: dark;
-  font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
+  font-family: var(--font-sans);
   background:
     radial-gradient(circle at top, rgba(85, 168, 247, 0.24), transparent 32%),
     linear-gradient(180deg, #0a1020 0%, #060912 100%);
@@ -33,7 +40,7 @@ body.app-sleeping {
 }
 
 code {
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
 }
 
 a {
@@ -625,18 +632,133 @@ a {
   border-color: rgba(34, 211, 238, 0.34);
 }
 
+/* Word-by-word karaoke colours from main: upcoming dim, current bright, spoken mid. */
 .subtitle-word {
-  opacity: 0.42;
-  transition: opacity 120ms ease, color 120ms ease;
+  color: rgba(200, 204, 224, 0.3);
+  transition: color 150ms ease;
 }
 
 .subtitle-word.is-active {
-  opacity: 1;
-  color: #7dd3fc;
+  color: #e8ebf5;
 }
 
 .subtitle-word.is-spoken {
-  opacity: 0.84;
+  color: rgba(200, 204, 224, 0.55);
+}
+
+/* Main shell: subtitle sits at the top of the face at audience size. */
+.visual-overlay-top {
+  top: 4%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(85%, 1200px);
+  display: grid;
+  justify-items: center;
+}
+
+.main-visual-shell .visual-subtitle {
+  width: auto;
+  max-width: 100%;
+  padding: 10px 20px;
+  border-radius: 10px;
+  background: rgba(10, 10, 15, 0.7);
+  border: none;
+  font-family: var(--font-sans);
+  font-size: clamp(17px, 2.9vw, 36px);
+  font-weight: 600;
+  line-height: 1.4;
+  backdrop-filter: blur(8px);
+}
+
+/* Thin sliding bar under the face while the assistant is thinking (main's loading bar). */
+.visual-thinking-bar {
+  width: 120px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(60, 70, 110, 0.2);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.visual-thinking-bar.is-active {
+  opacity: 1;
+}
+
+.visual-thinking-bar > span {
+  display: block;
+  width: 30%;
+  height: 100%;
+  border-radius: 2px;
+  background: #7dd3fc;
+  animation: loadSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes loadSlide {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}
+
+/* Floating "z z z" over the face while asleep. */
+.visual-zzz {
+  position: absolute;
+  top: 15%;
+  right: 20%;
+  width: 0;
+  height: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.visual-zzz > span {
+  position: absolute;
+  font-family: var(--font-sans);
+  font-weight: 800;
+  font-size: 48px;
+  color: rgba(234, 245, 255, 0.96);
+  text-shadow: 0 0 14px rgba(218, 236, 255, 0.95), 0 0 32px rgba(132, 182, 255, 0.55);
+  opacity: 0;
+  animation: zzzFloat 3.6s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.visual-zzz > span:nth-child(1) { right: 0; top: 0; }
+.visual-zzz > span:nth-child(2) { right: 22px; top: -22px; font-size: 32px; animation-delay: -1.2s; }
+.visual-zzz > span:nth-child(3) { right: -16px; top: -40px; font-size: 22px; animation-delay: -2.4s; }
+
+@keyframes zzzFloat {
+  0% { opacity: 0; transform: translate(0, 0) scale(0.82); }
+  12% { opacity: 0.92; }
+  75% { opacity: 0.7; }
+  100% { opacity: 0; transform: translate(16px, -55px) scale(1.08); }
+}
+
+/* Panels fade up on load, staggered, as on main. Fill backwards only: a kept
+   transform would turn each panel into a containing block for fixed children. */
+.hud-stack > *,
+.hud-corner > * {
+  animation: panelFadeIn 0.5s ease backwards;
+}
+
+.hud-stack > :nth-child(2) { animation-delay: 0.15s; }
+.hud-stack > :nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes panelFadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visual-zzz > span,
+  .visual-thinking-bar > span,
+  .hud-stack > *,
+  .hud-corner > * {
+    animation: none;
+  }
+
+  .visual-zzz > span {
+    opacity: 0.8;
+  }
 }
 
 .visual-donation-card {
@@ -2388,7 +2510,7 @@ a {
 
 .fx-editor-drawer-header h2 {
   margin: 0;
-  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
   font-weight: 600;
   letter-spacing: 0.14em;
@@ -2414,7 +2536,7 @@ a {
   border-bottom: 2px solid transparent;
   background: none;
   color: rgba(148, 163, 184, 0.9);
-  font: 600 0.7rem/1 "IBM Plex Mono", "SFMono-Regular", monospace;
+  font: 600 0.7rem/1 var(--font-mono);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   cursor: pointer;

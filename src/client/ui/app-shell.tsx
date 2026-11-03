@@ -330,6 +330,7 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
     voiceWakeWordEnabled: current.voiceWakeWordEnabled,
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     conversationActive: current.conversationActive,
+    thinking: current.currentExpression === 'thinking',
   }));
   const donationVisible = Boolean(state.currentDonationSignal) && !state.sleeping;
 
@@ -345,8 +346,23 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
         </div>
       </div>
 
-      <div className="visual-overlay visual-overlay-bottom">
+      {/* Audience-facing subtitle: big and at the top, as on main. */}
+      <div className="visual-overlay visual-overlay-top">
         <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
+      </div>
+
+      {state.sleeping ? (
+        <div className="visual-zzz" aria-hidden="true">
+          <span>z</span>
+          <span>z</span>
+          <span>z</span>
+        </div>
+      ) : null}
+
+      <div className="visual-overlay visual-overlay-bottom">
+        <div className={`visual-thinking-bar ${state.thinking && !state.sleeping ? 'is-active' : ''}`} aria-hidden="true">
+          <span />
+        </div>
         <div
           id="visual-live-transcript"
           className={`visual-live-transcript ${state.liveTranscriptText.trim() ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}

@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { createAmbientRuntime } from './audio/ambient-runtime.js';
 import { createSpeechRuntime } from './audio/speech-runtime.js';
@@ -95,13 +96,19 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     : undefined;
 
   const reactRoot = createRoot(options.root);
-  reactRoot.render(
-    <AppShell
-      mode={options.mode}
-      store={store}
-      {...(controls ? { controls } : {})}
-    />,
-  );
+  // Commit synchronously: the runtimes below look up React's DOM nodes
+  // (#visual-subtitle, #visual-face, .visual-shell) in the next frame. With a
+  // concurrent render the commit sometimes landed after that frame, and those
+  // runtimes kept a null node for the whole session (no subtitles, no gaze).
+  flushSync(() => {
+    reactRoot.render(
+      <AppShell
+        mode={options.mode}
+        store={store}
+        {...(controls ? { controls } : {})}
+      />,
+    );
+  });
 
   const bindInteractiveRuntimes = () => {
     speechRuntime.bind(options.root);
