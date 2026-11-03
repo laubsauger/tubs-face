@@ -923,20 +923,30 @@ a {
   pointer-events: auto;
 }
 
+.hud-layer {
+  /* Height the chat log takes in the bottom-left corner (see .panel-surface-chat). */
+  --chat-reserve: clamp(280px, 36vh, 460px);
+}
+
+.hud-layer:has(.panel-surface-chat.is-collapsed) {
+  --chat-reserve: 56px;
+}
+
+/* The left column scrolls as one and stops above the chat log; expanded
+   panels used to run underneath it, where their buttons couldn't be clicked. */
 .hud-stack-top-left {
   top: 16px;
   left: 16px;
   width: min(340px, calc(100vw - 32px));
   align-items: flex-start;
-}
-
-/* System Vitals and Input Status carry the runtime controls; keep an expanded
-   panel from running under the chat log. */
-.hud-stack-top-left .panel-body {
-  max-height: 46vh;
+  max-height: calc(100dvh - 32px - var(--chat-reserve) - 14px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
+}
+
+.hud-stack-top-left > * {
+  flex-shrink: 0;
 }
 
 .hud-corner-bottom-left {
@@ -2151,6 +2161,10 @@ a {
   .hud-stack-bottom-right {
     width: min(300px, calc(100vw - 24px));
     max-height: calc(100dvh - 24px);
+  }
+
+  .hud-layer {
+    --chat-reserve: clamp(250px, 34vh, 360px);
   }
 
   .hud-corner-bottom-left .panel-surface-chat {

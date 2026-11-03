@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 const rootDir = fileURLToPath(new URL('.', import.meta.url));
+// Where /api, /config, /ws etc. are proxied. The browser tests point it at a mock server.
+const apiPort = Number(process.env.TUBS_API_PORT || 3000);
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -13,11 +15,11 @@ export default defineConfig({
   server: {
     proxy: {
       '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script)': {
-        target: 'http://127.0.0.1:3000',
+        target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://127.0.0.1:3000',
+        target: `ws://127.0.0.1:${apiPort}`,
         changeOrigin: true,
         ws: true,
       },

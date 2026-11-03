@@ -132,7 +132,6 @@ export interface AppState {
   collapsedPanels: Partial<Record<PanelKey, boolean>>;
   chatPanelWidth: number | null;
   chatVerbosity: 'all' | 'chat' | 'minimal';
-  manualComposerOpen: boolean;
   manualComposerMode: 'single' | 'script';
   manualActor: TurnActor;
   manualAction: TurnAction;
@@ -281,7 +280,6 @@ export function createAppStore(serverUrl: string): AppStore {
     },
     chatPanelWidth: null,
     chatVerbosity: 'all',
-    manualComposerOpen: false,
     manualComposerMode: 'single',
     manualActor: 'main',
     manualAction: 'speak',

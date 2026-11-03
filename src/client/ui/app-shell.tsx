@@ -745,7 +745,6 @@ function ControlsPanel({
 function ManualPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.manual),
-    manualComposerOpen: current.manualComposerOpen,
     manualComposerMode: current.manualComposerMode,
     manualActor: current.manualActor,
     manualAction: current.manualAction,
@@ -764,19 +763,6 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
       <PanelHeader store={store} panelKey="manual" title="Manual Beats" meta={state.manualStatus} />
       <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <div className="manual-beats-row">
-          <button
-            id="manual-beats-toggle"
-            className="button button-secondary"
-            type="button"
-            onClick={() => {
-              store.setState((current) => ({
-                ...current,
-                manualComposerOpen: !current.manualComposerOpen,
-              }));
-            }}
-          >
-            {state.manualComposerOpen ? 'Close' : 'Open'}
-          </button>
           <select
             id="manual-beats-mode"
             className="mini-select"
@@ -795,7 +781,8 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
             <option value="script">Script JSON</option>
           </select>
         </div>
-        <div className={`manual-beats-shell ${state.manualComposerOpen ? 'is-open' : ''}`}>
+        {/* The panel's own collapse hides the composer; no second Open button. */}
+        <div className="manual-beats-shell is-open">
           <div id="manual-single-fields" className={`manual-fields-grid ${state.manualComposerMode === 'script' ? 'is-hidden' : ''}`}>
             <div className="manual-beats-row">
               <label className="manual-field">

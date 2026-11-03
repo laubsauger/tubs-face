@@ -41,3 +41,7 @@ data/face-library.json
 
 # Ad-hoc TTS test output
 /*.wav
+
+# Playwright
+/test-results/
+/playwright-report/
