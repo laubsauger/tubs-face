@@ -16,17 +16,15 @@ import type {
 } from '../../shared/contracts/ws.js';
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
-import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
-import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
+import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
+import { interruptAssistantTurns } from '../assistant/service.js';
+import { cancelAppearanceGreeting, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
 const WS_PATH = '/ws';
-const APPEARANCE_GREETING_DEBOUNCE_MS = 700;
 
-let pendingAppearanceGreetingTimer: NodeJS.Timeout | null = null;
-let pendingAppearanceGreetingPrompt = '';
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -129,27 +127,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       } satisfies WsPingServerMessage);
       return;
     case 'incoming':
-      cancelPendingAppearanceGreeting();
-      if (runtimeConfig.muted) {
-        broadcast({ type: 'expression', expression: 'idle' });
-        return;
-      }
-      broadcastInterrupt(interruptAssistantTurns(), 'user');
-      sessionStats.messagesIn += 1;
-      sessionStats.lastActivity = Date.now();
-      broadcast({
-        type: 'incoming',
-        text: message.text,
-      });
-      broadcast({
-        type: 'thinking',
-      });
-      void runAssistantTurn(message.text, broadcast).catch((error) => {
-        console.error('[ws] assistant turn failed', error);
-        broadcast({
-          type: 'error',
-          text: 'Response generation failed',
-        });
+      void startUserTurn({ text: message.text, source: 'text', broadcast })?.catch(() => {
+        // Already logged and broadcast as an error by startUserTurn.
       });
       return;
     case 'appearance_frame':
@@ -162,33 +141,17 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         const prompt = names.length > 0
           ? `Known person nearby: ${names.join(' and ')}. Greet them by name and make it impossible not to reply.`
           : 'Someone is nearby but has not spoken. Break the ice with something unexpected.';
-        scheduleAppearanceGreeting(prompt);
+        scheduleAppearanceGreeting(prompt, broadcast);
       }
       return;
     case 'face_greeting':
-      cancelPendingAppearanceGreeting();
-      if (runtimeConfig.muted) {
-        return;
-      }
-      broadcastInterrupt(interruptAssistantTurns(), 'system');
-      sessionStats.messagesIn += 1;
-      sessionStats.lastActivity = Date.now();
-      broadcast({ type: 'thinking' });
-      void runProactiveTurn('Someone just appeared. Greet them in a way that gets an immediate response.', broadcast).catch(console.error);
+      startProactiveTurn('Someone just appeared. Greet them in a way that gets an immediate response.', broadcast);
       return;
     case 'proactive':
-      cancelPendingAppearanceGreeting();
-      if (runtimeConfig.muted || !message.context) {
-        return;
-      }
-      broadcastInterrupt(interruptAssistantTurns(), 'system');
-      sessionStats.messagesIn += 1;
-      sessionStats.lastActivity = Date.now();
-      broadcast({ type: 'thinking' });
-      void runProactiveTurn(message.context, broadcast).catch(console.error);
+      startProactiveTurn(message.context ?? '', broadcast);
       return;
     case 'interrupt':
-      cancelPendingAppearanceGreeting();
+      cancelAppearanceGreeting();
       interruptAssistantTurns();
       broadcastInterrupt(message.turnId ?? null, 'user');
       return;
@@ -224,34 +187,6 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     default:
       return;
   }
-}
-
-function scheduleAppearanceGreeting(prompt: string): void {
-  pendingAppearanceGreetingPrompt = prompt;
-  if (pendingAppearanceGreetingTimer) {
-    clearTimeout(pendingAppearanceGreetingTimer);
-  }
-  pendingAppearanceGreetingTimer = setTimeout(() => {
-    pendingAppearanceGreetingTimer = null;
-    const nextPrompt = pendingAppearanceGreetingPrompt;
-    pendingAppearanceGreetingPrompt = '';
-    if (!nextPrompt || runtimeConfig.muted || hasActiveAssistantTurn()) {
-      return;
-    }
-    broadcastInterrupt(interruptAssistantTurns(), 'system');
-    sessionStats.messagesIn += 1;
-    sessionStats.lastActivity = Date.now();
-    broadcast({ type: 'thinking' });
-    void runProactiveTurn(nextPrompt, broadcast).catch(console.error);
-  }, APPEARANCE_GREETING_DEBOUNCE_MS);
-}
-
-function cancelPendingAppearanceGreeting(): void {
-  if (pendingAppearanceGreetingTimer) {
-    clearTimeout(pendingAppearanceGreetingTimer);
-    pendingAppearanceGreetingTimer = null;
-  }
-  pendingAppearanceGreetingPrompt = '';
 }
 
 function broadcastInterrupt(turnId?: string | null, source?: WsInterruptServerMessage['source']): void {

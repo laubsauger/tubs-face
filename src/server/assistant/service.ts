@@ -8,7 +8,7 @@ import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
-import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
+import { MAX_OUTPUT_SENTENCES, clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -81,13 +81,38 @@ function assistantUnavailable(message: string): Error {
   return error;
 }
 
+// Work a turn can cancel when it is superseded (LLM stream, TTS socket), keyed
+// by the turn's epoch. Without this an interrupted turn kept generating audio
+// nobody hears for up to 30 s.
+const supersedeHandlers = new Map<number, () => void>();
+
+function onTurnSuperseded(epoch: number, handler: () => void): () => void {
+  supersedeHandlers.set(epoch, handler);
+  return () => {
+    if (supersedeHandlers.get(epoch) === handler) {
+      supersedeHandlers.delete(epoch);
+    }
+  };
+}
+
+function runSupersedeHandlers(): void {
+  for (const [epoch, handler] of supersedeHandlers) {
+    if (epoch !== activeTurnEpoch) {
+      supersedeHandlers.delete(epoch);
+      handler();
+    }
+  }
+}
+
 export function interruptAssistantTurns(): string | null {
   const previousTurnId = activeTurnId;
   activeTurnEpoch += 1;
   activeTurnId = null;
+  runSupersedeHandlers();
   return previousTurnId;
 }
 
+/** True only while a turn is generating; cleared when it finishes or is interrupted. */
 export function hasActiveAssistantTurn(): boolean {
   return Boolean(activeTurnId);
 }
@@ -95,7 +120,14 @@ export function hasActiveAssistantTurn(): boolean {
 function activateAssistantTurn(turnId: string): number {
   activeTurnEpoch += 1;
   activeTurnId = turnId;
+  runSupersedeHandlers();
   return activeTurnEpoch;
+}
+
+function finishAssistantTurn(turnId: string, epoch: number): void {
+  if (isAssistantTurnActive(turnId, epoch)) {
+    activeTurnId = null;
+  }
 }
 
 function isAssistantTurnActive(turnId: string, epoch: number): boolean {
@@ -478,6 +510,20 @@ function logDualHeadInvalidScript(rawText: string, reason: string): void {
 export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void, turnTimer?: TurnTimer): Promise<AssistantTurnResult> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
+  try {
+    return await runAssistantTurnBody(userText, broadcast, turnTimer, turnId, epoch);
+  } finally {
+    finishAssistantTurn(turnId, epoch);
+  }
+}
+
+async function runAssistantTurnBody(
+  userText: string,
+  broadcast: (message: WsServerMessage) => void,
+  turnTimer: TurnTimer | undefined,
+  turnId: string,
+  epoch: number,
+): Promise<AssistantTurnResult> {
   const normalizedUserText = normalizeInput(userText);
   if (normalizedUserText) {
     logAssistantUserInput(normalizedUserText);
@@ -720,6 +766,7 @@ async function runStreamingAssistantTurn(args: {
   // still be in flight when the LLM stream ends, so chunkIndex can still be 0.
   let sentencesQueued = 0;
   let fullText = '';
+  let sawFirstDelta = false;
   let rawEmotion: SpeechEmotionPayload | null = null;
   let emotionExtracted = false;
   let ttsWsResolve!: () => void;
@@ -797,6 +844,10 @@ async function runStreamingAssistantTurn(args: {
   }
 
   const kokoroVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+  const removeSupersedeHandler = onTurnSuperseded(epoch, () => {
+    abortController.abort();
+    ttsWs?.close();
+  });
 
   // Track raw LLM output to detect JSON-wrapped responses.
   // When the model returns {"text":"..."} or {"main":"..."}, we strip
@@ -867,10 +918,19 @@ async function runStreamingAssistantTurn(args: {
     }
     text = sanitizeForTts(stripFormatting(text));
     if (!text) return;
+    // Same limit clampOutput applies to non-streamed replies. Later sentences
+    // are still parsed above so a trailing emotion emoji is not lost.
+    if (sentencesQueued >= MAX_OUTPUT_SENTENCES) {
+      console.log(`\x1b[33m[Streaming TTS]\x1b[0m over ${MAX_OUTPUT_SENTENCES} sentences, not spoken → "${text}"`);
+      return;
+    }
 
     fullText += (fullText ? ' ' : '') + text;
 
     console.log(`\x1b[36m[Streaming TTS]\x1b[0m sentence → "${text}"`);
+    if (sentencesQueued === 0) {
+      turnTimer?.mark('First sentence to TTS');
+    }
     sentencesQueued++;
     if (ttsWsReady && ttsWs && ttsWs.ready) {
       pendingTtsSentences++;
@@ -902,6 +962,10 @@ async function runStreamingAssistantTurn(args: {
           abortController.abort();
           return;
         }
+        if (!sawFirstDelta) {
+          sawFirstDelta = true;
+          turnTimer?.mark('First LLM token');
+        }
         console.log(`\x1b[90m[LLM delta]\x1b[0m ${JSON.stringify(delta)}`);
         pushToSplitter(delta);
       },
@@ -909,12 +973,15 @@ async function runStreamingAssistantTurn(args: {
     });
     endLlmStreamSpan?.();
     logRawModelOutput('stream', llmResult.text);
-    splitter.flush();
+    const stillActive = isAssistantTurnActive(turnId, epoch);
+    if (stillActive) {
+      splitter.flush();
+    }
     llmDone = true;
     checkCloseWs();
 
     // If the splitter produced nothing speakable, send the full text once.
-    if (sentencesQueued === 0 && llmResult.text) {
+    if (stillActive && sentencesQueued === 0 && llmResult.text) {
       const unwrapped = unwrapJsonSpeechText(llmResult.text);
       const parsed = splitTrailingEmotionEmoji(stripFormatting(unwrapped));
       rawEmotion = parsed.emotion;
@@ -1032,6 +1099,8 @@ async function runStreamingAssistantTurn(args: {
     throw error instanceof Error
       ? error
       : assistantUnavailable('[streaming] Assistant streaming turn failed');
+  } finally {
+    removeSupersedeHandler();
   }
 }
 
@@ -1285,6 +1354,19 @@ async function waitForTurnPlaybackWindow(turnId: string, epoch: number, delayMs:
 export async function runProactiveTurn(context: string, broadcast: (message: WsServerMessage) => void): Promise<AssistantTurnResult | null> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
+  try {
+    return await runProactiveTurnBody(context, broadcast, turnId, epoch);
+  } finally {
+    finishAssistantTurn(turnId, epoch);
+  }
+}
+
+async function runProactiveTurnBody(
+  context: string,
+  broadcast: (message: WsServerMessage) => void,
+  turnId: string,
+  epoch: number,
+): Promise<AssistantTurnResult | null> {
   broadcast({
     type: 'turn_start',
     turnId,

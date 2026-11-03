@@ -124,6 +124,25 @@ def ensure_tts_model():
         tts_model = "system"
     return tts_model
 
+def warm_up_tts():
+    """Run one tiny synthesis so the first real reply doesn't pay for building
+    the language pipeline and compiling kernels (about a second on the first
+    request otherwise)."""
+    started = time.time()
+    try:
+        model = ensure_tts_model()
+        if _KOKORO_BACKEND == "mlx":
+            with _gpu_lock:
+                for _ in model.generate(text="Ready.", voice=KOKORO_VOICE, speed=1.0, lang_code="a"):
+                    pass
+        else:
+            for _ in model("Ready.", voice=KOKORO_VOICE, speed=1.0):
+                pass
+        print(f"[Realtime TTS] Warm-up done in {time.time() - started:.2f}s")
+    except Exception as err:
+        print("[Realtime TTS] Warm-up failed:", err)
+
+
 def normalize_audio_mime_type(value):
     normalized = str(value or "").lower()
     if "audio/wav" in normalized or "audio/x-wav" in normalized or "audio/wave" in normalized:
@@ -805,6 +824,10 @@ if __name__ == "__main__":
     if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         print("[Realtime TTS] Preloading model before accepting requests")
         ensure_tts_model()
+        warm_up_tts()
     elif TTS_BACKEND == "system":
         print("[Realtime TTS] System backend selected")
+    # Load Whisper now too; otherwise the first voice turn after a restart
+    # waits for the model to load.
+    ensure_stt_model()
     app.run(port=PORT)

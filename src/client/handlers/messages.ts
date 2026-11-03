@@ -85,6 +85,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ts: Date.now(),
         }),
         currentExpression: 'idle',
+        // A failed turn never plays audio, so nothing else clears "Thinking..."
+        // (which also blocks hands-free listening).
+        ...(current.listenState === 'Thinking...' ? { listenState: 'Idle' } : {}),
       }));
       store.appendLog('error', message.text);
       return;

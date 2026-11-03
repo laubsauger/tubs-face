@@ -1,5 +1,5 @@
 const OUTPUT_CHAR_LIMIT = 180;
-const MAX_OUTPUT_SENTENCES = 2;
+export const MAX_OUTPUT_SENTENCES = 2;
 const INPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_INPUT_COST_PER_MTOKENS || '0');
 const OUTPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_OUTPUT_COST_PER_MTOKENS || '0');
 

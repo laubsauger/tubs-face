@@ -48,6 +48,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const HANDSFREE_STOP_SILENCE_MS = 900;
   const SPEECH_CAPTURE_COOLDOWN_MS = 650;
   const BARGE_IN_SETTLE_MS = 180;
+  const THINKING_RESET_MS = 20_000;
   const HEAD_SPEECH_STALE_MS = 20_000;
   let micStream: MediaStream | null = null;
   let mediaRecorder: MediaRecorder | null = null;
@@ -71,6 +72,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let vadProvider: VadProvider | null = null;
   let vadModelId: VadModelId = 'rms';
   let vadNoiseGateApplied = 0;
+  let thinkingResetTimer: number | undefined;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
   let anyHeadSpeechHandler: ((event: Event) => void) | null = null;
@@ -139,6 +141,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       speakingActors.clear();
       speechCaptureBlockedUntil = 0;
       unbindUnlockHandlers();
+      window.clearTimeout(thinkingResetTimer);
     },
   };
 
@@ -351,22 +354,22 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
           'Content-Type': blob.type || 'audio/webm',
         },
       });
-      const json = await response.json() as VoiceResponse & { turnId?: string; error?: string };
+      const json = await response.json() as VoiceResponse & { error?: string };
       if (!response.ok) {
         throw new Error(json.error || `${response.status} ${response.statusText}`);
       }
       store.appendLog(
         'info',
-        `Voice bridge replied ${json.ignored ? 'ignored' : 'ok'}${json.turnId ? ` (${json.turnId.slice(0, 8)})` : ''}`,
+        `Voice bridge replied ${json.ignored ? `ignored (${json.reason ?? 'unknown'})` : 'ok'}`,
       );
+      // An accepted clip is shown through the server's `incoming` message and
+      // cleared by `turn_start`. An ignored one (no wake word, noise) should
+      // not leave its live-recognition draft on screen.
       store.setState((current) => ({
         ...current,
         listenState: json.ignored ? 'Ignored' : 'Thinking...',
         voiceLastTranscript: json.text ?? '',
-        currentIncomingText: json.text ?? current.currentIncomingText,
-        liveTranscriptText: json.text ?? current.liveTranscriptText,
-        liveTranscriptDraft: false,
-        ...(json.turnId ? { currentTurnId: json.turnId } : {}),
+        ...(json.ignored ? { liveTranscriptText: '', liveTranscriptDraft: false } : {}),
       }));
       if (json.text) {
         store.appendLog('info', `Voice: ${json.text}`);
@@ -374,11 +377,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         store.appendLog('info', 'Voice upload completed with empty transcript');
       }
       lastLiveTranscript = '';
-      if (json.ignored) {
-        store.setState((current) => ({
-          ...current,
-          listenState: 'Ignored',
-        }));
+      if (!json.ignored) {
+        scheduleThinkingReset();
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Voice upload failed';
@@ -473,6 +473,25 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     } catch {
       // ignore
     }
+  }
+
+  /**
+   * Hands-free waits while listenState is "Thinking...". Speech playback clears
+   * it, but a turn that never speaks (superseded, dropped) would leave the mic
+   * deaf, so give up after a while.
+   */
+  function scheduleThinkingReset(): void {
+    window.clearTimeout(thinkingResetTimer);
+    thinkingResetTimer = window.setTimeout(() => {
+      const state = store.getState();
+      if (state.listenState === 'Thinking...' && !state.audioPlaying) {
+        store.setState((current) => ({
+          ...current,
+          listenState: current.voiceHandsFreeEnabled ? passiveListenState() : 'Idle',
+        }));
+        syncPassiveLiveRecognition();
+      }
+    }, THINKING_RESET_MS);
   }
 
   function passiveListenState(): string {

@@ -17,6 +17,9 @@ interface FakeTtsOptions {
 const fakes = vi.hoisted(() => ({
   provider: null as unknown as LlmProvider,
   ttsSent: [] as string[],
+  // When true, TTS accepts text but never answers (a slow or stuck generator).
+  ttsHang: false,
+  ttsClosed: 0,
 }));
 
 vi.mock('../llm/provider.js', () => ({
@@ -29,6 +32,7 @@ vi.mock('../tts/stream.js', () => ({
     return {
       send(text: string) {
         fakes.ttsSent.push(text);
+        if (fakes.ttsHang) return;
         setTimeout(() => {
           options.onChunk({ text, audio: 'UklGRg==' });
           options.onSentenceDone();
@@ -37,6 +41,7 @@ vi.mock('../tts/stream.js', () => ({
       close() {
         if (!open) return;
         open = false;
+        fakes.ttsClosed += 1;
         setTimeout(() => options.onClose?.(), 0);
       },
       get ready() {
@@ -50,7 +55,7 @@ vi.mock('../tts/stream.js', () => ({
 }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { interruptAssistantTurns, runAssistantTurn } = await import('./service.js');
+const { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn } = await import('./service.js');
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -133,6 +138,8 @@ describe('assistant turn', () => {
     vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     fakes.ttsSent.length = 0;
+    fakes.ttsHang = false;
+    fakes.ttsClosed = 0;
     runtimeConfig.dualHeadEnabled = false;
     runtimeConfig.ttsStreamingEnabled = false;
     interruptAssistantTurns();
@@ -192,6 +199,12 @@ describe('assistant turn', () => {
       ]);
     });
 
+    it('clears the active turn when the reply is done, so greetings can run again', async () => {
+      fakes.provider = queuedProvider(['Done talking.']);
+      await runAssistantTurn('say something short', collect().broadcast);
+      expect(hasActiveAssistantTurn()).toBe(false);
+    });
+
     it('turns a donation marker into a QR signal and keeps it out of speech', async () => {
       fakes.provider = queuedProvider(['Fund my wheels, human. [[SHOW_QR]]']);
       const ws = collect();
@@ -223,6 +236,36 @@ describe('assistant turn', () => {
       expect(end?.emotion?.emoji).toBe('😏');
       expect(ws.types().at(-1)).toBe('stats');
       expect(result.superseded).toBe(false);
+    });
+
+    it('speaks at most two sentences but still reads the emotion emoji at the end', async () => {
+      fakes.provider = streamingProvider(['One thing. ', 'Two things. ', 'Three things. 😏']);
+      const ws = collect();
+
+      await runAssistantTurn('list some things', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['One thing.', 'Two things.']);
+      const [end] = ws.ofType('speak_end');
+      expect(end?.fullText).toBe('One thing. Two things.');
+      expect(end?.emotion?.emoji).toBe('😏');
+    });
+
+    it('closes the TTS stream as soon as the user barges in, instead of waiting for audio nobody hears', async () => {
+      fakes.ttsHang = true;
+      fakes.provider = streamingProvider(['First line here. ', 'Second line here.']);
+      const ws = collect();
+
+      const turn = runAssistantTurn('say two things', ws.broadcast);
+      await waitFor(() => fakes.ttsSent.length === 2);
+      const interruptedAt = Date.now();
+      interruptAssistantTurns();
+      const result = await turn;
+
+      // Before, the turn sat on the open TTS socket for up to 30 s.
+      expect(Date.now() - interruptedAt).toBeLessThan(500);
+      expect(fakes.ttsClosed).toBe(1);
+      expect(result.superseded).toBe(true);
+      expect(ws.types()).not.toContain('stats');
     });
 
     it('strips a JSON envelope so only prose reaches TTS', async () => {

@@ -35,18 +35,16 @@ import type {
   TtsRequest,
 } from '../../shared/contracts/http.js';
 import type {
-  WsConversationModeServerMessage,
   WsExpressionServerMessage,
-  WsIncomingServerMessage,
   WsSleepServerMessage,
   WsSpeakServerMessage,
-  WsThinkingServerMessage,
   WsTurnScriptServerMessage,
   WsTurnStartServerMessage,
   WsWakeServerMessage,
 } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
-import { createTurnId, interruptAssistantTurns, runAssistantTurn } from '../assistant/service.js';
+import { createTurnId, interruptAssistantTurns } from '../assistant/service.js';
+import { isInConversation, startUserTurn } from '../assistant/turns.js';
 import { sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from '../assistant/text.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
@@ -59,12 +57,10 @@ import { addFace, deleteFace, readFaceLibrary, updateFace } from '../faces/libra
 import { captureOrder, createOrder } from '../paypal/client.js';
 import { emitDonationSignal, isDonationWebhookAuthorized, normalizeCurrencyCode, normalizeDonationSignalCertainty, toDonationSignalFromPayPalCapture, toDonationSignalFromPaypalEvent, toSafeAmount } from '../donations.js';
 
-const CONVERSATION_WINDOW_MS = 45_000;
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 const shapesDir = resolve(process.cwd(), 'src/shapes');
 const inputFacesDir = resolve(process.cwd(), 'input_faces');
 const processedFacesDir = resolve(process.cwd(), 'processed_faces');
-let lastConversationAt = 0;
 
 export async function handleApiRequest(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
   const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
@@ -142,74 +138,21 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
   }
 
   if (request.method === 'POST' && url.pathname === '/incoming') {
-    const turnTimer = createTurnTimer({
-      side: 'backend',
-      source: 'text',
-      startedAt: Date.now(),
-    });
     try {
       const body = await readJsonBody<IncomingRequest>(request);
       const text = body.text?.trim();
       if (!text) {
         throw badRequest('text is required');
       }
-
-      turnTimer.setMeta('User', text);
-      sessionStats.messagesIn += 1;
-      sessionStats.lastActivity = Date.now();
-      lastConversationAt = Date.now();
-
-      const interruptedTurnId = interruptAssistantTurns();
-      broadcast({
-        type: 'interrupt',
-        ...(interruptedTurnId ? { turnId: interruptedTurnId } : {}),
-        source: 'user',
+      const turn = startUserTurn({ text, source: 'text', broadcast });
+      sendJson(response, 200, (turn ? { ok: true } : { ok: true, ignored: true, reason: 'muted' }) satisfies IncomingResponse);
+      void turn?.catch(() => {
+        // Already logged and broadcast as an error by startUserTurn.
       });
-
-      broadcast({
-        type: 'incoming',
-        text,
-      } satisfies WsIncomingServerMessage);
-      broadcast({
-        type: 'conversation_mode',
-        active: true,
-        expiresIn: CONVERSATION_WINDOW_MS,
-      } satisfies WsConversationModeServerMessage);
-      broadcast({
-        type: 'thinking',
-      } satisfies WsThinkingServerMessage);
-
-      sendJson(response, 200, {
-        ok: true,
-      } satisfies IncomingResponse);
-      turnTimer.mark('HTTP response sent');
-      void (async () => {
-        try {
-          const endAssistantSpan = turnTimer.span('LLM Generation');
-          const result = await runAssistantTurn(text, broadcast, turnTimer);
-          endAssistantSpan();
-          if (result.superseded) {
-            turnTimer.mark('Assistant turn superseded');
-          }
-          turnTimer.log({ title: '[Turn Timing]' });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Text request failed';
-          broadcast({
-            type: 'error',
-            text: message,
-          });
-        }
-      })();
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Text request failed';
       const statusCode = error instanceof Error && error.name === 'BadRequestError' ? 400 : 500;
       sendJson(response, statusCode, { error: message } satisfies ErrorResponse);
-      if (statusCode >= 500) {
-        broadcast({
-          type: 'error',
-          text: message,
-        });
-      }
     }
     return true;
   }
@@ -266,7 +209,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       }
 
       let wake: WakeWordResult | undefined;
-      const inConversation = (Date.now() - lastConversationAt) < CONVERSATION_WINDOW_MS;
+      const inConversation = isInConversation();
 
       if (wakeWord) {
         wake = detectWakeWord(text);
@@ -292,46 +235,20 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
         }
       }
 
-      sessionStats.messagesIn += 1;
-      sessionStats.lastActivity = Date.now();
-      lastConversationAt = Date.now();
-
-      const interruptedTurnId = interruptAssistantTurns();
-      broadcast({
-        type: 'interrupt',
-        ...(interruptedTurnId ? { turnId: interruptedTurnId } : {}),
-        source: 'voice_barge_in',
-      });
-
-      broadcast({
-        type: 'incoming',
-        text,
-      } satisfies WsIncomingServerMessage);
-      broadcast({
-        type: 'conversation_mode',
-        active: true,
-        expiresIn: CONVERSATION_WINDOW_MS,
-      } satisfies WsConversationModeServerMessage);
-      broadcast({
-        type: 'thinking',
-      } satisfies WsThinkingServerMessage);
-
-      const endAssistantSpan = turnTimer.span('LLM Generation');
-      const result = await runAssistantTurn(text, broadcast, turnTimer);
-      endAssistantSpan();
-      if (result.superseded) {
-        turnTimer.mark('Assistant turn superseded');
-      }
-
+      // Answer as soon as the clip is accepted. The reply arrives over the
+      // WebSocket; holding the request until it finished left the client on
+      // "Thinking..." and re-showed the transcript after the reply.
+      const turn = startUserTurn({ text, source: 'voice', broadcast, turnTimer });
       sendJson(response, 200, {
         ok: true,
         text,
-        ...(result.turnId ? { turnId: result.turnId } : {}),
-        ...(result.superseded ? { ignored: true, reason: 'superseded' } : {}),
+        ...(turn ? {} : { ignored: true, reason: 'muted' }),
         ...(wake ? { wake } : {}),
-      } satisfies VoiceResponse & { turnId?: string });
+      } satisfies VoiceResponse);
       turnTimer.mark('HTTP response sent');
-      turnTimer.log({ title: '[Turn Timing]' });
+      void turn?.catch(() => {
+        // Already logged and broadcast as an error by startUserTurn.
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Voice request failed';
       sendJson(response, 500, { error: message } satisfies ErrorResponse);
