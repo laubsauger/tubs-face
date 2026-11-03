@@ -217,63 +217,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const isDualHead = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
     const serverStreaming = Boolean(store.getState().config?.ttsStreamingEnabled);
 
-    // In main mode with dual-head, only queue main beats locally. Small beats
-    // belong to the mini/spectator surface; otherwise the main face voices both
-    // sides when the mini window is closed.
-    if (mode === 'main' && isDualHead) {
-      // When server TTS streaming is enabled, audio arrives via audio_chunk
-      // messages. Keep only main-beat metadata here because this runtime ignores
-      // small-actor audio chunks.
-      if (serverStreaming) {
-        pendingBeatMeta = beats
-          .map((beat, i) => ({ beat, i }))
-          .filter(({ beat }) => (beat.actor === 'small' ? 'small' : 'main') === 'main')
-          .map(({ beat, i }) => ({
-            index: i,
-            actor: 'main' as const,
-            action: beat.action,
-            emotion: beat.emotion ?? null,
-            text: beat.text ?? '',
-          }));
-      } else {
-        pendingBeatMeta = [];
-      }
-      for (const beat of beats) {
-        if (!beat) continue;
-        const beatActor = beat.actor === 'small' ? 'small' : 'main';
-        if (beatActor !== 'main') {
-          continue;
-        }
-        if (beat.action === 'speak' && beat.text?.trim()) {
-          if (serverStreaming) continue; // audio comes via audio_chunk
-          queue.push({
-            type: 'speak',
-            actor: beatActor,
-            text: beat.text.trim(),
-            ...(beat.emotion ? { emotion: beat.emotion } : {}),
-            ...(turnId !== undefined ? { turnId } : {}),
-          });
-        } else if (beat.action === 'react') {
-          queue.push({
-            type: 'react',
-            actor: beatActor,
-            text: beat.text ?? '',
-            ...(beat.emotion ? { emotion: beat.emotion } : {}),
-            ...(beat.delayMs !== undefined ? { delayMs: Math.max(120, beat.delayMs) } : {}),
-            ...(turnId !== undefined ? { turnId } : {}),
-          });
-        } else if (beat.action === 'wait' && beat.delayMs) {
-          queue.push({
-            type: 'wait',
-            delayMs: Math.max(120, Math.min(8000, beat.delayMs)),
-            ...(turnId !== undefined ? { turnId } : {}),
-          });
-        }
-      }
-      processQueue();
-      return;
-    }
-
     const actor = mode === 'mini' ? 'small' : 'main';
     if (serverStreaming) {
       pendingBeatMeta = beats
@@ -289,10 +232,17 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     } else {
       pendingBeatMeta = [];
     }
-    const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait: false });
-    // When server TTS streaming is enabled and we're in mini mode, audio arrives
-    // via audio_chunk — skip speak beats to avoid trying to generate TTS we can't send
-    // (spectators have no WS sender wired up, so tts_request events go nowhere).
+    if (isDualHead && serverStreaming) {
+      // In dual-head streaming mode the server already serializes the beat audio.
+      // Running local scripted beat previews here makes the faces race ahead and
+      // appear to speak on top of each other before their audio actually arrives.
+      processQueue();
+      return;
+    }
+
+    const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait: isDualHead });
+    // When mini has no WS sender, local speak beats must stay visual-only if
+    // audio is expected to arrive from the server.
     const suppressTts = mode === 'mini' && serverStreaming;
     const hasSpeakBeat = !suppressTts && timeline.some((item) => item.action === 'speak' && item.text?.trim());
     let promotedReactToSpeak = false;

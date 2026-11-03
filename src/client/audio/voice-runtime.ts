@@ -47,6 +47,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const HANDSFREE_START_HOLD_MS = 45;
   const HANDSFREE_STOP_SILENCE_MS = 900;
   const SPEECH_CAPTURE_COOLDOWN_MS = 650;
+  const BARGE_IN_SETTLE_MS = 180;
   const HEAD_SPEECH_STALE_MS = 20_000;
   let micStream: MediaStream | null = null;
   let mediaRecorder: MediaRecorder | null = null;
@@ -250,7 +251,15 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     const state = store.getState();
-    if (state.audioPlaying || state.currentSpeechText || state.currentTurnId) {
+    if (state.audioPlaying || state.currentSpeechText) {
+      stopLiveRecognition();
+      lastLiveTranscript = '';
+      store.setState((current) => ({
+        ...current,
+        currentIncomingText: '',
+        liveTranscriptText: '',
+        liveTranscriptDraft: false,
+      }));
       window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
         detail: {
           turnId: state.currentTurnId ?? null,
@@ -262,6 +271,12 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
           turnId: state.currentTurnId ?? null,
         },
       }));
+      if (state.audioPlaying) {
+        speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, Date.now() + BARGE_IN_SETTLE_MS);
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, BARGE_IN_SETTLE_MS);
+        });
+      }
     }
 
     if (audioContext?.state === 'suspended') {
@@ -388,18 +403,27 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     speechRecognition.interimResults = true;
     speechRecognition.lang = 'en-US';
     speechRecognition.onresult = (event) => {
-      if (isSpeechCaptureBlocked(true)) {
+      if (isSpeechCaptureBlocked()) {
         return;
       }
-      let nextTranscript = '';
-      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      let finalTranscript = '';
+      let interimTranscript = '';
+      for (let index = 0; index < event.results.length; index += 1) {
         const result = event.results[index];
         if (!result || result.length === 0) {
           continue;
         }
-        nextTranscript += result[0]?.transcript ?? result.item(0)?.transcript ?? '';
+        const transcript = result[0]?.transcript ?? result.item(0)?.transcript ?? '';
+        if (!transcript) {
+          continue;
+        }
+        if (result.isFinal) {
+          finalTranscript += transcript;
+        } else {
+          interimTranscript += transcript;
+        }
       }
-      const normalized = nextTranscript.trim();
+      const normalized = `${finalTranscript} ${interimTranscript}`.trim();
       if (!normalized) {
         return;
       }
@@ -408,7 +432,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         ...upsertChatDraft(current, 'in', normalized),
         currentIncomingText: normalized,
         liveTranscriptText: normalized,
-        liveTranscriptDraft: true,
+        liveTranscriptDraft: interimTranscript.trim().length > 0 || current.recording,
         voiceLastTranscript: normalized,
       }));
     };
@@ -669,18 +693,16 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       if (detail?.state === 'start') {
         speakingActors.set(actor, ts + HEAD_SPEECH_STALE_MS);
         speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + SPEECH_CAPTURE_COOLDOWN_MS);
-        if (!manualPressActive) {
-          store.setState((current) => ({
-            ...current,
-            currentIncomingText: '',
-            liveTranscriptText: '',
-            liveTranscriptDraft: false,
-          }));
-          lastLiveTranscript = '';
-          stopLiveRecognition();
-          if (store.getState().recording && recordingMode === 'handsfree') {
-            stopRecording('handsfree', { discard: true });
-          }
+        store.setState((current) => ({
+          ...current,
+          currentIncomingText: '',
+          liveTranscriptText: '',
+          liveTranscriptDraft: false,
+        }));
+        lastLiveTranscript = '';
+        stopLiveRecognition();
+        if (!manualPressActive && store.getState().recording && recordingMode === 'handsfree') {
+          stopRecording('handsfree', { discard: true });
         }
       } else {
         speakingActors.delete(actor);

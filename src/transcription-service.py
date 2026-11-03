@@ -246,27 +246,25 @@ def tts_stream(ws):
                 continue
                 
             if TTS_BACKEND == "kokoro":
+                segments = []
                 if _KOKORO_BACKEND == "mlx":
                     # macOS: mlx_audio - GPU lock required (Metal not thread-safe)
                     with _gpu_lock:
                         for result in tts_model.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                            audio_np = _safe_numpy(result.audio)
-                            wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                            ws.send(json.dumps({
-                                "text": text,
-                                "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                                "chunk": True
-                            }))
+                            segments.append(_safe_numpy(result.audio))
                 else:
                     # Windows / Linux: kokoro KPipeline
                     for _, _, audio in tts_model(text, voice=voice, speed=1.0):
-                        audio_np = _safe_numpy(audio)
-                        wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                        ws.send(json.dumps({
-                            "text": text,
-                            "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                            "chunk": True
-                        }))
+                        segments.append(_safe_numpy(audio))
+                if not segments:
+                    ws.send(json.dumps({"error": "Kokoro generated no audio"}))
+                    continue
+                wav_bytes = pcm_to_wav_bytes(np.concatenate(segments), sample_rate=24000)
+                ws.send(json.dumps({
+                    "text": text,
+                    "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                    "chunk": True
+                }))
                 ws.send(json.dumps({"text": text, "done": True}))
             else:
                 ws.send(json.dumps({"error": "Streaming not supported by " + TTS_BACKEND}))

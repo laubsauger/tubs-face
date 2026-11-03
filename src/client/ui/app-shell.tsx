@@ -53,6 +53,7 @@ export interface AppShellControls {
     toggleCamera(): Promise<void>;
     detectFile(file: File): Promise<void>;
     saveDetectedFace(): Promise<void>;
+    enrollFace(name: string, onProgress?: (progress: import('../face/runtime.js').FaceEnrollmentProgress) => void): Promise<import('../face/runtime.js').FaceEnrollmentResult>;
     refreshLibrary(): Promise<void>;
     renameFace(id: string, name: string): Promise<void>;
     deleteFace(id: string): Promise<void>;
@@ -90,7 +91,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
           const name = window.prompt("Enter name for Face Enrollment:");
           if (name?.trim()) {
              store.setState(s => ({ ...s, faceDraftName: name.trim() }));
-             void controls?.face?.saveDetectedFace();
+             void controls?.face?.enrollFace(name.trim());
           }
         } else if (key === 'd') {
           e.preventDefault();

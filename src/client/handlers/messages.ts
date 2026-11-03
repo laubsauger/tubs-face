@@ -15,6 +15,7 @@ let donationPromptTimer: number | null = null;
 let activeTurnScriptId: string | null = null;
 let activeTurnScriptBeats: TurnBeat[] = [];
 let streamedBeatChatKeys = new Set<string>();
+let streamedTurnActorChatEntryIds = new Map<string, string>();
 
 /**
  * @param targetActor When set (spectator mode), filters actor-specific messages
@@ -138,6 +139,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       activeTurnScriptId = message.turnId;
       activeTurnScriptBeats = [];
       streamedBeatChatKeys = new Set();
+      streamedTurnActorChatEntryIds = new Map();
       store.setState((current) => {
         if (current.currentTurnId && current.currentTurnId !== message.turnId && (current.audioPlaying || current.currentSpeechText)) {
           window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
@@ -263,7 +265,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         const hasOutDraft = current.chatEntries.some((entry) => entry.type === 'out' && entry.draft);
         const alreadyAppended = hasRecentOutgoingAssistantEntry(current, finalizedText, 'main');
         const nextState = hasOutDraft
-          ? commitChatDraft(current, 'out')
+          ? (alreadyAppended ? clearChatDraft(current, 'out') : commitChatDraft(current, 'out'))
           : ((!dualHeadActive && finalizedText && !alreadyAppended)
               ? appendChatEntry(current, {
                 type: 'out',
@@ -301,6 +303,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         activeTurnScriptId = message.turnId ?? store.getState().currentTurnId;
         activeTurnScriptBeats = Array.isArray(message.beats) ? message.beats : [];
         streamedBeatChatKeys = new Set();
+        streamedTurnActorChatEntryIds = new Map();
         if (mode === 'mini') {
           return;
         }
@@ -315,7 +318,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
             .filter(Boolean)
             .join(' '),
         );
-        const previewText = summarizeTurnScript(message, targetActor);
+        const previewText = summarizeTurnScriptForPreview(message, targetActor);
         store.setState((current) => {
           let next: AppState = {
             ...current,
@@ -328,14 +331,21 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           if (dualHeadActive) {
             return next;
           }
+          const mergedByActor = new Map<'main' | 'small', string>();
           for (const beat of message.beats) {
             if (beat.action !== 'speak' || !beat.text?.trim()) {
               continue;
             }
+            const actor = beat.actor === 'small' ? 'small' : 'main';
+            const text = `${beat.emotion?.emoji ? `${beat.emotion.emoji} ` : ''}${beat.text.trim()}`;
+            const previous = mergedByActor.get(actor);
+            mergedByActor.set(actor, previous ? `${previous}\n${text}` : text);
+          }
+          for (const [actor, text] of mergedByActor.entries()) {
             next = appendChatEntry(next, {
               type: 'out',
-              actor: beat.actor,
-              text: `${beat.emotion?.emoji ? `${beat.emotion.emoji} ` : ''}${beat.text.trim()}`,
+              actor,
+              text,
               ts: Date.now(),
             });
           }
@@ -364,8 +374,13 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           audioBytes: Math.round(((message.audio || '').length * 3) / 4),
           ts: Date.now(),
         });
-        if (!dualHeadActive && mode === 'main' && message.text?.trim()) {
-          next = upsertChatDraft(next, 'out', message.text.trim(), 'main');
+        const chunkText = message.text?.trim() ?? '';
+        const alreadyAppended = chunkText
+          ? hasRecentOutgoingAssistantEntry(current, chunkText, 'main')
+            || hasRecentOutgoingAssistantEntry(current, current.currentSpeechText, 'main')
+          : false;
+        if (!dualHeadActive && mode === 'main' && chunkText && !alreadyAppended) {
+          next = upsertChatDraft(next, 'out', chunkText, 'main');
         }
         return {
           ...next,
@@ -554,15 +569,20 @@ function describeTurnContext(meta: NonNullable<Extract<WsServerMessage, { type: 
   return `Turn context: ${mode}, ${historyMessages} messages, ${historyChars} chars, ${imageAttached}`;
 }
 
-function summarizeTurnScript(
+function summarizeTurnScriptForPreview(
   message: Extract<WsServerMessage, { type: 'turn_script' }>,
   actor: 'main' | 'small',
 ): string {
-  return message.beats
+  const speakBeats = message.beats
     .filter((beat) => beat.actor === actor && beat.action === 'speak' && beat.text)
     .map((beat) => beat.text?.trim() ?? '')
-    .filter(Boolean)
-    .join(' ');
+    .filter(Boolean);
+
+  if (speakBeats.length !== 1) {
+    return '';
+  }
+
+  return speakBeats[0] ?? '';
 }
 
 function maybeAppendTimedDualHeadChat(
@@ -587,12 +607,46 @@ function maybeAppendTimedDualHeadChat(
 
   streamedBeatChatKeys.add(key);
   const emoji = beat?.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
-  store.setState((current) => appendChatEntry(current, {
-    type: 'out',
-    actor,
-    text: `${emoji}${text}`,
-    ts: Date.now(),
-  }));
+  const nextText = `${emoji}${text}`;
+  const turnActorKey = `${turnId ?? activeTurnScriptId ?? 'turn'}:${actor}`;
+
+  store.setState((current) => {
+    const existingEntryId = streamedTurnActorChatEntryIds.get(turnActorKey);
+    if (existingEntryId) {
+      const existingIndex = current.chatEntries.findIndex((entry) => entry.id === existingEntryId);
+      if (existingIndex >= 0) {
+        const existingEntry = current.chatEntries[existingIndex];
+        if (existingEntry?.type === 'out' && existingEntry.actor === actor) {
+          const existingLines = existingEntry.text.split('\n').map((line) => line.trim()).filter(Boolean);
+          if (existingLines[existingLines.length - 1] === nextText) {
+            return current;
+          }
+          const nextEntries = [...current.chatEntries];
+          nextEntries[existingIndex] = {
+            ...existingEntry,
+            text: `${existingEntry.text}\n${nextText}`,
+            ts: Date.now(),
+          };
+          return {
+            ...current,
+            chatEntries: nextEntries,
+          };
+        }
+      }
+    }
+
+    const nextState = appendChatEntry(current, {
+      type: 'out',
+      actor,
+      text: nextText,
+      ts: Date.now(),
+    });
+    const appendedEntry = nextState.chatEntries[nextState.chatEntries.length - 1];
+    if (appendedEntry) {
+      streamedTurnActorChatEntryIds.set(turnActorKey, appendedEntry.id);
+    }
+    return nextState;
+  });
 }
 
 function compactDonationSignal(message: Extract<WsServerMessage, { type: 'donation_signal' }>) {

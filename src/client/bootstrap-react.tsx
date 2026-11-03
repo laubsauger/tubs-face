@@ -85,6 +85,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
           },
           detectFile: (file: File) => faceRuntime.detectFile(file),
           saveDetectedFace: () => faceRuntime.saveDetectedFace(),
+          enrollFace: (name, onProgress) => faceRuntime.enrollFace(name, onProgress),
           refreshLibrary: () => faceRuntime.refreshLibrary(),
           renameFace: (id: string, name: string) => faceRuntime.renameFace(id, name),
           deleteFace: (id: string) => faceRuntime.deleteFace(id),

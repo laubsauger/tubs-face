@@ -42,7 +42,6 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
   // Streaming state
   let streamingActive = false;
   let streamedWords: string[] = [];
-  let streamRevealIndex = -1;
   let streamRevealTimer = 0;
 
   function renderSegment(words: string[]): void {
@@ -56,7 +55,6 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
   function stopStreaming(): void {
     streamingActive = false;
     streamedWords = [];
-    streamRevealIndex = -1;
     if (streamRevealTimer) {
       clearTimeout(streamRevealTimer);
       streamRevealTimer = 0;
@@ -150,12 +148,23 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
 
     streamingActive = true;
     const words = normalized.split(/\s+/).filter(Boolean);
+    const previousWords = streamedWords;
     streamedWords = words;
-    streamRevealIndex = -1;
+
+    let commonPrefixCount = 0;
+    while (
+      commonPrefixCount < previousWords.length
+      && commonPrefixCount < words.length
+      && previousWords[commonPrefixCount] === words[commonPrefixCount]
+    ) {
+      commonPrefixCount += 1;
+    }
 
     // Segment so we only show a manageable chunk at a time
     const segments = segmentText(normalized, maxSegmentChars);
     const lastSegment = segments[segments.length - 1] ?? words;
+    const lastSegmentStart = Math.max(0, words.length - lastSegment.length);
+    const initialLocalRevealIndex = Math.max(0, Math.min(lastSegment.length, commonPrefixCount - lastSegmentStart));
 
     // Render the last segment's words as the visible line
     element.innerHTML = lastSegment.map((word) =>
@@ -163,9 +172,13 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
     ).join(' ');
     element.classList.add('is-visible');
 
-    // Progressively reveal words with a stagger
     const wordNodes = element.querySelectorAll<HTMLElement>('.subtitle-word');
-    let revealIdx = 0;
+    wordNodes.forEach((node, index) => {
+      if (index < initialLocalRevealIndex) {
+        node.classList.add('is-spoken');
+      }
+    });
+    let revealIdx = initialLocalRevealIndex;
 
     function revealNext(): void {
       if (revealIdx > 0 && wordNodes[revealIdx - 1]) {
@@ -291,13 +304,15 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
 
     const startedAt = performance.now();
     const tick = () => {
-      const ratio = audioRef
-        ? Math.min(0.99, audioRef.currentTime / Math.max(audioRef.duration, 0.1))
-        : Math.min(0.99, (performance.now() - startedAt) / Math.max(durationSeconds * 850, 1));
+      const audioDuration = audioRef?.duration;
+      const useAudioClock = Boolean(audioRef && Number.isFinite(audioDuration) && (audioDuration ?? 0) > 0.05);
+      const ratio = useAudioClock
+        ? Math.min(0.99, (audioRef?.currentTime ?? 0) / Math.max(audioDuration ?? 0.1, 0.1))
+        : Math.min(0.99, (performance.now() - startedAt) / Math.max(durationSeconds * 1000, 1));
       const wordIndex = Math.min(allWords.length - 1, timeToWordIndex(ratio));
       updateHighlight(wordIndex);
 
-      if (ratio >= 0.99 || (audioRef && audioRef.ended)) {
+      if ((useAudioClock && (ratio >= 0.99 || Boolean(audioRef?.ended))) || (!useAudioClock && ratio >= 0.99)) {
         finish();
         return;
       }

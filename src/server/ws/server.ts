@@ -4,6 +4,7 @@ import type {
   WsAudioChunkServerMessage,
   WsClientMessage,
   WsConfigServerMessage,
+  WsErrorServerMessage,
   WsFaceBlinkServerMessage,
   WsFaceMotionServerMessage,
   WsHeadSpeechStateServerMessage,
@@ -16,12 +17,16 @@ import type {
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, sessionStats, toConfigResponse } from '../config/runtime.js';
-import { interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
+import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn } from '../assistant/service.js';
 import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
 const WS_PATH = '/ws';
+const APPEARANCE_GREETING_DEBOUNCE_MS = 700;
+
+let pendingAppearanceGreetingTimer: NodeJS.Timeout | null = null;
+let pendingAppearanceGreetingPrompt = '';
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
@@ -124,6 +129,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       } satisfies WsPingServerMessage);
       return;
     case 'incoming':
+      cancelPendingAppearanceGreeting();
       if (runtimeConfig.muted) {
         broadcast({ type: 'expression', expression: 'idle' });
         return;
@@ -150,20 +156,17 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     case 'camera_frame':
       void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'camera_frame'));
       if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
-        broadcastInterrupt(interruptAssistantTurns(), 'system');
-        sessionStats.messagesIn += 1;
-        sessionStats.lastActivity = Date.now();
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
           : [];
         const prompt = names.length > 0
           ? `Known person nearby: ${names.join(' and ')}. Greet them by name and make it impossible not to reply.`
           : 'Someone is nearby but has not spoken. Break the ice with something unexpected.';
-        broadcast({ type: 'thinking' });
-        void runProactiveTurn(prompt, broadcast).catch(console.error);
+        scheduleAppearanceGreeting(prompt);
       }
       return;
     case 'face_greeting':
+      cancelPendingAppearanceGreeting();
       if (runtimeConfig.muted) {
         return;
       }
@@ -174,6 +177,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       void runProactiveTurn('Someone just appeared. Greet them in a way that gets an immediate response.', broadcast).catch(console.error);
       return;
     case 'proactive':
+      cancelPendingAppearanceGreeting();
       if (runtimeConfig.muted || !message.context) {
         return;
       }
@@ -184,6 +188,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       void runProactiveTurn(message.context, broadcast).catch(console.error);
       return;
     case 'interrupt':
+      cancelPendingAppearanceGreeting();
       interruptAssistantTurns();
       broadcastInterrupt(message.turnId ?? null, 'user');
       return;
@@ -221,6 +226,34 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
   }
 }
 
+function scheduleAppearanceGreeting(prompt: string): void {
+  pendingAppearanceGreetingPrompt = prompt;
+  if (pendingAppearanceGreetingTimer) {
+    clearTimeout(pendingAppearanceGreetingTimer);
+  }
+  pendingAppearanceGreetingTimer = setTimeout(() => {
+    pendingAppearanceGreetingTimer = null;
+    const nextPrompt = pendingAppearanceGreetingPrompt;
+    pendingAppearanceGreetingPrompt = '';
+    if (!nextPrompt || runtimeConfig.muted || hasActiveAssistantTurn()) {
+      return;
+    }
+    broadcastInterrupt(interruptAssistantTurns(), 'system');
+    sessionStats.messagesIn += 1;
+    sessionStats.lastActivity = Date.now();
+    broadcast({ type: 'thinking' });
+    void runProactiveTurn(nextPrompt, broadcast).catch(console.error);
+  }, APPEARANCE_GREETING_DEBOUNCE_MS);
+}
+
+function cancelPendingAppearanceGreeting(): void {
+  if (pendingAppearanceGreetingTimer) {
+    clearTimeout(pendingAppearanceGreetingTimer);
+    pendingAppearanceGreetingTimer = null;
+  }
+  pendingAppearanceGreetingPrompt = '';
+}
+
 function broadcastInterrupt(turnId?: string | null, source?: WsInterruptServerMessage['source']): void {
   broadcast({
     type: 'interrupt',
@@ -237,6 +270,7 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
   const voice = message.voice || runtimeConfig.kokoroVoice || 'af_heart';
   let chunkIndex = 0;
   let sentSpeakEnd = false;
+  let sentError = false;
   const requestedAt = Date.now();
 
   console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request received — text="${text.slice(0, 60)}" voice=${voice}${turnId ? ` turn=${turnId}` : ''}`);
@@ -247,9 +281,25 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
     if (socket.readyState === socket.OPEN) {
       send(socket, {
         type: 'speak_end',
+        text,
+        fullText: text,
         ...(turnId ? { turnId } : {}),
       } satisfies WsSpeakEndServerMessage);
     }
+  }
+
+  function sendTtsError(reason: string): void {
+    if (sentError) {
+      return;
+    }
+    sentError = true;
+    if (socket.readyState !== socket.OPEN) {
+      return;
+    }
+    send(socket, {
+      type: 'error',
+      text: `Streaming TTS unavailable: ${reason}`,
+    } satisfies WsErrorServerMessage);
   }
 
   const ttsSession = openTtsStream({
@@ -271,15 +321,22 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
     },
     onSentenceDone() {
       sendSpeakEnd();
+      ttsSession.close();
     },
     onError(error) {
       console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS request error: ${error.message}`);
-      // Ensure client gets speak_end even on error so it doesn't hang
+      if (chunkIndex === 0) {
+        sendTtsError(error.message);
+        sendSpeakEnd();
+        return;
+      }
       sendSpeakEnd();
     },
     onClose() {
       console.log(`\x1b[36m[Streaming]\x1b[0m client TTS request done — ${chunkIndex} chunks sent in ${Date.now() - requestedAt}ms${turnId ? ` (turn: ${turnId})` : ''}`);
-      // Ensure speak_end is sent if TTS stream closed without onSentenceDone
+      if (chunkIndex === 0 && !sentSpeakEnd) {
+        sendTtsError('stream closed before audio');
+      }
       sendSpeakEnd();
     },
   });
@@ -292,6 +349,9 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
     }
     if (ttsSession.closed) {
       console.warn(`\x1b[31m\x1b[1m[Streaming]\x1b[0m client TTS WS closed before ready — text "${text.slice(0, 40)}..."`);
+      if (chunkIndex === 0) {
+        sendTtsError('stream closed before ready');
+      }
       sendSpeakEnd();
       return;
     }

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppStore } from '../../state/app-state.js';
 import type { DetectedFace, EnrolledFace, RecognitionMatch } from '../../../shared/contracts/faces.js';
+import type { FaceEnrollmentProgress } from '../../face/runtime.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import type { AppShellControls } from '../app-shell.js';
@@ -34,15 +35,20 @@ export function FacePanel({
   }));
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [libraryManagerOpen, setLibraryManagerOpen] = useState(false);
+  const [enrollmentOpen, setEnrollmentOpen] = useState(false);
+  const [enrollmentName, setEnrollmentName] = useState('');
+  const [enrollmentBusy, setEnrollmentBusy] = useState(false);
+  const [enrollmentProgress, setEnrollmentProgress] = useState<FaceEnrollmentProgress | null>(null);
   const [editingFaceId, setEditingFaceId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
   useEffect(() => {
-    if (!libraryManagerOpen) {
+    if (!libraryManagerOpen && !enrollmentOpen) {
       return undefined;
     }
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' && !enrollmentBusy) {
+        setEnrollmentOpen(false);
         setLibraryManagerOpen(false);
       }
     };
@@ -50,7 +56,7 @@ export function FacePanel({
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [libraryManagerOpen]);
+  }, [enrollmentBusy, enrollmentOpen, libraryManagerOpen]);
 
   const cameraAspectRatio = state.faceFrameWidth && state.faceFrameHeight
     ? `${state.faceFrameWidth} / ${state.faceFrameHeight}`
@@ -70,9 +76,9 @@ export function FacePanel({
             }}
           >
             <div className="face-library-dialog-header">
-              <div>
-                <h3>Face Library Manager</h3>
-                <p>{state.faceLibraryEmbeddings} embeddings across {state.faceLibraryPeople} people</p>
+              <div className="face-library-dialog-title">
+                <h3>Face Library</h3>
+                <p>{state.faceLibraryPeople} people, {state.faceLibraryEmbeddings} embeddings</p>
               </div>
               <div className="face-library-dialog-actions">
                 <button
@@ -104,9 +110,9 @@ export function FacePanel({
                     return (
                       <li key={group.key} className="face-library-group-card">
                         <div className="face-library-group-header">
-                          <div className="face-item-copy">
+                          <div className="face-item-copy face-library-group-copy">
                             <strong>{group.name}</strong>
-                            <span>{group.faces.length} embeddings</span>
+                            <span>{group.faces.length} embedding{group.faces.length === 1 ? '' : 's'}</span>
                           </div>
                           <div className="face-library-actions">
                             <button
@@ -182,11 +188,14 @@ export function FacePanel({
                                     </div>
                                   ) : (
                                     <>
-                                      <div className="face-item-copy face-library-item-copy">
-                                        <span>{face.createdAt ? `Saved ${formatFaceTimestamp(face.createdAt)}` : 'Saved face'}</span>
+                                      <div className="face-library-entry-head">
+                                        <strong className="face-library-entry-name">{face.name}</strong>
                                         <span className="face-item-meta" title={face.id}>{formatCompactFaceId(face.id)}</span>
                                       </div>
-                                      <div className="face-library-actions">
+                                      <div className="face-item-copy face-library-item-copy">
+                                        <span>{face.createdAt ? `Saved ${formatFaceTimestamp(face.createdAt)}` : 'Saved face'}</span>
+                                      </div>
+                                      <div className="face-library-actions face-library-actions-inline">
                                         <button
                                           className="button button-secondary button-compact"
                                           type="button"
@@ -225,6 +234,125 @@ export function FacePanel({
                     );
                   })}
               </ul>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )
+    : null;
+
+  const enrollmentDialog = enrollmentOpen && typeof document !== 'undefined'
+    ? createPortal(
+        <div
+          className="face-library-dialog-backdrop"
+          role="presentation"
+          onClick={() => {
+            if (!enrollmentBusy) {
+              setEnrollmentOpen(false);
+            }
+          }}
+        >
+          <div
+            className="face-library-dialog face-enroll-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Face onboarding wizard"
+            onClick={(event) => {
+              event.stopPropagation();
+            }}
+          >
+            <div className="face-library-dialog-header">
+              <div className="face-library-dialog-title">
+                <h3>Face Onboarding</h3>
+                <p>Guided 5-pose capture to build a more stable library match.</p>
+              </div>
+              <div className="face-library-dialog-actions">
+                <button
+                  className="button button-secondary button-compact"
+                  type="button"
+                  disabled={enrollmentBusy}
+                  onClick={() => {
+                    setEnrollmentOpen(false);
+                  }}
+                >
+                  {enrollmentProgress?.phase === 'done' ? 'Close' : 'Cancel'}
+                </button>
+              </div>
+            </div>
+            <div className="face-library-dialog-body face-enroll-dialog-body">
+              <div className="face-enroll-field">
+                <label htmlFor="face-enroll-wizard-name">Name</label>
+                <input
+                  id="face-enroll-wizard-name"
+                  className="face-name-input"
+                  type="text"
+                  value={enrollmentName}
+                  disabled={enrollmentBusy}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setEnrollmentName(value);
+                    store.setState((current) => ({
+                      ...current,
+                      faceDraftName: value,
+                    }));
+                  }}
+                />
+              </div>
+
+              <div className="face-enroll-stage">
+                <div className="face-enroll-instruction">
+                  <span className="face-enroll-icon">{enrollmentProgress?.icon ?? '📸'}</span>
+                  <div className="face-enroll-copy">
+                    <strong>{enrollmentProgress?.instruction ?? 'Get ready to capture multiple poses'}</strong>
+                    <span>{enrollmentProgress?.hint ?? 'Keep one face in frame and hold still for each prompt.'}</span>
+                  </div>
+                </div>
+                <div className="face-enroll-status">
+                  {enrollmentProgress?.status ?? 'Press start to launch the guided capture flow.'}
+                </div>
+                {typeof enrollmentProgress?.stepIndex === 'number' && typeof enrollmentProgress?.stepCount === 'number' && (
+                  <div className="face-enroll-progress">
+                    Pose {enrollmentProgress.stepIndex + 1} / {enrollmentProgress.stepCount}
+                  </div>
+                )}
+              </div>
+
+              <div className="face-enroll-strip">
+                {(enrollmentProgress?.samples ?? []).length === 0
+                  ? <div className="face-enroll-empty">Captured samples will appear here.</div>
+                  : (enrollmentProgress?.samples ?? []).map((sample, index) => (
+                    <div key={`${sample.thumbnail}-${index}`} className={`face-enroll-thumb ${sample.duplicate ? 'is-duplicate' : ''}`}>
+                      <img src={sample.thumbnail} alt={`Enrollment sample ${index + 1}`} />
+                    </div>
+                  ))}
+              </div>
+
+              <div className="face-enroll-actions">
+                <button
+                  className="button button-compact"
+                  type="button"
+                  disabled={enrollmentBusy || !enrollmentName.trim()}
+                  onClick={async () => {
+                    if (!enrollmentName.trim()) {
+                      return;
+                    }
+                    setEnrollmentBusy(true);
+                    setEnrollmentProgress({
+                      phase: 'prompt',
+                      status: `Starting onboarding for ${enrollmentName.trim()}`,
+                    });
+                    try {
+                      await controls?.enrollFace(enrollmentName.trim(), (progress) => {
+                        setEnrollmentProgress(progress);
+                      });
+                    } finally {
+                      setEnrollmentBusy(false);
+                    }
+                  }}
+                >
+                  {enrollmentBusy ? 'Capturing…' : (enrollmentProgress?.phase === 'done' ? 'Run Again' : 'Start Wizard')}
+                </button>
+              </div>
             </div>
           </div>
         </div>,
@@ -286,8 +414,10 @@ export function FacePanel({
                   className="button button-compact"
                   type="button"
                   disabled={!state.faceLastFaces.some((face) => Array.isArray(face.embedding))}
-                  onClick={async () => {
-                    await controls?.saveDetectedFace();
+                  onClick={() => {
+                    setEnrollmentName(state.faceDraftName || '');
+                    setEnrollmentProgress(null);
+                    setEnrollmentOpen(true);
                   }}
                 >
                   Onboard
@@ -402,6 +532,7 @@ export function FacePanel({
       </div>
       </article>
       {libraryDialog}
+      {enrollmentDialog}
     </>
   );
 }

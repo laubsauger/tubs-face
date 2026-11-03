@@ -723,27 +723,25 @@ def tts_stream(ws):
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder
+                segments = []
                 if _KOKORO_BACKEND == "mlx":
                     # macOS: mlx_audio — GPU lock required
                     with _gpu_lock:
                         for result in m.generate(text=text, voice=voice, speed=1.0, lang_code="a"):
-                            audio_np = _safe_numpy(result.audio)
-                            wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                            ws.send(json.dumps({
-                                "text": text,
-                                "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                                "chunk": True
-                            }))
+                            segments.append(_safe_numpy(result.audio))
                 else:
                     # Windows / Linux: kokoro KPipeline
                     for _, _, audio in m(text, voice=voice, speed=1.0):
-                        audio_np = _safe_numpy(audio)
-                        wav_bytes = pcm_to_wav_bytes(audio_np, sample_rate=24000)
-                        ws.send(json.dumps({
-                            "text": text,
-                            "audio": base64.b64encode(wav_bytes).decode('ascii'),
-                            "chunk": True
-                        }))
+                        segments.append(_safe_numpy(audio))
+                if not segments:
+                    ws.send(json.dumps({"error": "Kokoro generated no audio"}))
+                    continue
+                wav_bytes = pcm_to_wav_bytes(np.concatenate(segments), sample_rate=24000)
+                ws.send(json.dumps({
+                    "text": text,
+                    "audio": base64.b64encode(wav_bytes).decode('ascii'),
+                    "chunk": True
+                }))
                 ws.send(json.dumps({"text": text, "done": True}))
             else:
                 ws.send(json.dumps({"error": "Streaming not supported by " + TTS_BACKEND}))
@@ -804,4 +802,9 @@ if __name__ == "__main__":
         f"Starting realtime processing service on port {PORT} "
         f"(STT={STT_BACKEND}:{STT_MODEL}, TTS={TTS_BACKEND}, LLM={LLM_PROVIDER})"
     )
+    if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
+        print("[Realtime TTS] Preloading model before accepting requests")
+        ensure_tts_model()
+    elif TTS_BACKEND == "system":
+        print("[Realtime TTS] System backend selected")
     app.run(port=PORT)

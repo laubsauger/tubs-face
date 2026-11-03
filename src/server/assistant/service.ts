@@ -72,6 +72,8 @@ const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|addition
 const PERSONA_MARKER_RE = /\b(tubs|wheel|wheels|venmo|robot|plastic tubs?)\b/i;
 const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
 const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]/;
+const ESTIMATED_SPEECH_WORD_MS = 440;
+const ESTIMATED_MIN_SPEECH_MS = 800;
 
 function assistantUnavailable(message: string): Error {
   const error = new Error(message);
@@ -84,6 +86,10 @@ export function interruptAssistantTurns(): string | null {
   activeTurnEpoch += 1;
   activeTurnId = null;
   return previousTurnId;
+}
+
+export function hasActiveAssistantTurn(): boolean {
+  return Boolean(activeTurnId);
 }
 
 function activateAssistantTurn(turnId: string): number {
@@ -1129,6 +1135,7 @@ async function streamDualHeadSpeakBeat(args: {
     let chunkCount = 0;
     let sentenceDone = false;
     let firstChunkLogged = false;
+    let firstChunkAt = 0;
 
     const finishResolve = () => {
       if (settled) {
@@ -1153,6 +1160,7 @@ async function streamDualHeadSpeakBeat(args: {
         }
         if (!firstChunkLogged) {
           firstChunkLogged = true;
+          firstChunkAt = Date.now();
           onFirstChunk?.();
         }
         broadcast({
@@ -1195,7 +1203,18 @@ async function streamDualHeadSpeakBeat(args: {
           finishReject(streamError);
           return;
         }
-        finishResolve();
+        const streamedPlaybackMs = firstChunkAt > 0 ? Math.max(0, Date.now() - firstChunkAt) : 0;
+        const remainingPlaybackMs = Math.max(
+          0,
+          Math.min(8_000, estimateSpeechDurationMs(text) - streamedPlaybackMs),
+        );
+        if (remainingPlaybackMs <= 0 || !isAssistantTurnActive(turnId, epoch)) {
+          finishResolve();
+          return;
+        }
+        void waitForTurnPlaybackWindow(turnId, epoch, remainingPlaybackMs).then(() => {
+          finishResolve();
+        });
       },
     });
 
@@ -1231,10 +1250,28 @@ function clampBeatDelay(value: number | undefined, fallbackMs: number): number {
   return Math.max(120, Math.min(8_000, normalized));
 }
 
+function estimateSpeechDurationMs(text: string): number {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  if (words <= 0) {
+    return ESTIMATED_MIN_SPEECH_MS;
+  }
+  return Math.max(ESTIMATED_MIN_SPEECH_MS, words * ESTIMATED_SPEECH_WORD_MS);
+}
+
 async function waitForBeatDelay(delayMs: number): Promise<void> {
   await new Promise<void>((resolve) => {
     setTimeout(resolve, delayMs);
   });
+}
+
+async function waitForTurnPlaybackWindow(turnId: string, epoch: number, delayMs: number): Promise<void> {
+  const deadline = Date.now() + Math.max(0, delayMs);
+  while (Date.now() < deadline) {
+    if (!isAssistantTurnActive(turnId, epoch)) {
+      return;
+    }
+    await waitForBeatDelay(Math.min(90, Math.max(1, deadline - Date.now())));
+  }
 }
 
 /**

@@ -2,8 +2,44 @@ import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js
 import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { createFaceEntry, deleteFaceEntry, loadFaceLibrary, updateFaceEntry } from './library.js';
-import { annotateDetectedFaces } from './matching.js';
+import { annotateDetectedFaces, cosineSimilarity } from './matching.js';
 import { createFaceWorkerClient, type FaceWorkerClient } from './worker-client.js';
+
+const ENROLLMENT_STEPS = [
+  { text: 'Look straight at the camera', hint: 'Face forward, eyes on the lens', icon: '😐' },
+  { text: 'Turn your head left', hint: 'Just a little, like checking your shoulder', icon: '⬅️' },
+  { text: 'Turn your head right', hint: 'Mirror the last pose on the other side', icon: '➡️' },
+  { text: 'Tilt your head up', hint: 'Like you are looking at a high shelf', icon: '⬆️' },
+  { text: 'Tilt your head down', hint: 'Like you are reading your phone', icon: '⬇️' },
+] as const;
+
+const ENROLLMENT_CAPTURE_DELAY_MS = 1100;
+const ENROLLMENT_CAPTURE_RETRY_DELAY_MS = 250;
+const ENROLLMENT_MAX_CAPTURE_ATTEMPTS = 5;
+const ENROLLMENT_DUPLICATE_THRESHOLD = 0.82;
+
+export interface FaceEnrollmentSamplePreview {
+  thumbnail: string;
+  duplicate?: boolean;
+}
+
+export interface FaceEnrollmentProgress {
+  phase: 'prompt' | 'capturing' | 'saving' | 'done' | 'error';
+  stepIndex?: number;
+  stepCount?: number;
+  instruction?: string;
+  hint?: string;
+  icon?: string;
+  status: string;
+  samples?: FaceEnrollmentSamplePreview[];
+  savedCount?: number;
+  error?: string;
+}
+
+export interface FaceEnrollmentResult {
+  captured: number;
+  saved: number;
+}
 
 export interface FaceShellRuntime {
   init(): void;
@@ -12,6 +48,7 @@ export interface FaceShellRuntime {
   stopCamera(): void;
   detectFile(file: File): Promise<void>;
   saveDetectedFace(): Promise<void>;
+  enrollFace(name: string, onProgress?: (progress: FaceEnrollmentProgress) => void): Promise<FaceEnrollmentResult>;
   refreshLibrary(): Promise<void>;
   renameFace(id: string, name: string): Promise<void>;
   deleteFace(id: string): Promise<void>;
@@ -35,6 +72,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
   let lastAppearanceSignature = '';
+  let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
     onReady: () => {
@@ -155,6 +193,24 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     saveDetectedFace(): Promise<void> {
       return saveDetectedFace(store, refreshFaceLibraryState, captureCanvas);
     },
+    enrollFace(name: string, onProgress?: (progress: FaceEnrollmentProgress) => void): Promise<FaceEnrollmentResult> {
+      return enrollDetectedFace(
+        worker,
+        store,
+        refreshFaceLibraryState,
+        captureCanvas,
+        () => videoEl,
+        {
+          setEnrollmentActive(active) {
+            enrollmentActive = active;
+          },
+          clearLoop,
+          scheduleLoop,
+        },
+        name,
+        onProgress,
+      );
+    },
     refreshLibrary(): Promise<void> {
       return refreshFaceLibraryState(store);
     },
@@ -235,7 +291,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
 
   function scheduleLoop(): void {
     clearLoop();
-    if (!stream || !store.getState().faceCameraActive || !worker.ready) {
+    if (!stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
       return;
     }
     const interval = Math.min(5000, Math.max(800, Math.round(lastInferenceMs * 1.5)));
@@ -245,7 +301,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   }
 
   async function runCameraDetection(): Promise<void> {
-    if (!stream || !videoEl || !captureCtx || worker.busy || !worker.ready) {
+    if (!stream || !videoEl || !captureCtx || worker.busy || !worker.ready || enrollmentActive) {
       scheduleLoop();
       return;
     }
@@ -454,6 +510,204 @@ async function saveDetectedFace(
     }));
     store.appendLog('error', message);
   }
+}
+
+async function enrollDetectedFace(
+  worker: FaceWorkerClient,
+  store: AppStore,
+  refreshFaceLibraryState: (store: AppStore) => Promise<void>,
+  captureCanvas: HTMLCanvasElement,
+  getVideoEl: () => HTMLVideoElement | null,
+  hooks: {
+    setEnrollmentActive(active: boolean): void;
+    clearLoop(): void;
+    scheduleLoop(): void;
+  },
+  nameInput: string,
+  onProgress?: (progress: FaceEnrollmentProgress) => void,
+): Promise<FaceEnrollmentResult> {
+  const name = nameInput.trim();
+  if (!name) {
+    throw new Error('Enter a name before onboarding');
+  }
+  if (!store.getState().faceCameraActive) {
+    throw new Error('Camera must be active for onboarding');
+  }
+  if (!worker.ready) {
+    throw new Error('Face worker is still loading');
+  }
+
+  hooks.setEnrollmentActive(true);
+  hooks.clearLoop();
+
+  const samples: Array<{ embedding: number[]; thumbnail: string }> = [];
+
+  try {
+    onProgress?.({
+      phase: 'prompt',
+      status: `Starting onboarding for ${name}`,
+      stepCount: ENROLLMENT_STEPS.length,
+      samples: [],
+    });
+    store.setState((current) => ({
+      ...current,
+      faceStatus: `Onboarding ${name}`,
+    }));
+
+    for (const [index, step] of ENROLLMENT_STEPS.entries()) {
+      onProgress?.({
+        phase: 'capturing',
+        stepIndex: index,
+        stepCount: ENROLLMENT_STEPS.length,
+        instruction: step.text,
+        hint: step.hint,
+        icon: step.icon,
+        status: `Pose ${index + 1} of ${ENROLLMENT_STEPS.length}`,
+        samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+      });
+      await delay(ENROLLMENT_CAPTURE_DELAY_MS);
+
+      let captured: DetectedFace | null = null;
+      let duplicate = false;
+
+      for (let attempt = 0; attempt < ENROLLMENT_MAX_CAPTURE_ATTEMPTS; attempt += 1) {
+        const snapshot = captureVideoFrame(getVideoEl(), captureCanvas);
+        if (!snapshot) {
+          await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
+          continue;
+        }
+        const result = await worker.detectOnce(snapshot.imageData);
+        const candidates = result.faces.filter((face) => Array.isArray(face.embedding));
+        if (candidates.length !== 1) {
+          await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
+          continue;
+        }
+        const nextFace = candidates[0]!;
+        duplicate = samples.some((sample) => cosineSimilarity(sample.embedding, nextFace.embedding ?? []) >= ENROLLMENT_DUPLICATE_THRESHOLD);
+        if (duplicate && attempt < ENROLLMENT_MAX_CAPTURE_ATTEMPTS - 1) {
+          onProgress?.({
+            phase: 'capturing',
+            stepIndex: index,
+            stepCount: ENROLLMENT_STEPS.length,
+            instruction: step.text,
+            hint: 'That pose was too similar. Move a bit more and hold still.',
+            icon: step.icon,
+            status: `Retrying pose ${index + 1}`,
+            samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+          });
+          await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
+          continue;
+        }
+        captured = nextFace;
+        break;
+      }
+
+      if (!captured?.embedding) {
+        throw new Error(`Could not capture pose ${index + 1}. Make sure exactly one face is visible.`);
+      }
+
+      const thumbnail = captureFaceThumbnail(captureCanvas, captured);
+      if (!thumbnail) {
+        throw new Error(`Could not create thumbnail for pose ${index + 1}.`);
+      }
+      samples.push({
+        embedding: captured.embedding,
+        thumbnail,
+      });
+      onProgress?.({
+        phase: 'capturing',
+        stepIndex: index,
+        stepCount: ENROLLMENT_STEPS.length,
+        instruction: step.text,
+        hint: duplicate ? 'Captured, but it was still pretty close to another pose.' : step.hint,
+        icon: step.icon,
+        status: `Captured pose ${index + 1}`,
+        samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+      });
+    }
+
+    onProgress?.({
+      phase: 'saving',
+      status: `Saving ${samples.length} samples for ${name}`,
+      stepCount: ENROLLMENT_STEPS.length,
+      samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+    });
+
+    let saved = 0;
+    for (const sample of samples) {
+      await createFaceEntry({
+        name,
+        embedding: sample.embedding,
+        thumbnail: sample.thumbnail,
+      });
+      saved += 1;
+    }
+
+    await refreshFaceLibraryState(store);
+    store.setState((current) => ({
+      ...current,
+      faceDraftName: '',
+      faceStatus: `Enrolled ${name} (${saved} samples)`,
+    }));
+    store.appendLog('info', `Enrolled ${name} with ${saved} samples`);
+
+    const result = {
+      captured: samples.length,
+      saved,
+    } satisfies FaceEnrollmentResult;
+    onProgress?.({
+      phase: 'done',
+      status: `Saved ${saved} samples for ${name}`,
+      stepCount: ENROLLMENT_STEPS.length,
+      samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+      savedCount: saved,
+    });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Face onboarding failed';
+    store.setState((current) => ({
+      ...current,
+      faceStatus: 'Onboarding failed',
+    }));
+    store.appendLog('error', message);
+    onProgress?.({
+      phase: 'error',
+      status: message,
+      stepCount: ENROLLMENT_STEPS.length,
+      samples: samples.map((sample) => ({ thumbnail: sample.thumbnail })),
+      error: message,
+    });
+    throw error instanceof Error ? error : new Error(message);
+  } finally {
+    hooks.setEnrollmentActive(false);
+    hooks.scheduleLoop();
+  }
+}
+
+function captureVideoFrame(videoEl: HTMLVideoElement | null, captureCanvas: HTMLCanvasElement): { imageData: ImageData } | null {
+  if (!videoEl || videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
+    return null;
+  }
+  const context = captureCanvas.getContext('2d', { willReadFrequently: true });
+  if (!context) {
+    return null;
+  }
+  const maxWidth = 960;
+  const scale = Math.min(1, maxWidth / videoEl.videoWidth);
+  const width = Math.round(videoEl.videoWidth * scale);
+  const height = Math.round(videoEl.videoHeight * scale);
+  captureCanvas.width = width;
+  captureCanvas.height = height;
+  context.drawImage(videoEl, 0, 0, width, height);
+  return {
+    imageData: context.getImageData(0, 0, width, height),
+  };
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 function captureFaceThumbnail(sourceCanvas: HTMLCanvasElement, face: DetectedFace): string | null {
