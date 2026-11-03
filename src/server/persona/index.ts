@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { GreetingsConfig, GreetingSet } from '../../shared/contracts/faces.js';
-import { runtimeConfig } from '../config/runtime.js';
 
 const personaDir = resolve(process.cwd(), 'src/persona');
 const systemPromptPath = resolve(personaDir, 'system-prompt.md');
@@ -22,13 +21,9 @@ const DEFAULT_GREETINGS: GreetingsConfig = {
 };
 const WAKE_NAME_SUFFIXES = new Set(['tubs', 'tub', 'tubbs', 'tops', 'top']);
 
+/** Raw persona template. Placeholders are filled in assistant/prompt.ts. */
 export function loadSystemPrompt(): string {
-  const filePrompt = readTextFile(systemPromptPath, DEFAULT_SYSTEM_PROMPT);
-  const runtimePrompt = runtimeConfig.prompt.trim();
-  if (!runtimePrompt || runtimePrompt === 'Default personality') {
-    return filePrompt;
-  }
-  return `${filePrompt}\n\nRuntime override:\n${runtimePrompt}`;
+  return readTextFile(systemPromptPath, DEFAULT_SYSTEM_PROMPT);
 }
 
 export function loadGreetingConfig(): GreetingsConfig {

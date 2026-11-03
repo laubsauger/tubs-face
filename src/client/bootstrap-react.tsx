@@ -160,7 +160,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   fxRuntime?.init();
   glitchRuntime.init();
   speechRuntime.init();
-  await voiceRuntime?.init();
+  // Not awaited: getUserMedia can wait on a permission prompt forever, and the
+  // face must still connect and run on an unattended display.
+  void voiceRuntime?.init().catch((error: unknown) => {
+    store.appendLog('error', `Voice init failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   faceBehaviorRuntime.init();
   faceRuntime?.init();
   windowRuntime.init();

@@ -3,6 +3,7 @@ import http from 'node:http';
 import { startProcessingStack, stopProcessingStack } from './processing/mode-manager.js';
 import { handleApiRequest } from './routes/api.js';
 import { sendError } from './http/response.js';
+import { serveStatic } from './http/static.js';
 import { initWebSocketServer } from './ws/server.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -10,6 +11,10 @@ const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 const server = http.createServer(async (request, response) => {
   const handled = await handleApiRequest(request, response);
   if (handled) {
+    return;
+  }
+
+  if (await serveStatic(request, response)) {
     return;
   }
 
