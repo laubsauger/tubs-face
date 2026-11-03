@@ -4,6 +4,9 @@ import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import type { AppShellControls } from '../app-shell.js';
 import { toggleFullscreen } from '../window-runtime.js';
+import { VAD_MODELS } from '../../../shared/contracts/config.js';
+import { patchConfig, patchConfigLive } from '../../fx/runtime.js';
+import { ControlGroup, RangeControl, SelectControl, ToggleControl } from './controls.js';
 
 export function VoicePanel({
   store,
@@ -26,6 +29,10 @@ export function VoicePanel({
     faceCameraActive: current.faceCameraActive,
     fullscreenActive: current.fullscreenActive,
     vadModel: current.config?.vadModel ?? 'rms',
+    muted: current.config?.muted ?? false,
+    vadNoiseGate: current.config?.vadNoiseGate ?? 0.008,
+    ambientAudioEnabled: current.ambientAudioEnabled,
+    hasConfig: Boolean(current.config),
     faceDetectionDelayMs: (current.config as any)?.faceDetectionDelayMs ?? 'auto',
   }));
 
@@ -96,6 +103,23 @@ export function VoicePanel({
             Wake Word
           </label>
         </div>
+
+        {state.hasConfig ? (
+          <ControlGroup title="Input">
+            <ToggleControl label="Mute (M)" checked={state.muted} onChange={(muted) => void patchConfig(store, { muted })} />
+            <ToggleControl label="Ambient" checked={state.ambientAudioEnabled} onChange={() => void controls?.ambient?.toggleEnabled()} />
+            <SelectControl label="VAD" value={state.vadModel} options={VAD_MODELS} onChange={(vadModel) => void patchConfig(store, { vadModel })} />
+            <RangeControl
+              label="Noise Gate"
+              value={state.vadNoiseGate}
+              min={0}
+              max={0.06}
+              step={0.001}
+              format={(gate) => gate.toFixed(3)}
+              onChange={(vadNoiseGate) => patchConfigLive(store, { vadNoiseGate })}
+            />
+          </ControlGroup>
+        ) : null}
 
         {/* Delay Slider */}
         {state.faceCameraActive && (

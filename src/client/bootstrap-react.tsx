@@ -354,14 +354,10 @@ function selectVisualSlice(state: AppState) {
 }
 
 function selectGlitchSlice(state: AppState) {
+  // Any config field can change the glitch face (pixel grid, shapes, effects);
+  // the glitch runtime diffs what it actually uses.
   return {
-    faceRenderMode: state.config?.faceRenderMode,
-    glitchFxEnabled: state.config?.glitchFxEnabled,
-    glitchRenderer: state.config?.glitchRenderer,
-    glitchFxBaseColor: state.config?.glitchFxBaseColor,
-    secondaryGlitchFxBaseColor: state.config?.secondaryGlitchFxBaseColor,
-    glitchExpressionProfiles: state.config?.glitchExpressionProfiles,
-    renderQuality: state.config?.renderQuality,
+    config: state.config,
     fxBaseColorDraft: state.fxBaseColorDraft,
   };
 }

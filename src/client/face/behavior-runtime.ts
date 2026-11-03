@@ -140,7 +140,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
 
   function shouldIdleAnimate(): boolean {
     const state = store.getState();
-    return shouldAnimate() && state.currentExpression === 'idle';
+    // While the FX editor previews an expression, idle smiles would override it.
+    return shouldAnimate() && state.currentExpression === 'idle' && !state.fxEditorOpen;
   }
 
   function hasTrackedFaces(): boolean {
@@ -189,7 +190,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(smileResetTimer);
       smileResetTimer = window.setTimeout(() => {
         const state = store.getState();
-        if (!shouldAnimate() || state.currentExpression !== 'smile') {
+        if (!shouldAnimate() || state.currentExpression !== 'smile' || state.fxEditorOpen) {
           return;
         }
         store.setState((current) => ({

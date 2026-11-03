@@ -3,6 +3,9 @@ import type { AppStore } from '../../state/app-state.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import { formatUptime, formatAwakeElapsed } from '../utils/formatters.js';
+import { DUAL_HEAD_TURN_POLICIES, KOKORO_VOICES, RENDER_QUALITIES } from '../../../shared/contracts/config.js';
+import { patchConfig, patchConfigLive, toggleFxEditor } from '../../fx/runtime.js';
+import { ButtonControl, ColorControl, ControlGroup, RangeControl, SelectControl, ToggleControl } from './controls.js';
 
 export function ConnectionPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
@@ -38,7 +41,74 @@ export function ConnectionPanel({ store }: { store: AppStore }): JSX.Element {
             {state.stats?.model ?? state.config?.model ?? 'n/a'}
           </dd>
         </dl>
+
+        {state.config ? <RuntimeControls store={store} config={state.config} /> : null}
       </div>
     </article>
+  );
+}
+
+type Config = NonNullable<ReturnType<AppStore['getState']>['config']>;
+
+// Runtime settings that main kept in System Vitals. All of them are live server
+// config, so every client (main, mini, spectator) picks the change up.
+function RuntimeControls({ store, config }: { store: AppStore; config: Config }): JSX.Element {
+  const dualOn = config.dualHeadEnabled && config.dualHeadMode !== 'off';
+  return (
+    <>
+      <ControlGroup title="Face">
+        <SelectControl
+          label="Render"
+          value={config.faceRenderMode}
+          options={[{ value: 'glitch', label: 'Glitch' }, { value: 'css', label: 'CSS' }]}
+          onChange={(faceRenderMode) => void patchConfig(store, { faceRenderMode })}
+        />
+        <SelectControl label="Quality" value={config.renderQuality} options={RENDER_QUALITIES} onChange={(renderQuality) => void patchConfig(store, { renderQuality })} />
+        <ToggleControl label="Glitch FX" checked={config.glitchFxEnabled} onChange={(glitchFxEnabled) => void patchConfig(store, { glitchFxEnabled })} />
+        <ColorControl label="Glitch Color" value={config.glitchFxBaseColor} onChange={(glitchFxBaseColor) => patchConfigLive(store, { glitchFxBaseColor })} />
+        <ButtonControl label="FX Editor (E)" text="Edit" onClick={() => toggleFxEditor(store)} />
+      </ControlGroup>
+
+      <ControlGroup title="Voice">
+        <SelectControl label="Voice" value={config.kokoroVoice} options={KOKORO_VOICES} onChange={(kokoroVoice) => void patchConfig(store, { kokoroVoice })} />
+        <RangeControl
+          label="Sleep"
+          value={Math.round(config.sleepTimeout / 1000)}
+          min={5}
+          max={600}
+          step={5}
+          format={(seconds) => `${seconds}s`}
+          onChange={(seconds) => patchConfigLive(store, { sleepTimeout: seconds * 1000 })}
+        />
+      </ControlGroup>
+
+      <ControlGroup title="Two Heads">
+        <ToggleControl
+          label="Enabled"
+          checked={dualOn}
+          onChange={(enabled) => void patchConfig(store, enabled
+            ? { dualHeadEnabled: true, dualHeadMode: 'llm_directed' }
+            : { dualHeadEnabled: false })}
+        />
+        {dualOn ? (
+          <>
+            <SelectControl label="Turn Policy" value={config.dualHeadTurnPolicy} options={DUAL_HEAD_TURN_POLICIES} onChange={(dualHeadTurnPolicy) => void patchConfig(store, { dualHeadTurnPolicy })} />
+            <SelectControl label="Small Voice" value={config.secondaryVoice} options={KOKORO_VOICES} onChange={(secondaryVoice) => void patchConfig(store, { secondaryVoice })} />
+            <SelectControl label="Small FX" value={config.secondaryRenderQuality} options={RENDER_QUALITIES} onChange={(secondaryRenderQuality) => void patchConfig(store, { secondaryRenderQuality })} />
+            <ColorControl label="Small Glitch" value={config.secondaryGlitchFxBaseColor} onChange={(secondaryGlitchFxBaseColor) => patchConfigLive(store, { secondaryGlitchFxBaseColor })} />
+            <ToggleControl label="Small Subs" checked={config.secondarySubtitleEnabled} onChange={(secondarySubtitleEnabled) => void patchConfig(store, { secondarySubtitleEnabled })} />
+            <RangeControl
+              label="Small Gain"
+              value={config.secondaryAudioGain}
+              min={0}
+              max={1.2}
+              step={0.05}
+              format={(gain) => gain.toFixed(2)}
+              onChange={(secondaryAudioGain) => patchConfigLive(store, { secondaryAudioGain })}
+            />
+          </>
+        ) : null}
+      </ControlGroup>
+    </>
   );
 }

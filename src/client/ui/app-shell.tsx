@@ -21,16 +21,8 @@ import type { EmotionCue, ExpressionName } from '../../shared/contracts/config.j
 import type { FaceEnrollmentProgress, FaceEnrollmentResult } from '../face/runtime.js';
 import type { AppState, AppStore, PanelKey } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
-import {
-  exportConfig as exportGlitchConfig,
-  importConfig as importGlitchConfig,
-  normalizeExpressionName,
-  normalizeHex,
-  patchConfig as patchFxConfig,
-  patchExpressionProfile,
-  previewExpression,
-} from '../fx/runtime.js';
-import { GLITCH_PRESETS } from '../fx/presets.js';
+import { patchConfig, toggleFxEditor } from '../fx/runtime.js';
+import { FxEditor } from './panels/FxEditor.js';
 
 import { useAppSelector } from './react-store.js';
 import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
@@ -70,6 +62,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
     : <MainAppShell store={props.store} {...(props.controls ? { controls: props.controls } : {})} />;
 }
 
+// Single-letter shortcuts; typing any other letter focuses the chat input.
+const SHORTCUT_KEYS = new Set([' ', 'c', 'd', 'e', 'f', 'm', 'o', 's', 'x', 'z']);
+
 function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls }): JSX.Element {
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -77,9 +72,24 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
       
       const key = e.key.toLowerCase();
 
+      if (store.getState().fxEditorOpen) {
+        // Escape is handled by window-runtime; everything else waits for the editor to close.
+        if (!inInput && key === 'e') {
+          e.preventDefault();
+          toggleFxEditor(store);
+        }
+        return;
+      }
+
       // Non-input strict binds
       if (!inInput) {
-        if (key === 's') {
+        if (key === 'e') {
+          e.preventDefault();
+          toggleFxEditor(store);
+        } else if (key === 'm') {
+          e.preventDefault();
+          void patchConfig(store, { muted: !store.getState().config?.muted });
+        } else if (key === 's') {
           e.preventDefault();
           const isSleep = store.getState().sleeping;
           void postJson(isSleep ? '/wake' : '/sleep', {});
@@ -109,7 +119,8 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
     // Key presses on letter keys (if not in input) should focus the chat so users can just type text.
     const handleTypeFocus = (e: KeyboardEvent) => {
       const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (!inInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && e.key !== ' ' && e.key !== 'c' && e.key !== 'f' && e.key !== 'd' && e.key !== 's' && e.key !== 'z' && e.key !== 'x') {
+      if (store.getState().fxEditorOpen) return;
+      if (!inInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !SHORTCUT_KEYS.has(e.key.toLowerCase())) {
         const input = document.getElementById('chat-panel-input') as HTMLInputElement | null;
         if (input) {
           input.focus();
@@ -128,13 +139,14 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
   const shellState = useAppSelector(store, (state) => ({
     uiHidden: state.uiHidden,
     fullscreenActive: state.fullscreenActive,
+    fxEditorOpen: state.fxEditorOpen,
   }));
 
   return (
-    <main className={`shell shell-main ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''}`}>
+    <main className={`shell shell-main ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''} ${shellState.fxEditorOpen ? 'fx-editor-open' : ''}`}>
       <VisualShell store={store} mode="main" />
 
-      {!shellState.uiHidden && (
+      {!shellState.uiHidden && !shellState.fxEditorOpen && (
         <div className="hud-layer">
           <div className="hud-stack hud-stack-top-left">
             <ConnectionPanel store={store} />
@@ -156,13 +168,14 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
         </div>
       )}
 
+      <FxEditor store={store} />
+
       {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
       <div className="hidden">
         <HealthPanel store={store} />
         <ConfigPanel store={store} />
         <AssistantPanel store={store} />
         <ControlsPanel store={store} {...(controls ? { controls } : {})} />
-        <FxPanel store={store} />
         <ManualPanel store={store} />
         <StreamDebugPanel store={store} />
         <EventLogPanel store={store} />
@@ -709,191 +722,6 @@ function ControlsPanel({
   );
 }
 
-function FxPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.fx),
-    fxEditorOpen: current.fxEditorOpen,
-    fxExpressionSelected: current.fxExpressionSelected,
-    fxBaseColorDraft: current.fxBaseColorDraft,
-    config: current.config,
-  }));
-  const config = state.config;
-  const faceRenderMode = config?.faceRenderMode ?? 'glitch';
-  const renderQuality = config?.renderQuality ?? 'high';
-  const glitchRenderer = config?.glitchRenderer ?? 'auto';
-  const glitchBaseColor = config?.glitchFxBaseColor ?? state.fxBaseColorDraft;
-  const glitchGlowStrength = config?.glitchGlowStrength ?? 14;
-  const glitchFlickerDepth = config?.glitchFlickerDepth ?? 0.02;
-  const glitchScanlineIntensity = config?.glitchScanlineIntensity ?? 0.41;
-  const selectedProfile = config?.glitchExpressionProfiles?.[state.fxExpressionSelected as ExpressionName] ?? null;
-  const profileEyeH = selectedProfile?.eyeH ?? 1;
-  const profileEyeW = selectedProfile?.eyeW ?? 1;
-  const profileEyeDy = selectedProfile?.eyeDy ?? 0;
-  const profileEyeSkew = selectedProfile?.eyeSkew ?? 0;
-  const profileMouthW = selectedProfile?.mouthW ?? 1;
-  const profileMouthH = selectedProfile?.mouthH ?? 1;
-  const profileMouthRound = selectedProfile?.mouthRound ?? false;
-  const profileTears = selectedProfile?.tears ?? false;
-  const profileEyeShape = selectedProfile?.eyeShape ?? 'rect';
-  const profileMouthShape = selectedProfile?.mouthShape ?? 'rect';
-  const profileColorHex = selectedProfile?.colorHex ?? '#a855f7';
-  const profileTearColorHex = selectedProfile?.tearColorHex ?? '#57bfff';
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="fx" title="FX" meta={config?.glitchFxEnabled ? 'glitch on' : 'glitch off'} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
-        <div className="face-actions">
-          <div className="face-action-row">
-            <button
-              id="fx-toggle"
-              className={`button ${config?.glitchFxEnabled ? 'is-active' : 'button-secondary'}`}
-              type="button"
-              onClick={async () => patchFxConfig(store, { glitchFxEnabled: !store.getState().config?.glitchFxEnabled })}
-            >
-              {config?.glitchFxEnabled ? 'Glitch ON' : 'Glitch OFF'}
-            </button>
-            <button
-              id="fx-editor-open"
-              className={`button ${state.fxEditorOpen ? 'is-active' : 'button-secondary'}`}
-              type="button"
-              onClick={() => store.setState((current) => ({
-                ...current,
-                fxEditorOpen: !current.fxEditorOpen,
-                ...(current.fxEditorOpen ? { currentExpression: current.sleeping ? 'sleep' : 'idle' } : { currentExpression: current.fxExpressionSelected }),
-              }))}
-            >
-              {state.fxEditorOpen ? 'Close Editor' : 'Open Editor'}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className={`fx-fullscreen-hud ${state.fxEditorOpen ? 'is-open' : ''}`}>
-        <div className={`fx-editor-overlay ${state.fxEditorOpen ? 'is-open' : ''}`}>
-          <div className="fx-editor-group">
-            <div className="fx-editor-header">
-              <h3>Render Settings</h3>
-            </div>
-            <div className="face-action-row">
-              <label className="manual-field">
-                <span>Mode</span>
-                <select className="mini-select" value={faceRenderMode} onChange={async (e) => patchFxConfig(store, { faceRenderMode: e.currentTarget.value as any })}>
-                  <option value="glitch">Glitch</option>
-                  <option value="css">CSS</option>
-                </select>
-              </label>
-              <label className="manual-field">
-                <span>Quality</span>
-                <select className="mini-select" value={renderQuality} onChange={async (e) => patchFxConfig(store, { renderQuality: e.currentTarget.value as any })}>
-                  <option value="high">High</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="low">Low</option>
-                </select>
-              </label>
-              <label className="manual-field">
-                <span>Renderer</span>
-                <select className="mini-select" value={glitchRenderer} onChange={async (e) => patchFxConfig(store, { glitchRenderer: e.currentTarget.value as any })}>
-                  <option value="auto">Auto</option>
-                  <option value="webgpu">WebGPU</option>
-                  <option value="canvas2d">Canvas2D</option>
-                </select>
-              </label>
-            </div>
-            <div className="face-action-row">
-              <label className="manual-field">
-                <span>Preset</span>
-                <select className="mini-select" defaultValue="" onChange={async (e) => {
-                  const selected = GLITCH_PRESETS[e.currentTarget.value];
-                  if (selected) await patchFxConfig(store, selected);
-                  e.currentTarget.value = '';
-                }}>
-                  <option value="">Select preset</option>
-                  <option value="default">Default</option>
-                  <option value="cyberpunk">Cyberpunk</option>
-                  <option value="minimal">Minimal</option>
-                  <option value="warm">Warm</option>
-                </select>
-              </label>
-              <label className="manual-field">
-                <span>Color</span>
-                <input className="fx-color-input" type="color" value={state.fxBaseColorDraft} onChange={(e) => store.setState(c => ({ ...c, fxBaseColorDraft: normalizeHex(e.currentTarget.value, c.fxBaseColorDraft) }))} />
-              </label>
-              <button className="button button-secondary" type="button" onClick={async () => patchFxConfig(store, { glitchFxBaseColor: store.getState().fxBaseColorDraft })}>Apply</button>
-            </div>
-          </div>
-
-          <div className="fx-editor-group">
-            <div className="fx-editor-header">
-              <h3>Expression Profiles</h3>
-              <div className="face-action-row">
-                <button className="button button-secondary" type="button" onClick={() => exportGlitchConfig(store.getState().config)}>Export</button>
-                <button className="button button-secondary" type="button" onClick={() => importGlitchConfig(store)}>Import</button>
-                <button className="button button-secondary" type="button" onClick={async () => patchFxConfig(store, GLITCH_PRESETS.default ?? {})}>Reset</button>
-              </div>
-            </div>
-            <div className="face-action-row">
-              <label className="manual-field">
-                <span>Expression</span>
-                <select className="mini-select" value={state.fxExpressionSelected} onChange={(e) => {
-                  const next = normalizeExpressionName(e.currentTarget.value);
-                  store.setState(c => ({
-                    ...c,
-                    fxExpressionSelected: next,
-                    ...(c.fxEditorOpen ? { currentExpression: next } : {}),
-                  }));
-                }}>
-                  <option value="idle">idle</option>
-                  <option value="idle-flat">idle-flat</option>
-                  <option value="listening">listening</option>
-                  <option value="thinking">thinking</option>
-                  <option value="speaking">speaking</option>
-                  <option value="smile">smile</option>
-                  <option value="happy">happy</option>
-                  <option value="love">love</option>
-                  <option value="sad">sad</option>
-                  <option value="crying">crying</option>
-                  <option value="sleep">sleep</option>
-                  <option value="angry">angry</option>
-                  <option value="surprised">surprised</option>
-                </select>
-              </label>
-              <button className="button button-secondary" type="button" onClick={async () => {
-                const expression = store.getState().fxExpressionSelected;
-                await patchFxConfig(store, patchExpressionProfile(store.getState().config, expression, null));
-                previewExpression(store, expression);
-              }}>Reset Profile</button>
-            </div>
-            <FxRange label="Eye Height" dataKey="eyeH" value={profileEyeH} min={0.05} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxRange label="Eye Width" dataKey="eyeW" value={profileEyeW} min={0.3} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxRange label="Eye Offset Y" dataKey="eyeDy" value={profileEyeDy} min={-10} max={15} step={0.5} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeDy', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxRange label="Eye Skew" dataKey="eyeSkew" value={profileEyeSkew} min={-0.5} max={0.5} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'eyeSkew', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxRange label="Mouth W" dataKey="mouthW" value={profileMouthW} min={0.1} max={2} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthW', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxRange label="Mouth H" dataKey="mouthH" value={profileMouthH} min={0.1} max={4} step={0.01} onInput={(value) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'range', key: 'mouthH', value })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxToggle label="Mouth Round" dataKey="mouthRound" checked={profileMouthRound} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'mouthRound', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <FxToggle label="Tears" dataKey="tears" checked={profileTears} onChange={(checked) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'toggle', key: 'tears', value: checked })); previewExpression(store, store.getState().fxExpressionSelected); }} />
-            <label className="manual-field">
-              <span>Eye Shape</span>
-              <select className="mini-select" value={profileEyeShape} onChange={(e) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'eyeShape', value: e.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
-                <option value="rect">rect</option>
-                <option value="heart">heart</option>
-              </select>
-            </label>
-            <label className="manual-field">
-              <span>Mouth Shape</span>
-              <select className="mini-select" value={profileMouthShape} onChange={(e) => { void patchFxConfig(store, patchExpressionProfile(store.getState().config, store.getState().fxExpressionSelected, { type: 'select', key: 'mouthShape', value: e.currentTarget.value })); previewExpression(store, store.getState().fxExpressionSelected); }}>
-                <option value="rect">rect</option>
-                <option value="frown">frown</option>
-                <option value="smile-arc">smile-arc</option>
-                <option value="round">round</option>
-              </select>
-            </label>
-          </div>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 function ManualPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.manual),
@@ -1252,55 +1080,6 @@ function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function FxRange(props: {
-  label: string;
-  dataKey: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  onInput: (value: number) => void;
-}): JSX.Element {
-  return (
-    <label className="fx-slider-row">
-      <span>{props.label}</span>
-      <input
-        data-fx-expression-range={props.dataKey}
-        type="range"
-        min={props.min}
-        max={props.max}
-        step={props.step}
-        value={props.value}
-        onChange={(event) => {
-          props.onInput(Number(event.currentTarget.value));
-        }}
-      />
-      <strong>{props.value.toFixed(props.step >= 1 ? 0 : props.step >= 0.1 ? 1 : 3)}</strong>
-    </label>
-  );
-}
-
-function FxToggle(props: {
-  label: string;
-  dataKey: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}): JSX.Element {
-  return (
-    <label className="voice-toggle fx-toggle-row">
-      <input
-        data-fx-expression-toggle={props.dataKey}
-        type="checkbox"
-        checked={props.checked}
-        onChange={(event) => {
-          props.onChange(event.currentTarget.checked);
-        }}
-      />
-      <span>{props.label}</span>
-    </label>
-  );
-}
-
 async function runControlAction(store: AppStore, label: string, action: () => Promise<unknown>): Promise<void> {
   try {
     await action();
@@ -1349,196 +1128,6 @@ function renderFaceMeta(face: AppState['faceLastFaces'][number]): string {
     return `Closest match: ${face.match.name}`;
   }
   return 'No confident match';
-}
-
-function renderFxMarkup(args: {
-  fxEditorOpen: boolean;
-  fxExpressionSelected: string;
-  fxBaseColorDraft: `#${string}`;
-  config: AppState['config'];
-}): string {
-  const config = args.config;
-  const faceRenderMode = config?.faceRenderMode ?? 'glitch';
-  const renderQuality = config?.renderQuality ?? 'high';
-  const glitchRenderer = config?.glitchRenderer ?? 'auto';
-  const glitchBaseColor = config?.glitchFxBaseColor ?? args.fxBaseColorDraft;
-  const glitchGlowStrength = config?.glitchGlowStrength ?? 14;
-  const glitchFlickerDepth = config?.glitchFlickerDepth ?? 0.02;
-  const glitchScanlineIntensity = config?.glitchScanlineIntensity ?? 0.41;
-  const selectedExpression = args.fxExpressionSelected;
-  const selectedProfile = config?.glitchExpressionProfiles?.[selectedExpression as ExpressionName] ?? null;
-  const profileEyeH = selectedProfile?.eyeH ?? 1;
-  const profileEyeW = selectedProfile?.eyeW ?? 1;
-  const profileEyeDy = selectedProfile?.eyeDy ?? 0;
-  const profileEyeSkew = selectedProfile?.eyeSkew ?? 0;
-  const profileMouthW = selectedProfile?.mouthW ?? 1;
-  const profileMouthH = selectedProfile?.mouthH ?? 1;
-  const profileMouthRound = selectedProfile?.mouthRound ?? false;
-  const profileTears = selectedProfile?.tears ?? false;
-  const profileEyeShape = selectedProfile?.eyeShape ?? 'rect';
-  const profileMouthShape = selectedProfile?.mouthShape ?? 'rect';
-  const profileColorHex = selectedProfile?.colorHex ?? '#a855f7';
-  const profileTearColorHex = selectedProfile?.tearColorHex ?? '#57bfff';
-
-  return `
-        <dl class="kv">
-          <div><dt>Render Mode</dt><dd>${escapeHtml(faceRenderMode)}</dd></div>
-          <div><dt>Renderer</dt><dd>${escapeHtml(glitchRenderer)}</dd></div>
-          <div><dt>Quality</dt><dd>${escapeHtml(renderQuality)}</dd></div>
-          <div><dt>Base Color</dt><dd>${escapeHtml(glitchBaseColor)}</dd></div>
-          <div><dt>Glow</dt><dd>${glitchGlowStrength.toFixed(0)} px</dd></div>
-          <div><dt>Flicker</dt><dd>${glitchFlickerDepth.toFixed(3)}</dd></div>
-          <div><dt>Scanline</dt><dd>${glitchScanlineIntensity.toFixed(2)}</dd></div>
-        </dl>
-        <div class="face-actions">
-          <div class="face-action-row">
-            <button id="fx-toggle" class="button button-secondary" type="button">${config?.glitchFxEnabled ? 'Disable Glitch' : 'Enable Glitch'}</button>
-            <button id="fx-editor-open" class="button button-secondary" type="button">${args.fxEditorOpen ? 'Editor Open' : 'Open Editor'}</button>
-          </div>
-          <div class="face-action-row">
-            <label class="manual-field">
-              <span>Render Mode</span>
-              <select id="face-render-mode-select" class="mini-select">
-                <option value="glitch" ${faceRenderMode === 'glitch' ? 'selected' : ''}>Glitch</option>
-                <option value="svg" ${faceRenderMode === 'svg' ? 'selected' : ''}>SVG</option>
-                <option value="css" ${faceRenderMode === 'css' ? 'selected' : ''}>CSS</option>
-              </select>
-            </label>
-            <label class="manual-field">
-              <span>Render Quality</span>
-              <select id="face-render-quality-select" class="mini-select">
-                <option value="high" ${renderQuality === 'high' ? 'selected' : ''}>High</option>
-                <option value="balanced" ${renderQuality === 'balanced' ? 'selected' : ''}>Balanced</option>
-                <option value="low" ${renderQuality === 'low' ? 'selected' : ''}>Low</option>
-              </select>
-            </label>
-          </div>
-          <div class="face-action-row">
-            <label class="manual-field">
-              <span>Renderer</span>
-              <select id="glitch-renderer-select" class="mini-select">
-                <option value="auto" ${glitchRenderer === 'auto' ? 'selected' : ''}>Auto</option>
-                <option value="webgpu" ${glitchRenderer === 'webgpu' ? 'selected' : ''}>WebGPU</option>
-                <option value="canvas2d" ${glitchRenderer === 'canvas2d' ? 'selected' : ''}>Canvas2D</option>
-              </select>
-            </label>
-            <label class="manual-field">
-              <span>Preset</span>
-              <select id="glitch-preset-select" class="mini-select">
-                <option value="">Select preset</option>
-                <option value="default">Default</option>
-                <option value="cyberpunk">Cyberpunk</option>
-                <option value="minimal">Minimal</option>
-                <option value="warm">Warm</option>
-              </select>
-            </label>
-          </div>
-          <div class="face-action-row">
-            <input id="fx-base-color" class="fx-color-input" type="color" value="${escapeAttribute(args.fxBaseColorDraft)}" />
-            <button id="fx-color-apply" class="button button-secondary" type="button">Apply Color</button>
-          </div>
-          <div class="fx-editor-shell ${args.fxEditorOpen ? 'is-open' : ''}">
-            <div class="fx-editor-header">
-              <strong>FX Editor</strong>
-              <div class="face-action-row">
-                <button id="glitch-export-button" class="button button-secondary" type="button">Export</button>
-                <button id="glitch-import-button" class="button button-secondary" type="button">Import</button>
-                <button id="glitch-reset-button" class="button button-secondary" type="button">Reset</button>
-                <button id="fx-editor-close" class="button button-secondary" type="button">Close</button>
-              </div>
-            </div>
-            <div class="fx-editor-group">
-              <h3>Expression Profiles</h3>
-              <div class="face-action-row">
-                <label class="manual-field">
-                  <span>Expression</span>
-                  <select id="fx-expression-select" class="mini-select">
-                    ${renderExpressionOption('idle', selectedExpression)}
-                    ${renderExpressionOption('idle-flat', selectedExpression)}
-                    ${renderExpressionOption('listening', selectedExpression)}
-                    ${renderExpressionOption('thinking', selectedExpression)}
-                    ${renderExpressionOption('speaking', selectedExpression)}
-                    ${renderExpressionOption('smile', selectedExpression)}
-                    ${renderExpressionOption('happy', selectedExpression)}
-                    ${renderExpressionOption('love', selectedExpression)}
-                    ${renderExpressionOption('sad', selectedExpression)}
-                    ${renderExpressionOption('crying', selectedExpression)}
-                    ${renderExpressionOption('sleep', selectedExpression)}
-                    ${renderExpressionOption('angry', selectedExpression)}
-                    ${renderExpressionOption('surprised', selectedExpression)}
-                  </select>
-                </label>
-                <button id="fx-expression-reset" class="button button-secondary" type="button">Reset Profile</button>
-              </div>
-              ${renderFxSlider('Eye Height', 'eyeH', profileEyeH, 0.05, 2, 0.01, 'expression-range')}
-              ${renderFxSlider('Eye Width', 'eyeW', profileEyeW, 0.3, 2, 0.01, 'expression-range')}
-              ${renderFxSlider('Eye Offset Y', 'eyeDy', profileEyeDy, -10, 15, 0.5, 'expression-range')}
-              ${renderFxSlider('Eye Skew', 'eyeSkew', profileEyeSkew, -0.5, 0.5, 0.01, 'expression-range')}
-              ${renderFxSlider('Mouth Width', 'mouthW', profileMouthW, 0.1, 2, 0.01, 'expression-range')}
-              ${renderFxSlider('Mouth Height', 'mouthH', profileMouthH, 0.1, 4, 0.01, 'expression-range')}
-              ${renderFxToggle('Mouth Round', 'mouthRound', profileMouthRound, 'expression-toggle')}
-              ${renderFxToggle('Tears', 'tears', profileTears, 'expression-toggle')}
-              ${renderFxSelect('Eye Shape', 'eyeShape', profileEyeShape, ['rect', 'heart'])}
-              ${renderFxSelect('Mouth Shape', 'mouthShape', profileMouthShape, ['rect', 'frown', 'smile-arc', 'round'])}
-              ${renderFxColor('Color Override', 'colorHex', profileColorHex)}
-              ${renderFxColor('Tear Color', 'tearColorHex', profileTearColorHex)}
-            </div>
-          </div>
-        </div>
-        `;
-}
-
-function renderFxSlider(
-  label: string,
-  key: string,
-  value: number,
-  min: number,
-  max: number,
-  step: number,
-  datasetType: 'config-range' | 'expression-range' = 'config-range',
-): string {
-  const datasetAttribute = datasetType === 'expression-range' ? 'data-fx-expression-range' : 'data-fx-config-range';
-  return `
-        <label class="fx-slider-row">
-          <span>${escapeHtml(label)}</span>
-          <input ${datasetAttribute}="${escapeAttribute(key)}" type="range" min="${min}" max="${max}" step="${step}" value="${value}" />
-          <strong>${value.toFixed(step >= 1 ? 0 : step >= 0.1 ? 1 : 3)}</strong>
-        </label>
-        `;
-}
-
-function renderFxToggle(label: string, key: string, checked: boolean, datasetType: 'config-toggle' | 'expression-toggle' = 'config-toggle'): string {
-  const datasetAttribute = datasetType === 'expression-toggle' ? 'data-fx-expression-toggle' : 'data-fx-config-toggle';
-  return `
-        <label class="voice-toggle fx-toggle-row">
-          <input ${datasetAttribute}="${escapeAttribute(key)}" type="checkbox" ${checked ? 'checked' : ''} />
-          <span>${escapeHtml(label)}</span>
-        </label>
-        `;
-}
-
-function renderFxSelect(label: string, key: string, value: string, options: string[]): string {
-  return `
-        <label class="manual-field">
-          <span>${escapeHtml(label)}</span>
-          <select data-fx-expression-select="${escapeAttribute(key)}" class="mini-select">
-            ${options.map((option) => `<option value="${escapeAttribute(option)}" ${value === option ? 'selected' : ''}>${escapeHtml(option)}</option>`).join('')}
-          </select>
-        </label>
-        `;
-}
-
-function renderFxColor(label: string, key: string, value: `#${string}`): string {
-  return `
-        <label class="manual-field">
-          <span>${escapeHtml(label)}</span>
-          <input data-fx-expression-color="${escapeAttribute(key)}" class="fx-color-input" type="color" value="${escapeAttribute(value)}" />
-        </label>
-        `;
-}
-
-function renderExpressionOption(name: string, selected: string): string {
-  return `<option value="${escapeAttribute(name)}" ${name === selected ? 'selected' : ''}>${escapeHtml(name)}</option>`;
 }
 
 function renderManualStatusClass(kind: 'idle' | 'ok' | 'error' | 'busy'): string {
@@ -1731,17 +1320,4 @@ function parseDelayMs(value: unknown): number | null {
 
 function normalizeManualAction(value: string): TurnAction {
   return value === 'react' || value === 'wait' ? value : 'speak';
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function escapeAttribute(value: string): string {
-  return escapeHtml(value);
 }

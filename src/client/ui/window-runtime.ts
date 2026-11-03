@@ -1,4 +1,5 @@
 import type { AppStore } from '../state/app-state.js';
+import { toggleFxEditor } from '../fx/runtime.js';
 import { postJson } from '../transport/http.js';
 
 const FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
@@ -56,6 +57,15 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
     syncState();
 
     keyHandler = (event: KeyboardEvent) => {
+      // While the FX editor is open, Escape closes it instead of toggling sleep,
+      // and the other global shortcuts are off (same as main).
+      if (store.getState().fxEditorOpen) {
+        if (event.code === 'Escape') {
+          event.preventDefault();
+          toggleFxEditor(store);
+        }
+        return;
+      }
       const target = event.target;
       const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLButtonElement;
 

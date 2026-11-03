@@ -97,11 +97,17 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     try {
       const patch = await readJsonBody<Partial<ConfigResponse>>(request);
       const shouldRestartStt = patch.sttModel !== undefined && patch.sttModel !== toConfigResponse().sttModel;
+      const wasMuted = runtimeConfig.muted;
       const payload = applyRuntimeConfigPatch(patch);
       if (shouldRestartStt && patch.sttModel) {
         await restartTranscriptionService(patch.sttModel, 'config patch');
       }
       broadcastConfig();
+      if (!wasMuted && runtimeConfig.muted) {
+        // Mute means silence now: drop the turn in flight and stop client audio.
+        interruptAssistantTurns();
+        broadcast({ type: 'interrupt', turnId: null, source: 'system' });
+      }
       sendJson(response, 200, payload);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Invalid config payload';

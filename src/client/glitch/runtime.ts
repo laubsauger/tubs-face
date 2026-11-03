@@ -52,6 +52,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let rendererConfig: GlitchConfig = structuredClone(DEFAULT_CONFIG);
   let lastRendererPreference = normalizeRenderer(DEFAULT_CONFIG.renderer);
   let lastProfileSignature = '';
+  let lastRendererSignature = '';
   const rendererState: RendererState = {
     kind: 'canvas2d',
     ready: false,
@@ -196,6 +197,32 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     const scan = hexToHSL(rendererConfig.scanBeam.color);
     cachedScanBeamRGBA = `rgba(${scan.h},${scan.s},${scan.l},0.26)`;
     recolorPixelGrid(pixelGrid, colorLUTs, baseHSL);
+
+    const rendererSignature = JSON.stringify(rendererConfig);
+    if (rendererSignature !== lastRendererSignature) {
+      const firstSync = lastRendererSignature === '';
+      lastRendererSignature = rendererSignature;
+      if (!firstSync) {
+        applyRendererConfigChange();
+      }
+    }
+  }
+
+  /**
+   * Pixel size, gap, shapes, scanlines and glow are baked into the pixel grid and
+   * the Canvas2D caches when the canvas is sized. Rebuild them so FX editor
+   * changes show up live instead of on the next resize or expression change.
+   */
+  function applyRendererConfigChange(): void {
+    if (!rendererState.ready) {
+      return;
+    }
+    updateEffectivePixelMetrics();
+    if (ctx) {
+      scanlinePattern = rebuildScanlinePattern(ctx, rendererConfig, cachedDpr);
+    }
+    cachedGlowFilter = `blur(${Math.round(rendererConfig.glow.pixelGlow * cachedDpr)}px)`;
+    lastBuiltExpression = '';
   }
 
   function setupCanvas(): void {

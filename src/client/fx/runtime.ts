@@ -120,6 +120,23 @@ export async function patchConfig(store: AppStore, patch: Partial<ConfigResponse
   }
 }
 
+const pendingCommits = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * For sliders and colour pickers: apply locally on every input so the face
+ * updates live, and POST /config once the value settles. Sending each input
+ * event would flood the server and broadcast a config message per pixel of drag.
+ */
+export function patchConfigLive(store: AppStore, patch: Partial<ConfigResponse>, delayMs = 200): void {
+  applyOptimisticConfigPatch(store, patch);
+  const key = Object.keys(patch).sort().join(',');
+  clearTimeout(pendingCommits.get(key));
+  pendingCommits.set(key, setTimeout(() => {
+    pendingCommits.delete(key);
+    void patchConfig(store, patch);
+  }, delayMs));
+}
+
 export function applyOptimisticConfigPatch(store: AppStore, patch: Partial<ConfigResponse>): void {
   store.setState((current) => ({
     ...current,
@@ -316,6 +333,17 @@ export function normalizeHex(value: string, fallback: `#${string}`): `#${string}
 export function normalizeExpressionName(value: string): ExpressionName {
   const normalized = value.trim() as ExpressionName;
   return normalized in DEFAULT_EXPRESSION_PROFILES ? normalized : 'idle';
+}
+
+/** Toggled by the E key and the System Vitals "Edit" button. */
+export function toggleFxEditor(store: AppStore): void {
+  store.setState((current) => ({
+    ...current,
+    fxEditorOpen: !current.fxEditorOpen,
+    currentExpression: current.fxEditorOpen
+      ? (current.sleeping ? 'sleep' : 'idle')
+      : current.fxExpressionSelected,
+  }));
 }
 
 export function previewExpression(store: AppStore, expression: ExpressionName): void {

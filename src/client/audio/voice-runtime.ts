@@ -70,6 +70,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let lastVoiceDetectedAt = 0;
   let vadProvider: VadProvider | null = null;
   let vadModelId: VadModelId = 'rms';
+  let vadNoiseGateApplied = 0;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
   let anyHeadSpeechHandler: ((event: Event) => void) | null = null;
@@ -95,9 +96,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         },
         { fireImmediately: true },
       );
-      // Hot-switch VAD model when config changes
+      // Hot-switch VAD model (or the RMS noise gate) when config changes
       store.subscribeSelector(
-        (s) => s.config?.vadModel,
+        (s) => `${s.config?.vadModel}:${s.config?.vadNoiseGate}`,
         () => {
           if (audioContext) {
             void ensureVadProvider(audioContext.sampleRate);
@@ -239,7 +240,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   }
 
   async function startRecording(mode: 'manual' | 'handsfree'): Promise<void> {
-    if (store.getState().recording) {
+    // The server drops input while muted; don't record and upload it either.
+    if (store.getState().recording || store.getState().config?.muted) {
       return;
     }
     await ensureMicrophone();
@@ -567,13 +569,15 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
 
   async function ensureVadProvider(sampleRate: number): Promise<void> {
     const configModel = (store.getState().config?.vadModel ?? 'rms') as VadModelId;
-    if (vadProvider && vadModelId === configModel) {
+    const noiseGate = store.getState().config?.vadNoiseGate ?? 0.008;
+    // The RMS VAD bakes the noise gate in at creation, so a new gate needs a new provider.
+    if (vadProvider && vadModelId === configModel && (configModel !== 'rms' || vadNoiseGateApplied === noiseGate)) {
       return;
     }
     vadProvider?.dispose();
     vadProvider = null;
     vadModelId = configModel;
-    const noiseGate = store.getState().config?.vadNoiseGate ?? 0.008;
+    vadNoiseGateApplied = noiseGate;
     vadProvider = createVadProvider(configModel, { noiseGate, sampleRate });
     try {
       await vadProvider.init();
