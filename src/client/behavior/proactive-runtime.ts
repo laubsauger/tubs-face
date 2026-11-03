@@ -70,7 +70,8 @@ export function createProactiveRuntime(store: AppStore): ProactiveRuntime {
 
   function tryProactiveChat(): void {
     const state = store.getState();
-    if (state.sleeping || state.audioPlaying || state.faceLastDetectedCount === 0) {
+    // Not while someone is mid-onboarding in front of the camera.
+    if (state.sleeping || state.audioPlaying || state.faceLastDetectedCount === 0 || state.faceEnrollOpen) {
       schedule();
       return;
     }

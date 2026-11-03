@@ -51,6 +51,7 @@ export function createSleepRuntime(store: AppStore): SleepRuntime {
       || state.listenState === 'Uploading...'
       || state.listenState === 'Thinking...'
       || state.fxEditorOpen
+      || state.faceEnrollOpen
       || now < state.conversationUntil;
   }
 

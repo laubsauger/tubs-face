@@ -64,6 +64,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   let headSpeechStateHandler: ((event: Event) => void) | null = null;
   let requestInterruptHandler: ((event: Event) => void) | null = null;
   let ttsRequestHandler: ((event: Event) => void) | null = null;
+  let faceEnrolledHandler: ((event: Event) => void) | null = null;
 
   const controls: AppShellControls | undefined = isController
     ? {
@@ -88,7 +89,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
           },
           detectFile: (file: File) => faceRuntime.detectFile(file),
           saveDetectedFace: () => faceRuntime.saveDetectedFace(),
-          enrollFace: (name, onProgress) => faceRuntime.enrollFace(name, onProgress),
+          getCameraStream: () => faceRuntime.getCameraStream(),
+          beginEnrollment: () => faceRuntime.beginEnrollment(),
+          endEnrollment: () => faceRuntime.endEnrollment(),
+          captureEnrollmentSample: (previous) => faceRuntime.captureEnrollmentSample(previous),
+          saveEnrollment: (name, samples) => faceRuntime.saveEnrollment(name, samples),
           refreshLibrary: () => faceRuntime.refreshLibrary(),
           renameFace: (id: string, name: string) => faceRuntime.renameFace(id, name),
           deleteFace: (id: string) => faceRuntime.deleteFace(id),
@@ -282,6 +287,18 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     };
     window.addEventListener('tubs:tts-request', ttsRequestHandler as EventListener);
 
+    // Right after onboarding, Tubs greets the new face by name.
+    faceEnrolledHandler = (event: Event) => {
+      const name = (event as CustomEvent<{ name?: string }>).detail?.name?.trim();
+      if (!name) return;
+      wsClient.send({
+        type: 'proactive',
+        context: `You just learned ${name}'s face and will recognize them from now on. Greet ${name} by name, smug about your new trick.`,
+        faces: [name],
+      });
+    };
+    window.addEventListener('tubs:face-enrolled', faceEnrolledHandler);
+
     proactiveRuntime?.init((message) => {
       wsClient.send(message);
     });
@@ -315,6 +332,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       }
       if (ttsRequestHandler) {
         window.removeEventListener('tubs:tts-request', ttsRequestHandler as EventListener);
+      }
+      if (faceEnrolledHandler) {
+        window.removeEventListener('tubs:face-enrolled', faceEnrolledHandler);
       }
       wsClient.disconnect();
       sleepRuntime?.dispose();

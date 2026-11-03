@@ -115,6 +115,8 @@ export interface AppState {
   faceLibraryEmbeddings: number;
   faceLibraryPeople: number;
   faceDraftName: string;
+  /** Face onboarding wizard is open (F key or the Onboard button). */
+  faceEnrollOpen: boolean;
   controlSpeakText: string;
   controlDonationAmount: string;
   chatComposerText: string;
@@ -255,6 +257,7 @@ export function createAppStore(serverUrl: string): AppStore {
     faceLibraryEmbeddings: 0,
     faceLibraryPeople: 0,
     faceDraftName: '',
+    faceEnrollOpen: false,
     controlSpeakText: 'Hello from the TypeScript shell.',
     controlDonationAmount: '5.00',
     chatComposerText: '',

@@ -18,11 +18,12 @@ import type {
 } from '../../shared/contracts/http.js';
 import type { TurnActor, TurnAction, TurnBeat } from '../../shared/contracts/turn-script.js';
 import type { EmotionCue, ExpressionName } from '../../shared/contracts/config.js';
-import type { FaceEnrollmentProgress, FaceEnrollmentResult } from '../face/runtime.js';
+import type { EnrollmentCapture } from '../face/runtime.js';
 import type { AppState, AppStore, PanelKey } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import { patchConfig, toggleFxEditor } from '../fx/runtime.js';
 import { FxEditor } from './panels/FxEditor.js';
+import { EnrollmentWizard } from './panels/EnrollmentWizard.js';
 
 import { useAppSelector } from './react-store.js';
 import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
@@ -46,7 +47,11 @@ export interface AppShellControls {
     toggleCamera(): Promise<void>;
     detectFile(file: File): Promise<void>;
     saveDetectedFace(): Promise<void>;
-    enrollFace(name: string, onProgress?: (progress: FaceEnrollmentProgress) => void): Promise<FaceEnrollmentResult>;
+    getCameraStream(): MediaStream | null;
+    beginEnrollment(): void;
+    endEnrollment(): void;
+    captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+    saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number>;
     refreshLibrary(): Promise<void>;
     renameFace(id: string, name: string): Promise<void>;
     deleteFace(id: string): Promise<void>;
@@ -98,12 +103,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
           void controls?.face?.toggleCamera();
         } else if (key === 'f') {
           e.preventDefault();
-          if (!store.getState().faceCameraActive) return;
-          const name = window.prompt("Enter name for Face Enrollment:");
-          if (name?.trim()) {
-             store.setState(s => ({ ...s, faceDraftName: name.trim() }));
-             void controls?.face?.enrollFace(name.trim());
-          }
+          store.setState((s) => ({ ...s, faceEnrollOpen: true }));
         } else if (key === 'd') {
           e.preventDefault();
           store.setState(s => ({ ...s, debugOverlayActive: !s.debugOverlayActive }));
@@ -169,6 +169,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
       )}
 
       <FxEditor store={store} />
+      <EnrollmentWizard store={store} {...(controls?.face ? { controls: controls.face } : {})} />
 
       {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
       <div className="hidden">
