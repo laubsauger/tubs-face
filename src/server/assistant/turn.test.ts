@@ -1,0 +1,283 @@
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WsServerMessage } from '../../shared/contracts/ws.js';
+import type { LlmGenerateResult, LlmProvider, LlmStreamArgs } from '../llm/types.js';
+import type { TtsStreamChunk } from '../tts/stream.js';
+
+// Characterization tests for a full assistant turn: what clients receive over the
+// WebSocket, in what order, and what happens when a turn is interrupted. The LLM
+// provider and the Python TTS stream are replaced by in-memory fakes.
+
+interface FakeTtsOptions {
+  onChunk: (chunk: TtsStreamChunk) => void;
+  onSentenceDone: () => void;
+  onError?: (error: Error) => void;
+  onClose?: () => void;
+}
+
+const fakes = vi.hoisted(() => ({
+  provider: null as unknown as LlmProvider,
+  ttsSent: [] as string[],
+}));
+
+vi.mock('../llm/provider.js', () => ({
+  resolveLlmProvider: () => fakes.provider,
+}));
+
+vi.mock('../tts/stream.js', () => ({
+  openTtsStream(options: FakeTtsOptions) {
+    let open = true;
+    return {
+      send(text: string) {
+        fakes.ttsSent.push(text);
+        setTimeout(() => {
+          options.onChunk({ text, audio: 'UklGRg==' });
+          options.onSentenceDone();
+        }, 0);
+      },
+      close() {
+        if (!open) return;
+        open = false;
+        setTimeout(() => options.onClose?.(), 0);
+      },
+      get ready() {
+        return open;
+      },
+      get closed() {
+        return !open;
+      },
+    };
+  },
+}));
+
+const { runtimeConfig } = await import('../config/runtime.js');
+const { interruptAssistantTurns, runAssistantTurn } = await import('./service.js');
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) {
+      throw new Error('waitFor timed out');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function llmResult(text: string): LlmGenerateResult {
+  return { text, usage: { promptTokenCount: 10, candidatesTokenCount: 5 }, model: 'fake-model' };
+}
+
+/** Provider whose generateContent answers each call from a queue (string or pending promise). */
+function queuedProvider(replies: Array<string | Promise<string>>): LlmProvider {
+  return {
+    id: 'gemini',
+    getAuthState: () => ({ ready: true, warningMessage: null, auth: null }),
+    generateContent: vi.fn(async () => llmResult(await (replies.shift() ?? 'Out of lines.'))),
+  };
+}
+
+/** Provider that streams the given deltas; a Promise in the list pauses the stream until it resolves. */
+function streamingProvider(deltas: Array<string | Promise<void>>): LlmProvider {
+  return {
+    id: 'gemini',
+    getAuthState: () => ({ ready: true, warningMessage: null, auth: null }),
+    generateContent: vi.fn(async () => llmResult('unused')),
+    streamContent: vi.fn(async (args: LlmStreamArgs) => {
+      let text = '';
+      for (const delta of deltas) {
+        if (typeof delta !== 'string') {
+          await delta;
+          continue;
+        }
+        if (args.abortSignal?.aborted) break;
+        text += delta;
+        args.onChunk(delta);
+      }
+      return { ...llmResult(text), aborted: Boolean(args.abortSignal?.aborted) };
+    }),
+  };
+}
+
+function collect() {
+  const messages: WsServerMessage[] = [];
+  return {
+    messages,
+    broadcast: (message: WsServerMessage) => {
+      messages.push(message);
+    },
+    types: () => messages.map((message) => message.type),
+    ofType<T extends WsServerMessage['type']>(type: T) {
+      return messages.filter((message): message is Extract<WsServerMessage, { type: T }> => message.type === type);
+    },
+  };
+}
+
+describe('assistant turn', () => {
+  let configSnapshot: typeof runtimeConfig;
+
+  beforeAll(() => {
+    configSnapshot = structuredClone(runtimeConfig);
+  });
+
+  beforeEach(() => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    fakes.ttsSent.length = 0;
+    runtimeConfig.dualHeadEnabled = false;
+    runtimeConfig.ttsStreamingEnabled = false;
+    interruptAssistantTurns();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    Object.assign(runtimeConfig, configSnapshot);
+  });
+
+  describe('sequential (no TTS streaming)', () => {
+    it('announces the turn, then speaks it, all under one turnId', async () => {
+      fakes.provider = queuedProvider(['You brought snacks or just vibes? 😏']);
+      const ws = collect();
+
+      const result = await runAssistantTurn('what are you doing today', ws.broadcast);
+
+      expect(ws.types()).toEqual(['turn_start', 'turn_context', 'speak', 'stats']);
+      const [speak] = ws.ofType('speak');
+      expect(speak?.turnId).toBe(result.turnId);
+      expect(ws.ofType('turn_start')[0]?.turnId).toBe(result.turnId);
+      // The emotion emoji drives the face; it must not be spoken.
+      expect(speak?.text).toBe('You brought snacks or just vibes?');
+      expect(speak?.emotion?.emoji).toBe('😏');
+      expect(result.superseded).toBeUndefined();
+    });
+
+    it('drops the reply when the user barges in while the model is still thinking', async () => {
+      const pending = deferred<string>();
+      fakes.provider = queuedProvider([pending.promise]);
+      const ws = collect();
+
+      const turn = runAssistantTurn('tell me something weird', ws.broadcast);
+      await waitFor(() => vi.mocked(fakes.provider.generateContent).mock.calls.length > 0);
+      interruptAssistantTurns();
+      pending.resolve('This should never be heard.');
+      const result = await turn;
+
+      expect(result.superseded).toBe(true);
+      expect(ws.types()).not.toContain('speak');
+    });
+
+    it('lets a newer turn supersede an older one that is still generating', async () => {
+      const slow = deferred<string>();
+      fakes.provider = queuedProvider([slow.promise, 'Second question wins.']);
+      const ws = collect();
+
+      const first = runAssistantTurn('first question here', ws.broadcast);
+      await waitFor(() => vi.mocked(fakes.provider.generateContent).mock.calls.length > 0);
+      const second = await runAssistantTurn('second question here', ws.broadcast);
+      slow.resolve('Stale answer.');
+      const firstResult = await first;
+
+      expect(firstResult.superseded).toBe(true);
+      expect(ws.ofType('speak').map((message) => [message.turnId, message.text])).toEqual([
+        [second.turnId, 'Second question wins.'],
+      ]);
+    });
+
+    it('turns a donation marker into a QR signal and keeps it out of speech', async () => {
+      fakes.provider = queuedProvider(['Fund my wheels, human. [[SHOW_QR]]']);
+      const ws = collect();
+
+      await runAssistantTurn('how can I help you', ws.broadcast);
+
+      const [speak] = ws.ofType('speak');
+      expect(speak?.text).toBe('Fund my wheels, human.');
+      expect(speak?.donation).toMatchObject({ show: true, reason: 'marker' });
+    });
+  });
+
+  describe('streaming (LLM stream to TTS stream)', () => {
+    beforeEach(() => {
+      runtimeConfig.ttsStreamingEnabled = true;
+    });
+
+    it('sends each sentence to TTS as it completes and finishes with speak_end', async () => {
+      fakes.provider = streamingProvider(['Nice hat. ', 'Did it come', ' with instructions? 😏']);
+      const ws = collect();
+
+      const result = await runAssistantTurn('do you like my hat', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['Nice hat.', 'Did it come with instructions?']);
+      expect(ws.ofType('audio_chunk').map((chunk) => chunk.chunkIndex)).toEqual([0, 1]);
+      expect(ws.types()).not.toContain('speak');
+      const [end] = ws.ofType('speak_end');
+      expect(end?.fullText).toBe('Nice hat. Did it come with instructions?');
+      expect(end?.emotion?.emoji).toBe('😏');
+      expect(ws.types().at(-1)).toBe('stats');
+      expect(result.superseded).toBe(false);
+    });
+
+    it('strips a JSON envelope so only prose reaches TTS', async () => {
+      fakes.provider = streamingProvider(['{"text": "', 'Cool shoes. ', 'Very brave."}']);
+      const ws = collect();
+
+      await runAssistantTurn('check out my shoes', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['Cool shoes.', 'Very brave.']);
+    });
+
+    it('stops sending audio for a turn once the user barges in', async () => {
+      const gate = deferred();
+      fakes.provider = streamingProvider(['First line here. ', gate.promise, 'Second line here.']);
+      const ws = collect();
+
+      const turn = runAssistantTurn('say two things', ws.broadcast);
+      await waitFor(() => ws.ofType('audio_chunk').length === 1);
+      interruptAssistantTurns();
+      gate.resolve();
+      const result = await turn;
+
+      expect(result.superseded).toBe(true);
+      expect(fakes.ttsSent).toEqual(['First line here.']);
+      expect(ws.ofType('audio_chunk')).toHaveLength(1);
+      // Clients still get speak_end so they can close the audio session cleanly.
+      expect(ws.types()).toContain('speak_end');
+      expect(ws.types()).not.toContain('stats');
+    });
+  });
+
+  describe('dual-head', () => {
+    beforeEach(() => {
+      runtimeConfig.dualHeadEnabled = true;
+      runtimeConfig.dualHeadMode = 'llm_directed';
+      runtimeConfig.dualHeadTurnPolicy = 'llm_order';
+    });
+
+    it('broadcasts one turn_script with every beat instead of a single speak', async () => {
+      fakes.provider = queuedProvider([JSON.stringify({
+        beats: [
+          { actor: 'main', action: 'speak', text: 'You again?', emoji: '😏' },
+          { actor: 'small', action: 'react', emoji: '😄', delayMs: 260 },
+          { actor: 'small', action: 'speak', text: 'Bring snacks next time.' },
+        ],
+      })]);
+      const ws = collect();
+
+      const result = await runAssistantTurn('hello again friends', ws.broadcast);
+
+      expect(ws.types()).toEqual(['turn_start', 'turn_context', 'turn_script', 'stats']);
+      const [script] = ws.ofType('turn_script');
+      expect(script?.turnId).toBe(result.turnId);
+      expect(script?.beats.map((beat) => `${beat.actor}:${beat.action}`)).toEqual(['main:speak', 'small:react', 'small:speak']);
+      expect(result.reply.text).toBe('You again? Bring snacks next time.');
+    });
+  });
+});

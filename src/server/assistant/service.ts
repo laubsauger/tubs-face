@@ -716,6 +716,9 @@ async function runStreamingAssistantTurn(args: {
   let pendingTtsSentences = 0;
   let llmDone = false;
   let chunkIndex = 0;
+  // Sentences handed to TTS (or to the client as speak_chunk). Audio for them may
+  // still be in flight when the LLM stream ends, so chunkIndex can still be 0.
+  let sentencesQueued = 0;
   let fullText = '';
   let rawEmotion: SpeechEmotionPayload | null = null;
   let emotionExtracted = false;
@@ -868,6 +871,7 @@ async function runStreamingAssistantTurn(args: {
     fullText += (fullText ? ' ' : '') + text;
 
     console.log(`\x1b[36m[Streaming TTS]\x1b[0m sentence → "${text}"`);
+    sentencesQueued++;
     if (ttsWsReady && ttsWs && ttsWs.ready) {
       pendingTtsSentences++;
       currentTtsSentence = text;
@@ -909,8 +913,8 @@ async function runStreamingAssistantTurn(args: {
     llmDone = true;
     checkCloseWs();
 
-    // If no chunks were sent (very short response), send full text
-    if (chunkIndex === 0 && llmResult.text) {
+    // If the splitter produced nothing speakable, send the full text once.
+    if (sentencesQueued === 0 && llmResult.text) {
       const unwrapped = unwrapJsonSpeechText(llmResult.text);
       const parsed = splitTrailingEmotionEmoji(stripFormatting(unwrapped));
       rawEmotion = parsed.emotion;
