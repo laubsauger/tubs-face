@@ -108,7 +108,9 @@ export async function streamGeminiContent(args: StreamGeminiArgs): Promise<Strea
           continue;
         }
 
-        const delta = extractResponseText(chunk);
+        // Streamed deltas are not trimmed: a word boundary often falls on the
+        // space at the start or end of a chunk ("Fun is" + " just ...").
+        const delta = extractResponseText(chunk, { trim: false });
         if (delta) {
           fullText += delta;
           args.onChunk(delta);
@@ -214,16 +216,16 @@ function parseGeminiJson(raw: string): GeminiResponseJson | null {
   }
 }
 
-function extractResponseText(responseJson: GeminiResponseJson): string {
+function extractResponseText(responseJson: GeminiResponseJson, options: { trim?: boolean } = {}): string {
   const candidates = Array.isArray(responseJson.candidates) ? responseJson.candidates : [];
   for (const candidate of candidates) {
     const parts = Array.isArray(candidate.content?.parts) ? candidate.content.parts : [];
-    const text = parts
+    const joined = parts
       .filter((part) => !part.thought)
       .map((part) => (typeof part.text === 'string' ? part.text : ''))
-      .join('\n')
-      .trim();
-    if (text) {
+      .join('\n');
+    const text = options.trim === false ? joined : joined.trim();
+    if (text.trim()) {
       return text;
     }
   }
