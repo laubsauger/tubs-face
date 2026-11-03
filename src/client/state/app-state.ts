@@ -258,7 +258,7 @@ export function createAppStore(serverUrl: string): AppStore {
     faceLibraryPeople: 0,
     faceDraftName: '',
     faceEnrollOpen: false,
-    controlSpeakText: 'Hello from the TypeScript shell.',
+    controlSpeakText: '',
     controlDonationAmount: '5.00',
     chatComposerText: '',
     uiHidden: false,
@@ -267,6 +267,8 @@ export function createAppStore(serverUrl: string): AppStore {
       connection: true,
       voice: true,
       stats: true,
+      controls: true,
+      manual: true,
     },
     chatPanelWidth: null,
     chatVerbosity: 'all',
@@ -304,7 +306,11 @@ export function createAppStore(serverUrl: string): AppStore {
     },
     logs: [],
   };
-  Object.assign(initialState, readStoredUiPrefs());
+  const storedPrefs = readStoredUiPrefs();
+  // Merge panel state so panels added later start with their default.
+  Object.assign(initialState, storedPrefs, {
+    collapsedPanels: { ...initialState.collapsedPanels, ...storedPrefs.collapsedPanels },
+  });
   const store = createStore<AppState>()(subscribeWithSelector(() => initialState));
 
   return {

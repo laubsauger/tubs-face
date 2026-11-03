@@ -152,6 +152,8 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
             <ConnectionPanel store={store} />
             <VoicePanel store={store} controls={controls} />
             <StatsPanel store={store} />
+            <ControlsPanel store={store} {...(controls ? { controls } : {})} />
+            <ManualPanel store={store} />
           </div>
 
           <div className="hud-corner hud-corner-bottom-left">
@@ -176,8 +178,7 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
         <HealthPanel store={store} />
         <ConfigPanel store={store} />
         <AssistantPanel store={store} />
-        <ControlsPanel store={store} {...(controls ? { controls } : {})} />
-        <ManualPanel store={store} />
+        {/* Stream debug stays hidden: the server never sends stream_debug, so it would be empty. */}
         <StreamDebugPanel store={store} />
         <EventLogPanel store={store} />
       </div>
@@ -530,7 +531,7 @@ function HealthPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="health" title="Health" meta={state.health?.status ?? 'unknown'} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <dl className="kv">
           <div><dt>Status</dt><dd>{state.health?.status ?? 'unknown'}</dd></div>
           <div><dt>Mode</dt><dd>{state.health?.processingMode ?? 'n/a'}</dd></div>
@@ -554,7 +555,7 @@ function ConfigPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="config" title="Config" meta={state.config?.llmModel ?? 'n/a'} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <dl className="kv">
           <div><dt>Model</dt><dd>{state.config?.llmModel ?? 'n/a'}</dd></div>
           <div><dt>Render</dt><dd>{faceRenderMode}</dd></div>
@@ -583,7 +584,7 @@ function AssistantPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="assistant" title="Assistant" meta={state.currentExpression} metaId="assistant-panel-meta" />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <dl className="kv">
           <div><dt>Expression</dt><dd id="assistant-expression-value">{state.currentExpression}</dd></div>
           <div><dt>Sleep</dt><dd id="assistant-sleep-value">{state.sleeping ? 'asleep' : 'awake'}</dd></div>
@@ -616,7 +617,7 @@ function ControlsPanel({
   return (
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="controls" title="Controls" meta="Actions" />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <div className="face-actions">
           <div className="face-action-row">
             <button
@@ -672,7 +673,7 @@ function ControlsPanel({
               id="action-speak-text"
               className="face-name-input"
               type="text"
-              placeholder="Inject statement"
+              placeholder="Line for Tubs to say"
               value={state.controlSpeakText}
               onChange={(event) => {
                 const value = event.currentTarget.value;
@@ -759,7 +760,7 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <article className={renderPanelCardClass(state.collapsed)}>
       <PanelHeader store={store} panelKey="manual" title="Manual Beats" meta={state.manualStatus} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <div className="manual-beats-row">
           <button
             id="manual-beats-toggle"
@@ -996,7 +997,7 @@ function StreamDebugPanel({ store }: { store: AppStore }): JSX.Element {
         meta={debug.enabled ? (debug.currentTurnId?.slice(0, 8) ?? 'none') : 'disabled'}
         metaId="stream-debug-panel-meta"
       />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <div className="face-action-row">
           <button
             id="stream-debug-toggle"
@@ -1079,7 +1080,7 @@ function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
   return (
     <article className={`${renderPanelCardClass(state.collapsed)} flex-column-card`}>
       <PanelHeader store={store} panelKey="eventLog" title="Event Log" meta={`${state.logs.length} entries`} />
-      <div className={`panel-body ${state.collapsed ? 'is-hidden' : ''}`}>
+      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
         <ul id="event-log-list" className="logs event-log-list">
           {state.logs.length === 0
             ? <li className="log"><span>No events yet.</span></li>
@@ -1108,7 +1109,7 @@ async function runControlAction(store: AppStore, label: string, action: () => Pr
 }
 
 function renderPanelCardClass(collapsed: boolean): string {
-  return `card panel-card ${collapsed ? 'is-collapsed' : ''}`;
+  return `panel-surface panel-surface-compact transition-all ${collapsed ? 'is-collapsed h-11' : ''}`;
 }
 
 function formatFaceSummary(state: Pick<AppState, 'faceWorkerBusy' | 'faceWorkerReady' | 'faceLastDetectedCount'>): string {
