@@ -39,7 +39,8 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       }
 
       const config = state.config;
-      const usingGlitchCanvas = config?.faceRenderMode === 'glitch' && Boolean(config?.glitchFxEnabled);
+      // The pixel canvas is the face in glitch mode; glitchFxEnabled only turns its effects off.
+      const usingGlitchCanvas = config?.faceRenderMode === 'glitch';
       const chromaticOffset = Math.max(
         Math.abs(config?.glitchChromaticOffsetX ?? 0),
         Math.abs(config?.glitchChromaticOffsetY ?? 4.5),

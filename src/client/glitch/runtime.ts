@@ -86,7 +86,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       }
 
       syncConfig();
-      if (!faceEl || store.getState().config?.faceRenderMode !== 'glitch' || !store.getState().config?.glitchFxEnabled) {
+      if (!faceEl || store.getState().config?.faceRenderMode !== 'glitch') {
         stopRenderLoop();
         setCanvasVisible(false);
         return;
@@ -188,6 +188,18 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     rendererConfig.glitch.flicker = config?.glitchFlicker ?? DEFAULT_CONFIG.glitch.flicker;
     rendererConfig.glitch.flickerSpeed = config?.glitchFlickerSpeed ?? DEFAULT_CONFIG.glitch.flickerSpeed;
     rendererConfig.glitch.flickerDepth = config?.glitchFlickerDepth ?? DEFAULT_CONFIG.glitch.flickerDepth;
+    // Glitch FX off: draw the same pixel face, just without the effects. It
+    // used to stop the renderer, which left no face on screen at all.
+    if (config && !config.glitchFxEnabled) {
+      rendererConfig.glitch.scanlines = false;
+      rendererConfig.glitch.flicker = false;
+      rendererConfig.glitch.pixelJitter = 0;
+      rendererConfig.glitch.scanlineMove = false;
+      rendererConfig.chromatic.enabled = false;
+      rendererConfig.glitchSlice.enabled = false;
+      rendererConfig.scanBeam.enabled = false;
+      rendererConfig.brightnessPulse.enabled = false;
+    }
     const nextRendererPreference = normalizeRenderer(rendererConfig.renderer);
     if (nextRendererPreference !== lastRendererPreference) {
       lastRendererPreference = nextRendererPreference;
@@ -402,7 +414,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   function renderFrame(now: number): void {
     animFrameId = requestAnimationFrame(renderFrame);
     const state = store.getState();
-    if (!canvas || !faceEl || state.config?.faceRenderMode !== 'glitch' || !state.config.glitchFxEnabled) {
+    if (!canvas || !faceEl || state.config?.faceRenderMode !== 'glitch') {
       stopRenderLoop();
       setCanvasVisible(false);
       return;

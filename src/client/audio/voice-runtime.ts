@@ -45,7 +45,11 @@ export interface VoiceRuntime {
 
 export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const HANDSFREE_START_HOLD_MS = 45;
-  const HANDSFREE_STOP_SILENCE_MS = 900;
+  // Plus the 300 ms voice hangover below: about 1 s of quiet ends the turn.
+  const HANDSFREE_STOP_SILENCE_MS = 700;
+  // Recording starts on the first voiced frame so no word is clipped; clips
+  // with less real speech than this are room noise and are not uploaded.
+  const HANDSFREE_MIN_VOICED_MS = 350;
   const SPEECH_CAPTURE_COOLDOWN_MS = 650;
   const BARGE_IN_SETTLE_MS = 180;
   const THINKING_RESET_MS = 20_000;
@@ -75,6 +79,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let vadNoiseGateApplied = 0;
   let thinkingResetTimer: number | undefined;
   let asleepSpeechSince = 0;
+  let handsfreeVoicedMs = 0;
+  let lastVadTickAt = 0;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
   let anyHeadSpeechHandler: ((event: Event) => void) | null = null;
@@ -671,9 +677,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     const now = Date.now();
+    const tickMs = lastVadTickAt ? Math.min(50, now - lastVadTickAt) : 0;
+    lastVadTickAt = now;
 
     if (isVoice) {
       lastVoiceDetectedAt = now;
+      if (state.recording && recordingMode === 'handsfree') {
+        handsfreeVoicedMs += tickMs;
+      }
     }
 
     const activeVoice = isVoice || ((now - lastVoiceDetectedAt) < 300);
@@ -687,6 +698,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         if (now - speechDetectedAt >= HANDSFREE_START_HOLD_MS) {
           lastSpeechStart = speechDetectedAt;
           speechDetectedAt = 0;
+          handsfreeVoicedMs = 0;
           void startRecording('handsfree');
         }
       } else {
@@ -700,20 +712,28 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     if (now - recordingStartedAt >= 10000) {
-      stopRecording('handsfree');
+      finishHandsFreeRecording();
       return;
     }
 
-    // Must be completely silent for 900ms (so total ~1.2s since last actual voice)
     if (!activeVoice) {
       silenceDetectedAt = silenceDetectedAt || now;
       if (now - silenceDetectedAt >= HANDSFREE_STOP_SILENCE_MS) {
         silenceDetectedAt = 0;
-        stopRecording('handsfree');
+        finishHandsFreeRecording();
       }
     } else {
       silenceDetectedAt = 0;
     }
+  }
+
+  function finishHandsFreeRecording(): void {
+    const isNoise = handsfreeVoicedMs < HANDSFREE_MIN_VOICED_MS;
+    if (isNoise) {
+      store.appendLog('info', `Hands-free: dropped ${Math.round(handsfreeVoicedMs)} ms clip as noise`);
+    }
+    handsfreeVoicedMs = 0;
+    stopRecording('handsfree', isNoise ? { discard: true } : undefined);
   }
 
   function bindUnlockHandlers(): void {
