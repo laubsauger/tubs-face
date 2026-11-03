@@ -25,6 +25,10 @@ export function isInConversation(now = Date.now()): boolean {
   return now - lastConversationAt < CONVERSATION_WINDOW_MS;
 }
 
+export function endConversation(): void {
+  lastConversationAt = 0;
+}
+
 function interruptCurrentTurn(broadcast: Broadcast, source: NonNullable<WsInterruptServerMessage['source']>): void {
   const interruptedTurnId = interruptAssistantTurns();
   broadcast({

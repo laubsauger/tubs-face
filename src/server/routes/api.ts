@@ -44,7 +44,7 @@ import type {
 } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { createTurnId, interruptAssistantTurns } from '../assistant/service.js';
-import { isInConversation, startUserTurn } from '../assistant/turns.js';
+import { endConversation, isInConversation, startUserTurn } from '../assistant/turns.js';
 import { sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from '../assistant/text.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
@@ -119,6 +119,10 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       const body = await readJsonBody<SpeakRequest>(request);
       if (!body.text?.trim()) {
         throw badRequest('text is required');
+      }
+      if (runtimeConfig.muted) {
+        sendJson(response, 200, { ok: true, ignored: true, reason: 'muted' } satisfies SpeakResponse);
+        return true;
       }
 
       broadcast({
@@ -640,6 +644,8 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
   }
 
   if (request.method === 'POST' && url.pathname === '/sleep') {
+    // Whoever comes next after a nap is a new visitor: wake word again.
+    endConversation();
     broadcast({ type: 'sleep' } satisfies WsSleepServerMessage);
     sendJson(response, 200, { ok: true });
     return true;

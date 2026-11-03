@@ -135,7 +135,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'appearance_frame':
     case 'camera_frame':
-      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'camera_frame'));
+      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame));
       if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)

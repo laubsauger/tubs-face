@@ -36,4 +36,11 @@ describe('applyRuntimeConfigPatch', () => {
     expect(() => applyRuntimeConfigPatch({ llmMaxOutputTokens: 512, faceRenderMode: 'hologram' as never })).toThrow();
     expect(runtimeConfig.llmMaxOutputTokens).toBe(snapshot.llmMaxOutputTokens);
   });
+
+  // Changing modes needs a Python restart; a silent no-op made it look applied.
+  it('rejects a live processingMode change instead of ignoring it', () => {
+    const other = runtimeConfig.processingMode === 'realtime' ? 'legacy' : 'realtime';
+    expect(() => applyRuntimeConfigPatch({ processingMode: other })).toThrow(/processingMode is set at startup/);
+    expect(() => applyRuntimeConfigPatch({ processingMode: runtimeConfig.processingMode })).not.toThrow();
+  });
 });

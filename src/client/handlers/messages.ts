@@ -126,6 +126,8 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.setState((current) => ({
         ...current,
         sleeping: true,
+        conversationActive: false,
+        conversationUntil: 0,
         currentExpression: 'sleep',
         currentReactionEmoji: '',
         currentDonationSignal: null,

@@ -41,6 +41,8 @@ export interface FaceShellRuntime {
 
 export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   const FACE_STICKY_MS = 1400;
+  const VISION_REFRESH_MS = 30_000;
+  let lastVisionFrameAt = 0;
   const MAX_EMPTY_FRAMES = 2;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
@@ -120,6 +122,12 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           count: faces.length,
         });
         lastAppearanceSignature = appearanceSignature;
+        lastVisionFrameAt = Date.now();
+      } else if (faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= VISION_REFRESH_MS) {
+        // The server forgets a camera description after 60 s. While someone is
+        // still in view, refresh it (vision only, no new greeting).
+        sender({ type: 'camera_frame', frame: captureCanvas.toDataURL('image/jpeg', 0.6) });
+        lastVisionFrameAt = Date.now();
       } else if (faces.length === 0) {
         lastAppearanceSignature = '';
       }

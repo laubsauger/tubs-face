@@ -198,6 +198,11 @@ function resolveProcessingEnv(values: { legacy: string | undefined; realtime: st
 export type RuntimeConfigPatch = Partial<RuntimeConfig>;
 
 export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigResponse {
+  if (patch.processingMode !== undefined && patch.processingMode !== runtimeConfig.processingMode) {
+    // Switching modes means restarting the Python stack; say so instead of
+    // silently ignoring it.
+    throw badRequest('processingMode is set at startup (PROCESSING_MODE) and cannot be changed live');
+  }
   if (patch.sleepTimeout !== undefined) {
     runtimeConfig.sleepTimeout = parseIntegerInRange(patch.sleepTimeout, runtimeConfig.sleepTimeout, 5000, 600000);
   }
