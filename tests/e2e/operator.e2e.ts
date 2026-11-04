@@ -43,8 +43,19 @@ test('Event Log shows errors the operator would otherwise never see', async ({ p
 
 test('Mind shows the field notes on the visitor in front of Tubs', async ({ page, request }) => {
   await page.getByRole('button', { name: /Mind/ }).click();
-  await send(request, { type: 'field_notes', visitorId: 'v1', returning: true, names: ['Anna'], notes: ['works in marketing'], quotes: ['AI art is real art'] });
-  await expect(page.locator('#mind-notes')).toContainText('works in marketing');
+  await send(request, {
+    type: 'field_notes',
+    people: [
+      { id: 'a', position: 'left', names: ['Anna'], returning: true, notes: ['works in marketing'] },
+      { id: 'b', position: 'right', names: [], returning: false, notes: ['owns three phones'] },
+    ],
+    groupNotes: ['came as a couple'],
+    quotes: ['AI art is real art'],
+  });
+  const notes = page.locator('#mind-notes');
+  await expect(notes).toContainText('Left · Anna · back again');
+  await expect(notes).toContainText('works in marketing');
+  await expect(notes).toContainText('Right · stranger');
+  await expect(notes).toContainText('The group: came as a couple');
   await expect(page.locator('#mind-quotes')).toContainText('AI art is real art');
-  await expect(page.getByLabel('Field notes')).toContainText('Anna · back again');
 });

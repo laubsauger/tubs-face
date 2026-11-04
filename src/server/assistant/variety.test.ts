@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTurnDirection, lengthOf } from './variety.js';
+import { buildTurnDirection, lengthOf, pickRoastMirror } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -71,6 +71,24 @@ describe('buildTurnDirection', () => {
   it('passes on gossip from an earlier visitor, anonymously, in single-head turns', () => {
     expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).toContain('another visitor said: "AI art is real art"');
     expect(buildTurnDirection('dual', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).not.toContain('another visitor');
+  });
+
+  // The roast mirror: with a group, side with one person against another.
+  it('sides with one person and roasts another, preferring someone Tubs knows things about', () => {
+    const people = [{ position: 'left' as const, noteCount: 0 }, { position: 'right' as const, noteCount: 3 }];
+    expect(pickRoastMirror(people, fixed(0, 0, 0))).toEqual({ ally: 'left', target: 'right' });
+    expect(pickRoastMirror([{ position: 'left', noteCount: 1 }], fixed(0))).toBeNull();
+    // Two people in the same spot cannot be told apart by position.
+    expect(pickRoastMirror([{ position: 'left', noteCount: 1 }, { position: 'left', noteCount: 0 }], fixed(0, 0, 0))).toBeNull();
+  });
+
+  it('puts the roast mirror or a note call-back into the direction', () => {
+    const mirror = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: 'left', target: 'right' }, callBackNote: false });
+    expect(mirror).toContain('Side with the one on the left and roast the one on the right');
+    const callback = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: true });
+    expect(callback).toContain('Call back one thing from your notes');
+    const neither = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: false });
+    expect(neither).not.toMatch(/Side with|Call back/);
   });
 
   it('classifies reply length by words', () => {

@@ -1,3 +1,4 @@
+import type { WsFieldNotesServerMessage } from '../../shared/contracts/ws.js';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { createStore } from 'zustand/vanilla';
 import type { ExpressionName } from '../../shared/contracts/config.js';
@@ -50,8 +51,8 @@ export interface AppState {
   conversationActive: boolean;
   /** When the no-wake-word window ends (ms epoch); the server only sends its length. */
   conversationUntil: number;
-  /** Tubs's field notes on the visitor in front of him (from the server). */
-  fieldNotes: { visitorId: string | null; returning: boolean; names: string[]; notes: string[]; quotes: string[] };
+  /** Tubs's field notes on the people in front of him (from the server). */
+  fieldNotes: Omit<WsFieldNotesServerMessage, 'type'>;
   awakeSinceTs: number;
   awakeElapsedSec: number;
   currentExpression: ExpressionName;
@@ -189,7 +190,7 @@ export function createAppStore(): AppStore {
     audioPlaying: false,
     conversationActive: false,
     conversationUntil: 0,
-    fieldNotes: { visitorId: null, returning: false, names: [], notes: [], quotes: [] },
+    fieldNotes: { people: [], groupNotes: [], quotes: [] },
     awakeSinceTs: Date.now(),
     awakeElapsedSec: 0,
     currentExpression: 'idle',

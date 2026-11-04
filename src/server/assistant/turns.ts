@@ -5,7 +5,7 @@ import { logConversation, logTubsReply } from '../observability/conversation-log
 import { captureTurnTrace } from '../observability/langfuse.js';
 import { noteReplyEmoji } from './variety.js';
 import { forgetConversation } from './context.js';
-import { endVisit, setCurrentVisitor } from './field-notes.js';
+import { endVisit } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 
 /**
@@ -49,10 +49,8 @@ export function onVisitorLeft(now = Date.now()): boolean {
 }
 
 /** The face saw a different person than the last visitor come into view. */
-export function onNewVisitor(visitorId?: string, names: string[] = []): void {
+export function onNewVisitor(): void {
   forgetVisitor('new visitor');
-  // A past visitor's field notes come back with their id.
-  if (visitorId) setCurrentVisitor(visitorId, names);
 }
 
 function forgetVisitor(reason: string): void {

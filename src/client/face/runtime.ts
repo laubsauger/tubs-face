@@ -4,6 +4,7 @@ import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { loadFaceLibrary } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
+import { createPeopleTracker, type PersonInView } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
 import { type EnrollmentCapture, captureEnrollmentSample, saveEnrollment } from './enrollment.js';
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
@@ -50,7 +51,8 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let lastAppearanceSignature = '';
   let uploadPending = false;
   const visitorTracker = createVisitorTracker();
-  let currentVisitorId: string | null = null;
+  const peopleTracker = createPeopleTracker();
+  let lastPeopleSignature = '';
   let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
@@ -106,6 +108,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
 
       const now = Date.now();
       const greeting = handleVisitorEvents(visitorTracker.update(faces, now, now < store.getState().conversationUntil), faces.length);
+      reportPeople(peopleTracker.update(faces, captureCanvas.width, now));
       // Someone joined, or a face got recognized, while people stayed in view.
       const groupChanged = faces.length > 0 && !wasEmpty && appearanceSignature !== lastAppearanceSignature;
       if (faces.length > 0) {
@@ -119,7 +122,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           frame: captureCanvas.toDataURL('image/jpeg', 0.6),
           faces: recognizedNames,
           count: faces.length,
-          ...(currentVisitorId ? { visitorId: currentVisitorId } : {}),
           ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
@@ -431,6 +433,15 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
    * detection deserves: a first arrival or a new visitor gets one, the same
    * visitor back after a while gets a "welcome back", a glance away gets none.
    */
+  /** Tells the server who is in view when the group or where they stand changes. */
+  function reportPeople(people: PersonInView[]): void {
+    const signature = people.map((person) => `${person.id}:${person.position}:${person.names.join(',')}`).join('|');
+    const someoneBack = people.some((person) => person.awayMs !== undefined);
+    if (!sender || (signature === lastPeopleSignature && !someoneBack)) return;
+    lastPeopleSignature = signature;
+    sender({ type: 'people', people });
+  }
+
   function handleVisitorEvents(events: VisitorEvent[], count: number): { returning: boolean; awayMs?: number } | null {
     let greeting: { returning: boolean; awayMs?: number } | null = null;
     // Someone seen earlier tonight (awayMs set) is welcomed back, not greeted as new.
@@ -440,13 +451,11 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     for (const event of events) {
       switch (event.type) {
         case 'arrived':
-          currentVisitorId = event.visitorId;
           greeting = greetFor(event.awayMs);
           break;
         case 'new_visitor':
-          currentVisitorId = event.visitorId;
           // Before the greeting, so the server has forgotten the last visitor.
-          sender?.({ type: 'presence', present: true, newVisitor: true, visitorId: event.visitorId, faces: event.names, count });
+          sender?.({ type: 'presence', present: true, newVisitor: true, faces: event.names, count });
           greeting = greetFor(event.awayMs);
           break;
         case 'returned':
@@ -460,7 +469,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           });
           break;
         case 'gone':
-          sender?.({ type: 'presence', present: false, visitorId: event.visitorId, count: 0 });
+          sender?.({ type: 'presence', present: false, count: 0 });
           break;
       }
     }

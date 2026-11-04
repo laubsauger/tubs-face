@@ -11,7 +11,7 @@ export async function processVisualContext(frameDataUrl: string) {
   // Factual inventory; Tubs adds the attitude. Same prompt for a new visitor
   // (appearance_frame) and the periodic refresh (camera_frame), so the first
   // impression includes clothing too.
-  const prompt = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. Factual, no judgments, no guesses about age, body, ethnicity or gender. Under 40 words.';
+  const prompt = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. With several people, go left to right as the image shows them and start each with Left:, Middle: or Right:. Factual, no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.';
 
   try {
     const res = await generateGeminiContent({

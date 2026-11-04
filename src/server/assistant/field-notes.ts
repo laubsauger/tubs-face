@@ -1,116 +1,139 @@
 /**
  * Tubs's field notes on tonight's visitors. When he learns something worth
  * remembering, his reply carries a hidden [[NOTE: ...]] (and sometimes a
- * [[QUOTE: ...]]); no extra LLM call. Notes are kept per visitor id from the
- * face tracker, so someone back hours later is remembered, and they reach the
- * prompt through the persona's MEMORY_CONTEXT slot. Quotes from other
- * visitors feed gossip. Memory only: nothing is written to disk, and notes
- * older than NOTES_TTL_MS are dropped.
+ * [[QUOTE: ...]]); no extra LLM call. With several people in view he says
+ * who it is about ([[NOTE left: ...]]), positions as in the camera
+ * description. Notes are kept per person id from the face tracker, so someone
+ * back hours later is remembered; they reach the prompt through the persona's
+ * MEMORY_CONTEXT slot. Quotes from people no longer in view feed gossip.
+ * Memory only: nothing is written to disk, and notes older than NOTES_TTL_MS
+ * are dropped.
  */
 
-const TAG_RE = /\[\[\s*(NOTE|QUOTE)\s*:\s*([^\]]*?)\s*\]\]/gi;
-const MAX_NOTES_PER_VISITOR = 10;
-const MAX_VISITORS = 200;
+export type Position = 'left' | 'center' | 'right';
+
+export interface PersonInView {
+  id: string;
+  names: string[];
+  position: Position;
+  awayMs?: number;
+}
+
+const TAG_RE = /\[\[\s*(NOTE|QUOTE)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]/gi;
+const MAX_NOTES_PER_PERSON = 10;
+const MAX_PEOPLE = 300;
 const MAX_QUOTES = 20;
 const MAX_NOTE_CHARS = 120;
 export const NOTES_TTL_MS = 12 * 3600_000;
 /** Back after this long, they count as returning ("you met them earlier tonight"). */
 const RETURNING_AFTER_MS = 3 * 60_000;
-// Without camera ids, notes still help within one conversation.
+// Camera off: notes still help within one conversation.
 const ANONYMOUS = '';
+// Several people and the note does not say who: it belongs to this visit's group.
+const GROUP = '#group';
 
-interface VisitorRecord {
+interface PersonRecord {
   notes: string[];
   names: string[];
-  firstSeenAt: number;
   lastSeenAt: number;
   returning: boolean;
 }
 
 interface QuoteRecord {
-  visitorId: string;
+  personId: string;
   text: string;
   at: number;
 }
 
-const visitors = new Map<string, VisitorRecord>();
+const records = new Map<string, PersonRecord>();
+const quotes: QuoteRecord[] = [];
+let inView: PersonInView[] = [];
 let changeListener: (() => void) | null = null;
 
-/** Called when the current visitor or their notes change (the server broadcasts to the operator panel). */
+/** Called when the people in view or their notes change (the server broadcasts to the operator panel). */
 export function onFieldNotesChange(listener: (() => void) | null): void {
   changeListener = listener;
 }
-const quotes: QuoteRecord[] = [];
-let currentVisitorId = ANONYMOUS;
 
 function clean(text: string): string {
   return text.replace(/\\"/g, '"').replace(/\s+/g, ' ').replace(/^["']|["']$/g, '').trim().slice(0, MAX_NOTE_CHARS);
 }
 
+function normalizePosition(value: string | undefined): Position | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  return lower === 'left' || lower === 'right' ? lower : 'center';
+}
+
 /** The note and quote tags in a raw reply (dual-head JSON included). */
-export function extractFieldNotes(rawText: string): { notes: string[]; quotes: string[] } {
-  const found = { notes: [] as string[], quotes: [] as string[] };
+export function extractFieldNotes(rawText: string): Array<{ kind: 'note' | 'quote'; position: Position | null; text: string }> {
+  const found: Array<{ kind: 'note' | 'quote'; position: Position | null; text: string }> = [];
   for (const match of String(rawText).matchAll(TAG_RE)) {
-    const text = clean(match[2] ?? '');
+    const text = clean(match[3] ?? '');
     if (!text) continue;
-    (match[1]!.toUpperCase() === 'NOTE' ? found.notes : found.quotes).push(text);
+    found.push({ kind: match[1]!.toUpperCase() === 'NOTE' ? 'note' : 'quote', position: normalizePosition(match[2]), text });
   }
   return found;
 }
 
 function prune(now: number): void {
-  for (const [id, record] of visitors) {
-    if (now - record.lastSeenAt > NOTES_TTL_MS) visitors.delete(id);
+  for (const [id, record] of records) {
+    if (now - record.lastSeenAt > NOTES_TTL_MS) records.delete(id);
   }
   while (quotes.length > 0 && now - quotes[0]!.at > NOTES_TTL_MS) quotes.shift();
 }
 
-function recordFor(id: string, now: number): VisitorRecord {
-  let record = visitors.get(id);
+function recordFor(id: string, now: number): PersonRecord {
+  let record = records.get(id);
   if (!record) {
-    record = { notes: [], names: [], firstSeenAt: now, lastSeenAt: now, returning: false };
-    visitors.set(id, record);
-    if (visitors.size > MAX_VISITORS) {
-      const oldest = [...visitors.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt)[0];
-      if (oldest) visitors.delete(oldest[0]);
+    record = { notes: [], names: [], lastSeenAt: now, returning: false };
+    records.set(id, record);
+    if (records.size > MAX_PEOPLE) {
+      const oldest = [...records.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt)[0];
+      if (oldest) records.delete(oldest[0]);
     }
   }
   return record;
 }
 
-/** The face tracker says who is in front of Tubs now (null: nobody known). */
-export function setCurrentVisitor(visitorId: string | null, names: string[] = [], now = Date.now()): void {
+/** The face tracker says who is in view, left to right. */
+export function setPeople(people: PersonInView[], now = Date.now()): void {
   prune(now);
-  currentVisitorId = visitorId ?? ANONYMOUS;
-  if (!visitorId) {
-    changeListener?.();
-    return;
+  for (const person of people) {
+    const existing = records.get(person.id);
+    const record = recordFor(person.id, now);
+    const back = person.awayMs !== undefined ? person.awayMs >= RETURNING_AFTER_MS : Boolean(existing && now - existing.lastSeenAt >= RETURNING_AFTER_MS);
+    if (back) record.returning = true;
+    record.lastSeenAt = now;
+    for (const name of person.names) if (!record.names.includes(name)) record.names.push(name);
   }
-  const existing = visitors.get(visitorId);
-  const record = recordFor(visitorId, now);
-  record.returning = Boolean(existing && now - existing.lastSeenAt >= RETURNING_AFTER_MS);
-  record.lastSeenAt = now;
-  for (const name of names) if (!record.names.includes(name)) record.names.push(name);
+  inView = people.map((person) => ({ id: person.id, names: person.names, position: person.position }));
   changeListener?.();
 }
 
-/** The visitor left or was replaced: anonymous notes go with the conversation. */
+/** The visit is over: anonymous and group notes go with the conversation. */
 export function endVisit(): void {
-  visitors.delete(ANONYMOUS);
-  currentVisitorId = ANONYMOUS;
+  records.delete(ANONYMOUS);
+  records.delete(GROUP);
   changeListener?.();
 }
 
-/** Stores the tags of one reply for the current visitor. True when something new was noted. */
-export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
-  const { notes, quotes: said } = extractFieldNotes(rawText);
-  if (notes.length === 0 && said.length === 0) return false;
-  const record = recordFor(currentVisitorId, now);
-  record.lastSeenAt = now;
+/** Who a note is about: by position, the only person in view, or the group. */
+function ownerOf(position: Position | null): string {
+  if (inView.length === 0) return ANONYMOUS;
+  if (inView.length === 1) return inView[0]!.id;
+  if (position) {
+    const atPosition = inView.filter((person) => person.position === position);
+    if (atPosition.length === 1) return atPosition[0]!.id;
+  }
+  return GROUP;
+}
+
+function addFacts(record: PersonRecord, note: string): boolean {
   let changed = false;
   // The model tends to repeat its whole list ("dentist, hates jazz, from
   // Berlin"); keep single facts and merge overlaps instead of piling up.
-  for (const fact of notes.flatMap((note) => note.split(/\s*[,;]\s*/)).map((fact) => fact.trim()).filter(Boolean)) {
+  for (const fact of note.split(/\s*[,;]\s*/).map((part) => part.trim()).filter(Boolean)) {
     const lower = fact.toLowerCase();
     if (record.notes.some((existing) => existing.toLowerCase().includes(lower))) continue;
     const narrower = record.notes.findIndex((existing) => lower.includes(existing.toLowerCase()));
@@ -118,57 +141,110 @@ export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
     record.notes.push(fact);
     changed = true;
   }
-  if (record.notes.length > MAX_NOTES_PER_VISITOR) record.notes.splice(0, record.notes.length - MAX_NOTES_PER_VISITOR);
-  for (const text of said) {
-    if (quotes.some((quote) => quote.text === text)) continue;
-    quotes.push({ visitorId: currentVisitorId, text, at: now });
-    changed = true;
+  if (record.notes.length > MAX_NOTES_PER_PERSON) record.notes.splice(0, record.notes.length - MAX_NOTES_PER_PERSON);
+  return changed;
+}
+
+/** Stores the tags of one reply. True when something new was noted. */
+export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
+  const tags = extractFieldNotes(rawText);
+  if (tags.length === 0) return false;
+  let changed = false;
+  for (const tag of tags) {
+    const owner = ownerOf(tag.position);
+    if (tag.kind === 'note') {
+      const record = recordFor(owner, now);
+      record.lastSeenAt = now;
+      changed = addFacts(record, tag.text) || changed;
+    } else if (!quotes.some((quote) => quote.text === tag.text)) {
+      quotes.push({ personId: owner, text: tag.text, at: now });
+      changed = true;
+    }
   }
   if (quotes.length > MAX_QUOTES) quotes.splice(0, quotes.length - MAX_QUOTES);
   if (changed) changeListener?.();
   return changed;
 }
 
-/** What goes into the prompt's MEMORY_CONTEXT slot for the current visitor. */
+const POSITION_WORDS: Record<Position, string> = { left: 'On the left', center: 'In the middle', right: 'On the right' };
+
+function describe(record: PersonRecord | undefined): string {
+  if (!record) return 'nothing yet';
+  const bits = [
+    ...(record.names.length > 0 ? [`name ${record.names.join('/')}`] : []),
+    ...(record.returning ? ['met earlier tonight'] : []),
+    ...record.notes,
+  ];
+  return bits.length > 0 ? bits.join('; ') : 'nothing yet';
+}
+
+/** What goes into the prompt's MEMORY_CONTEXT slot for the people in view. */
 export function memoryContext(now = Date.now()): string {
   prune(now);
-  const record = visitors.get(currentVisitorId);
-  if (!record || (record.notes.length === 0 && record.names.length === 0)) return '';
-  const lines = ['# YOUR FIELD NOTES ON THE PERSON IN FRONT OF YOU'];
-  if (record.returning) lines.push('You met them earlier tonight. Act like it.');
-  if (record.names.length > 0) lines.push(`Name: ${record.names.join(', ')}.`);
-  for (const note of record.notes) lines.push(`- ${note}`);
-  lines.push('Use these when it is funny or sharp; never read them out as a list.');
+  const usage = 'Your own private notes. Bring them up only when the stage direction asks or they are directly relevant, and never read them out as a list.';
+  if (inView.length <= 1) {
+    const record = records.get(inView[0]?.id ?? ANONYMOUS);
+    if (!record || (record.notes.length === 0 && record.names.length === 0)) return '';
+    const lines = ['# YOUR FIELD NOTES ON THE PERSON IN FRONT OF YOU', usage];
+    if (record.returning) lines.push('You met them earlier tonight. Act like it.');
+    if (record.names.length > 0) lines.push(`Name: ${record.names.join(', ')}.`);
+    for (const note of record.notes) lines.push(`- ${note}`);
+    return lines.join('\n');
+  }
+  const lines = [`# YOUR FIELD NOTES ON THE ${inView.length} PEOPLE IN FRONT OF YOU (left to right, as the camera sees them)`, usage];
+  for (const person of inView) lines.push(`- ${POSITION_WORDS[person.position]}: ${describe(records.get(person.id))}`);
+  const group = records.get(GROUP);
+  if (group && group.notes.length > 0) lines.push(`- About the group: ${group.notes.join('; ')}`);
   return lines.join('\n');
 }
 
-/** A recent quote from someone other than the current visitor, for gossip. */
+/** A recent quote from someone not in view, for gossip. */
 export function pickGossip(random: () => number = Math.random, now = Date.now()): string | null {
   prune(now);
-  // Without camera ids every quote is "anonymous" and may be this person's own.
-  const others = quotes.filter((quote) => quote.visitorId !== currentVisitorId);
+  const here = new Set([ANONYMOUS, GROUP, ...inView.map((person) => person.id)]);
+  const others = quotes.filter((quote) => !here.has(quote.personId));
   if (others.length === 0) return null;
   return others[Math.floor(random() * others.length)]!.text;
 }
 
+/** Who is in view, with how much Tubs knows about each, for the roast mirror. */
+export function peopleInView(): Array<{ position: Position; noteCount: number }> {
+  return inView.map((person) => ({ position: person.position, noteCount: records.get(person.id)?.notes.length ?? 0 }));
+}
+
+/** True when the people in view have any notes (for "call back a note"). */
+export function hasNotesInView(): boolean {
+  if (inView.length === 0) return (records.get(ANONYMOUS)?.notes.length ?? 0) > 0;
+  return inView.some((person) => (records.get(person.id)?.notes.length ?? 0) > 0);
+}
+
+export interface FieldNotesSnapshot {
+  people: Array<{ id: string; position: Position; names: string[]; returning: boolean; notes: string[] }>;
+  groupNotes: string[];
+  quotes: string[];
+}
+
 /** For the operator panel. */
-export function fieldNotesSnapshot(now = Date.now()): { visitorId: string | null; returning: boolean; names: string[]; notes: string[]; quotes: string[] } {
+export function fieldNotesSnapshot(now = Date.now()): FieldNotesSnapshot {
   prune(now);
-  const record = visitors.get(currentVisitorId);
+  const people = inView.length > 0
+    ? inView.map((person) => {
+      const record = records.get(person.id);
+      return { id: person.id, position: person.position, names: record?.names ?? person.names, returning: record?.returning ?? false, notes: record?.notes ?? [] };
+    })
+    : (records.get(ANONYMOUS)?.notes.length ? [{ id: 'no-camera', position: 'center' as const, names: [], returning: false, notes: records.get(ANONYMOUS)!.notes }] : []);
   return {
-    visitorId: currentVisitorId || null,
-    returning: record?.returning ?? false,
-    names: record?.names ?? [],
-    notes: record?.notes ?? [],
+    people,
+    groupNotes: records.get(GROUP)?.notes ?? [],
     quotes: quotes.slice(-8).map((quote) => quote.text).reverse(),
   };
 }
 
 /** Test helper. */
 export function resetFieldNotes(): void {
-  visitors.clear();
+  records.clear();
   quotes.length = 0;
-  currentVisitorId = ANONYMOUS;
+  inView = [];
 }
 
 /**

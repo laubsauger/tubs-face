@@ -1,9 +1,30 @@
 import { recentModelReplies, wasLastReplyCutOff } from './context.js';
-import { pickGossip } from './field-notes.js';
+import { hasNotesInView, peopleInView, pickGossip, type Position } from './field-notes.js';
 
 // Now and then Tubs brings up what an earlier visitor said, so separate
 // visitors feel like one audience he is keeping track of.
 const GOSSIP_CHANCE = 0.1;
+// Notes are always in the prompt; calling one back is decided here so it
+// stays a surprise instead of every line.
+const NOTE_CALLBACK_CHANCE = 0.2;
+// With two or more people, now and then side with one against another.
+const ROAST_MIRROR_CHANCE = 0.3;
+const SIDE: Record<Position, string> = { left: 'on the left', center: 'in the middle', right: 'on the right' };
+
+/** Ally and target for the roast mirror: the target is preferably someone Tubs knows things about. */
+export function pickRoastMirror(
+  people: Array<{ position: Position; noteCount: number }>,
+  random: () => number,
+): { ally: Position; target: Position } | null {
+  if (people.length < 2) return null;
+  const known = people.filter((person) => person.noteCount > 0);
+  const pool = known.length > 0 && random() < 0.7 ? known : people;
+  const target = pool[Math.floor(random() * pool.length)]!;
+  const allies = people.filter((person) => person !== target && person.position !== target.position);
+  if (allies.length === 0) return null;
+  const ally = allies[Math.floor(random() * allies.length)]!;
+  return { ally: ally.position, target: target.position };
+}
 
 const HEADER = '[Stage direction for this reply, not said by the visitor]';
 
@@ -78,6 +99,10 @@ export function buildTurnDirection(
   emojis: readonly string[] = recentEmojis,
   cutOff: boolean = wasLastReplyCutOff(),
   gossip: string | null = Math.random() < GOSSIP_CHANCE ? pickGossip() : null,
+  group: { mirror: { ally: Position; target: Position } | null; callBackNote: boolean } = {
+    mirror: Math.random() < ROAST_MIRROR_CHANCE ? pickRoastMirror(peopleInView(), Math.random) : null,
+    callBackNote: hasNotesInView() && Math.random() < NOTE_CALLBACK_CHANCE,
+  },
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -122,6 +147,13 @@ export function buildTurnDirection(
   const lastEmojis = emojis.slice(-3);
   if (lastEmojis.length === 3 && lastEmojis.every((emoji) => emoji === lastEmojis[0])) {
     lines.push(`Your face has shown ${lastEmojis[0]} three replies in a row. Feel something else this time and pick a different emoji.`);
+  }
+
+  if (group.mirror) {
+    const { ally, target } = group.mirror;
+    lines.push(`There are several people here. Side with the one ${SIDE[ally]} and roast the one ${SIDE[target]} to them, using what you see or know about them. Point at people by what they wear or do, not by left or right.`);
+  } else if (group.callBackNote) {
+    lines.push('Call back one thing from your notes on them, in passing.');
   }
 
   if (mode !== 'dual' && gossip) {

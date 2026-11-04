@@ -274,7 +274,7 @@ describe('assistant turn', () => {
 
       expect(fakes.ttsSent.join(' ')).not.toMatch(/NOTE|lanyard|buzzwords/);
       expect(fakes.ttsSent).toEqual(['Bold.']);
-      expect(fieldNotesSnapshot().notes).toEqual(['works in marketing', 'loves buzzwords. Owns a lanyard']);
+      expect(fieldNotesSnapshot().people[0]?.notes).toEqual(['works in marketing', 'loves buzzwords. Owns a lanyard']);
     });
 
     it('speaks at most two sentences but still reads the emotion emoji at the end', async () => {

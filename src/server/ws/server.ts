@@ -19,7 +19,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
-import { fieldNotesSnapshot, onFieldNotesChange, setCurrentVisitor } from '../assistant/field-notes.js';
+import { fieldNotesSnapshot, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
@@ -144,16 +144,18 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
           : [];
-        if (message.visitorId) setCurrentVisitor(message.visitorId, names);
         scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
       }
       return;
     case 'proactive':
       startProactiveTurn(message.context ?? '', broadcast);
       return;
+    case 'people':
+      setPeople(message.people);
+      return;
     case 'presence':
       if (!message.present) onVisitorLeft();
-      else if (message.newVisitor) onNewVisitor(message.visitorId, message.faces ?? []);
+      else if (message.newVisitor) onNewVisitor();
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.

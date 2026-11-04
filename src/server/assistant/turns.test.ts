@@ -122,15 +122,12 @@ describe('turns', () => {
     expect(service.runProactiveTurn).not.toHaveBeenCalled();
   });
 
-  it('gives a returning visitor their field notes back, and a new one none', async () => {
+  it('clears group and camera-off notes when a new visitor replaces the old one', async () => {
     const notes = await import('./field-notes.js');
     notes.resetFieldNotes();
-    onNewVisitor('anna-1');
-    notes.recordFieldNotes('[[NOTE: works in marketing]]');
-    onNewVisitor('stranger-2');
-    expect(notes.memoryContext()).toBe('');
-    onNewVisitor('anna-1');
-    expect(notes.memoryContext()).toContain('works in marketing');
+    notes.recordFieldNotes('[[NOTE: wears a red hoodie]]');
+    onNewVisitor();
+    expect(notes.fieldNotesSnapshot().people).toEqual([]);
   });
 
   // Visitors come and go all evening. The next one must not hear about the

@@ -66,8 +66,6 @@ export interface WsPresenceClientMessage {
   present: boolean;
   /** A different person than the last visitor just came into view. */
   newVisitor?: boolean;
-  /** The face tracker's id for this visitor, stable for the night. */
-  visitorId?: string;
   faces?: string[];
   count?: number;
 }
@@ -91,7 +89,19 @@ export interface WsAppearanceFrameClientMessage {
   /** The same visitor is back after stepping away for awayMs. */
   returning?: boolean;
   awayMs?: number;
-  visitorId?: string;
+}
+
+/** Who is in view, left to right as the camera sees them; sent when that changes. */
+export interface WsPeopleClientMessage {
+  type: 'people';
+  people: Array<{
+    /** Stable for the night; field notes are kept by it. */
+    id: string;
+    names: string[];
+    position: 'left' | 'center' | 'right';
+    /** Seen earlier tonight and gone this long. */
+    awayMs?: number;
+  }>;
 }
 
 export interface WsTtsRequestClientMessage {
@@ -110,6 +120,7 @@ export type WsClientMessage =
   | WsFaceBlinkClientMessage
   | WsHeadSpeechStateClientMessage
   | WsPresenceClientMessage
+  | WsPeopleClientMessage
   | WsProactiveClientMessage
   | WsCameraFrameClientMessage
   | WsAppearanceFrameClientMessage
@@ -215,14 +226,13 @@ export interface WsStatsServerMessage {
   session?: SessionStats;
 }
 
-/** Tubs's field notes on the visitor in front of him, for the operator. */
+/** Tubs's field notes on the people in front of him, for the operator. */
 export interface WsFieldNotesServerMessage {
   type: 'field_notes';
-  visitorId: string | null;
-  /** Seen earlier tonight. */
-  returning: boolean;
-  names: string[];
-  notes: string[];
+  /** Left to right as the camera sees them. */
+  people: Array<{ id: string; position: 'left' | 'center' | 'right'; names: string[]; returning: boolean; notes: string[] }>;
+  /** Notes about the group that did not say who. */
+  groupNotes: string[];
   /** Recent quotes from tonight's visitors, newest first. */
   quotes: string[];
 }
