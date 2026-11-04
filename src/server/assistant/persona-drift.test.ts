@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPersonaDrift } from './service.js';
+import { isPersonaDrift } from './persona-drift.js';
 
 describe('isPersonaDrift', () => {
   it('does not flag a reply just because it lacks a question mark', () => {
