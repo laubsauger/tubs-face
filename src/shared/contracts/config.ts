@@ -18,6 +18,7 @@ export const EXPRESSIONS = [
   'thinking',
   'speaking',
   'smile',
+  'smug',
   'happy',
   'love',
   'sad',
@@ -84,7 +85,9 @@ export const DEFAULT_EXPRESSION_PROFILES: ExpressionProfileMap = {
   listening: { eyeH: 1.09, eyeW: 1.07 },
   thinking: { eyeH: 0.5, eyeW: 1.15, eyeDy: 5, mouthW: 0.56, mouthH: 1.4, mouthRound: true },
   smile: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
-  happy: { eyeH: 0.85, eyeDy: 2, mouthW: 0.85, mouthH: 1.8 },
+  // Half-lidded and a small smirk: Tubs's resting attitude.
+  smug: { eyeH: 0.55, eyeDy: 4, eyeW: 1.08, mouthW: 0.62, mouthH: 1.3, mouthShape: 'smile-arc' },
+  happy: { eyeH: 0.7, eyeDy: 2, mouthW: 0.95, mouthH: 2.1, mouthShape: 'smile-arc' },
   love: { eyeH: 0.85, eyeDy: 1, mouthW: 0.9, mouthH: 1.5, eyeShape: 'heart', colorHex: '#ff4da1', mouthShape: 'smile-arc' },
   sad: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown' },
   crying: { eyeH: 0.3, eyeDy: 7, eyeW: 1.15, mouthW: 0.56, mouthH: 0.7, mouthShape: 'frown', tears: true, tearColorHex: '#57bfff' },

@@ -239,6 +239,18 @@ describe('assistant turn', () => {
       expect(result.superseded).toBe(false);
     });
 
+    // The emoji comes first so the face can show the feeling from the first
+    // word; at the end it only arrived once the reply was over.
+    it('puts the leading emotion on every audio chunk and keeps it out of speech', async () => {
+      fakes.provider = streamingProvider(['😤 Oh, ', 'you again. ', 'Great.']);
+      const ws = collect();
+
+      await runAssistantTurn('I am back to bother you', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['Oh, you again.', 'Great.']);
+      expect(ws.ofType('audio_chunk').map((chunk) => chunk.emotion?.expression)).toEqual(['angry', 'angry']);
+    });
+
     it('speaks at most two sentences but still reads the emotion emoji at the end', async () => {
       fakes.provider = streamingProvider(['One thing. ', 'Two things. ', 'Three things. 😏']);
       const ws = collect();

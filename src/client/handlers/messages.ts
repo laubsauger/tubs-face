@@ -406,8 +406,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
             currentSpeechText: message.text,
             subtitleText: message.text,
           } : {}),
+          // The reply's emotion shows while it is spoken; plain chunks (a filler) just talk.
           ...((!message.actor || message.actor === myActor)
-            ? { currentExpression: nextExpression(current.currentExpression, 'speaking') }
+            ? { currentExpression: nextExpression(current.currentExpression, message.emotion?.expression ?? 'speaking') }
             : {}),
         };
       });

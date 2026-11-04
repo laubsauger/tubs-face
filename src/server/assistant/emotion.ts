@@ -22,7 +22,7 @@ const EMOJI_EMOTION_MAP: Record<EmotionCue, EmotionMapEntry> = {
     impulse: { pos: 0.9, neg: 0.02, arousal: 0.78 },
   },
   '😏': {
-    expression: 'smile',
+    expression: 'smug',
     impulse: { pos: 0.5, neg: 0.16, arousal: 0.48 },
   },
   '🥺': {
@@ -30,15 +30,15 @@ const EMOJI_EMOTION_MAP: Record<EmotionCue, EmotionMapEntry> = {
     impulse: { pos: 0.36, neg: 0.26, arousal: 0.36 },
   },
   '😢': {
-    expression: 'sad',
+    expression: 'crying',
     impulse: { pos: 0.12, neg: 0.82, arousal: 0.42 },
   },
   '😤': {
-    expression: 'sad',
+    expression: 'angry',
     impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 },
   },
   '🤖': {
-    expression: 'thinking',
+    expression: 'idle-flat',
     impulse: { pos: 0.32, neg: 0.1, arousal: 0.2 },
   },
   '🫶': {

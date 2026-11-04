@@ -6,6 +6,7 @@ import { buildPixelGrid, featureFitScale, recolorPixelGrid, type PixelGridPoint,
 import { ensureRendererBackendReady, fallbackToCanvas2D, initializeRendererBackend } from './renderer-backend.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig, normalizeRenderer } from './utils.js';
+import { readSpeechLevel } from '../audio/speech-level.js';
 
 export interface GlitchRuntime {
   init(): void;
@@ -503,6 +504,10 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   }
 
   function getBlinkFactor(now: number): number {
+    return Math.max(blinkAmount(now), moodSquint());
+  }
+
+  function blinkAmount(now: number): number {
     const lastBlinkAt = store.getState().lastBlinkAt;
     if (!store.getState().blinkActive || !lastBlinkAt) return 0;
     const elapsed = now - lastBlinkAt;
@@ -512,9 +517,23 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     return 0;
   }
 
+  /** Annoyed and worked up, the eyes narrow; more so the longer it lasts. */
+  function moodSquint(): number {
+    const state = store.getState();
+    if (state.sleeping) return 0;
+    return Math.min(0.3, Math.max(0, 1.2 * (state.moodNeg - 0.1) * (0.6 + state.moodArousal)));
+  }
+
   function getSpeakMouthScale(now: number): number {
-    if (!store.getState().audioPlaying) return 1;
+    const state = store.getState();
+    if (!state.audioPlaying) return 1;
+    // Worked up, the mouth moves bigger; flat, it barely opens.
+    const range = (SPEAK_MAX_SCALE - SPEAK_MIN_SCALE) * (0.75 + 0.5 * state.moodArousal);
+    const level = readSpeechLevel(now);
+    if (level !== null) {
+      return SPEAK_MIN_SCALE + range * level;
+    }
     const phase = ((now - startTime) % SPEAK_CYCLE_MS) / SPEAK_CYCLE_MS;
-    return SPEAK_MIN_SCALE + (SPEAK_MAX_SCALE - SPEAK_MIN_SCALE) * (0.5 + 0.5 * Math.sin(phase * Math.PI * 2));
+    return SPEAK_MIN_SCALE + range * (0.5 + 0.5 * Math.sin(phase * Math.PI * 2));
   }
 }

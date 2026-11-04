@@ -31,3 +31,21 @@ test('some turns keep looking straight ahead while thinking', async ({ page, req
   await page.waitForTimeout(800);
   expect(Math.abs((await gaze(page)).y)).toBeLessThan(0.05);
 });
+
+// The reply's emoji used to arrive only after the reply, so the face spoke
+// every line with the same neutral look.
+test('speaks with the reply’s feeling on its face, then lets it go', async ({ page, request }) => {
+  const annoyed = { emoji: '😤', expression: 'angry', impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 } };
+  await send(request,
+    { type: 'turn_start', turnId: 't-mood' },
+    { ...chunk('t-mood', 0, 'Oh, you again.', 900), emotion: annoyed },
+    { type: 'speak_end', turnId: 't-mood', fullText: 'Oh, you again.', emotion: annoyed },
+  );
+  const face = page.locator('#visual-face');
+  await expect(face).toHaveClass(/is-speaking/);
+  await expect(face).toHaveAttribute('data-expression', 'angry');
+
+  // Not stuck on anger once the line is over: back to idle, where the mood takes over.
+  await expect(face).not.toHaveClass(/is-speaking/, { timeout: 5000 });
+  await expect(face).toHaveAttribute('data-expression', 'idle', { timeout: 6000 });
+});

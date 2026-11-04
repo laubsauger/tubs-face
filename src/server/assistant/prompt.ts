@@ -7,10 +7,9 @@ const PLACEHOLDER_RE = /\{\{([A-Z_]+)\}\}/g;
 
 const OUTPUT_PROTOCOL = [
   'Reply in character as Tubs.',
-  'Keep it brutally concise: one short sentence preferred, two punchy sentences maximum.',
-  'Aim for roughly 6-22 words total unless the user explicitly asks for detail.',
+  'Keep it brutally concise: never more than two sentences. The stage direction with each message sets the length.',
   'Plain text only. No markdown, no lists, no stage directions.',
-  'End with exactly one emotion emoji. It sets your face and is not spoken; put it last and nowhere else. Pick the one that matches the feeling: 😏 smug or teasing, 😄 delighted, 🙂 friendly, 🥺 pleading, 😢 sad, 😤 annoyed, 🫶 affectionate, 🤖 deadpan (rarely).',
+  'Start with exactly one emotion emoji, before any words. It sets your face while you talk and is not spoken; put it first and nowhere else. Pick the one that matches how you feel about this: 😏 smug or teasing, 😄 delighted, 🙂 friendly, 🥺 pleading, 😢 sad, 😤 annoyed, 🫶 affectionate, 🤖 deadpan.',
   'If you mention support, donations, Venmo, or tips, include [[SHOW_QR]] once.',
 ];
 

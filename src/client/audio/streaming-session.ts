@@ -43,6 +43,8 @@ export interface StreamingSessionOptions {
   /** All audio played after markEnd (or the wait timed out). Called once. */
   onFinished: () => void;
   onChunkScheduled?: (chunk: ScheduledChunk, buffer: AudioBuffer) => void;
+  /** Where sources connect (the lip-sync meter); the destination by default. */
+  output?: (context: AudioContext) => AudioNode;
   onError?: (message: string) => void;
   log?: (message: string) => void;
 }
@@ -125,7 +127,7 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
       nextStartTime = Math.max(nextStartTime, now);
       const source = context.createBufferSource();
       source.buffer = buffer;
-      source.connect(context.destination);
+      source.connect(options.output?.(context) ?? context.destination);
       const scheduledAt = nextStartTime;
       activeNodes += 1;
       sources.add(source);

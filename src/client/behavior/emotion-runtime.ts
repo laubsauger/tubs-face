@@ -9,11 +9,38 @@ const BASELINE = Object.freeze({
 const PULSE_DURATION_MS = 920;
 const EXPRESSION_PULSE_DURATIONS_MS: Record<string, number> = Object.freeze({
   smile: 980,
+  smug: 1600,
   happy: 1300,
   sad: 3200,
+  angry: 1800,
   thinking: 1100,
   love: 1600,
 });
+// How long a feeling lingers. It used to fade in about a quarter second, so
+// the face forgot an insult before the reply was over. Now a run of insults
+// adds up to a grumpy Tubs that calms down over a minute or so.
+export const MOOD_HALF_LIFE_MS = 30_000;
+const SLEEP_MOOD_HALF_LIFE_MS = 8000;
+// Idle flickers of the current mood, spaced so they read as moods, not tics.
+const AUTO_PULSE_MIN_GAP_MS = 3500;
+const AUTO_PULSE_MAX_GAP_MS = 7000;
+
+type PulseExpression = 'smile' | 'smug' | 'happy' | 'sad' | 'angry' | 'thinking' | 'love';
+
+/**
+ * The idle face for a mood, or null to stay neutral. Thresholds sit just
+ * below where one reply's emoji leaves the mood (one 😤: neg 0.24, arousal
+ * 0.43; one 😏: pos 0.31, neg 0.09), so a single reply shows and fades within
+ * 10-30 s, and several in a row last longer.
+ */
+export function moodExpression(mood: { pos: number; neg: number; arousal: number }): PulseExpression | null {
+  if (mood.neg >= 0.2 && mood.neg > mood.pos * 0.8) {
+    return mood.arousal >= 0.38 ? 'angry' : 'sad';
+  }
+  if (mood.pos >= 0.42 && mood.arousal >= 0.38) return 'happy';
+  if (mood.pos >= 0.28) return mood.neg >= 0.08 ? 'smug' : 'smile';
+  return null;
+}
 
 export interface EmotionRuntime {
   init(): void;
@@ -28,7 +55,7 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
   let rafId = 0;
   let lastTickMs = 0;
   let pulseTimer: number | null = null;
-  let lastAutoPulseAt = 0;
+  let nextAutoPulseAt = 0;
 
   return {
     init(): void {
@@ -65,7 +92,8 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
 
     const now = Date.now();
     if (now > holdUntil) {
-      const drift = store.getState().sleeping ? 0.11 : 0.045;
+      const halfLife = store.getState().sleeping ? SLEEP_MOOD_HALF_LIFE_MS : MOOD_HALF_LIFE_MS;
+      const drift = 1 - Math.pow(0.5, deltaMs / halfLife);
       targetMood.pos = lerp(targetMood.pos, BASELINE.pos, drift);
       targetMood.neg = lerp(targetMood.neg, BASELINE.neg, drift);
       targetMood.arousal = lerp(targetMood.arousal, store.getState().sleeping ? 0.08 : BASELINE.arousal, drift);
@@ -92,29 +120,17 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
 
   function maybeAutoPulse(now: number): void {
     const state = store.getState();
-    if (now - lastAutoPulseAt < 1350 || state.sleeping || state.audioPlaying || state.currentExpression !== 'idle') {
+    if (now < nextAutoPulseAt || state.sleeping || state.audioPlaying || state.currentExpression !== 'idle') {
       return;
     }
-
-    if (currentMood.neg >= 0.66 && currentMood.arousal >= 0.24) {
-      lastAutoPulseAt = now;
-      pulseExpression('sad');
-      return;
-    }
-
-    if (currentMood.pos >= 0.8) {
-      lastAutoPulseAt = now;
-      pulseExpression('happy');
-      return;
-    }
-
-    if (currentMood.pos >= 0.58 && Math.random() < 0.55) {
-      lastAutoPulseAt = now;
-      pulseExpression('smile');
+    nextAutoPulseAt = now + AUTO_PULSE_MIN_GAP_MS + Math.random() * (AUTO_PULSE_MAX_GAP_MS - AUTO_PULSE_MIN_GAP_MS);
+    const expression = moodExpression(currentMood);
+    if (expression) {
+      pulseExpression(expression);
     }
   }
 
-  function pulseExpression(expression: 'smile' | 'happy' | 'sad' | 'thinking' | 'love'): void {
+  function pulseExpression(expression: PulseExpression): void {
     const state = store.getState();
     if (state.sleeping || state.audioPlaying) {
       return;

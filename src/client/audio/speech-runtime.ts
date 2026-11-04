@@ -7,6 +7,7 @@ import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
 import { createQueueRun, type QueueRun } from './queue-run.js';
 import { STREAMING_GAP_GRACE_MS, createStreamingSession, type ScheduledChunk, type StreamingSession } from './streaming-session.js';
+import { speechOutput } from './speech-level.js';
 
 interface SpeakQueueItem {
   type: 'speak' | 'wait' | 'react' | 'wait_remote';
@@ -58,6 +59,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let subtitleClearTimer: number | null = null;
   let stopSpeechHandler: ((event: Event) => void) | null = null;
   let lastEmotion: TurnEmotion | null = null;
+  // The face a streamed reply was spoken with; it hands over to idle (and the
+  // mood) once the reply is over instead of sticking.
+  let streamExpression: string | null = null;
   // Beat metadata from turn_script for syncing expressions with server-streamed audio
   let pendingBeatMeta: Array<{
     index: number;
@@ -115,6 +119,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           }
           if (message.turnId && interruptedTurnIds.has(message.turnId)) {
             return;
+          }
+          if (message.emotion?.expression) {
+            streamExpression = message.emotion.expression;
           }
           try {
             console.log(`[STREAM-v2] chunk_in #${message.chunkIndex ?? '?'} | len=${message.audio?.length ?? 0} | turn=${message.turnId ?? '?'} | actor=${message.actor ?? '-'} | beat=${message.beatIndex ?? '-'} | session=${Boolean(streamSession)} | t=${Date.now()}`);
@@ -635,6 +642,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const session = createStreamingSession({
       turnId: sessionTurnId,
       getContext: getStreamingContext,
+      output: speechOutput,
       decode: (context, audioBase64) => {
         const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
         return context.decodeAudioData(bytes.buffer.slice(0));
@@ -808,7 +816,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         }));
         return;
       }
-      if (state.currentExpression !== 'speaking') {
+      const spokenWith = streamExpression;
+      streamExpression = null;
+      if (state.currentExpression !== 'speaking' && state.currentExpression !== spokenWith) {
         return;
       }
       store.setState((current) => ({

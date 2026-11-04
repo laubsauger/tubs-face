@@ -51,6 +51,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const emotionRuntime = isController ? createEmotionRuntime(store) : null;
   const fxRuntime = isController ? createFxRuntime(store) : null;
   const glitchRuntime = createGlitchRuntime(store, messageMode);
+  let lastImpulseTurnId: string | undefined;
   const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
   const sleepRuntime = isController ? createSleepRuntime(store) : null;
   const speechRuntime = createSpeechRuntime(store, speechMode);
@@ -225,6 +226,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         proactiveRuntime?.onActivity();
       }
       if (message.type === 'speak' && message.emotion?.impulse) {
+        emotionRuntime?.pushImpulse(message.emotion.impulse, 'spoken');
+      }
+      // Streamed replies carry their emotion on every chunk; count it once per turn.
+      if (message.type === 'audio_chunk' && message.emotion?.impulse && message.turnId !== lastImpulseTurnId) {
+        lastImpulseTurnId = message.turnId;
         emotionRuntime?.pushImpulse(message.emotion.impulse, 'spoken');
       }
       if (message.type === 'thinking') {

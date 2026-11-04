@@ -193,6 +193,8 @@ export interface WsAudioChunkServerMessage {
   actor?: 'main' | 'small';
   /** Beat index within the turn script (for expression sync). */
   beatIndex?: number;
+  /** How Tubs feels about this reply; sets the face while the audio plays. */
+  emotion?: SpeechEmotionPayload | null;
 }
 
 export interface WsTurnStartServerMessage {
