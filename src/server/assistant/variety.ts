@@ -16,6 +16,9 @@ const NAME_CHANCE = 0.3;
 // Auto onboarding: once an unnamed person has talked a bit, ask their name
 // on some turns (once per person), so it comes up naturally.
 const ASK_NAME_CHANCE = 0.35;
+// Swearing is in the persona, but left alone the model stays polite. Asked on
+// some turns, it lands where it fits instead of in every line.
+const SWEAR_CHANCE = 0.3;
 const SIDE: Record<Position, string> = { left: 'on the left', center: 'in the middle', right: 'on the right' };
 
 interface PersonRef { position: Position; name: string | null }
@@ -205,6 +208,10 @@ export function buildTurnDirection(
     lines.push('Skip their topic and say what has actually been on your mind.');
   } else if (random() < 0.3) {
     lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
+  }
+
+  if (random() < SWEAR_CHANCE) {
+    lines.push('Let a swear word land in this one (fuck, shit), where it fits naturally.');
   }
 
   return `${HEADER}\n${lines.map((line) => `- ${line}`).join('\n')}`;

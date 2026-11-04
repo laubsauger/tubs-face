@@ -129,3 +129,13 @@ describe('bits', () => {
     for (const roll of [0, 0.3, 0.6, 0.9, 0.999]) expect(pickLength(['Nice hat.', BIT], () => roll)).not.toBe('bit');
   });
 });
+
+// Left alone the model never swears, though the persona allows it. Some turns
+// ask for it; most don't, or every line turns into a swear jar.
+describe('swearing', () => {
+  it('is asked for on some turns and not on others', () => {
+    expect(buildTurnDirection('single', () => 0.01, ['Nice hat.'])).toContain('swear word');
+    expect(buildTurnDirection('single', () => 0.99, ['Nice hat.'])).not.toContain('swear word');
+  });
+});
+
