@@ -3,7 +3,7 @@ import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { logConversation, logTubsReply } from '../observability/conversation-log.js';
 import { captureTurnTrace } from '../observability/langfuse.js';
-import { noteReplyEmoji } from './variety.js';
+import { noteReplyEmoji, noteReplyText } from './variety.js';
 import { forgetConversation } from './context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
@@ -208,6 +208,7 @@ function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, resul
   if (!result.superseded) {
     void logTubsReply(result.reply.text, result.beats);
     noteReplyEmoji(result.reply.emotion?.emoji);
+    noteReplyText(result.reply.text);
   }
   captureTurnTrace({ source, userText: input, result, startedAt, ...(turnTimer ? { turnTimer } : {}) });
 }

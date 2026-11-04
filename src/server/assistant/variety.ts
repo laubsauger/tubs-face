@@ -66,6 +66,8 @@ const LENGTHS = {
 type LengthKey = keyof typeof LENGTHS;
 
 // Different ways to land a line, used on some turns only.
+// A wide pool on purpose: with six moves on a third of turns the jokes kept
+// landing in the same few places.
 const MOVES = [
   'Agree with them for once, then twist it.',
   'Make it about yourself and your plastic-tub body.',
@@ -73,7 +75,60 @@ const MOVES = [
   'Connect it to something from tech, AI or the internet.',
   'Take what they said more literally than they meant it.',
   'Pick one specific detail from what they said and run with it.',
+  'Tell a tiny, oddly specific story from your day that turns on them at the end.',
+  'Invent an absurdly precise statistic about them or this room.',
+  'Confess something weird about yourself as if it were completely normal.',
+  'Interview them back, like a suspicious customs officer.',
+  'Go on a short tangent about something unrelated, then snap back to them.',
+  'Take their side so hard it becomes an insult.',
+  'Describe them the way a nature documentary would.',
+  'Build a grand theory out of one small detail.',
+  'Treat this like a job interview they are failing.',
 ];
+const MOVE_CHANCE = 0.55;
+
+// Recent replies across visitors. The conversation history resets for every
+// new visitor, so without this nothing noticed Tubs coming back to the same
+// motif (Wi-Fi drops, oat milk) over and over.
+const recentReplies: string[] = [];
+const MOTIF_MEMORY = 10;
+const MOTIF_REPEATS = 3;
+const MOTIF_STOPWORDS = new Set(('about after again also always another anyone anything around because been before being better could does doing done dont even every everyone from going have here into just know like look made make maybe more most much never nothing only other over people really right said same says should since some something still than that thats their them then there these they thing things think this those through time very want what when where which while will with would your youre youve '
+  + 'the and for you are but not all can was one has his her its our out who why how get got let way too off any did yes now see say two '
+  // Numbers ("two-oh-four" is the studio's name) and the swearing the persona asks for are not motifs.
+  + 'three four five seven eight nine hundred thousand someone fuck fucking fuckin shit shitty damn').split(' '));
+
+export function noteReplyText(text: string): void {
+  if (!text.trim()) return;
+  recentReplies.push(text);
+  if (recentReplies.length > MOTIF_MEMORY) recentReplies.shift();
+}
+
+/** Words and two-word phrases that keep coming back across recent replies, phrases first. */
+export function wornMotifs(replies: readonly string[] = recentReplies, max = 3): string[] {
+  const counts = new Map<string, number>();
+  for (const reply of replies) {
+    const words = reply.toLowerCase().replace(/wi-?fi/g, 'wifi').replace(/['’]/g, '').match(/[a-z]+/g) ?? [];
+    const terms = new Set<string>();
+    words.forEach((word, index) => {
+      if (word.length < 4 || MOTIF_STOPWORDS.has(word)) return;
+      terms.add(word);
+      const next = words[index + 1];
+      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next)) terms.add(`${word} ${next}`);
+    });
+    for (const term of terms) counts.set(term, (counts.get(term) ?? 0) + 1);
+  }
+  const worn = [...counts]
+    .filter(([, count]) => count >= MOTIF_REPEATS)
+    .sort((a, b) => b[1] - a[1] || b[0].split(' ').length - a[0].split(' ').length);
+  const picked: string[] = [];
+  for (const [term] of worn) {
+    if (picked.some((chosen) => chosen.includes(term) || term.includes(chosen))) continue;
+    picked.push(term);
+    if (picked.length >= max) break;
+  }
+  return picked;
+}
 
 export function lengthOf(text: string): LengthKey {
   const words = text.split(/\s+/).filter(Boolean).length;
@@ -206,8 +261,13 @@ export function buildTurnDirection(
   // Tubs has things on his mind; now and then they win over the visitor's topic.
   if (mode === 'single' && random() < 0.12) {
     lines.push('Skip their topic and say what has actually been on your mind.');
-  } else if (random() < 0.3) {
+  } else if (random() < MOVE_CHANCE) {
     lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
+  }
+
+  const worn = wornMotifs();
+  if (worn.length > 0) {
+    lines.push(`Fresh material: you keep coming back to ${worn.map((term) => `"${term}"`).join(', ')}. Stay off them this time.`);
   }
 
   if (random() < SWEAR_CHANCE) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTurnDirection, lengthOf, pickLength, pickName, pickRoastMirror } from './variety.js';
+import { buildTurnDirection, lengthOf, pickLength, pickName, pickRoastMirror, wornMotifs } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -136,6 +136,23 @@ describe('swearing', () => {
   it('is asked for on some turns and not on others', () => {
     expect(buildTurnDirection('single', () => 0.01, ['Nice hat.'])).toContain('swear word');
     expect(buildTurnDirection('single', () => 0.99, ['Nice hat.'])).not.toContain('swear word');
+  });
+});
+
+// The conversation resets for every visitor, so a motif Tubs keeps reaching
+// for (the user heard "Wi-Fi drops" in bit after bit) is tracked across replies.
+describe('worn motifs', () => {
+  const wifi = (n: number) => Array.from({ length: n }, (_, i) => `Then the Wi-Fi drops and everyone panics, reply ${i}.`);
+  it('flags a motif that came back three times', () => {
+    expect(wornMotifs([...wifi(3), 'Nice hat.'])).toContain('wifi drops');
+  });
+  it('never counts the studio number or swearing as a motif', () => {
+    const lines = Array.from({ length: 4 }, (_, i) => `Welcome to Studio two-oh-four, fucking hell, take ${i}.`);
+    expect(wornMotifs(lines)).not.toContain('four');
+    expect(wornMotifs(lines).some((term) => term.includes('fucking'))).toBe(false);
+  });
+  it('leaves a motif used twice alone, and ignores filler words', () => {
+    expect(wornMotifs([...wifi(2), 'You really think that is going to work?', 'I really think so.', 'Really.'])).toEqual([]);
   });
 });
 
