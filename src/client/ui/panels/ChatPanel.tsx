@@ -102,9 +102,10 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
                 <li key={entry.id} className={`flex flex-col gap-1 ${isAssistant ? 'items-start' : isSystem ? 'items-center opacity-70' : 'items-end'} ${entry.draft ? 'opacity-50' : ''}`}>
                   <div className={`flex items-baseline gap-2 text-[10px] ${isAssistant ? 'text-cyan-400/80 flex-row' : isSystem ? 'text-slate-500' : 'text-emerald-400/80 flex-row-reverse'}`}>
                     <strong className="uppercase tracking-wider">{renderChatPrefix(entry.type, entry.actor)}</strong>
+                    {entry.filler ? <span className="text-slate-500">filler</span> : null}
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
-                  <div className={`px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'bg-slate-800 text-slate-300 rounded-tl-sm border border-slate-700' : isSystem ? 'bg-transparent text-slate-500 text-center italic text-[11px]' : 'bg-emerald-900/40 text-emerald-200 rounded-tr-sm border border-emerald-800/50'}`}>
+                  <div className={`px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${entry.filler ? 'bg-transparent text-slate-500 italic rounded-tl-sm border border-dashed border-slate-700' : isAssistant ? 'bg-slate-800 text-slate-300 rounded-tl-sm border border-slate-700' : isSystem ? 'bg-transparent text-slate-500 text-center italic text-[11px]' : 'bg-emerald-900/40 text-emerald-200 rounded-tr-sm border border-emerald-800/50'}`}>
                     {entry.text}
                   </div>
                 </li>

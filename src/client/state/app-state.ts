@@ -21,6 +21,8 @@ export interface ChatEntry {
   text: string;
   ts: number;
   draft?: boolean;
+  /** A pre-rendered filler line, not model output; shown muted in the chat log. */
+  filler?: boolean;
 }
 
 export type PanelKey =

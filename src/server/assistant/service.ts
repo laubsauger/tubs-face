@@ -57,7 +57,7 @@ async function runAssistantTurnBody(
   const filler = allowFiller && !shouldUseDualHeadDirectedMode() ? pickFiller(runtimeConfig.kokoroVoice ?? 'af_heart') : null;
   if (filler) {
     turnTimer?.mark(`Filler "${filler.text}"`);
-    broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId } satisfies WsAudioChunkServerMessage);
+    broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId, filler: true } satisfies WsAudioChunkServerMessage);
   }
 
   if (shouldUseDualHeadDirectedMode()) {

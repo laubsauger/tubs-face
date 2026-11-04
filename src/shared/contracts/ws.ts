@@ -190,6 +190,8 @@ export interface WsAudioChunkServerMessage {
   beatIndex?: number;
   /** How Tubs feels about this reply; sets the face while the audio plays. */
   emotion?: SpeechEmotionPayload | null;
+  /** A pre-rendered filler ("Um, okay.") played while the reply is generated, not model output. */
+  filler?: boolean;
 }
 
 export interface WsTurnStartServerMessage {

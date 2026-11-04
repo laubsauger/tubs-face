@@ -15,7 +15,8 @@ export function hasRecentOutgoingAssistantEntry(
 
   for (let index = state.chatEntries.length - 1; index >= 0; index -= 1) {
     const entry = state.chatEntries[index];
-    if (!entry || entry.type !== 'out' || entry.actor !== actor || entry.draft) {
+    // A filler is not model output; matching it would swallow the reply's first sentence.
+    if (!entry || entry.type !== 'out' || entry.actor !== actor || entry.draft || entry.filler) {
       continue;
     }
     if ((Date.now() - entry.ts) > 15_000) {

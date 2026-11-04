@@ -343,7 +343,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ? hasRecentOutgoingAssistantEntry(current, chunkText, 'main')
             || hasRecentOutgoingAssistantEntry(current, current.currentSpeechText, 'main')
           : false;
-        if (!dualHeadActive && mode === 'main' && chunkText && !alreadyAppended) {
+        if (!dualHeadActive && mode === 'main' && chunkText && message.filler) {
+          // Its own entry, so the transcript keeps it once the reply replaces the draft.
+          next = appendChatEntry(next, { type: 'out', actor: 'main', text: chunkText, ts: Date.now(), filler: true });
+        } else if (!dualHeadActive && mode === 'main' && chunkText && !alreadyAppended) {
           next = appendChatDraft(next, 'out', chunkText, 'main');
         }
         return {
