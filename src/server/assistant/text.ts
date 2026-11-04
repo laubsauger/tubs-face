@@ -54,6 +54,7 @@ export function sanitizeForTts(text: string): string {
     .replace(/\[[^\]]*\]/g, '')             // echoed notes like [cut off by the visitor]
     .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, ' ')
     .replace(/[{}[\]"]/g, '')               // braces, brackets, double quotes
+    .replace(/\b204\b/g, 'two-oh-four')    // the studio, said the way it's said there
     .replace(/\s+/g, ' ')
     .trim());
 }

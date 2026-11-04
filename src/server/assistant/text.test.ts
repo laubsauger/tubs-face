@@ -46,3 +46,13 @@ describe('clampOutput with a bit budget', () => {
     expect(clampOutput(BIT)).toBe('Let me tell you something about this studio. People come in and ask if I am alive.');
   });
 });
+
+// The studio is "two-oh-four". Voices read "204" as "two hundred four" or
+// mangle it ("24", "2014"), so it is spelled out before speech.
+describe('Studio 204', () => {
+  it('is spoken as two-oh-four', () => {
+    expect(sanitizeForTts('Welcome to Studio 204.')).toBe('Welcome to Studio two-oh-four.');
+    expect(sanitizeForTts('Room 2048 stays a number.')).toBe('Room 2048 stays a number.');
+  });
+});
+
