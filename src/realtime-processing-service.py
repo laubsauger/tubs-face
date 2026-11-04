@@ -669,6 +669,9 @@ def transcribe():
 # Cloned voices ("ming:...") are rendered by a separate Ming service. It needs
 # a newer mlx than this process (speech-to-text), so it runs in its own venv.
 MING_TTS_URL = os.environ.get("MING_TTS_URL", "http://127.0.0.1:3003").rstrip("/")
+# When the Ming service is down (not started after a reboot, crashed), Tubs
+# speaks with this Kokoro voice instead of going silent.
+MING_FALLBACK_VOICE = os.environ.get("MING_FALLBACK_VOICE", "hm_omega")
 
 
 def _ming_wav(text):
@@ -697,7 +700,8 @@ def tts():
         try:
             return Response(_ming_wav(text), mimetype="audio/wav")
         except Exception as err:
-            return jsonify({"error": f"Ming service: {err}"}), 502
+            print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {MING_FALLBACK_VOICE}")
+            voice = MING_FALLBACK_VOICE
 
     if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         return _tts_kokoro(text, voice)
@@ -799,10 +803,14 @@ def tts_stream(ws):
                 continue
 
             if voice.startswith("ming:"):
-                wav_bytes = _ming_wav(text)
-                ws.send(json.dumps({"text": text, "audio": base64.b64encode(wav_bytes).decode("ascii"), "chunk": True}))
-                ws.send(json.dumps({"text": text, "done": True}))
-                continue
+                try:
+                    wav_bytes = _ming_wav(text)
+                    ws.send(json.dumps({"text": text, "audio": base64.b64encode(wav_bytes).decode("ascii"), "chunk": True}))
+                    ws.send(json.dumps({"text": text, "done": True}))
+                    continue
+                except Exception as err:
+                    print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {MING_FALLBACK_VOICE}")
+                    voice = MING_FALLBACK_VOICE
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder
