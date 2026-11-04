@@ -10,7 +10,7 @@ import { buildTurnDirection } from './variety.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
 import { MAX_OUTPUT_SENTENCES, clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
-import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
+import { buildContents, buildProactiveContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
 import {
@@ -839,9 +839,16 @@ async function runStreamingAssistantTurn(args: {
   }
 
   const kokoroVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+  let historyRecorded = false;
   const removeSupersedeHandler = onTurnSuperseded(epoch, () => {
     abortController.abort();
     ttsWs?.close();
+    // Record it now, before the turn that interrupted this one builds its
+    // context: what was said so far, marked as cut off.
+    historyRecorded = true;
+    pushHistory('user', normalized);
+    pushHistory('model', fullText || '...');
+    markLastReplyCutOff();
   });
 
   // Track raw LLM output to detect JSON-wrapped responses.
@@ -1036,8 +1043,10 @@ async function runStreamingAssistantTurn(args: {
     const tokensIn = Number(llmResult.usage.promptTokenCount || 0) || estimateTokens(normalized);
     const tokensOut = Number(llmResult.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
     assistantReplyCount += 1;
-    pushHistory('user', normalized);
-    pushHistory('model', fullText);
+    if (!historyRecorded) {
+      pushHistory('user', normalized);
+      pushHistory('model', fullText);
+    }
 
     const reply: AssistantReply = {
       text: fullText,

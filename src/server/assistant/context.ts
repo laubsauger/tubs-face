@@ -96,6 +96,25 @@ export function recentModelReplies(limit: number): string[] {
   return conversationHistory.filter((entry) => entry.role === 'model').slice(-limit).map((entry) => entry.text);
 }
 
+export const CUT_OFF_MARK = '[cut off by the visitor]';
+
+/**
+ * The visitor talked over Tubs's last reply. Marked so the model knows they
+ * did not hear all of it, instead of assuming its whole line landed.
+ */
+export function markLastReplyCutOff(): void {
+  const last = conversationHistory.at(-1);
+  if (last?.role === 'model' && !last.text.endsWith(CUT_OFF_MARK)) {
+    last.text = `${last.text} ${CUT_OFF_MARK}`;
+  }
+}
+
+export function wasLastReplyCutOff(): boolean {
+  pruneConversationHistory();
+  const last = conversationHistory.at(-1);
+  return last?.role === 'model' && last.text.endsWith(CUT_OFF_MARK);
+}
+
 export function pushHistory(role: 'user' | 'model', text: string): void {
   const normalized = compactForHistory(text);
   if (!normalized) {

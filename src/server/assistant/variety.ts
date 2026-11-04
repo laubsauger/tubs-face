@@ -1,4 +1,4 @@
-import { recentModelReplies } from './context.js';
+import { recentModelReplies, wasLastReplyCutOff } from './context.js';
 
 const HEADER = '[Stage direction for this reply, not said by the visitor]';
 
@@ -71,6 +71,7 @@ export function buildTurnDirection(
   random: Random = Math.random,
   recent: string[] = recentModelReplies(6),
   emojis: readonly string[] = recentEmojis,
+  cutOff: boolean = wasLastReplyCutOff(),
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -99,6 +100,12 @@ export function buildTurnDirection(
 
   if (openers.length > 0) {
     lines.push(`Do not start with: ${openers.map((value) => `"${value}"`).join(', ')}.`);
+  }
+
+  // People notice when they talk over someone; so should Tubs, but only now and
+  // then, or every interruption gets the same "Rude." back.
+  if (cutOff && random() < 0.4) {
+    lines.push('They talked over your last reply. You may call that out in a few words, then answer them.');
   }
 
   const lastEmojis = emojis.slice(-3);

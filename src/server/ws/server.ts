@@ -18,6 +18,7 @@ import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
+import { markLastReplyCutOff } from '../assistant/context.js';
 import { cancelAppearanceGreeting, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
@@ -153,8 +154,10 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       startProactiveTurn(message.context ?? '', broadcast);
       return;
     case 'interrupt':
+      // The face sends this when a visitor starts talking over Tubs.
       cancelAppearanceGreeting();
       interruptAssistantTurns();
+      markLastReplyCutOff();
       broadcastInterrupt(message.turnId ?? null, 'user');
       return;
     case 'face_motion':

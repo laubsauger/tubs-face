@@ -46,6 +46,7 @@ export function stripSpeakerLabels(text: string): string {
 export function sanitizeForTts(text: string): string {
   return stripSpeakerLabels(String(text)
     .replace(/\[\[.*?\]\]/g, '')            // [[SHOW_QR]] etc.
+    .replace(/\[[^\]]*\]/g, '')             // echoed notes like [cut off by the visitor]
     .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, ' ')
     .replace(/[{}[\]"]/g, '')               // braces, brackets, double quotes
     .replace(/\s+/g, ' ')

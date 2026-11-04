@@ -50,6 +50,12 @@ describe('buildTurnDirection', () => {
     expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], ['😏', '😤', '😏'])).not.toContain('in a row');
   });
 
+  it('sometimes lets Tubs react to being talked over, never every time', () => {
+    const reactions = [0.1, 0.39, 0.41, 0.9].map((roll) => buildTurnDirection('single', fixed(0.5, roll, 0.99), [], [], true).includes('talked over'));
+    expect(reactions).toEqual([true, true, false, false]);
+    expect(buildTurnDirection('single', fixed(0.5, 0.1, 0.99), [], [], false)).not.toContain('talked over');
+  });
+
   it('classifies reply length by words', () => {
     expect(lengthOf('Nice hat.')).toBe('short');
     expect(lengthOf('That jacket screams I want to look outdoorsy but I fear grass.')).toBe('one');
