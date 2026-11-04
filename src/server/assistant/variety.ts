@@ -260,7 +260,8 @@ export function buildTurnDirection(
 
   // Tubs has things on his mind; now and then they win over the visitor's topic.
   if (mode === 'single' && random() < 0.12) {
-    lines.push('Skip their topic and say what has actually been on your mind.');
+    // Hooked onto what they said: plain topic skips came out as non-sequiturs.
+    lines.push('Bring up what has actually been on your mind, and hook it onto what they just said.');
   } else if (random() < MOVE_CHANCE) {
     lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
   }
