@@ -7,6 +7,7 @@ import { ensureRendererBackendReady, initializeRendererBackend } from './rendere
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig, normalizeRenderer } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';
+import { NEUTRAL_TINT, moodTint } from './mood-tint.js';
 
 export interface GlitchRuntime {
   init(): void;
@@ -34,6 +35,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let animFrameId: number | null = null;
   let startTime = performance.now();
   let baseHSL = hexToHSL(DEFAULT_CONFIG.color.base);
+  // Colours currently baked into the Canvas2D pixel grid (WebGPU tints per frame).
+  let bakedHSL = baseHSL;
   let cachedDpr = 1;
   let cachedGlowFilter = 'blur(14px)';
   let cachedScanBeamRGBA = 'rgba(166,0,255,0.26)';
@@ -210,6 +213,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     const scan = hexToHSL(rendererConfig.scanBeam.color);
     cachedScanBeamRGBA = `rgba(${scan.h},${scan.s},${scan.l},0.26)`;
     recolorPixelGrid(pixelGrid, colorLUTs, baseHSL);
+    bakedHSL = baseHSL;
 
     const rendererSignature = JSON.stringify(rendererConfig);
     if (rendererSignature !== lastRendererSignature) {
@@ -336,6 +340,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     shapeCenters = next.shapeCenters;
     lastBuiltExpression = store.getState().currentExpression;
     lastSleepingState = store.getState().sleeping;
+    bakedHSL = baseHSL;
     if (rendererState.kind === 'webgpu') {
       updateGpuInstanceBuffer(gpu, pixelGrid, shapeGroups);
     }
@@ -437,8 +442,25 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       buildGrid();
     }
 
+    // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
+    const tint = state.sleeping || state.fxEditorOpen
+      ? NEUTRAL_TINT
+      : moodTint({ pos: state.moodPos, neg: state.moodNeg, arousal: state.moodArousal });
+    const moodHSL = {
+      h: baseHSL.h + tint.hueShift,
+      s: Math.max(0, Math.min(100, baseHSL.s * tint.saturation)),
+      l: Math.max(0, Math.min(100, baseHSL.l + tint.lightness)),
+    };
+    if (rendererState.kind !== 'webgpu'
+      && (Math.abs(moodHSL.h - bakedHSL.h) >= 2 || Math.abs(moodHSL.s - bakedHSL.s) >= 2 || Math.abs(moodHSL.l - bakedHSL.l) >= 1)) {
+      // Canvas2D bakes colours; re-bake only when the change is visible.
+      recolorPixelGrid(pixelGrid, colorLUTs, moodHSL);
+      bakedHSL = moodHSL;
+    }
+
     const frameResult = computeFrameState(now, {
       state,
+      tint,
       config: rendererConfig,
       startTime,
       cachedDpr,
@@ -477,7 +499,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
         faceW: faceEl.getBoundingClientRect().width,
         faceH: faceEl.getBoundingClientRect().height,
         shapeCenters,
-        baseHSL,
+        baseHSL: moodHSL,
         glitchBurstSeed,
         sleeping: state.sleeping,
       });
@@ -488,7 +510,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
         tempCtx,
         tempCanvas,
         config: rendererConfig,
-        baseHSL,
+        baseHSL: moodHSL,
         pixelGrid,
         shapeGroups,
         shapeCenters,

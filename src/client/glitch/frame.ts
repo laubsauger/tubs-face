@@ -47,9 +47,12 @@ export function computeFrameState(
     getSpeakMouthScale: (time: number) => number;
     lastBurstState: boolean;
     glitchBurstSeed: number;
+    /** Mood: more frequent bursts and a wider colour split when Tubs is worked up. */
+    tint?: { burstInterval: number; chroma: number };
   },
 ): { frame: FrameState; lastBurstState: boolean; glitchBurstSeed: number } {
   const { config, startTime, cachedDpr, canvas, containerCssW, containerCssH, effectivePixelSize, currentGazeX, currentGazeY, faceW, faceH, getBlinkFactor, getSpeakMouthScale, lastBurstState, glitchBurstSeed } = args;
+  const chromaScale = args.tint?.chroma ?? 1;
 
   const t = (now - startTime) / 1000;
   const dpr = cachedDpr;
@@ -81,15 +84,16 @@ export function computeFrameState(
 
   const chroma = config.chromatic;
   const chrOffX = chroma.enabled
-    ? chroma.offsetX + (chroma.animate ? Math.sin(t * chroma.animateSpeed * 0.4) * 2 : 0)
+    ? (chroma.offsetX + (chroma.animate ? Math.sin(t * chroma.animateSpeed * 0.4) * 2 : 0)) * chromaScale
     : 0;
   const chrOffY = chroma.enabled
-    ? chroma.offsetY + (chroma.animate ? Math.cos(t * chroma.animateSpeed * 0.3) * 2 : 0)
+    ? (chroma.offsetY + (chroma.animate ? Math.cos(t * chroma.animateSpeed * 0.3) * 2 : 0)) * chromaScale
     : 0;
 
   const slice = config.glitchSlice;
-  const burstPhase = (now - startTime) % (slice.interval + slice.burstDuration);
-  const inBurst = slice.enabled && burstPhase > slice.interval;
+  const burstInterval = slice.interval * (args.tint?.burstInterval ?? 1);
+  const burstPhase = (now - startTime) % (burstInterval + slice.burstDuration);
+  const inBurst = slice.enabled && burstPhase > burstInterval;
   let nextGlitchBurstSeed = glitchBurstSeed;
   if (inBurst) {
     // Dynamically animate the burst seed throughout the duration of the glitch.
