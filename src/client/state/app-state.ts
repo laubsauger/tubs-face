@@ -26,7 +26,7 @@ export interface ChatEntry {
 export type PanelKey =
   | 'connection'
   | 'stats'
-  | 'assistant'
+  | 'mind'
   | 'voice'
   | 'controls'
   | 'fx'
@@ -141,7 +141,8 @@ export interface AppStore {
   appendLog(level: LogEntry['level'], text: string): void;
 }
 
-const MAX_LOGS = 10;
+// Enough to see what led up to an error.
+const MAX_LOGS = 100;
 const UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs';
 
 /** Layout choices an operator expects to survive a reload of the studio screen. */
@@ -241,6 +242,8 @@ export function createAppStore(): AppStore {
       stats: true,
       controls: true,
       manual: true,
+      mind: true,
+      eventLog: true,
     },
     chatPanelWidth: null,
     chatVerbosity: 'all',

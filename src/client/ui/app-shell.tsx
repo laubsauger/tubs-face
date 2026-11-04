@@ -3,9 +3,10 @@ import { ConnectionPanel } from './panels/ConnectionPanel.js';
 import { VoicePanel } from './panels/VoicePanel.js';
 import { FacePanel } from './panels/FacePanel.js';
 import { StatsPanel } from './panels/StatsPanel.js';
+import { MindPanel } from './panels/MindPanel.js';
+import { EventLogPanel } from './panels/EventLogPanel.js';
 import { ChatPanel } from './panels/ChatPanel.js';
 import { PanelHeader } from './panels/PanelHeader.js';
-import { formatAwakeElapsed, formatTimestamp } from './utils/formatters.js';
 import { useCallback, useRef, useState, useEffect, memo, type JSX } from 'react';
 import type {
   DonationConfirmRequest,
@@ -151,9 +152,11 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
           <div className="hud-stack hud-stack-top-left">
             <ConnectionPanel store={store} />
             <VoicePanel store={store} controls={controls} />
+            <MindPanel store={store} />
             <StatsPanel store={store} />
             <ControlsPanel store={store} {...(controls ? { controls } : {})} />
             <ManualPanel store={store} />
+            <EventLogPanel store={store} />
           </div>
 
           <div className="hud-corner hud-corner-bottom-left">
@@ -173,11 +176,6 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
       <FxEditor store={store} />
       <EnrollmentWizard store={store} {...(controls?.face ? { controls: controls.face } : {})} />
 
-      {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
-      <div className="hidden">
-        <AssistantPanel store={store} />
-        <EventLogPanel store={store} />
-      </div>
     </main>
   );
 }
@@ -513,36 +511,6 @@ function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
         </span>
       )}
     </div>
-  );
-}
-
-function AssistantPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.assistant),
-    currentExpression: current.currentExpression,
-    sleeping: current.sleeping,
-    conversationActive: current.conversationActive,
-    awakeElapsedSec: current.awakeElapsedSec,
-    currentTurnId: current.currentTurnId,
-    moodPos: current.moodPos,
-    moodNeg: current.moodNeg,
-    moodArousal: current.moodArousal,
-  }));
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="assistant" title="Assistant" meta={state.currentExpression} metaId="assistant-panel-meta" />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Expression</dt><dd id="assistant-expression-value">{state.currentExpression}</dd></div>
-          <div><dt>Sleep</dt><dd id="assistant-sleep-value">{state.sleeping ? 'asleep' : 'awake'}</dd></div>
-          <div><dt>Conversation</dt><dd id="assistant-conversation-value">{state.conversationActive ? 'active' : 'idle'}</dd></div>
-          <div><dt>Awake</dt><dd id="assistant-awake-value">{formatAwakeElapsed(state.awakeElapsedSec)}</dd></div>
-          <div><dt>Turn</dt><dd id="assistant-turn-value">{state.currentTurnId ?? 'n/a'}</dd></div>
-          <div><dt>Mood</dt><dd id="assistant-mood-value">{state.moodPos.toFixed(2)} / {state.moodNeg.toFixed(2)} / {state.moodArousal.toFixed(2)}</dd></div>
-        </dl>
-      </div>
-    </article>
   );
 }
 
@@ -911,33 +879,6 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
           </div>
           <div className={`manual-beats-status ${renderManualStatusClass(state.manualStatusKind)}`}>{state.manualStatus}</div>
         </div>
-      </div>
-    </article>
-  );
-}
-
-function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.eventLog),
-    logs: current.logs,
-  }));
-
-  return (
-    <article className={`${renderPanelCardClass(state.collapsed)} flex-column-card`}>
-      <PanelHeader store={store} panelKey="eventLog" title="Event Log" meta={`${state.logs.length} entries`} />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
-        <ul id="event-log-list" className="logs event-log-list">
-          {state.logs.length === 0
-            ? <li className="log"><span>No events yet.</span></li>
-            : state.logs.map((entry) => (
-              <li key={entry.id} className={`log log-${entry.level}`}>
-                <div className="log-meta">
-                  <span className="log-time">{formatTimestamp(entry.ts)}</span>
-                </div>
-                <span className="log-text">{entry.text}</span>
-              </li>
-            ))}
-        </ul>
       </div>
     </article>
   );

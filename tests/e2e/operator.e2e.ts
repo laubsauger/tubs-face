@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { openFace, received } from './helpers.js';
+import { chunk, openFace, received, send } from './helpers.js';
 
 // Operator tools used during a session.
 test.beforeEach(async ({ page, request }) => {
@@ -24,4 +24,19 @@ test('Controls > Speak sends the line for Tubs to say', async ({ page, request }
   await page.locator('#action-speak').click();
 
   await expect.poll(async () => (await received(request)).http.find((entry) => entry.path === '/speak')?.body).toMatchObject({ text: 'Testing one two.' });
+});
+
+// The operator could not see Tubs's mood or any error: both panels were hidden.
+test('Mind shows the mood in words after an annoyed reply', async ({ page, request }) => {
+  await page.getByRole('button', { name: /Mind/ }).click();
+  const annoyed = { emoji: '😤', expression: 'angry', impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 } };
+  await send(request, { type: 'turn_start', turnId: 't-mind' }, { ...chunk('t-mind', 0, 'Oh, you again.', 600), emotion: annoyed });
+  await expect(page.locator('#mind-mood')).toHaveText('irritated', { timeout: 5000 });
+});
+
+test('Event Log shows errors the operator would otherwise never see', async ({ page, request }) => {
+  await page.getByRole('button', { name: /Event Log/ }).click();
+  await send(request, { type: 'error', text: 'TTS stream failed: test' });
+  await expect(page.locator('#event-log-list')).toContainText('TTS stream failed: test');
+  await expect(page.getByRole('button', { name: /Event Log/ })).toContainText('1 error');
 });
