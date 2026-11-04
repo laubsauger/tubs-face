@@ -2,13 +2,13 @@ import type { AppStore } from '../state/app-state.js';
 import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
-import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, pushStreamDebugEntry, reconcileIncomingChat, resetStreamDebugState, upsertChatDraft } from '../chat/state.js';
+import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, reconcileIncomingChat, upsertChatDraft } from '../chat/state.js';
 import { detectDonationSignal, inferDonationPrompt } from '../message-handler-utils.js';
 
 const DONATION_JOY_DURATION_MS = 1_800;
 const DONATION_PROMPT_HIDE_MS = 12_000;
 const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
-const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config', 'stream_debug']);
+const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config']);
 let donationJoyUntil = 0;
 let donationJoyResetTimer: number | null = null;
 let donationPromptTimer: number | null = null;
@@ -99,10 +99,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.appendLog('error', message.text);
       return;
     case 'ping':
-      store.setState((current) => ({
-        ...current,
-        lastPingMs: Math.max(0, message.serverTs - message.ts),
-      }));
       return;
     case 'conversation_mode':
       store.setState((current) => ({
@@ -137,7 +133,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         currentExpression: 'sleep',
         currentReactionEmoji: '',
         currentDonationSignal: null,
-        subtitleText: '',
         liveTranscriptText: '',
         liveTranscriptDraft: false,
       }));
@@ -167,10 +162,9 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         const before = store.getState();
         const stopPrevious = Boolean(before.currentTurnId && before.currentTurnId !== message.turnId && (before.audioPlaying || before.currentSpeechText));
         store.setState((current) => ({
-          ...resetStreamDebugState(clearChatDraft(clearChatDraft(current, 'out'), 'in'), message.turnId),
+          ...clearChatDraft(clearChatDraft(current, 'out'), 'in'),
           currentTurnId: message.turnId,
           currentSpeechText: '',
-          subtitleText: '',
           currentReactionEmoji: '',
         }));
         if (stopPrevious) {
@@ -196,7 +190,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.setState((current) => ({
         ...clearChatDraft(current, 'out'),
         currentSpeechText: '',
-        subtitleText: '',
         currentReactionEmoji: '',
         audioPlaying: false,
         currentExpression: current.sleeping ? 'sleep' : nextExpression(current.currentExpression, 'listening'),
@@ -204,11 +197,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.appendLog('info', `Interrupt received${message.source ? ` (${message.source})` : ''}`);
       return;
     case 'turn_context':
-      store.setState((current) => pushStreamDebugEntry(current, 'turn_context', {
-        turnId: message.turnId,
-        ...message.meta,
-        ts: Date.now(),
-      }));
       store.appendLog('info', describeTurnContext(message.meta));
       return;
     case 'incoming':
@@ -219,7 +207,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }
         return {
           ...reconcileIncomingChat(current, message.text),
-          currentIncomingText: message.text,
           currentExpression: donationSignal ? 'love' : nextExpression(current.currentExpression, 'listening'),
           liveTranscriptText: message.text,
           liveTranscriptDraft: true,
@@ -248,7 +235,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ts: Date.now(),
         }),
         currentSpeechText: message.text,
-        subtitleText: message.text,
         currentExpression: nextExpression(current.currentExpression, message.emotion?.expression ?? 'speaking'),
       }));
       store.appendLog('info', `Speak: ${message.text}`);
@@ -260,17 +246,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       clearLiveTranscript(store);
       store.setState((current) => ({
         ...upsertChatDraft(
-          pushStreamDebugEntry(current, 'llm_delta', {
-          turnId: message.turnId ?? current.currentTurnId,
-          deltaChars: message.text.length,
-          ts: Date.now(),
-          }),
+          current,
           'out',
           `${current.currentSpeechText} ${message.text}`.trim(),
           'main',
         ),
         currentSpeechText: `${current.currentSpeechText} ${message.text}`.trim(),
-        subtitleText: `${current.subtitleText} ${message.text}`.trim(),
         currentExpression: nextExpression(current.currentExpression, 'speaking'),
       }));
       return;
@@ -305,26 +286,8 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
               : current);
         return {
           ...nextState,
-          subtitleText: current.currentSpeechText,
         };
       });
-      return;
-    case 'backchannel':
-      if (mode === 'mini') {
-        return;
-      }
-      store.setState((current) => ({
-        ...appendChatEntry(current, {
-          type: 'out',
-          actor: 'main',
-          text: message.text,
-          ts: Date.now(),
-        }),
-        currentSpeechText: message.text,
-        subtitleText: message.text,
-        currentExpression: nextExpression(current.currentExpression, 'smile'),
-      }));
-      store.appendLog('info', `Backchannel: ${message.text}`);
       return;
     case 'turn_script':
       {
@@ -354,7 +317,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
             currentTurnId: message.turnId ?? current.currentTurnId,
             ...(!dualHeadActive && hasRelevantBeat && previewText ? {
               currentSpeechText: previewText,
-              subtitleText: previewText,
             } : {}),
           };
           if (dualHeadActive) {
@@ -397,12 +359,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         clearLiveTranscript(store);
       }
       store.setState((current) => {
-        let next = pushStreamDebugEntry(current, 'audio_chunk_ws_in', {
-          turnId: message.turnId ?? current.currentTurnId,
-          chunkIndex: message.chunkIndex,
-          audioBytes: Math.round(((message.audio || '').length * 3) / 4),
-          ts: Date.now(),
-        });
+        let next = current;
         const chunkText = message.text?.trim() ?? '';
         const alreadyAppended = chunkText
           ? hasRecentOutgoingAssistantEntry(current, chunkText, 'main')
@@ -415,7 +372,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ...next,
           ...(message.text ? {
             currentSpeechText: message.text,
-            subtitleText: message.text,
           } : {}),
           // The reply's emotion shows while it is spoken; plain chunks (a filler) just talk.
           ...((!message.actor || message.actor === myActor)
@@ -432,13 +388,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         currentExpression: 'love',
       }));
       store.appendLog('info', `Donation signal: ${message.certainty}`);
-      return;
-    case 'stream_debug':
-      store.setState((current) => pushStreamDebugEntry(current, message.stage ?? 'stream_debug', {
-        ...message,
-        ts: message.ts ?? Date.now(),
-      }));
-      store.appendLog('info', `${message.stage ?? 'stream'}: ${message.detail ?? 'update'}`);
       return;
     case 'face_motion':
       if (mode === 'mini' && !targetActor && message.actor === 'main') {

@@ -259,7 +259,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       store.setState((current) => ({
         ...current,
         recording: false,
-        currentIncomingText: '',
         liveTranscriptText: '',
         liveTranscriptDraft: false,
         voiceLastTranscript: '',
@@ -303,7 +302,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       lastLiveTranscript = '';
       store.setState((current) => ({
         ...current,
-        currentIncomingText: '',
         liveTranscriptText: '',
         liveTranscriptDraft: false,
       }));
@@ -486,7 +484,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       lastLiveTranscript = normalized;
       store.setState((current) => ({
         ...upsertChatDraft(current, 'in', normalized),
-        currentIncomingText: normalized,
         liveTranscriptText: normalized,
         liveTranscriptDraft: interimTranscript.trim().length > 0 || current.recording,
         voiceLastTranscript: normalized,
@@ -825,7 +822,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + SPEECH_CAPTURE_COOLDOWN_MS);
         store.setState((current) => ({
           ...current,
-          currentIncomingText: '',
           liveTranscriptText: '',
           liveTranscriptDraft: false,
         }));
@@ -851,10 +847,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     anyHeadSpeechHandler = null;
   }
 
-  function isSpeechCaptureBlocked(allowManual = false): boolean {
-    if (allowManual && (manualPressActive || recordingMode === 'manual')) {
-      return false;
-    }
+  function isSpeechCaptureBlocked(): boolean {
     const now = Date.now();
     for (const [actor, until] of speakingActors.entries()) {
       if (until <= now) {

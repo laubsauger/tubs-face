@@ -32,7 +32,7 @@ export interface BootstrapHandle {
 }
 
 export async function bootstrapClient(options: BootstrapOptions): Promise<BootstrapHandle> {
-  const store = createAppStore(resolveServerLabel());
+  const store = createAppStore();
   const isController = options.mode === 'main';
   const isSpectator = options.mode === 'spectator';
   // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
@@ -373,13 +373,6 @@ async function loadInitialState(store: AppStore): Promise<void> {
   }
 }
 
-function resolveServerLabel(): string {
-  if (window.location.port !== '3000') {
-    return `${window.location.hostname}:3000`;
-  }
-
-  return window.location.host;
-}
 
 function selectVisualSlice(state: AppState) {
   return {

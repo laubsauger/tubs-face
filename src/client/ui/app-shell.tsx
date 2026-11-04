@@ -176,8 +176,6 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
       {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
       <div className="hidden">
         <AssistantPanel store={store} />
-        {/* Stream debug stays hidden: the server never sends stream_debug, so it would be empty. */}
-        <StreamDebugPanel store={store} />
         <EventLogPanel store={store} />
       </div>
     </main>
@@ -918,96 +916,6 @@ function ManualPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function StreamDebugPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.streamDebug),
-    streamDebug: current.streamDebug,
-  }));
-  const debug = state.streamDebug;
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader
-        store={store}
-        panelKey="streamDebug"
-        title="Stream Debug"
-        meta={debug.enabled ? (debug.currentTurnId?.slice(0, 8) ?? 'none') : 'disabled'}
-        metaId="stream-debug-panel-meta"
-      />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
-        <div className="face-action-row">
-          <button
-            id="stream-debug-toggle"
-            className="button button-secondary"
-            type="button"
-            onClick={() => {
-              store.setState((current) => {
-                const enabled = !current.streamDebug.enabled;
-                try {
-                  window.localStorage.setItem('tubs.streamDebugEnabled', enabled ? '1' : '0');
-                } catch {
-                  // ignore
-                }
-                return {
-                  ...current,
-                  streamDebug: {
-                    ...current.streamDebug,
-                    enabled,
-                  },
-                };
-              });
-            }}
-          >
-            {debug.enabled ? 'Disable Debug' : 'Enable Debug'}
-          </button>
-          <button
-            id="stream-debug-clear"
-            className="button button-secondary"
-            type="button"
-            onClick={() => {
-              store.setState((current) => ({
-                ...current,
-                streamDebug: {
-                  ...current.streamDebug,
-                  entries: [],
-                  llmDeltas: 0,
-                  llmChars: 0,
-                  sentences: 0,
-                  ttsSentences: 0,
-                  ttsChars: 0,
-                  audioChunksIn: 0,
-                  audioBytesIn: 0,
-                  audioChunksPlayed: 0,
-                  audioSecondsPlayed: 0,
-                },
-              }));
-            }}
-          >
-            Clear
-          </button>
-        </div>
-        <dl className="kv">
-          <div><dt>LLM</dt><dd id="stream-debug-llm-value">{debug.llmDeltas}/{debug.llmChars}</dd></div>
-          <div><dt>Sentences</dt><dd id="stream-debug-sentences-value">{debug.sentences}</dd></div>
-          <div><dt>TTS Out</dt><dd id="stream-debug-tts-value">{debug.ttsSentences}/{debug.ttsChars}</dd></div>
-          <div><dt>Audio In</dt><dd id="stream-debug-audio-in-value">{debug.audioChunksIn}/{Math.round(debug.audioBytesIn / 1024)}KB</dd></div>
-          <div><dt>Played</dt><dd id="stream-debug-played-value">{debug.audioChunksPlayed}/{debug.audioSecondsPlayed.toFixed(2)}s</dd></div>
-        </dl>
-        <ul id="stream-debug-list" className="logs">
-          {!debug.enabled && <li className="log"><span>Stream debug disabled.</span></li>}
-          {debug.enabled && debug.entries.length === 0 && <li className="log"><span>No stream events yet.</span></li>}
-          {debug.enabled && debug.entries.map((entry) => (
-            <li key={entry.id} className="debug-entry">
-              <span className="log-time">{formatTimestamp(entry.ts)}</span>
-              <span>{entry.stage} {formatDebugPayload(entry.payload)}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </article>
-  );
-}
-
 function EventLogPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     collapsed: Boolean(current.collapsedPanels.eventLog),
@@ -1047,14 +955,6 @@ async function runControlAction(store: AppStore, label: string, action: () => Pr
 
 function renderPanelCardClass(collapsed: boolean): string {
   return `panel-surface panel-surface-compact transition-all ${collapsed ? 'is-collapsed h-11' : ''}`;
-}
-
-function formatDebugPayload(payload: Record<string, unknown>): string {
-  return Object.entries(payload)
-    .filter(([key]) => key !== 'ts')
-    .slice(0, 5)
-    .map(([key, value]) => `${key}=${String(value)}`)
-    .join(' ');
 }
 
 function donationQrSrc(qrData: string): string {

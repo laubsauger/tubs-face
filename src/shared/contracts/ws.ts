@@ -211,11 +211,6 @@ export interface WsTurnScriptServerMessage extends TurnScript {
   type: 'turn_script';
 }
 
-export interface WsBackchannelServerMessage {
-  type: 'backchannel';
-  text: string;
-}
-
 export interface WsIncomingServerMessage {
   type: 'incoming';
   text: string;
@@ -233,14 +228,6 @@ export interface WsStatsServerMessage {
   model?: string;
   cost?: number;
   session?: SessionStats;
-}
-
-export interface WsStreamDebugServerMessage {
-  type: 'stream_debug';
-  stage?: string;
-  detail?: string;
-  turnId?: string;
-  ts?: number;
 }
 
 export interface WsConversationModeServerMessage {
@@ -299,11 +286,9 @@ export type WsServerMessage =
   | WsInterruptServerMessage
   | WsTurnContextServerMessage
   | WsTurnScriptServerMessage
-  | WsBackchannelServerMessage
   | WsIncomingServerMessage
   | WsDonationSignalServerMessage
   | WsStatsServerMessage
-  | WsStreamDebugServerMessage
   | WsConversationModeServerMessage
   | WsSleepServerMessage
   | WsWakeServerMessage

@@ -48,7 +48,6 @@ export function createAmbientRuntime(store: AppStore, mode: 'main' | 'mini'): Am
         syncActiveState();
       };
       window.addEventListener('tubs:head-speech-state', speechObservedHandler as EventListener);
-      window.addEventListener('tubs:head-speech-observed', speechObservedHandler as EventListener);
       document.addEventListener('visibilitychange', syncActiveState);
     },
     async toggleEnabled(): Promise<void> {
@@ -75,7 +74,6 @@ export function createAmbientRuntime(store: AppStore, mode: 'main' | 'mini'): Am
       }
       if (speechObservedHandler) {
         window.removeEventListener('tubs:head-speech-state', speechObservedHandler as EventListener);
-        window.removeEventListener('tubs:head-speech-observed', speechObservedHandler as EventListener);
       }
       document.removeEventListener('visibilitychange', syncActiveState);
       if (pauseTimer != null) {

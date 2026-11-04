@@ -1,7 +1,6 @@
 import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
-import { pushStreamDebugEntry } from '../chat/state.js';
 import { buildLocalTurnTimeline } from '../turn-script.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
@@ -362,12 +361,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     // Show text in subtitle immediately as preview before audio loads
     subtitles.setText(item.text);
     // For small beats in main mode, only update subtitle — don't change main face expression
-    if (item.actor === 'small' && mode === 'main') {
-      store.setState((current) => ({
-        ...current,
-        subtitleText: item.text ?? '',
-      }));
-    } else {
+    if (!(item.actor === 'small' && mode === 'main')) {
       applyBeatVisuals(item.text, item.emotion, true);
     }
     startSpeechSafetyTimer();
@@ -413,11 +407,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const useWsStreaming = store.getState().config?.ttsStreamingEnabled === true;
     if (useWsStreaming) {
       const endWsTtsSpan = turnTimer.span('WS TTS Stream');
-      store.setState((current) => pushStreamDebugEntry(current, 'tts_ws_request', {
-        turnId: effectiveTurnId ?? current.currentTurnId,
-        textChars: text.length,
-        ts: Date.now(),
-      }));
 
       // Send TTS request via custom event (bootstrap wires this to wsClient.send)
       const voice = (mode === 'mini' || actor === 'small')
@@ -464,11 +453,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     if (isLocalBeat) updatePlaybackState(true, 'Speaking');
     emitHeadSpeechState('start', effectiveTurnId, actor);
     try {
-      store.setState((current) => pushStreamDebugEntry(current, 'tts_request_start', {
-        turnId: effectiveTurnId ?? current.currentTurnId,
-        textChars: text.length,
-        ts: Date.now(),
-      }));
       const endTtsHttpSpan = turnTimer.span('HTTP /tts');
       const response = await fetch('/tts', {
         method: 'POST',
@@ -487,23 +471,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       endTtsHttpSpan();
 
       if (!response.ok) {
-        store.setState((current) => pushStreamDebugEntry(current, 'tts_request_error', {
-          turnId: effectiveTurnId ?? current.currentTurnId,
-          status: response.status,
-          statusText: response.statusText,
-          ts: Date.now(),
-        }));
         const detail = await readTtsErrorDetail(response);
         turnTimer.mark('TTS request failed');
         turnTimer.log({ title: '[Turn Timing]' });
         throw new Error(`TTS failed: ${response.status} ${response.statusText}${detail ? ` - ${detail}` : ''}`);
       }
-
-      store.setState((current) => pushStreamDebugEntry(current, 'tts_request_complete', {
-        turnId: effectiveTurnId ?? current.currentTurnId,
-        status: response.status,
-        ts: Date.now(),
-      }));
       const blob = await response.blob();
       turnTimer.mark('TTS body received');
       if (blob.size < 100) {
@@ -653,14 +625,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       onChunkStarted: (chunk) => {
         if (chunk.text) updateStreamingSubtitle(chunk.text, chunk.duration);
       },
-      onChunkScheduled: (_chunk, buffer) => {
-        store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
-          turnId: sessionTurnId ?? current.currentTurnId,
-          audioBytes: buffer.length,
-          audioDurationSec: buffer.duration,
-          ts: Date.now(),
-        }));
-      },
       onError: (message) => store.appendLog('error', `Stream ${message}`),
       log: (message) => console.log(`[Stream] ${message}`),
     });
@@ -710,16 +674,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       store.setState((current) => ({
         ...current,
         currentExpression: expression,
-        ...(beatMeta?.text ? { currentSpeechText: beatMeta.text, subtitleText: beatMeta.text } : {}),
+        ...(beatMeta?.text ? { currentSpeechText: beatMeta.text } : {}),
       }));
-    } else {
-      // Small beat on main — only update subtitle, not main face
-      if (beatMeta?.text) {
-        store.setState((current) => ({
-          ...current,
-          subtitleText: beatMeta.text,
-        }));
-      }
     }
   }
 
@@ -840,7 +796,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       subtitles.stop();
       store.setState((current) => ({
         ...current,
-        subtitleText: '',
         currentSpeechText: '',
       }));
     }, SUBTITLE_CLEAR_DELAY_MS);
@@ -954,7 +909,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     store.setState((current) => ({
       ...current,
       currentSpeechText: text,
-      subtitleText: text,
       currentReactionEmoji: nextReactionEmoji,
       currentExpression: emotion?.expression ?? (speaking ? 'speaking' : current.currentExpression),
     }));
@@ -1165,7 +1119,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       store.setState((current) => ({
         ...current,
         currentSpeechText: '',
-        subtitleText: '',
         currentReactionEmoji: '',
       }));
       updatePlaybackState(false, 'Interrupted');

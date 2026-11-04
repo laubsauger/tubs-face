@@ -23,32 +23,8 @@ export interface ChatEntry {
   draft?: boolean;
 }
 
-export interface StreamDebugEntry {
-  id: string;
-  stage: string;
-  payload: Record<string, unknown>;
-  ts: number;
-}
-
-export interface StreamDebugState {
-  enabled: boolean;
-  currentTurnId: string | null;
-  llmDeltas: number;
-  llmChars: number;
-  sentences: number;
-  ttsSentences: number;
-  ttsChars: number;
-  audioChunksIn: number;
-  audioBytesIn: number;
-  audioChunksPlayed: number;
-  audioSecondsPlayed: number;
-  entries: StreamDebugEntry[];
-}
-
 export type PanelKey =
   | 'connection'
-  | 'health'
-  | 'config'
   | 'stats'
   | 'assistant'
   | 'voice'
@@ -57,19 +33,16 @@ export type PanelKey =
   | 'manual'
   | 'face'
   | 'chat'
-  | 'streamDebug'
   | 'eventLog';
 
 export interface AppState {
   connected: boolean;
   connectionLabel: string;
-  serverUrl: string;
   lastMessageType: WsServerMessage['type'] | 'none';
   /** Server-reported duration of the last reply, for Bot Stats. */
   lastResponseMs: number | null;
   /** Glitch renderer actually in use, once it is running. */
   glitchBackend: 'webgpu' | 'canvas2d' | null;
-  lastPingMs: number | null;
   health: HealthResponse | null;
   config: ConfigResponse | null;
   stats: StatsResponse | null;
@@ -82,11 +55,9 @@ export interface AppState {
   awakeElapsedSec: number;
   currentExpression: ExpressionName;
   currentTurnId: string | null;
-  currentIncomingText: string;
   currentSpeechText: string;
   currentReactionEmoji: string;
   currentDonationSignal: DonationSignalPayload | null;
-  subtitleText: string;
   gazeX: number;
   gazeY: number;
   idleVariant: 'soft' | 'flat';
@@ -149,7 +120,6 @@ export interface AppState {
   chatEntries: ChatEntry[];
   liveTranscriptText: string;
   liveTranscriptDraft: boolean;
-  streamDebug: StreamDebugState;
   logs: LogEntry[];
 }
 
@@ -172,7 +142,6 @@ export interface AppStore {
 }
 
 const MAX_LOGS = 10;
-const STREAM_DEBUG_STORAGE_KEY = 'tubs.streamDebugEnabled';
 const UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs';
 
 /** Layout choices an operator expects to survive a reload of the studio screen. */
@@ -206,16 +175,13 @@ export function persistUiPrefs(store: AppStore): () => void {
   );
 }
 
-export function createAppStore(serverUrl: string): AppStore {
-  const streamDebugEnabled = readStoredStreamDebugEnabled();
+export function createAppStore(): AppStore {
   const initialState: AppState = {
     connected: false,
     connectionLabel: 'Offline',
-    serverUrl,
     lastMessageType: 'none',
     lastResponseMs: null,
     glitchBackend: null,
-    lastPingMs: null,
     health: null,
     config: null,
     stats: null,
@@ -227,11 +193,9 @@ export function createAppStore(serverUrl: string): AppStore {
     awakeElapsedSec: 0,
     currentExpression: 'idle',
     currentTurnId: null,
-    currentIncomingText: '',
     currentSpeechText: '',
     currentReactionEmoji: '',
     currentDonationSignal: null,
-    subtitleText: '',
     gazeX: 0,
     gazeY: 0,
     idleVariant: 'soft',
@@ -297,20 +261,6 @@ export function createAppStore(serverUrl: string): AppStore {
     chatEntries: [],
     liveTranscriptText: '',
     liveTranscriptDraft: false,
-    streamDebug: {
-      enabled: streamDebugEnabled,
-      currentTurnId: null,
-      llmDeltas: 0,
-      llmChars: 0,
-      sentences: 0,
-      ttsSentences: 0,
-      ttsChars: 0,
-      audioChunksIn: 0,
-      audioBytesIn: 0,
-      audioChunksPlayed: 0,
-      audioSecondsPlayed: 0,
-      entries: [],
-    },
     logs: [],
   };
   const storedPrefs = readStoredUiPrefs();
@@ -349,10 +299,3 @@ export function createAppStore(serverUrl: string): AppStore {
   };
 }
 
-function readStoredStreamDebugEnabled(): boolean {
-  try {
-    return window.localStorage.getItem(STREAM_DEBUG_STORAGE_KEY) !== '0';
-  } catch {
-    return true;
-  }
-}

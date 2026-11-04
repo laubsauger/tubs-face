@@ -16,7 +16,7 @@ const { applyServerMessage } = await import('./messages.js');
 // first sentence.
 describe('chat log for streamed replies', () => {
   it('keeps every sentence of a multi-sentence reply', () => {
-    const store = createAppStore('test');
+    const store = createAppStore();
     const send = (message: WsServerMessage) => applyServerMessage(store, message, 'main');
 
     send({ type: 'turn_start', turnId: 't1' });
