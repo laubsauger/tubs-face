@@ -10,8 +10,9 @@ import { openTtsStream } from '../tts/stream.js';
  */
 
 // Kokoro garbles "Hm", "Mm" and "Uh huh" (speech-to-text heard "Am I?",
-// "MESS", "As high"). These come out clean.
-export const FILLER_LINES = ['Oh.', 'Okay.', 'Right.', 'Well.', 'Oh boy.', 'Wow.'] as const;
+// "MESS", "As high"). These come out clean. No "Wow.": as a reaction to
+// whatever was just said it sounds wrong far more often than right.
+export const FILLER_LINES = ['Oh.', 'Okay.', 'Right.', 'Well.', 'Oh boy.'] as const;
 export const FILLER_CHANCE = 0.4;
 const RENDER_RETRY_MS = 60_000;
 const RENDER_TIMEOUT_MS = 15_000;
