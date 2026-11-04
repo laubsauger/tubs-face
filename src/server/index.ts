@@ -10,16 +10,27 @@ import { shutdownLangfuse } from './observability/langfuse.js';
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
 const server = http.createServer(async (request, response) => {
-  const handled = await handleApiRequest(request, response);
-  if (handled) {
-    return;
-  }
+  // A malformed URL (GET /shapes/%) used to throw here unhandled and take the
+  // whole server down; anyone on the studio network could do it.
+  try {
+    const handled = await handleApiRequest(request, response);
+    if (handled) {
+      return;
+    }
 
-  if (await serveStatic(request, response)) {
-    return;
-  }
+    if (await serveStatic(request, response)) {
+      return;
+    }
 
-  sendError(response, 404, 'Not found');
+    sendError(response, 404, 'Not found');
+  } catch (error) {
+    console.error('[http] request failed', request.method, request.url, error);
+    if (!response.headersSent) {
+      sendError(response, error instanceof URIError ? 400 : 500, error instanceof URIError ? 'Bad request' : 'Internal error');
+    } else {
+      response.end();
+    }
+  }
 });
 
 initWebSocketServer(server);

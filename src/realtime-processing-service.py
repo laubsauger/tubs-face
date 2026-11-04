@@ -750,6 +750,7 @@ def tts_stream(ws):
     while True:
         raw = ws.receive()
         if not raw: break
+        text = ""
         try:
             data = json.loads(raw)
             text = str(data.get("text") or "").strip()
@@ -771,6 +772,8 @@ def tts_stream(ws):
                         segments.append(_safe_numpy(audio))
                 if not segments:
                     ws.send(json.dumps({"error": "Kokoro generated no audio"}))
+                    # The server counts sentences by "done"; without it the turn waits 30 s.
+                    ws.send(json.dumps({"text": text, "done": True}))
                     continue
                 wav_bytes = pcm_to_wav_bytes(trim_silence(np.concatenate(segments)), sample_rate=24000)
                 ws.send(json.dumps({
@@ -786,6 +789,7 @@ def tts_stream(ws):
             print("[TTS Stream] Error:", err)
             traceback.print_exc()
             ws.send(json.dumps({"error": str(err)}))
+            ws.send(json.dumps({"text": text, "done": True}))
 
 
 @app.route("/llm/generate", methods=["POST"])

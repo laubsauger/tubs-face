@@ -15,6 +15,7 @@ import { type AssistantTurnResult, isDualHeadReply } from './reply-types.js';
 import { generateAssistantReply, generateProactiveReply } from './single-head.js';
 import { runStreamingAssistantTurn } from './streaming-turn.js';
 import { activateAssistantTurn, createTurnId, emitIfActive, finishAssistantTurn, isAssistantTurnActive } from './turn-state.js';
+import { forgetLastReply, markLastReplyUnheard } from './context.js';
 
 export { createTurnId, hasActiveAssistantTurn, interruptAssistantTurns } from './turn-state.js';
 export type { AssistantReply, AssistantTurnResult } from './reply-types.js';
@@ -76,6 +77,7 @@ async function runAssistantTurnBody(
     }
 
     if (!isAssistantTurnActive(turnId, epoch)) {
+      markLastReplyUnheard();
       return {
         turnId,
         reply: {
@@ -204,6 +206,7 @@ async function runAssistantTurnBody(
   }
 
   if (!isAssistantTurnActive(turnId, epoch)) {
+    markLastReplyUnheard();
     return { turnId, reply, superseded: true };
   }
 
@@ -281,6 +284,7 @@ async function runProactiveTurnBody(
   }
 
   if (!isAssistantTurnActive(turnId, epoch)) {
+    forgetLastReply();
     return {
       turnId,
       reply: {

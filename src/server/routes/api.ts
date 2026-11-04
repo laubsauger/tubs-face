@@ -2,7 +2,7 @@ import http from 'node:http';
 import os from 'node:os';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import type {
   ConfigResponse,
   DonationConfirmRequest,
@@ -63,7 +63,8 @@ const inputFacesDir = resolve(process.cwd(), 'input_faces');
 const processedFacesDir = resolve(process.cwd(), 'processed_faces');
 
 export async function handleApiRequest(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
-  const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+  // The Host header is client input; a malformed one made this throw.
+  const url = new URL(request.url ?? '/', 'http://localhost');
   applyCors(response);
 
   if (request.method === 'OPTIONS') {
@@ -541,7 +542,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     }
 
     const fullPath = resolve(shapesDir, filename);
-    if (!fullPath.startsWith(shapesDir)) {
+    if (!fullPath.startsWith(shapesDir + sep)) {
       sendJson(response, 403, { error: 'Forbidden' } satisfies ErrorResponse);
       return true;
     }
@@ -598,7 +599,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       }
       const inputPath = resolve(inputFacesDir, relPath);
       const processedPath = resolve(processedFacesDir, relPath);
-      if (!inputPath.startsWith(inputFacesDir) || !processedPath.startsWith(processedFacesDir)) {
+      if (!inputPath.startsWith(inputFacesDir + sep) || !processedPath.startsWith(processedFacesDir + sep)) {
         sendJson(response, 403, { error: 'Forbidden' } satisfies ErrorResponse);
         return true;
       }
@@ -622,7 +623,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
   if (request.method === 'GET' && url.pathname.startsWith('/raw-faces/')) {
     const relPath = decodeURIComponent(url.pathname.replace('/raw-faces/', ''));
     const fullPath = resolve(inputFacesDir, relPath);
-    if (!fullPath.startsWith(inputFacesDir)) {
+    if (!fullPath.startsWith(inputFacesDir + sep)) {
       sendJson(response, 403, { error: 'Forbidden' } satisfies ErrorResponse);
       return true;
     }

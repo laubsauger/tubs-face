@@ -116,6 +116,24 @@ export function markLastReplyCutOff(): void {
   }
 }
 
+/**
+ * A reply was generated, then superseded before any of it played. It was
+ * already pushed to history; keep the exchange, but not words nobody heard.
+ */
+export function markLastReplyUnheard(): void {
+  const last = conversationHistory.at(-1);
+  if (last?.role === 'model') {
+    last.text = `... ${CUT_OFF_MARK}`;
+  }
+}
+
+/** A proactive line was superseded before it played: as if never said. */
+export function forgetLastReply(): void {
+  if (conversationHistory.at(-1)?.role === 'model') {
+    conversationHistory.pop();
+  }
+}
+
 export function wasLastReplyCutOff(): boolean {
   pruneConversationHistory();
   const last = conversationHistory.at(-1);

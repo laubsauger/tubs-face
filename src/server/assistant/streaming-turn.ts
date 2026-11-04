@@ -203,8 +203,10 @@ export async function runStreamingAssistantTurn(args: {
     }
   }
 
+  let qrMarkerSeen = false;
   const splitter = createSentenceSplitter((sentence) => {
     let text = sentence;
+    if (/\[\[\s*SHOW[\s_-]*QR\s*\]\]/i.test(sentence)) qrMarkerSeen = true;
     if (!emotionExtracted) {
       const parsed = splitTrailingEmotionEmoji(text);
       if (parsed.emotion) {
@@ -274,10 +276,9 @@ export async function runStreamingAssistantTurn(args: {
     if (stillActive) {
       splitter.flush();
     }
-    llmDone = true;
-    checkCloseWs();
 
     // If the splitter produced nothing speakable, send the full text once.
+    // Before llmDone/checkCloseWs: with nothing pending, that closes the socket.
     if (stillActive && sentencesQueued === 0 && llmResult.text) {
       const unwrapped = unwrapJsonSpeechText(llmResult.text);
       const parsed = splitTrailingEmotionEmoji(stripFormatting(unwrapped));
@@ -288,6 +289,8 @@ export async function runStreamingAssistantTurn(args: {
         ttsWs.send(fullText, kokoroVoice);
       }
     }
+    llmDone = true;
+    checkCloseWs();
 
     // Wait for TTS to finish sending all audio
     if (pendingTtsSentences > 0) {
@@ -295,8 +298,29 @@ export async function runStreamingAssistantTurn(args: {
         ttsWsDone,
         new Promise<void>((resolve) => setTimeout(resolve, 30_000)),
       ]);
-    } else {
-      ttsWs?.close();
+    }
+    // Also after a timeout: an unclosed socket leaks here and a thread in the TTS service.
+    ttsWs?.close();
+
+    if (!fullText && !isAssistantTurnActive(turnId, epoch)) {
+      // Interrupted before the first word. The supersede handler already
+      // recorded the cut-off; falling through would run a second LLM call
+      // for a turn nobody is waiting for.
+      return {
+        turnId,
+        reply: {
+          text: '',
+          model: runtimeConfig.llmModel,
+          latencyMs: Date.now() - startedAt,
+          source: 'llm',
+          donation: null,
+          emotion: null,
+          contextMeta: context.meta,
+          tokens: { in: 0, out: 0 },
+          costUsd: 0,
+        },
+        superseded: true,
+      };
     }
 
     if (!fullText) {
@@ -309,6 +333,10 @@ export async function runStreamingAssistantTurn(args: {
     }
 
     const donationSignal = extractDonationSignal(fullText);
+    // Sentences were sanitized for TTS, which drops [[SHOW_QR]]; it was noted on the raw text.
+    if (qrMarkerSeen && !donationSignal.donation.show) {
+      donationSignal.donation = buildDonationPayload(true, 'marker');
+    }
     const nudged = maybeInjectDonationNudge(donationSignal.text, Boolean(donationSignal.donation.show), replyCount());
     const donation = nudged.forcedQr
       ? buildDonationPayload(true, 'periodic_nudge')

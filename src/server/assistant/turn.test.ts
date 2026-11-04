@@ -57,6 +57,7 @@ vi.mock('../tts/stream.js', () => ({
 
 const { runtimeConfig } = await import('../config/runtime.js');
 const { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn } = await import('./service.js');
+const { buildContents } = await import('./context.js');
 
 function deferred<T = void>() {
   let resolve!: (value: T) => void;
@@ -183,6 +184,21 @@ describe('assistant turn', () => {
       expect(ws.types()).not.toContain('speak');
     });
 
+    it('does not record a superseded reply in history as if it was said', async () => {
+      const pending = deferred<string>();
+      fakes.provider = queuedProvider([pending.promise]);
+
+      const turn = runAssistantTurn('what is your secret', collect().broadcast);
+      await waitFor(() => vi.mocked(fakes.provider.generateContent).mock.calls.length > 0);
+      interruptAssistantTurns();
+      pending.resolve('My secret is never heard.');
+      await turn;
+
+      const said = buildContents('next').contents.map((entry) => entry.parts[0]?.text);
+      expect(said).not.toContain('My secret is never heard.');
+      expect(said.at(-2)).toContain('[cut off by the visitor]');
+    });
+
     it('lets a newer turn supersede an older one that is still generating', async () => {
       const slow = deferred<string>();
       fakes.provider = queuedProvider([slow.promise, 'Second question wins.']);
@@ -261,6 +277,24 @@ describe('assistant turn', () => {
       const [end] = ws.ofType('speak_end');
       expect(end?.fullText).toBe('One thing. Two things.');
       expect(end?.emotion?.emoji).toBe('😏');
+    });
+
+    // An abort resolves with empty text; it used to fall through to a second,
+    // one-call LLM request for a turn nobody was waiting for any more.
+    it('does not call the model a second time when interrupted before the first word', async () => {
+      const gate = deferred();
+      fakes.provider = streamingProvider([gate.promise, 'Too late. ']);
+      const ws = collect();
+
+      const turn = runAssistantTurn('tell me about yourself', ws.broadcast);
+      await waitFor(() => vi.mocked(fakes.provider.streamContent!).mock.calls.length > 0);
+      interruptAssistantTurns();
+      gate.resolve();
+      const result = await turn;
+
+      expect(result.superseded).toBe(true);
+      expect(fakes.provider.generateContent).not.toHaveBeenCalled();
+      expect(ws.types()).not.toContain('speak');
     });
 
     it('closes the TTS stream as soon as the user barges in, instead of waiting for audio nobody hears', async () => {

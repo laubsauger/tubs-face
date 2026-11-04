@@ -42,7 +42,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   });
 
   wss.on('connection', (socket: WebSocket, request: IncomingMessage) => {
-    const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+    const url = new URL(request.url ?? '/', 'http://localhost');
     const isSpectator = url.searchParams.get('role') === 'spectator';
 
     clients.add(socket);
@@ -90,7 +90,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
 }
 
 function isWebSocketRequest(request: IncomingMessage): boolean {
-  const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+  const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
   return pathname === WS_PATH;
 }
 

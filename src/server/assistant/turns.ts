@@ -171,6 +171,11 @@ export function startProactiveTurn(context: string, broadcast: Broadcast): void 
   if (runtimeConfig.muted || !context.trim()) {
     return;
   }
+  // Tubs speaking up on his own never kills a reply someone is waiting for.
+  if (hasActiveAssistantTurn()) {
+    console.log('[turn] proactive line skipped: a reply is still being generated');
+    return;
+  }
   interruptCurrentTurn(broadcast, 'system');
   sessionStats.messagesIn += 1;
   sessionStats.lastActivity = Date.now();
