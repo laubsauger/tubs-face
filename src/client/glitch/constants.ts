@@ -92,6 +92,50 @@ export const MORPH_WAKE = {
   staggerMs: 90,
 } as const;
 
+/**
+ * Living expressions: small motion on top of each expression's shape, applied
+ * per eye and mouth in the shader. Scales are fractions (0.02 = 2%), offsets
+ * fractions of the face height. Subtle on purpose: a character, not a cartoon.
+ */
+export const MOTION = {
+  /** Idle and listening breathe: a slow swell of eyes and mouth, rising a touch. */
+  breathScale: 0.018,
+  breathRise: 0.004,
+  breathPeriodMs: 4200,
+  /** Asleep the breath is slower and a little deeper. */
+  sleepBreathScale: 0.03,
+  sleepBreathPeriodMs: 6400,
+  /** Surprised pops in: swells past its size, then settles. */
+  popAmount: 0.1,
+  popPeriodMs: 360,
+  popDecayMs: 160,
+  /** Happy and smile give a little hop when they appear. */
+  bounceHeight: 0.018,
+  bouncePeriodMs: 230,
+  bounceDecayMs: 230,
+  /** Angry trembles by about a pixel. */
+  trembleAmount: 0.0016,
+  /** Sad sinks and the lids droop, slowly. */
+  sadSink: 0.022,
+  sadDroop: 0.08,
+  sadSettleMs: 1600,
+  /** Thinking: one eye squints a little, the other opens, both drift. */
+  thinkSquint: 0.14,
+  thinkWiden: 0.03,
+  thinkDrift: 0.012,
+  thinkDriftPeriodMs: 6500,
+  /** Smug: one upper lid a little lower. */
+  smugLid: 0.22,
+  /** Looking sideways turns the head: the near eye grows, the far eye narrows, and the face travels a bit further. */
+  headTurnNearGrow: 0.05,
+  headTurnFarNarrow: 0.14,
+  headTurnShift: 0.03,
+  /** How fast a held pose (sink, lid, squint) settles after a change. */
+  poseSettleMs: 220,
+  /** How fast loops (breath, tremble, drift) fade in and out. */
+  loopFadeMs: 400,
+} as const;
+
 export const SPEAK_CYCLE_MS = 320;
 export const SPEAK_MIN_SCALE = 0.75;
 export const SPEAK_MAX_SCALE = 1.05;

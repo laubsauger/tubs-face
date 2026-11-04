@@ -12,6 +12,7 @@ import {
   setExpressionProfiles,
   type GlitchConfig,
 } from './constants.js';
+import { SHAPE_TRANSFORM_FLOATS, createExpressionMotion, createFaceMotion, packShapeTransforms } from './expression-motion.js';
 import { computeFrameState, renderFrameWebGpu } from './frame.js';
 import { INSTANCE_FLOATS, createMorphPlan, easeOutCubic, packPixels, planMorph, snapshotMorph, writeMorphFrame } from './morph.js';
 import { buildPixelGrid, featureFitScale, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
@@ -47,9 +48,12 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   // The grid of the expression on screen; during a morph, the one it morphs to.
   let pixelGrid: PixelGridPoint[] = [];
   let shapeCenters: ShapeCenter[] = [];
-  // Centres the blink and speech mouth squash around; they travel with a morph.
-  const drawnCenters: ShapeCenter[] = [{ cx: 0, cy: 0 }, { cx: 0, cy: 0 }, { cx: 0, cy: 0 }];
-  const morphFromCenters: ShapeCenter[] = [{ cx: 0, cy: 0 }, { cx: 0, cy: 0 }, { cx: 0, cy: 0 }];
+  // Shape centres the blink, speech mouth and living motion work around; they travel with a morph.
+  const drawnCenters: ShapeCenter[] = [{ cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }];
+  const morphFromCenters: ShapeCenter[] = [{ cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }];
+  const expressionMotion = createExpressionMotion();
+  const faceMotion = createFaceMotion();
+  const shapeTransforms = new Float32Array(SHAPE_TRANSFORM_FLOATS * 3);
   const morph = createMorphPlan();
   let morphing = false;
   let morphStart = 0;
@@ -344,6 +348,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       if (!drawn || !from || !to) continue;
       drawn.cx = from.cx + (to.cx - from.cx) * p;
       drawn.cy = from.cy + (to.cy - from.cy) * p;
+      drawn.halfH = from.halfH + (to.halfH - from.halfH) * p;
     }
   }
 
@@ -427,6 +432,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     if (morphing) {
       stepMorph(now);
     }
+    // Living motion holds still while the FX editor shows the true shapes.
+    expressionMotion.update(state.fxEditorOpen ? null : faceKey(state), now, state.gazeX, faceMotion);
+    packShapeTransforms(faceMotion, drawnCenters, containerCssH, shapeTransforms);
 
     // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
     const tint = state.sleeping || state.fxEditorOpen
@@ -479,6 +487,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       faceW: faceEl.getBoundingClientRect().width,
       faceH: faceEl.getBoundingClientRect().height,
       shapeCenters: drawnCenters,
+      shapeTransforms,
       baseHSL: moodHSL,
       glitchBurstSeed,
       sleeping: state.sleeping,
@@ -539,5 +548,6 @@ function copyCenters(from: readonly ShapeCenter[], to: ShapeCenter[]): void {
     if (!source || !target) continue;
     target.cx = source.cx;
     target.cy = source.cy;
+    target.halfH = source.halfH;
   }
 }

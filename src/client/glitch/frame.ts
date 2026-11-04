@@ -3,6 +3,9 @@ import { GAZE_EYE_RANGE_X, GAZE_EYE_RANGE_Y, GAZE_MOUTH_RANGE_X, GAZE_MOUTH_RANG
 import { clamp01 } from './utils.js';
 import type { GpuHandle } from './webgpu.js';
 
+/** Where the per-shape transforms start in the pixel pass uniforms (after the 12 shared vec4s). */
+const SHAPE_TRANSFORM_OFFSET = 48;
+
 export interface FrameState {
   t: number;
   dpr: number;
@@ -131,12 +134,14 @@ export function writeGpuUniforms(
     faceW: number;
     faceH: number;
     shapeCenters: Array<{ cy: number }>;
+    /** Left eye, right eye, mouth: (sx, sy, tx, ty) each, from the living expression motion. */
+    shapeTransforms: Float32Array;
     baseHSL: { h: number; s: number; l: number };
     glitchBurstSeed: number;
     sleeping: boolean;
   },
 ): void {
-  const { gpuDevice, gpuUniformBuffer, gpuPostUniformBuffer, gpuUniformData, gpuPostUniformData, config, faceW, faceH, shapeCenters, baseHSL, glitchBurstSeed, sleeping } = args;
+  const { gpuDevice, gpuUniformBuffer, gpuPostUniformBuffer, gpuUniformData, gpuPostUniformData, config, faceW, faceH, shapeCenters, shapeTransforms, baseHSL, glitchBurstSeed, sleeping } = args;
   if (!gpuDevice || !gpuUniformBuffer || !gpuPostUniformBuffer) return;
 
   const sb = config.scanBeam;
@@ -171,6 +176,8 @@ export function writeGpuUniforms(
   gpuUniformData[31] = 0;
   gpuUniformData[32] = 0;
   gpuUniformData[40] = 0;
+  // Pixel pass only (xformL, xformR, xformM); the post pass doesn't move shapes.
+  gpuUniformData.set(shapeTransforms, SHAPE_TRANSFORM_OFFSET);
 
   gpuDevice.queue.writeBuffer(gpuUniformBuffer, 0, gpuUniformData.buffer, gpuUniformData.byteOffset, GPU_UNIFORM_FLOATS * 4);
   gpuDevice.queue.writeBuffer(gpuPostUniformBuffer, 0, gpuPostUniformData.buffer, gpuPostUniformData.byteOffset, GPU_UNIFORM_FLOATS * 4);
@@ -193,6 +200,7 @@ export function renderFrameWebGpu(frame: FrameState, args: {
   faceW: number;
   faceH: number;
   shapeCenters: Array<{ cy: number }>;
+  shapeTransforms: Float32Array;
   baseHSL: { h: number; s: number; l: number };
   glitchBurstSeed: number;
   sleeping: boolean;

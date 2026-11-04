@@ -13,11 +13,22 @@ struct Globals {
   glitch: vec4f,
   glitch2: vec4f,
   scanline: vec4f,
-  flags: vec4f
+  flags: vec4f,
+  // Living expression motion per shape: a pixel centre p goes to p * xy + zw.
+  xformL: vec4f,
+  xformR: vec4f,
+  xformM: vec4f
 };
 
 @group(0) @binding(0) var<uniform> u: Globals;
 @group(0) @binding(1) var<storage, read> pixels: array<vec4f>;
+
+// Tears (3 and 4) move with their eye.
+fn shapeXform(group: f32) -> vec4f {
+  if (group < 0.5 || (group > 2.5 && group < 3.5)) { return u.xformL; }
+  if (group < 1.5 || group > 3.5) { return u.xformR; }
+  return u.xformM;
+}
 
 struct VSOut {
   @builtin(position) position: vec4f,
@@ -68,16 +79,21 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
   let a = pixels[base];
   let b = pixels[base + 1u];
 
-  var x = a.x + u.face.x;
-  var y = a.y + u.face.y;
   let hueOff = a.z;
   let brightOff = a.w;
 
   let group = b.x;
   // Below 1 only while a morph grows the pixel in or shrinks it away.
   let scale = b.y;
-  var drawH = u.motion.y;
-  let drawW = u.motion.y;
+
+  // The shape's motion moves the pixel centre and sizes the pixel with it.
+  let xf = shapeXform(group);
+  let sz = u.motion.y;
+  let moved = (a.xy + vec2f(sz * 0.5)) * xf.xy + xf.zw;
+  let drawW = sz * xf.x;
+  var drawH = sz * xf.y;
+  var x = moved.x - drawW * 0.5 + u.face.x;
+  var y = moved.y - drawH * 0.5 + u.face.y;
 
   if (group < 1.5) {
     x = x + u.gaze.x;
@@ -87,14 +103,14 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
       if (group >= 0.5) {
         centerY = u.shapeCenters.y;
       }
-      centerY = centerY + u.face.y + u.gaze.y;
+      centerY = centerY * xf.y + xf.w + u.face.y + u.gaze.y;
       y = centerY + (y - centerY) * (1.0 - u.shapeCenters.w);
-      drawH = max(2.0, u.motion.y * (1.0 - u.shapeCenters.w * 0.85));
+      drawH = max(2.0, drawH * (1.0 - u.shapeCenters.w * 0.85));
     }
   } else if (group < 2.5) {
     x = x + u.gaze.z;
     y = y + u.gaze.w;
-    let centerY = u.shapeCenters.z + u.face.y + u.gaze.w;
+    let centerY = u.shapeCenters.z * xf.y + xf.w + u.face.y + u.gaze.w;
     y = centerY + (y - centerY) * u.motion.x;
   } else {
     x = x + u.gaze.x;

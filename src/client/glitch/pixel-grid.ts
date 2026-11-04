@@ -29,6 +29,8 @@ export interface PixelGridPoint {
 export interface ShapeCenter {
   cx: number;
   cy: number;
+  /** Half the shape's height: a lowered lid pivots on the bottom edge. */
+  halfH: number;
 }
 
 export interface PixelGridBuildResult {
@@ -92,7 +94,7 @@ export function buildPixelGrid(
       ty = cy - sh * 0.5;
     }
 
-    shapeCenters.push({ cx: tx + sw / 2, cy: ty + sh / 2 });
+    shapeCenters.push({ cx: tx + sw / 2, cy: ty + sh / 2, halfH: sh / 2 });
 
     let hitTest = 'rect';
     if (profile) {
