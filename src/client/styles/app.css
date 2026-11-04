@@ -246,6 +246,24 @@ a {
   color: #67e8f9;
 }
 
+.status-action.is-rec {
+  border-color: rgba(248, 113, 113, 0.6);
+  color: #fca5a5;
+  font-variant-numeric: tabular-nums;
+}
+
+.rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ef4444;
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  50% { opacity: 0.35; }
+}
+
 /* How Tubs listens, shared by the status meter and the listening dot. */
 .listen-idle { --listen-color: #8b96a8; }
 .listen-always-on { --listen-color: #2dd4bf; }

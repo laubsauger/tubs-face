@@ -44,6 +44,10 @@ export interface AppShellControls {
     renameFace(id: string, name: string): Promise<void>;
     deleteFace(id: string): Promise<void>;
   } | undefined;
+  /** Face window: a video of this tab with its sound and the mic (R). */
+  recorder?: {
+    toggle(): Promise<void>;
+  } | undefined;
   /** Dashboard: things only the face window can do (camera, perform mode). */
   remote?: {
     faceCommand(command: FaceCommand): void;
@@ -176,6 +180,9 @@ function runHotkey(action: HotkeyAction, store: AppStore, controls: AppShellCont
       return;
     case 'open-mini':
       openMiniWindow(store, true);
+      return;
+    case 'record-toggle':
+      void controls?.recorder?.toggle();
       return;
     case 'focus-chat':
       document.getElementById('chat-panel-input')?.focus();

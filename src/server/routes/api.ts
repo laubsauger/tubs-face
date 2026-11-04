@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { applyCors, sendNoContent } from '../http/response.js';
 import { handleFaceRoute } from './face-routes.js';
+import { handleRecordingRoute } from './recording-routes.js';
 import { handleSystemRoute } from './system-routes.js';
 import { handleTurnRoute } from './turn-routes.js';
 
@@ -18,5 +19,6 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
 
   return await handleSystemRoute(request, response, url)
     || await handleTurnRoute(request, response, url)
-    || await handleFaceRoute(request, response, url);
+    || await handleFaceRoute(request, response, url)
+    || await handleRecordingRoute(request, response, url);
 }

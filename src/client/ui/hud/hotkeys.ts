@@ -6,7 +6,7 @@
  * so an operator can just start typing to Tubs. Space is push-to-talk (voice
  * runtime), backtick folds the dock.
  */
-export const SHORTCUT_KEYS = new Set([' ', '`', 'c', 'd', 'e', 'f', 'm', 'o', 's', 't', 'x', 'z']);
+export const SHORTCUT_KEYS = new Set([' ', '`', 'c', 'd', 'e', 'f', 'm', 'o', 'r', 's', 't', 'x', 'z']);
 
 export type HotkeyAction =
   | 'fx-toggle'
@@ -21,6 +21,8 @@ export type HotkeyAction =
   | 'fullscreen'
   | 'perform-toggle'
   | 'open-mini'
+  /** Start or stop the video recording of the face window. */
+  | 'record-toggle'
   /** The dock's chat input (Chat tab open, or the dashboard's chat column). */
   | 'focus-chat'
   /** The compact input on the floating transcript, when the Chat tab is not on screen. */
@@ -41,7 +43,7 @@ export interface HotkeyContext {
 }
 
 // Shortcuts that act on the face window itself; the dashboard has no face.
-const FACE_ONLY: ReadonlySet<HotkeyAction> = new Set(['enroll', 'transcript-toggle', 'fullscreen', 'perform-toggle', 'open-mini']);
+const FACE_ONLY: ReadonlySet<HotkeyAction> = new Set(['enroll', 'transcript-toggle', 'fullscreen', 'perform-toggle', 'open-mini', 'record-toggle']);
 
 const LETTER_ACTIONS: Record<string, HotkeyAction> = {
   e: 'fx-toggle',
@@ -54,6 +56,7 @@ const LETTER_ACTIONS: Record<string, HotkeyAction> = {
   x: 'fullscreen',
   z: 'perform-toggle',
   o: 'open-mini',
+  r: 'record-toggle',
 };
 
 export function resolveHotkey(ctx: HotkeyContext): HotkeyAction | null {

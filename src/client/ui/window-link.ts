@@ -39,6 +39,10 @@ const RELAYED_FACE_FIELDS = [
   'moodPos',
   'moodNeg',
   'moodArousal',
+  // The face window records; the dashboard shows it and can stop it.
+  'screenRecording',
+  'screenRecordingSince',
+  'screenRecordingFile',
 ] as const satisfies ReadonlyArray<keyof AppState>;
 type RelayedFaceState = Pick<AppState, (typeof RELAYED_FACE_FIELDS)[number]>;
 
@@ -46,7 +50,7 @@ type RelayedFaceState = Pick<AppState, (typeof RELAYED_FACE_FIELDS)[number]>;
 const REMOTE_SETTINGS = ['voiceHandsFreeEnabled', 'voiceWakeWordEnabled', 'faceDetectionDelayMs'] as const satisfies ReadonlyArray<keyof AppState>;
 type RemoteSettings = Pick<AppState, (typeof REMOTE_SETTINGS)[number]>;
 
-export type FaceCommand = 'toggleCamera' | 'toggleAmbient' | 'togglePerform' | 'refreshFaces' | 'pttStart' | 'pttStop';
+export type FaceCommand = 'toggleCamera' | 'toggleAmbient' | 'togglePerform' | 'refreshFaces' | 'pttStart' | 'pttStop' | 'stopRecording';
 
 type LinkMessage =
   | { type: 'here'; id: string; kind: WindowKind; reply?: boolean }

@@ -121,3 +121,24 @@ export interface IngestDoneResponse extends OkResponse {
 }
 
 export type FaceLibraryResponse = FaceLibraryDocument;
+
+/** Video recordings of the face window (POST /api/recordings, /chunk, /finish, /reveal). */
+export interface RecordingStartRequest {
+  ext: 'mp4' | 'webm';
+}
+
+export interface RecordingStartResponse {
+  file: string;
+  dir: string;
+}
+
+export interface RecordingFileRequest {
+  file: string;
+}
+
+export interface RecordingFinishResponse {
+  file: string;
+  path: string;
+  /** Rewritten by ffmpeg as a plain MP4; false keeps Chrome's fragmented file. */
+  remuxed: boolean;
+}

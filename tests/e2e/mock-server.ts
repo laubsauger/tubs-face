@@ -7,9 +7,16 @@
  *   GET  /__test/clients    how many pages are connected
  * tts_request messages are answered with tone audio, like the Python TTS would.
  */
+import { mkdtempSync } from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { toConfigResponse } from '../../src/server/config/runtime.js';
+import { handleRecordingRoute } from '../../src/server/routes/recording-routes.js';
+
+// Recordings go through the real route into a scratch folder, never ~/Movies.
+process.env.TUBS_RECORDINGS_DIR = mkdtempSync(join(os.tmpdir(), 'tubs-e2e-recordings-'));
 
 const port = Number(process.env.MOCK_PORT || 39010);
 
@@ -114,6 +121,13 @@ const server = http.createServer(async (request, response) => {
     wsReceived = [];
     httpReceived = [];
     json(response, 200, { ok: true });
+    return;
+  }
+  if (path === '/__test/recordings') {
+    json(response, 200, { dir: process.env.TUBS_RECORDINGS_DIR });
+    return;
+  }
+  if (path.startsWith('/api/recordings') && await handleRecordingRoute(request, response, url)) {
     return;
   }
   if (path === '/__test/clients') {

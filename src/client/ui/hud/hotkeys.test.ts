@@ -81,6 +81,14 @@ describe('shortcuts', () => {
     expect(press('Escape', { inTextField: true })).toBe('sleep-toggle');
   });
 
+  // Chrome only lets a tab share itself after a key press or click in that
+  // tab, so a recording starts in the face window, never from the dashboard.
+  it('R records the face window, in perform mode too', () => {
+    expect(press('r')).toBe('record-toggle');
+    expect(press('r', { perform: true, chatInputVisible: false })).toBe('record-toggle');
+    expect(press('r', { view: 'dashboard' })).toBeNull();
+  });
+
   it('drops face-window shortcuts on the dashboard, which has no face of its own', () => {
     for (const key of ['f', 't', 'x', 'z', 'o']) {
       expect(press(key, { view: 'dashboard' })).toBeNull();

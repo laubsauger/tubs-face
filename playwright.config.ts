@@ -29,6 +29,8 @@ export default defineConfig({
         '--use-fake-device-for-media-stream',
         '--disable-audio-output',
         '--mute-audio',
+        // The recorder shares its own tab; this answers Chrome's prompt.
+        '--auto-accept-this-tab-capture',
       ],
     },
   },

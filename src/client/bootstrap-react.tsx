@@ -1,6 +1,7 @@
 import { flushSync } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { createAmbientRuntime } from './audio/ambient-runtime.js';
+import { createScreenRecorder } from './audio/screen-recorder.js';
 import { createSpeechRuntime } from './audio/speech-runtime.js';
 import { createVoiceRuntime } from './audio/voice-runtime.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
@@ -72,6 +73,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const voiceRuntime = isController ? createVoiceRuntime(store) : null;
   const faceBehaviorRuntime = hasFace ? createFaceBehaviorRuntime(store, messageMode) : null;
   const faceRuntime = isController ? createFaceShellRuntime(store) : null;
+  const screenRecorder = isController ? createScreenRecorder(store) : null;
   // The mini tile follows the face window it sits in, not the fullscreen sync.
   const windowRuntime = isDashboard || options.embedded ? null : createWindowRuntime(store, messageMode);
   const windowLink: WindowLink | null = isController
@@ -93,6 +95,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       ambient: {
         toggleEnabled: () => ambientRuntime!.toggleEnabled(),
       },
+      ...(screenRecorder ? { recorder: { toggle: () => screenRecorder.toggle() } } : {}),
       ...(voiceRuntime ? {
         voice: {
           enableMic: () => voiceRuntime.enableMic(),
@@ -146,6 +149,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         return;
       case 'pttStop':
         controls?.voice?.stopManualRecording();
+        return;
+      case 'stopRecording':
+        screenRecorder?.stop();
         return;
     }
   }
@@ -414,6 +420,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       }
       wsClient.disconnect();
       windowLink?.dispose();
+      screenRecorder?.dispose();
       sleepRuntime?.dispose();
       speechRuntime?.dispose();
       ambientRuntime?.dispose?.();

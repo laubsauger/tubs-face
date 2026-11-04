@@ -1,8 +1,9 @@
 // One line of at-a-glance state across the top. Each chip opens the dock tab
 // with the details.
 
-import type { JSX, ReactNode } from 'react';
-import type { AppStore, DockTab } from '../../state/app-state.js';
+import { useEffect, useState, type JSX, type ReactNode } from 'react';
+import type { AppStore, DockTab, ScreenRecordingPhase } from '../../state/app-state.js';
+import { postJson } from '../../transport/http.js';
 import type { AppShellControls } from '../app-shell.js';
 import { moodWordFor } from '../panels/MindPanel.js';
 import { useAppSelector } from '../react-store.js';
@@ -39,6 +40,9 @@ export function StatusBar({ store, view, controls }: {
     faceWindowOpen: current.peers.face,
     facePerform: current.facePerform,
     fullscreenActive: current.fullscreenActive,
+    screenRecording: current.screenRecording,
+    screenRecordingSince: current.screenRecordingSince,
+    screenRecordingFile: current.screenRecordingFile,
   }));
   const open = (tab: DockTab) => store.setState((current) => openDockTab(current, tab));
   // The dashboard only knows mic and camera from the face window.
@@ -83,6 +87,19 @@ export function StatusBar({ store, view, controls }: {
       </div>
 
       <div className="status-actions">
+        <RecordControls
+          phase={state.screenRecording}
+          since={state.screenRecordingSince}
+          file={state.screenRecordingFile}
+          // Only the face window can start one: Chrome asks that tab to share itself.
+          onStart={view === 'face' && controls?.recorder ? () => void controls.recorder?.toggle() : null}
+          onStop={view === 'face' ? () => void controls?.recorder?.toggle() : () => controls?.remote?.faceCommand('stopRecording')}
+          onReveal={(file) => {
+            postJson('/api/recordings/reveal', { file }).catch((error: unknown) => {
+              store.appendLog('error', `Show in Finder failed: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }}
+        />
         {view === 'face' ? (
           <>
             <button id="window-perform" type="button" className="status-action" title="Perform mode: hide the HUD (Z)" onClick={() => store.setState((current) => ({ ...current, uiHidden: true }))}>
@@ -116,6 +133,62 @@ export function StatusBar({ store, view, controls }: {
       </div>
     </header>
   );
+}
+
+function RecordControls(props: {
+  phase: ScreenRecordingPhase;
+  since: number | null;
+  file: string | null;
+  onStart: (() => void) | null;
+  onStop: () => void;
+  onReveal: (file: string) => void;
+}): JSX.Element | null {
+  const { phase, since, file } = props;
+  if (phase === 'recording') {
+    return (
+      <button id="recording-toggle" type="button" className="status-action is-rec" title="Stop recording (R)" onClick={props.onStop}>
+        <span className="rec-dot" aria-hidden="true" />
+        {since == null ? 'REC' : <Elapsed since={since} />}
+      </button>
+    );
+  }
+  if (phase === 'starting' || phase === 'saving') {
+    return (
+      <button id="recording-toggle" type="button" className="status-action" disabled>
+        {phase === 'starting' ? 'Rec…' : 'Saving…'}
+      </button>
+    );
+  }
+  return (
+    <>
+      {file ? (
+        <button id="recording-show" type="button" className="status-action" title={`Show ${file} in Finder`} onClick={() => props.onReveal(file)}>
+          Show video
+        </button>
+      ) : null}
+      {props.onStart ? (
+        <button
+          id="recording-toggle"
+          type="button"
+          className="status-action"
+          title="Record this tab with Tubs' voice and the mic, saved to ~/Movies/tubs-recordings (R)"
+          onClick={props.onStart}
+        >
+          Rec
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function Elapsed({ since }: { since: number }): JSX.Element {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - since) / 1000));
+  return <>{Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}</>;
 }
 
 function Chip(props: {

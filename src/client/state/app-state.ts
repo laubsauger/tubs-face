@@ -7,6 +7,8 @@ import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { TurnAction, TurnActor } from '../../shared/contracts/turn-script.js';
 
+export type ScreenRecordingPhase = 'idle' | 'starting' | 'recording' | 'saving';
+
 export interface LogEntry {
   id: string;
   level: 'info' | 'error';
@@ -127,6 +129,11 @@ export interface AppState {
   peers: WindowPeers;
   /** Dashboard only: whether the face window is in perform mode; null until it reports. */
   facePerform: boolean | null;
+  /** Video recording of the face window (R), see audio/screen-recorder.ts. */
+  screenRecording: ScreenRecordingPhase;
+  screenRecordingSince: number | null;
+  /** The last saved recording's file name, for "Show in Finder". */
+  screenRecordingFile: string | null;
   chatVerbosity: 'all' | 'chat' | 'minimal';
   manualComposerMode: 'single' | 'script';
   manualActor: TurnActor;
@@ -349,6 +356,9 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
     stage: DEFAULT_STAGE_PREFS,
     peers: { face: false, mini: false, dashboard: false },
     facePerform: null,
+    screenRecording: 'idle',
+    screenRecordingSince: null,
+    screenRecordingFile: null,
     chatVerbosity: 'all',
     manualComposerMode: 'single',
     manualActor: 'main',

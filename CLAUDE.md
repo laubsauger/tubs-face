@@ -43,6 +43,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `tts/stream.ts` — Streaming audio chunks to WebSocket
 - `config/runtime.ts` — Runtime configuration, session stats
 - `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
+- `recordings.ts` — Face-window video recordings, appended piece by piece, remuxed to plain MP4 by ffmpeg when present; saved to `~/Movies/tubs-recordings` (`TUBS_RECORDINGS_DIR`)
 
 ### Python Service (`src/realtime-processing-service.py`)
 - Flask app on port 3002, started and restarted by the server
@@ -61,6 +62,7 @@ Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). 
 **Runtime-based architecture** — each subsystem is a standalone runtime with `init()`, `bind()`, `dispose()`:
 
 - `audio/speech-runtime.ts` — Server audio playback (streaming queue), subtitle timing
+- `audio/screen-recorder.ts` — Record button / R key: this tab's video and audio plus the mic, mixed, uploaded to the server each second
 - `audio/voice-runtime.ts` — Mic input + VAD (push-to-talk + hands-free)
 - `audio/ambient-runtime.ts` — Background sounds
 - `face/runtime.ts` — Face shell, camera input, face detection
