@@ -4,7 +4,6 @@ import type { ExpressionName } from '../../shared/contracts/config.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../../shared/contracts/http.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
-import type { DonationSignalPayload } from '../../shared/contracts/ws.js';
 import type { TurnAction, TurnActor } from '../../shared/contracts/turn-script.js';
 
 export interface LogEntry {
@@ -59,7 +58,6 @@ export interface AppState {
   currentTurnId: string | null;
   currentSpeechText: string;
   currentReactionEmoji: string;
-  currentDonationSignal: DonationSignalPayload | null;
   gazeX: number;
   gazeY: number;
   idleVariant: 'soft' | 'flat';
@@ -97,7 +95,6 @@ export interface AppState {
   /** Face onboarding wizard is open (F key or the Onboard button). */
   faceEnrollOpen: boolean;
   controlSpeakText: string;
-  controlDonationAmount: string;
   chatComposerText: string;
   uiHidden: boolean;
   debugOverlayActive?: boolean;
@@ -199,7 +196,6 @@ export function createAppStore(): AppStore {
     currentTurnId: null,
     currentSpeechText: '',
     currentReactionEmoji: '',
-    currentDonationSignal: null,
     gazeX: 0,
     gazeY: 0,
     idleVariant: 'soft',
@@ -235,7 +231,6 @@ export function createAppStore(): AppStore {
     faceEnrollOpen: false,
     faceDetectionDelayMs: 0,
     controlSpeakText: '',
-    controlDonationAmount: '5.00',
     chatComposerText: '',
     uiHidden: false,
     fullscreenActive: false,

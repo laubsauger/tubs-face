@@ -29,7 +29,6 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'turn_context',
   'turn_script',
   'incoming',
-  'donation_signal',
   'stats',
   'conversation_mode',
   'field_notes',

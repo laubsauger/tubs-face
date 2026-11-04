@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createTagFilter, endVisit, extractFieldNotes, fieldNotesSnapshot, memoryContext, NOTES_TTL_MS, pickGossip, recordFieldNotes, resetFieldNotes,
-  setCurrentVisitor, stripFieldNoteTags,
+  setCurrentVisitor,
 } from './field-notes.js';
 
 // Tubs remembering things about people is the point; leaking a note into
@@ -51,9 +51,6 @@ describe('field notes', () => {
     expect(fieldNotesSnapshot(1).notes).toEqual([]);
   });
 
-  it('strips note tags but leaves the QR marker for the donation check', () => {
-    expect(stripFieldNoteTags('Pay up. [[SHOW_QR]] [[NOTE: cheap]]')).toBe('Pay up. [[SHOW_QR]]');
-  });
 });
 
 // The sentence splitter must never see half a tag, or TTS would read it out.
@@ -64,9 +61,9 @@ describe('stream tag filter', () => {
     expect(out).toBe('Nice hat.  Next. Done.');
   });
 
-  it('passes the QR marker through and drops an unclosed tag at the end', () => {
+  it('drops any complete marker, and an unclosed tag at the end', () => {
     const filter = createTagFilter();
-    expect(filter.push('Venmo me. [[SHOW_QR]] ')).toBe('Venmo me. [[SHOW_QR]] ');
+    expect(filter.push('Fine. [[SHOW_QR]] ')).toBe('Fine.  ');
     expect(filter.push('[[NOTE: never closed')).toBe('');
     expect(filter.flush()).toBe('');
   });

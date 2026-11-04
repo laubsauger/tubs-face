@@ -60,9 +60,11 @@ describe('system instructions built from the persona template', () => {
     }
   });
 
-  // The handle comes from DONATION_VENMO so the studio can change it without
-  // editing the persona; the QR card and the spoken line must agree.
-  it('fills the donation handle from config', () => {
-    expect(buildAssistantSystemInstruction()).toContain(`Venmo: @${runtimeConfig.donationHandle}.`);
+  // The studio dropped the begging-for-wheels story and payments; Tubs must
+  // not be told to ask visitors for money in any mode.
+  it('never tells Tubs to ask for money or wheels', () => {
+    for (const prompt of [buildAssistantSystemInstruction(), buildDualHeadSystemInstruction()]) {
+      expect(prompt).not.toMatch(/venmo|donat|SHOW_QR|would like wheels/i);
+    }
   });
 });

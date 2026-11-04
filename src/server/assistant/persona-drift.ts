@@ -13,7 +13,7 @@ const PERSONA_DRIFT_PHRASE_RE = /\b(certainly|however|it's important to remember
 
 const PERSONA_DRIFT_FORMAL_RE = /\b(representation|subjective|therefore|additionally|furthermore|moreover)\b/i;
 
-const PERSONA_MARKER_RE = /\b(tubs|wheel|wheels|venmo|robot|plastic tubs?)\b/i;
+const PERSONA_MARKER_RE = /\b(tubs|robot|plastic tubs?)\b/i;
 
 const CONTRACTION_RE = /\b(i'm|you're|we're|that's|it's|don't|can't|won't|let's)\b/i;
 

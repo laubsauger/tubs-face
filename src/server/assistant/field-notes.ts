@@ -58,11 +58,6 @@ export function extractFieldNotes(rawText: string): { notes: string[]; quotes: s
   return found;
 }
 
-/** Removes note and quote tags; other [[...]] markers (SHOW_QR) stay. */
-export function stripFieldNoteTags(text: string): string {
-  return String(text).replace(TAG_RE, ' ').replace(/[ \t]{2,}/g, ' ').trim();
-}
-
 function prune(now: number): void {
   for (const [id, record] of visitors) {
     if (now - record.lastSeenAt > NOTES_TTL_MS) visitors.delete(id);
@@ -179,8 +174,7 @@ export function resetFieldNotes(): void {
 /**
  * Streams arrive token by token; a tag can be cut in half by the sentence
  * splitter and then spoken ("NOTE works in marketing"). This holds text back
- * from an opening [[ until its ]] arrives, drops note/quote tags and passes
- * other markers through.
+ * from an opening [[ until its ]] arrives and drops the whole tag.
  */
 export function createTagFilter(): { push(delta: string): string; flush(): string } {
   let held = '';
@@ -203,8 +197,6 @@ export function createTagFilter(): { push(delta: string): string; flush(): strin
           held = held.slice(open);
           break;
         }
-        const tag = held.slice(open, close + 2);
-        out += stripFieldNoteTags(tag) === '' ? '' : tag;
         held = held.slice(close + 2);
       }
       return out;

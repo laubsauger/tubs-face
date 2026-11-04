@@ -1,7 +1,6 @@
 import type { EmotionCue } from '../../shared/contracts/config.js';
-import type { TurnBeat, TurnDonation, TurnEmotion } from '../../shared/contracts/turn-script.js';
+import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import { runtimeConfig } from '../config/runtime.js';
-import { buildDonationPayload, extractDonationSignal, DONATION_MARKER_RE, stripDonationMarkers } from './donation.js';
 import {
   buildEmotionFromEmoji,
   defaultDualHeadSpeakEmotion,
@@ -38,7 +37,7 @@ export const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
   required: ['beats'],
 });
 
-type NormalizedBeat = TurnBeat & { _hadDonationMarker?: boolean };
+type NormalizedBeat = TurnBeat;
 
 export interface ParsedDualHeadScript {
   beats: NormalizedBeat[];
@@ -64,8 +63,7 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
   const rawText = normalizeInput(String(record.text ?? ''));
   const parsed = splitTrailingEmotionEmoji(rawText);
   const strippedText = stripSpeakerLabels(stripFormatting(parsed.text || stripEmojiClusters(rawText)));
-  const hadDonationMarker = DONATION_MARKER_RE.test(strippedText);
-  const text = clampOutput(stripDonationMarkers(strippedText));
+  const text = clampOutput(strippedText);
   const emojiFromField = pickSupportedEmotionEmoji(String(record.emoji ?? ''));
   const emotion = toTurnEmotion((emojiFromField ? buildEmotionFromEmoji(emojiFromField) : null) || parsed.emotion || null);
 
@@ -83,7 +81,6 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
       action: 'react',
       emotion,
       ...(safeDelayMs !== undefined ? { delayMs: safeDelayMs } : {}),
-      _hadDonationMarker: hadDonationMarker,
     };
   }
 
@@ -96,7 +93,6 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
     text,
     emotion: emotion ?? toTurnEmotion(defaultDualHeadSpeakEmotion(actor)),
     ...(safeDelayMs !== undefined ? { delayMs: safeDelayMs } : {}),
-    _hadDonationMarker: hadDonationMarker,
   };
 }
 
@@ -180,7 +176,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
     if (!rawBeatText || rawBeatText.length < 2) {
       continue;
     }
-    const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(stripDonationMarkers(rawBeatText))));
+    const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(rawBeatText)));
     if (!cleanText) {
       continue;
     }
@@ -251,42 +247,6 @@ export function summarizeDualHeadBeatsForLog(beats: TurnBeat[], options: { userI
       return `  -> [${actor}]${actionStr} ${emoji} : ${text}`;
     })
     .join('\n')}`;
-}
-
-export function mergeDonationSignalFromBeats(beats: NormalizedBeat[]): { beats: TurnBeat[]; donation: TurnDonation } {
-  const cleanedBeats: TurnBeat[] = [];
-  let show = false;
-  let reason = 'none';
-
-  for (const beat of beats) {
-    if (beat._hadDonationMarker) {
-      show = true;
-      reason = reason === 'none' ? 'marker' : reason;
-    }
-    if (beat.action !== 'speak') {
-      cleanedBeats.push(stripInternalBeatFields(beat));
-      continue;
-    }
-    const signal = extractDonationSignal(beat.text ?? '');
-    if (signal.donation.show) {
-      show = true;
-      reason = signal.donation.reason ?? reason;
-    }
-    cleanedBeats.push({
-      ...stripInternalBeatFields(beat),
-      text: signal.text,
-    });
-  }
-
-  return {
-    beats: cleanedBeats,
-    donation: buildDonationPayload(show, reason),
-  };
-}
-
-function stripInternalBeatFields(beat: NormalizedBeat): TurnBeat {
-  const { _hadDonationMarker: _ignored, ...rest } = beat;
-  return rest;
 }
 
 function toTurnEmotion(emotion: { emoji?: string | null; expression?: string | null; impulse?: TurnEmotion['impulse'] | null } | null): TurnEmotion | null {

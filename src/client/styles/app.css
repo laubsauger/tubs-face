@@ -338,12 +338,6 @@ a {
   pointer-events: none;
 }
 
-.visual-overlay-top-left {
-  top: clamp(18px, 2vw, 28px);
-  left: clamp(16px, 24vw, 400px);
-  max-width: calc(100vw - 32px);
-}
-
 .visual-overlay-bottom {
   left: 50%;
   bottom: clamp(12px, 1.6vw, 20px);
@@ -617,43 +611,6 @@ a {
   .visual-zzz > span {
     opacity: 0.8;
   }
-}
-
-.visual-donation-card {
-  display: none;
-  align-items: center;
-  gap: 14px;
-  padding: 14px;
-  border-radius: 22px;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(251, 191, 36, 0.28);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
-  backdrop-filter: blur(14px);
-}
-
-.visual-donation-card.is-visible {
-  display: flex;
-}
-
-.visual-donation-card img {
-  width: 96px;
-  height: 96px;
-  border-radius: 14px;
-  background: white;
-}
-
-.visual-donation-copy {
-  display: grid;
-  gap: 6px;
-}
-
-.visual-donation-copy strong {
-  font-size: 1rem;
-}
-
-.visual-donation-copy span {
-  color: rgba(229, 238, 252, 0.72);
-  max-width: 220px;
 }
 
 .eyebrow {
@@ -2022,10 +1979,6 @@ a {
   .hud-corner-bottom-left .panel-surface-chat {
     width: min(340px, calc(100vw - 24px));
     height: clamp(250px, 34vh, 360px);
-  }
-
-  .visual-overlay-top-left {
-    left: 12px;
   }
 
   .visual-overlay-bottom {

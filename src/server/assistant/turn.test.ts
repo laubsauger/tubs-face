@@ -222,15 +222,13 @@ describe('assistant turn', () => {
       expect(hasActiveAssistantTurn()).toBe(false);
     });
 
-    it('turns a donation marker into a QR signal and keeps it out of speech', async () => {
-      fakes.provider = queuedProvider(['Fund my wheels, human. [[SHOW_QR]]']);
+    it('keeps a stray [[MARKER]] out of the spoken and shown text', async () => {
+      fakes.provider = queuedProvider(['Nice hat, human. [[SHOW_QR]]']);
       const ws = collect();
 
-      await runAssistantTurn('how can I help you', ws.broadcast);
+      await runAssistantTurn('how do I look', ws.broadcast);
 
-      const [speak] = ws.ofType('speak');
-      expect(speak?.text).toBe('Fund my wheels, human.');
-      expect(speak?.donation).toMatchObject({ show: true, reason: 'marker' });
+      expect(ws.ofType('speak')[0]?.text).toBe('Nice hat, human.');
     });
   });
 

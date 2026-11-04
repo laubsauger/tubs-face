@@ -61,7 +61,6 @@ export function captureTurnTrace({ source, userText, result, turnTimer, startedA
         imageAttached: Boolean(reply.contextMeta?.imageAttached),
         historyMessages: reply.contextMeta?.historyMessages ?? 0,
         emotion: reply.emotion?.emoji ?? null,
-        donation: reply.donation?.show ? (reply.donation.reason ?? 'shown') : 'none',
       },
     });
     trace.generation({

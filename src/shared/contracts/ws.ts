@@ -1,10 +1,9 @@
 import type {
-  DonationSignalCertainty,
   ExpressionName,
   RuntimeConfig,
   SessionStats,
 } from './config.js';
-import type { EmotionImpulse, TurnContextMeta, TurnDonation, TurnScript } from './turn-script.js';
+import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
 
 export interface TokenUsage {
   in: number;
@@ -15,17 +14,6 @@ export interface TotalsUsage {
   in: number;
   out: number;
   cost: number;
-}
-
-export interface DonationSignalPayload {
-  certainty: DonationSignalCertainty;
-  source?: string;
-  amount?: string;
-  currency?: string;
-  donor?: string;
-  note?: string;
-  reference?: string;
-  ts?: number;
 }
 
 export interface SpeechEmotionPayload {
@@ -155,7 +143,6 @@ export interface WsSpeakServerMessage {
   type: 'speak';
   text: string;
   ts: number;
-  donation?: TurnDonation | null;
   emotion?: SpeechEmotionPayload | null;
   turnId?: string | null;
 }
@@ -173,7 +160,6 @@ export interface WsSpeakEndServerMessage {
   actor?: 'main' | 'small';
   text?: string;
   emotion?: SpeechEmotionPayload | null;
-  donation?: TurnDonation | null;
   fullText?: string;
 }
 
@@ -217,10 +203,6 @@ export interface WsTurnScriptServerMessage extends TurnScript {
 export interface WsIncomingServerMessage {
   type: 'incoming';
   text: string;
-}
-
-export interface WsDonationSignalServerMessage extends DonationSignalPayload {
-  type: 'donation_signal';
 }
 
 export interface WsStatsServerMessage {
@@ -302,7 +284,6 @@ export type WsServerMessage =
   | WsTurnContextServerMessage
   | WsTurnScriptServerMessage
   | WsIncomingServerMessage
-  | WsDonationSignalServerMessage
   | WsStatsServerMessage
   | WsConversationModeServerMessage
   | WsFieldNotesServerMessage

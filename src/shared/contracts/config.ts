@@ -6,8 +6,6 @@ export const DUAL_HEAD_MODES = ['off', 'llm_directed'] as const;
 export const DUAL_HEAD_TURN_POLICIES = ['llm_order', 'main_first', 'small_first'] as const;
 export const VAD_MODELS = ['rms', 'ten-vad'] as const;
 export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-only'] as const;
-export const DONATION_SIGNAL_CERTAINTIES = ['implied', 'confident'] as const;
-export const DONATION_SIGNAL_KINDS = ['confirmed', 'pledge'] as const;
 export const EXPRESSIONS = [
   'idle',
   'idle-flat',
@@ -50,7 +48,6 @@ export type DualHeadMode = (typeof DUAL_HEAD_MODES)[number];
 export type DualHeadTurnPolicy = (typeof DUAL_HEAD_TURN_POLICIES)[number];
 export type VadModel = (typeof VAD_MODELS)[number];
 export type ChatVerbosity = (typeof CHAT_VERBOSITIES)[number];
-export type DonationSignalCertainty = (typeof DONATION_SIGNAL_CERTAINTIES)[number];
 export type ExpressionName = (typeof EXPRESSIONS)[number];
 export type EmotionCue = (typeof EMOTION_CUES)[number];
 export type KokoroVoice = (typeof KOKORO_VOICES)[number];
@@ -120,10 +117,6 @@ export interface RuntimeConfig {
   secondaryAudioGain: number;
   dualHeadTurnPolicy: DualHeadTurnPolicy;
   muted: boolean;
-  /** Venmo handle without the @, from DONATION_VENMO. Read-only. */
-  donationHandle: string;
-  /** What the donation QR encodes, from DONATION_QR_DATA (defaults to the Venmo link). Read-only. */
-  donationQrData: string;
   ambientAudioEnabled: boolean;
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;

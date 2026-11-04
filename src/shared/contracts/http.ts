@@ -1,7 +1,6 @@
 import type { GreetingsConfig, EnrolledFace, FaceLibraryDocument } from './faces.js';
 import type { RuntimeConfig, SessionStats } from './config.js';
-import type { TurnBeat, TurnDonation } from './turn-script.js';
-import type { DonationSignalPayload } from './ws.js';
+import type { TurnBeat } from './turn-script.js';
 
 export interface HealthResponse {
   status: 'ok';
@@ -44,7 +43,6 @@ export interface IncomingResponse extends OkResponse {
 
 export interface ManualTurnScriptRequest {
   beats?: TurnBeat[];
-  donation?: TurnDonation | null;
 }
 
 export interface ManualTurnScriptResponse extends OkResponse {
@@ -75,47 +73,6 @@ export interface TtsRequest {
   stream?: boolean;
   chunkIndex?: number;
   turnId?: string;
-}
-
-export interface PayPalOrderRequest {
-  amount?: string;
-  currency?: string;
-  description?: string;
-  referenceId?: string;
-}
-
-export interface PayPalOrderResponse extends OkResponse {
-  id?: string;
-  status?: string;
-  orderId?: string;
-  approveUrl?: string;
-  order?: unknown;
-}
-
-export interface PayPalCaptureRequest {
-  orderId: string;
-}
-
-export interface PayPalCaptureResponse extends OkResponse {
-  id?: string;
-  status?: string;
-  capture?: unknown;
-  donationSignal?: DonationSignalPayload | null;
-}
-
-export interface DonationConfirmRequest {
-  source?: string;
-  certainty?: 'implied' | 'confident';
-  amount?: string;
-  message?: string;
-  currency?: string;
-  note?: string;
-  donor?: string;
-  reference?: string;
-}
-
-export interface DonationConfirmResponse extends OkResponse {
-  signal?: DonationSignalPayload;
 }
 
 export interface FaceCreateRequest {

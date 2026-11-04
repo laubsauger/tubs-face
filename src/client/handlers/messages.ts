@@ -3,9 +3,7 @@ import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, reconcileIncomingChat, upsertChatDraft } from '../chat/state.js';
-import { detectDonationSignal } from '../message-handler-utils.js';
 import { hasRecentOutgoingAssistantEntry } from '../chat/dedupe.js';
-import { applyDonationPrompt, clearDonationPromptTimer, compactDonationSignal, nextExpression, triggerDonationJoy } from './donation-joy.js';
 
 const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config']);
 
@@ -117,7 +115,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'thinking':
       store.setState((current) => ({
         ...commitChatDraft(current, 'in'),
-        currentExpression: nextExpression(current.currentExpression, 'thinking'),
+        currentExpression: 'thinking',
         liveTranscriptText: '',
         liveTranscriptDraft: false,
       }));
@@ -126,11 +124,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
     case 'expression':
       store.setState((current) => ({
         ...current,
-        currentExpression: nextExpression(current.currentExpression, message.expression),
+        currentExpression: message.expression,
       }));
       return;
     case 'sleep':
-      clearDonationPromptTimer();
       store.setState((current) => ({
         ...current,
         sleeping: true,
@@ -138,7 +135,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         conversationUntil: 0,
         currentExpression: 'sleep',
         currentReactionEmoji: '',
-        currentDonationSignal: null,
         liveTranscriptText: '',
         liveTranscriptDraft: false,
       }));
@@ -198,7 +194,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         currentSpeechText: '',
         currentReactionEmoji: '',
         audioPlaying: false,
-        currentExpression: current.sleeping ? 'sleep' : nextExpression(current.currentExpression, 'listening'),
+        currentExpression: current.sleeping ? 'sleep' : 'listening',
       }));
       store.appendLog('info', `Interrupt received${message.source ? ` (${message.source})` : ''}`);
       return;
@@ -206,25 +202,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       store.appendLog('info', describeTurnContext(message.meta));
       return;
     case 'incoming':
-      store.setState((current) => {
-        const donationSignal = detectDonationSignal(message.text);
-        if (donationSignal) {
-          triggerDonationJoy(store);
-        }
-        return {
-          ...reconcileIncomingChat(current, message.text),
-          currentExpression: donationSignal ? 'love' : nextExpression(current.currentExpression, 'listening'),
-          liveTranscriptText: message.text,
-          liveTranscriptDraft: true,
-          ...(donationSignal ? {
-            currentDonationSignal: {
-              certainty: donationSignal === 'confirmed' ? 'confident' : 'implied',
-              source: `text-${donationSignal}`,
-              ts: Date.now(),
-            },
-          } : {}),
-        };
-      });
+      store.setState((current) => ({
+        ...reconcileIncomingChat(current, message.text),
+        currentExpression: 'listening',
+        liveTranscriptText: message.text,
+        liveTranscriptDraft: true,
+      }));
       store.appendLog('info', `Incoming: ${message.text}`);
       return;
     case 'speak':
@@ -232,7 +215,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         return;
       }
       clearLiveTranscript(store);
-      applyDonationPrompt(store, message.donation ?? null, message.text);
       store.setState((current) => ({
         ...appendChatEntry(current, {
           type: 'out',
@@ -241,7 +223,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           ts: Date.now(),
         }),
         currentSpeechText: message.text,
-        currentExpression: nextExpression(current.currentExpression, message.emotion?.expression ?? 'speaking'),
+        currentExpression: message.emotion?.expression ?? 'speaking',
       }));
       store.appendLog('info', `Speak: ${message.text}`);
       return;
@@ -258,7 +240,7 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           'main',
         ),
         currentSpeechText: `${current.currentSpeechText} ${message.text}`.trim(),
-        currentExpression: nextExpression(current.currentExpression, 'speaking'),
+        currentExpression: 'speaking',
       }));
       return;
     case 'speak_end':
@@ -269,7 +251,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         return;
       }
       clearLiveTranscript(store);
-      applyDonationPrompt(store, message.donation ?? null, message.fullText ?? message.text ?? '');
       // Don't reset expression here — let speech runtime's finishSpeech handle it
       // when audio actually finishes playing (speak_end arrives before audio ends).
       store.setState((current) => {
@@ -307,15 +288,6 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         }
         const targetActor = 'main';
         const hasRelevantBeat = message.beats.some((beat) => beat.actor === targetActor);
-        applyDonationPrompt(
-          store,
-          message.donation ?? null,
-          message.beats
-            .filter((beat) => beat.action === 'speak')
-            .map((beat) => beat.text?.trim() ?? '')
-            .filter(Boolean)
-            .join(' '),
-        );
         const previewText = summarizeTurnScriptForPreview(message, targetActor);
         store.setState((current) => {
           let next: AppState = {
@@ -381,19 +353,10 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
           } : {}),
           // The reply's emotion shows while it is spoken; plain chunks (a filler) just talk.
           ...((!message.actor || message.actor === myActor)
-            ? { currentExpression: nextExpression(current.currentExpression, message.emotion?.expression ?? 'speaking') }
+            ? { currentExpression: message.emotion?.expression ?? 'speaking' }
             : {}),
         };
       });
-      return;
-    case 'donation_signal':
-      triggerDonationJoy(store);
-      applyDonationPrompt(store, compactDonationSignal(message), '');
-      store.setState((current) => ({
-        ...current,
-        currentExpression: 'love',
-      }));
-      store.appendLog('info', `Donation signal: ${message.certainty}`);
       return;
     case 'face_motion':
       if (mode === 'mini' && !targetActor && message.actor === 'main') {

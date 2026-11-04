@@ -1,6 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { applyCors, sendNoContent } from '../http/response.js';
-import { handleDonationRoute } from './donation-routes.js';
 import { handleFaceRoute } from './face-routes.js';
 import { handleSystemRoute } from './system-routes.js';
 import { handleTurnRoute } from './turn-routes.js';
@@ -19,6 +18,5 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
 
   return await handleSystemRoute(request, response, url)
     || await handleTurnRoute(request, response, url)
-    || await handleDonationRoute(request, response, url)
     || await handleFaceRoute(request, response, url);
 }

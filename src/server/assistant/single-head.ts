@@ -7,7 +7,6 @@ import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
-import { buildDonationPayload, extractDonationSignal } from './donation.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
@@ -33,7 +32,6 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       model: runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
       source: 'llm',
-      donation: buildDonationPayload(false),
       emotion: null,
       contextMeta: context.meta,
       tokens: {
@@ -55,7 +53,6 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       model: 'fast-greeting',
       latencyMs: Date.now() - startedAt,
       source: 'greeting',
-      donation: buildDonationPayload(false),
       emotion: parsed.emotion,
       contextMeta: context.meta,
       tokens: {
@@ -103,15 +100,13 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       cleaned = repaired.text;
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
-    const donationSignal = extractDonationSignal(unwrapJsonSpeechText(parsed.text));
-    const text = clampOutput(stripSpeakerLabels(donationSignal.text));
+    const text = clampOutput(stripSpeakerLabels(unwrapJsonSpeechText(parsed.text)));
     if (!text) {
       throw assistantUnavailable('[assistant] LLM returned empty reply text');
     }
 
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repaired.usageIn) || estimateTokens(normalized);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repaired.usageOut) || estimateTokens(text);
-    const donation = donationSignal.donation;
     pushHistory('user', normalized);
     pushHistory('model', text);
 
@@ -120,7 +115,6 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       model: result.model || runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
       source: 'llm',
-      donation,
       emotion: parsed.emotion,
       contextMeta: context.meta,
       tokens: {
@@ -174,8 +168,7 @@ export async function generateProactiveReply(context: string): Promise<Assistant
       cleaned = repaired.text;
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
-    const donationSignal = extractDonationSignal(unwrapJsonSpeechText(parsed.text));
-    const text = clampOutput(stripSpeakerLabels(donationSignal.text));
+    const text = clampOutput(stripSpeakerLabels(unwrapJsonSpeechText(parsed.text)));
     if (!text) {
       return null;
     }
@@ -188,7 +181,6 @@ export async function generateProactiveReply(context: string): Promise<Assistant
       model: result.model || runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
       source: 'llm',
-      donation: donationSignal.donation,
       emotion: parsed.emotion,
       contextMeta: contents.meta,
       tokens: {

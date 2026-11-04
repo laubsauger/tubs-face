@@ -265,7 +265,7 @@ const VALENTINE_TEMPLATE: ManualTurnScriptRequest = {
     {
       actor: 'small',
       action: 'speak',
-      text: 'If you feel generous today, I still accept wheel money with romance.',
+      text: 'Somebody here is getting a valentine from a plastic tub. Brace yourselves.',
       emotion: { expression: 'smile', emoji: '😏' },
     },
   ],
@@ -290,7 +290,7 @@ function applyManualTemplate(store: AppStore): void {
     manualExpression: 'love',
     manualEmoji: '🫶',
     manualDelay: '',
-    manualText: "Happy Valentine's Day from Tubs. Hearts, hype, and electric-wheel dreams.",
+    manualText: "Happy Valentine's Day from Tubs. Hearts, hype, and questionable romance.",
     manualStatus: 'Template loaded',
     manualStatusKind: 'ok',
   }));

@@ -222,7 +222,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     onMessage: (message: WsServerMessage) => {
       if (message.type === 'incoming') {
         proactiveRuntime?.onUserTurn();
-      } else if (message.type === 'speak' || message.type === 'speak_end' || message.type === 'turn_script' || message.type === 'donation_signal') {
+      } else if (message.type === 'speak' || message.type === 'speak_end' || message.type === 'turn_script') {
         proactiveRuntime?.onActivity();
       }
       if (message.type === 'speak' && message.emotion?.impulse) {
@@ -235,9 +235,6 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       }
       if (message.type === 'thinking') {
         emotionRuntime?.pushImpulse({ arousal: 0.52 }, 'system');
-      }
-      if (message.type === 'donation_signal') {
-        emotionRuntime?.pushImpulse({ pos: 1, neg: 0, arousal: 0.85 }, 'system');
       }
       sleepRuntime?.onServerMessage(message);
       applyServerMessage(store, message, messageMode, targetActor);

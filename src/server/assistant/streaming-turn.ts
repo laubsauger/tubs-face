@@ -7,7 +7,6 @@ import type { TurnTimer } from '../turn-timing.js';
 import type { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
-import { buildDonationPayload, extractDonationSignal } from './donation.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
 import { MAX_OUTPUT_SENTENCES, clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from './text.js';
 import { buildContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
@@ -204,12 +203,10 @@ export async function runStreamingAssistantTurn(args: {
     }
   }
 
-  let qrMarkerSeen = false;
   // Holds back half-arrived [[NOTE...]] tags so the splitter never speaks one.
   const tagFilter = createTagFilter();
   const splitter = createSentenceSplitter((sentence) => {
     let text = sentence;
-    if (/\[\[\s*SHOW[\s_-]*QR\s*\]\]/i.test(sentence)) qrMarkerSeen = true;
     if (!emotionExtracted) {
       const parsed = splitTrailingEmotionEmoji(text);
       if (parsed.emotion) {
@@ -321,7 +318,6 @@ export async function runStreamingAssistantTurn(args: {
           model: runtimeConfig.llmModel,
           latencyMs: Date.now() - startedAt,
           source: 'llm',
-          donation: null,
           emotion: null,
           contextMeta: context.meta,
           tokens: { in: 0, out: 0 },
@@ -340,15 +336,6 @@ export async function runStreamingAssistantTurn(args: {
       return null;
     }
 
-    const donationSignal = extractDonationSignal(fullText);
-    // Sentences were sanitized for TTS, which drops [[SHOW_QR]]; it was noted on the raw text.
-    if (qrMarkerSeen && !donationSignal.donation.show) {
-      donationSignal.donation = buildDonationPayload(true, 'marker');
-    }
-    const donation = donationSignal.donation;
-    // Already capped sentence by sentence above; the character clamp would cut
-    // the chat and history text short of what was spoken.
-    fullText = donationSignal.text;
 
     if (turnTimer) {
       if (context.meta?.imageAttached) {
@@ -365,7 +352,6 @@ export async function runStreamingAssistantTurn(args: {
         type: 'speak_end',
         turnId,
         emotion: rawEmotion,
-        donation,
         fullText,
       } satisfies WsSpeakEndServerMessage);
     }
@@ -382,7 +368,6 @@ export async function runStreamingAssistantTurn(args: {
       model: llmResult.model || runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
       source: 'llm',
-      donation,
       emotion: rawEmotion,
       contextMeta: context.meta,
       tokens: { in: tokensIn, out: tokensOut },

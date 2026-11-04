@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runtimeConfig } from '../config/runtime.js';
-import { mergeDonationSignalFromBeats, parseDualHeadScript, rescueBeatsFromRawText } from './dual-head.js';
+import { parseDualHeadScript, rescueBeatsFromRawText } from './dual-head.js';
 
 // Dual-head turns depend on turning loose model output into a playable beat
 // script. If parsing fails the whole turn is lost (or costs a repair call), and if
@@ -95,20 +95,5 @@ describe('rescueBeatsFromRawText', () => {
       ['main', 'You look lost.'],
       ['small', 'Or hungry.'],
     ]);
-  });
-});
-
-describe('mergeDonationSignalFromBeats', () => {
-  it('raises one QR signal for the turn and keeps the marker out of every spoken line', () => {
-    const script = parseDualHeadScript(JSON.stringify({
-      beats: [
-        { actor: 'main', action: 'speak', text: 'Fund my wheels. [[SHOW_QR]]' },
-        { actor: 'small', action: 'speak', text: 'Please.' },
-      ],
-    }));
-    const merged = mergeDonationSignalFromBeats(script!.beats);
-    expect(merged.donation.show).toBe(true);
-    expect(merged.beats.map((beat) => beat.text)).toEqual(['Fund my wheels.', 'Please.']);
-    expect(JSON.stringify(merged.beats)).not.toMatch(/SHOW_QR|_hadDonationMarker/);
   });
 });

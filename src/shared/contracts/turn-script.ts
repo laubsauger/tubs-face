@@ -1,4 +1,4 @@
-import type { DonationSignalCertainty, EmotionCue, ExpressionName } from './config.js';
+import type { EmotionCue, ExpressionName } from './config.js';
 
 export const TURN_ACTORS = ['main', 'small'] as const;
 export const TURN_ACTIONS = ['speak', 'react', 'wait'] as const;
@@ -18,18 +18,6 @@ export interface TurnEmotion {
   impulse?: EmotionImpulse | null;
 }
 
-export interface TurnDonation {
-  show?: boolean;
-  reason?: string | null;
-  venmoHandle?: string | null;
-  qrData?: string | null;
-  qrImageUrl?: string | null;
-  source?: string | null;
-  certainty?: DonationSignalCertainty;
-  amount?: string | null;
-  message?: string | null;
-}
-
 export interface TurnBeat {
   actor: TurnActor;
   action: TurnAction;
@@ -43,7 +31,6 @@ export interface TurnBeat {
 export interface TurnScript {
   turnId: string;
   beats: TurnBeat[];
-  donation?: TurnDonation | null;
   ts?: number;
 }
 

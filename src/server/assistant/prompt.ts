@@ -11,7 +11,6 @@ const OUTPUT_PROTOCOL = [
   'Keep it brutally concise: never more than two sentences. The stage direction with each message sets the length.',
   'Plain text only. No markdown, no lists, no stage directions.',
   'Start with exactly one emotion emoji, before any words. It sets your face while you talk and is not spoken; put it first and nowhere else. Pick the one that matches how you feel about this: 😏 smug or teasing, 😄 delighted, 🙂 friendly, 🥺 pleading, 😢 sad, 😤 annoyed, 🫶 affectionate, 🤖 deadpan.',
-  'If you mention support, donations, Venmo, or tips, include [[SHOW_QR]] once.',
   'When you learn something about the person worth remembering tonight (their job, a strong opinion, something they did, wore or carry), add one hidden note at the very end: [[NOTE: short phrases, commas only]]. When they say something quotable, you may add [[QUOTE: their words]]. At most one of each, only facts not already in your notes, never their name unless they told you, nothing about their body, health or private life. Notes are never spoken.',
 ];
 
@@ -36,9 +35,6 @@ const DUAL_HEAD_OUTPUT_RULES = [
   'Never use formal connective words (e.g. "furthermore", "however").',
   'Usually return 1-3 beats total.',
   'A small-only turn is allowed when it genuinely fits. Do not force Main to speak first.',
-  'Do not bring up donations repeatedly or in back-to-back replies.',
-  'Only mention support when the user asks about it or the moment clearly calls for it.',
-  'If asking for donations, support, Venmo, or tips include [[SHOW_QR]] once in Main text only.',
   'When you learn something about the person worth remembering tonight (their job, a strong opinion, something they did, wore or carry), add one hidden note at the very end of Main text: [[NOTE: short phrases, commas only]]. When they say something quotable, you may add [[QUOTE: their words]]. At most one of each, only facts not already in your notes, never their name unless they told you, nothing about their body, health or private life. Notes are never spoken.',
   'Allowed emoji values: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
   '',
@@ -100,7 +96,6 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string, canSe
     RUNTIME_INSTRUCTION: runtimeInstruction,
     MEMORY_CONTEXT: memoryContext(),
     OUTPUT_FORMAT_HEADER: mode === 'dual' ? '(STRICT JSON ONLY)' : '(Text Only)',
-    DONATION_HANDLE: `@${runtimeConfig.donationHandle}`,
     OUTPUT_FORMAT_INSTRUCTIONS: outputInstructions,
   };
 

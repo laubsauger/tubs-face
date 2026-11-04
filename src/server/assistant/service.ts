@@ -85,7 +85,6 @@ async function runAssistantTurnBody(
           model: dualHead.model,
           latencyMs: dualHead.latencyMs,
           source: dualHead.source,
-          donation: dualHead.donation,
           emotion: dualHead.emotion,
           contextMeta: dualHead.contextMeta,
           tokens: dualHead.tokens,
@@ -105,7 +104,6 @@ async function runAssistantTurnBody(
       type: 'turn_script',
       turnId,
       beats: dualHead.beats,
-      ...(dualHead.donation ? { donation: dualHead.donation } : {}),
       ts: Date.now(),
     })) {
       return {
@@ -115,7 +113,6 @@ async function runAssistantTurnBody(
           model: dualHead.model,
           latencyMs: dualHead.latencyMs,
           source: dualHead.source,
-          donation: dualHead.donation,
           emotion: dualHead.emotion,
           contextMeta: dualHead.contextMeta,
           tokens: dualHead.tokens,
@@ -158,7 +155,6 @@ async function runAssistantTurnBody(
         model: dualHead.model,
         latencyMs: dualHead.latencyMs,
         source: dualHead.source,
-        donation: dualHead.donation,
         emotion: dualHead.emotion,
         contextMeta: dualHead.contextMeta,
         tokens: dualHead.tokens,
@@ -220,7 +216,6 @@ async function runAssistantTurnBody(
     type: 'speak',
     text: reply.text,
     ts: Date.now(),
-    donation: reply.donation,
     emotion: reply.emotion,
     turnId,
   } satisfies WsSpeakServerMessage)) {
@@ -292,7 +287,6 @@ async function runProactiveTurnBody(
         model: reply.model,
         latencyMs: reply.latencyMs,
         source: reply.source,
-        donation: reply.donation,
         emotion: reply.emotion,
         contextMeta: reply.contextMeta,
         tokens: reply.tokens,
@@ -315,7 +309,6 @@ async function runProactiveTurnBody(
       type: 'turn_script',
       turnId,
       beats: reply.beats,
-      ...(reply.donation ? { donation: reply.donation } : {}),
       ts: Date.now(),
     })) {
       return {
@@ -325,7 +318,6 @@ async function runProactiveTurnBody(
           model: reply.model,
           latencyMs: reply.latencyMs,
           source: reply.source,
-          donation: reply.donation,
           emotion: reply.emotion,
           contextMeta: reply.contextMeta,
           tokens: reply.tokens,
@@ -339,7 +331,6 @@ async function runProactiveTurnBody(
       type: 'speak',
       text: proactiveText,
       ts: Date.now(),
-      donation: reply.donation,
       emotion: reply.emotion,
       turnId,
     } satisfies WsSpeakServerMessage)) {
@@ -350,7 +341,6 @@ async function runProactiveTurnBody(
           model: reply.model,
           latencyMs: reply.latencyMs,
           source: reply.source,
-          donation: reply.donation,
           emotion: reply.emotion,
           contextMeta: reply.contextMeta,
           tokens: reply.tokens,
@@ -388,7 +378,6 @@ async function runProactiveTurnBody(
       model: reply.model,
       latencyMs: reply.latencyMs,
       source: reply.source,
-      donation: reply.donation,
       emotion: reply.emotion,
       contextMeta: reply.contextMeta,
       tokens: reply.tokens,

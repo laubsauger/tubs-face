@@ -1,8 +1,8 @@
-// Operator actions: speak a line, sleep/wake, mute, ambient sound, donation confirm.
+// Operator actions: speak a line, sleep/wake, mute, ambient sound.
 
 import { PanelHeader } from './PanelHeader.js';
 import type { JSX } from 'react';
-import type { DonationConfirmRequest, DonationConfirmResponse, OkResponse, SpeakRequest, SpeakResponse } from '../../../shared/contracts/http.js';
+import type { OkResponse, SpeakRequest, SpeakResponse } from '../../../shared/contracts/http.js';
 import type { AppStore } from '../../state/app-state.js';
 import { postJson } from '../../transport/http.js';
 import { useAppSelector } from '../react-store.js';
@@ -22,7 +22,6 @@ export function ControlsPanel({
     ambientAudioEnabled: current.ambientAudioEnabled,
     sleeping: current.sleeping,
     controlSpeakText: current.controlSpeakText,
-    controlDonationAmount: current.controlDonationAmount,
   }));
 
   return (
@@ -114,35 +113,6 @@ export function ControlsPanel({
               }}
             >
               Speak
-            </button>
-            <input
-              id="action-donation-amount"
-              className="face-name-input"
-              type="text"
-              placeholder="$ Amount"
-              value={state.controlDonationAmount}
-              onChange={(event) => {
-                const value = event.currentTarget.value;
-                store.setState((current) => ({
-                  ...current,
-                  controlDonationAmount: value,
-                }));
-              }}
-            />
-            <button
-              id="action-donate"
-              className="button button-compact"
-              type="button"
-              onClick={async () => {
-                const amount = store.getState().controlDonationAmount.trim();
-                await runControlAction(store, 'Donation', () => postJson<DonationConfirmRequest, DonationConfirmResponse>('/donations/confirm', {
-                  certainty: 'confident',
-                  source: 'react-client-shell',
-                  ...(amount ? { amount, currency: 'USD' } : {}),
-                }));
-              }}
-            >
-              Signal Donation
             </button>
           </div>
         </div>

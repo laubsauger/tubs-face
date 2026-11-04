@@ -1,6 +1,6 @@
 // Shapes shared by the single-head, streamed and two-head reply paths.
 
-import type { TurnBeat, TurnContextMeta, TurnDonation } from '../../shared/contracts/turn-script.js';
+import type { TurnBeat, TurnContextMeta } from '../../shared/contracts/turn-script.js';
 import type { SpeechEmotionPayload } from '../../shared/contracts/ws.js';
 
 export interface AssistantReply {
@@ -8,7 +8,6 @@ export interface AssistantReply {
   model: string;
   latencyMs: number;
   source: 'greeting' | 'llm';
-  donation: TurnDonation | null;
   emotion: SpeechEmotionPayload | null;
   contextMeta: TurnContextMeta;
   tokens: {
@@ -28,7 +27,6 @@ export interface AssistantTurnResult {
 
 export interface DualHeadReply {
   beats: TurnBeat[];
-  donation: TurnDonation | null;
   model: string;
   latencyMs: number;
   tokens: {

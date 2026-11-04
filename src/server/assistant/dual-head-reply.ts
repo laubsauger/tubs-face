@@ -8,11 +8,10 @@ import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { buildDualHeadSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
-import { buildDonationPayload } from './donation.js';
 import { defaultDualHeadSpeakEmotion } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
-import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, mergeDonationSignalFromBeats, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
+import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
 import { logDualHeadInvalidScript, logRawModelOutput } from './llm-log.js';
 import { type DualHeadReply, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
@@ -99,7 +98,6 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
         text,
         emotion: toTurnEmotion(defaultDualHeadSpeakEmotion('main')),
       }],
-      donation: buildDonationPayload(false),
       model: runtimeConfig.llmModel,
       latencyMs: Date.now() - startedAt,
       tokens: {
@@ -169,7 +167,7 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
       throw new Error('No valid dual-head script returned by LLM');
     }
 
-    let { beats, donation } = mergeDonationSignalFromBeats(script.beats);
+    const beats = script.beats;
     let fullText = beats
       .filter((beat) => beat.action === 'speak')
       .map((beat) => beat.text?.trim() ?? '')
@@ -187,11 +185,10 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     pushHistory('user', normalized);
     pushHistory('model', fullText);
-    console.log(`[LLM:dual] turn_script beats=${beats.length} donation=${donation.show ? donation.reason : 'none'}${summarizeDualHeadBeatsForLog(beats, { userInput: normalized })}`);
+    console.log(`[LLM:dual] turn_script beats=${beats.length}${summarizeDualHeadBeatsForLog(beats, { userInput: normalized })}`);
 
     return {
       beats,
-      donation,
       model: result.model || dualHeadModel,
       latencyMs: Date.now() - startedAt,
       tokens: {
@@ -268,7 +265,7 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       return null;
     }
 
-    let { beats, donation } = mergeDonationSignalFromBeats(script.beats);
+    const beats = script.beats;
     let fullText = beats
       .filter((beat) => beat.action === 'speak')
       .map((beat) => beat.text?.trim() ?? '')
@@ -285,11 +282,10 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(context);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
-    console.log(`[LLM:dual-proactive] beats=${beats.length} donation=${donation.show ? donation.reason : 'none'}${summarizeDualHeadBeatsForLog(beats, { userInput: context })}`);
+    console.log(`[LLM:dual-proactive] beats=${beats.length}${summarizeDualHeadBeatsForLog(beats, { userInput: context })}`);
 
     return {
       beats,
-      donation,
       model: result.model || dualHeadModel,
       latencyMs: Date.now() - startedAt,
       tokens: {

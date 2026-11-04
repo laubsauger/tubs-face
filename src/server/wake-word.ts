@@ -12,7 +12,7 @@ const WAKE_GLUE_PREFIXES = ['h', 'ho', 'hey', 'e', 'eh', 'a', 'at', 'yo', 'ok', 
 const WAKE_POLITE_LEAD_TOKENS = new Set(['thank', 'thanks', 'you', 'please', 'sorry', 'excuse', 'me']);
 const WAKE_DIRECT_CUE_TOKENS = new Set([
   'you', 'your', 'can', 'could', 'will', 'would', 'do', 'did', 'are', 'is',
-  'help', 'tell', 'show', 'give', 'send', 'donate', 'pay', 'money', 'venmo',
+  'help', 'tell', 'show', 'give', 'send', 'pay', 'money',
 ]);
 const WAKE_QUERY_CUE_TOKENS = new Set(['what', 'who', 'why', 'how', 'where', 'when']);
 const WAKE_TAIL_LEADING_CUE_TOKENS = new Set([

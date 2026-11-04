@@ -2,7 +2,7 @@ import type { AppStore } from '../state/app-state.js';
 
 /**
  * Owns the `#visual-face` element only: its data attributes and
- * CSS variables. Overlays (subtitle visibility, live transcript, donation card)
+ * CSS variables. Overlays (subtitle visibility, live transcript)
  * are rendered by React in app-shell.tsx, and subtitle words by the subtitle
  * controller in speech-runtime.ts. Writing those nodes here too made the last
  * writer win, e.g. the mini subtitle came back after it was turned off.

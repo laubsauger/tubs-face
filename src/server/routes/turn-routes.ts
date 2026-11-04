@@ -212,7 +212,6 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
         type: 'turn_script',
         turnId,
         beats,
-        ...(payload.donation ? { donation: payload.donation } : {}),
         ts: Date.now(),
       } satisfies WsTurnScriptServerMessage);
       sessionStats.messagesOut += 1;

@@ -1,8 +1,8 @@
 // The face itself and what floats over it: subtitles, live transcript,
-// thinking bar, donation card, and the listening indicator.
+// thinking bar and the listening indicator.
 
 import { memo, type JSX } from 'react';
-import type { AppState, AppStore } from '../state/app-state.js';
+import type { AppStore } from '../state/app-state.js';
 import { useAppSelector } from './react-store.js';
 
 /**
@@ -22,13 +22,12 @@ export const StableFaceContainer = memo(
   () => true,
 );
 
-/** Overlays that sit on top of the face (transcript, waveform, donation) */
+/** Overlays that sit on top of the face (subtitle, transcript, waveform) */
 function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     sleeping: current.sleeping,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
-    currentDonationSignal: current.currentDonationSignal,
     micLevel: current.micLevel,
     recording: current.recording,
     listenState: current.listenState,
@@ -36,23 +35,10 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     conversationActive: current.conversationActive,
     thinking: current.currentExpression === 'thinking',
-    donationHandle: current.config?.donationHandle ?? 'TubsBot',
-    donationQrData: current.config?.donationQrData ?? '',
   }));
-  const donationVisible = Boolean(state.currentDonationSignal) && !state.sleeping;
 
   return (
     <>
-      <div className="visual-overlay visual-overlay-top-left">
-        <div id="visual-donation-card" className={`visual-donation-card ${donationVisible ? 'is-visible' : ''}`}>
-          {donationVisible && state.donationQrData ? <img id="visual-donation-qr" alt="Donation QR" src={donationQrSrc(state.donationQrData)} /> : null}
-          <div className="visual-donation-copy">
-            <strong id="visual-donation-handle">Venmo @{state.donationHandle}</strong>
-            <span id="visual-donation-amount">{formatDonationFromSignal(state.currentDonationSignal)}</span>
-          </div>
-        </div>
-      </div>
-
       {/* Audience-facing subtitle: big and at the top, as on main. */}
       <div className="visual-overlay visual-overlay-top">
         <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
@@ -227,14 +213,3 @@ function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-function donationQrSrc(qrData: string): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=256x256&data=${encodeURIComponent(qrData)}`;
-}
-
-function formatDonationFromSignal(signal: AppState['currentDonationSignal']): string {
-  if (!signal) {
-    return '';
-  }
-  const amount = signal.amount ? `${signal.amount}${signal.currency ? ` ${signal.currency}` : ''}` : 'Wheel fund';
-  return [signal.certainty.toUpperCase(), signal.donor, amount].filter(Boolean).join(' · ');
-}
