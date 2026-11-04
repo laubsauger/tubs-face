@@ -33,12 +33,13 @@ class FakeMing(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     script = None  # (handler) -> None, set per test
     paths = []
+    bodies = []
 
     def log_message(self, *args):
         pass
 
     def do_POST(self):
-        self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        FakeMing.bodies.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}"))
         FakeMing.paths.append(self.path)
         FakeMing.script(self)
 
@@ -78,6 +79,7 @@ class MingStreamForwarding(unittest.TestCase):
     def setUp(self):
         svc.MING_TTS_URL = f"http://127.0.0.1:{self.server.server_address[1]}"
         FakeMing.paths = []
+        FakeMing.bodies = []
         svc.print = lambda *a, **k: None  # keep the service's log lines out of the test output
 
     def tearDown(self):
@@ -145,6 +147,27 @@ class MingStreamForwarding(unittest.TestCase):
             ws = FakeSocket()
             self.assertFalse(svc._send_ming_stream(ws, TEXT))
             self.assertEqual(ws.messages, [])
+
+    # Main and Mini are two cloned voices in one Ming service; each line must
+    # reach Ming with its own voice, or Mini speaks with main's.
+    def test_each_cloned_voice_reaches_ming_by_name(self):
+        def script(h):
+            h.stream_head()
+            h.wfile.write(chunk_line(0, last=True))
+            h.wfile.write(b'{"done": true}\n')
+        FakeMing.script = script
+
+        self.assertTrue(svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend-b"))
+        self.assertTrue(svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend"))
+
+        self.assertEqual([body["voice"] for body in FakeMing.bodies], ["friend-b", "friend"])
+
+    # With Ming down, Mini must keep a voice of its own instead of falling
+    # back to main's Kokoro voice: two heads with one voice read as one.
+    def test_each_head_falls_back_to_its_own_kokoro_voice(self):
+        self.assertEqual(svc._ming_fallback("ming:friend"), svc.MING_FALLBACK_VOICE)
+        self.assertEqual(svc._ming_fallback("ming:friend-b"), "jf_tebukuro")
+        self.assertNotEqual(svc._ming_fallback("ming:friend-b"), svc._ming_fallback("ming:friend"))
 
     # The streaming speech service may be deployed before the Ming service is
     # switched to ming_service_stream.py: the old one has no /tts/stream, and

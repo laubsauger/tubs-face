@@ -37,8 +37,11 @@ export const KOKORO_VOICES = [
   'pf_dora', 'pm_alex', 'pm_santa',
   'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
   'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
-  // Not Kokoro: a cloned voice served by the separate Ming service (MING_TTS_URL).
+  // Not Kokoro: cloned voices served by the separate Ming service (MING_TTS_URL).
+  // friend is main Tubs; friend-b (and the other take, friend-b-alt) is Mini.
   'ming:friend',
+  'ming:friend-b',
+  'ming:friend-b-alt',
 ] as const;
 
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];
