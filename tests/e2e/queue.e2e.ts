@@ -88,3 +88,19 @@ test('two speak lines sent together play one after the other', async ({ page, re
   const [a, b] = await speechAudio(page);
   expect(b!.calledAt).toBeGreaterThanOrEqual(a!.calledAt + a!.duration * 1000 - 50);
 });
+
+test('after an interrupt the next line plays right away', async ({ page, request }) => {
+  await send(request, { type: 'speak', text: 'This line gets cut off.', turnId: 't-a', ts: Date.now() });
+  await expect.poll(async () => (await speechAudio(page)).length).toBe(1);
+  await send(request, { type: 'interrupt', turnId: 't-a', source: 'user' });
+  await page.waitForTimeout(200);
+
+  const sentAt = Date.now();
+  await send(request, { type: 'speak', text: 'Fresh line.', turnId: 't-b', ts: Date.now() });
+  // Before, the abandoned line's wait could hold the queue for up to 60 s.
+  await expect.poll(async () => (await ttsRequests(request)).find((m) => m.text === 'Fresh line.')?.receivedAt ?? 0, { timeout: 3000 }).toBeGreaterThan(0);
+  const fresh = (await ttsRequests(request)).find((m) => m.text === 'Fresh line.')!;
+  expect(fresh.receivedAt - sentAt).toBeLessThan(1000);
+  await expect.poll(async () => (await speechAudio(page)).length).toBe(2);
+});
+

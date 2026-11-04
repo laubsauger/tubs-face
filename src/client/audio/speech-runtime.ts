@@ -5,6 +5,7 @@ import { pushStreamDebugEntry } from '../chat/state.js';
 import { buildLocalTurnTimeline } from '../turn-script.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
+import { createQueueRun, type QueueRun } from './queue-run.js';
 import { STREAMING_GAP_GRACE_MS, createStreamingSession, type ScheduledChunk, type StreamingSession } from './streaming-session.js';
 
 interface SpeakQueueItem {
@@ -14,8 +15,6 @@ interface SpeakQueueItem {
   delayMs?: number;
   emotion?: TurnEmotion | null;
   turnId?: string | null;
-  waitRemoteStartedAt?: number;
-  waitRemoteSawStart?: boolean;
 }
 
 const INTER_UTTERANCE_PAUSE_MS = 220;
@@ -40,7 +39,6 @@ export interface SpeechRuntime {
 export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): SpeechRuntime {
   const queue: SpeakQueueItem[] = [];
   let audioElement: HTMLAudioElement | null = null;
-  let processing = false;
   let disposed = false;
   let pendingInferencePlayback: { blob: Blob; turnId: string | null } | null = null;
   let streamingAudioContext: AudioContext | null = null;
@@ -55,7 +53,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let subtitles: SubtitleController = createSubtitleController(null);
   let remoteActorSpeaking = false;
   let remoteActorSpeakingUntil = 0;
-  let remoteWaitTimer: number | null = null;
   let reactionResetTimer: number | null = null;
   let speechSafetyTimer: number | null = null;
   let subtitleClearTimer: number | null = null;
@@ -71,9 +68,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }> = [];
   let lastStreamingBeatIndex = -1;
 
-  // Bumped when active playback is interrupted, so timers from the interrupted
-  // queue item cannot release the queue while a newer item is playing.
-  let queueGeneration = 0;
+  // The running pass over the queue. Cancelling it ends every pause and wait it
+  // is in, so nothing from an interrupted item can release the queue later.
+  let queueRun: QueueRun | null = null;
   // Turns the user barged in on. Audio already in flight for them is dropped.
   const interruptedTurnIds = new Set<string>();
 
@@ -271,53 +268,64 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     processQueue();
   }
 
+  /** Start working through the queue, or nudge a running pass that is waiting. */
   function processQueue(): void {
-    clearSpeechSafetyTimer();
-    if (processing || disposed) {
+    if (disposed) {
       return;
     }
-
+    if (queueRun) {
+      queueRun.wake();
+      return;
+    }
     if (queue.length === 0) {
       lastEmotion = null;
       return;
     }
+    const run = createQueueRun();
+    queueRun = run;
+    void drainQueue(run).finally(() => {
+      if (queueRun === run) {
+        queueRun = null;
+      }
+    });
+  }
 
-    const item = queue.shift();
-    if (!item) {
-      return;
+  function cancelQueueRun(): void {
+    queueRun?.cancel();
+    queueRun = null;
+  }
+
+  async function drainQueue(run: QueueRun): Promise<void> {
+    while (!run.cancelled) {
+      const item = queue.shift();
+      if (!item) {
+        break;
+      }
+      activeQueueTurnId = item.turnId ?? null;
+      await playQueueItem(item, run);
+      if (!run.cancelled) {
+        activeQueueTurnId = null;
+      }
     }
-    activeQueueTurnId = item.turnId ?? null;
-    const generation = queueGeneration;
+    if (!run.cancelled) {
+      lastEmotion = null;
+    }
+  }
 
-    if (item.type === 'wait') {
-      processing = true;
+  async function playQueueItem(item: SpeakQueueItem, run: QueueRun): Promise<void> {
+    if (item.type === 'wait' || item.type === 'wait_remote') {
       if (mode === 'mini') {
         subtitles.stop();
       }
-      window.setTimeout(() => {
-        if (generation !== queueGeneration) return;
-        activeQueueTurnId = null;
-        processing = false;
-        processQueue();
-      }, item.delayMs ?? 320);
-      return;
-    }
-
-    if (item.type === 'wait_remote') {
-      processing = true;
-      if (mode === 'mini') {
-        subtitles.stop();
-      }
-      if (waitForRemoteActor(item)) {
-        activeQueueTurnId = null;
-        processing = false;
-        processQueue();
+      if (item.type === 'wait') {
+        await run.pause(item.delayMs ?? 320);
+      } else {
+        await waitForRemoteActor(run);
       }
       return;
     }
 
     if (item.type === 'react') {
-      processing = true;
       // Don't change main face expression for small actor's react beats
       if (!(item.actor === 'small' && mode === 'main')) {
         applyBeatVisuals(item.text ?? '', item.emotion, false);
@@ -330,27 +338,21 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           subtitles.stop();
         }
       }
-      window.setTimeout(() => {
-        if (generation !== queueGeneration) return;
+      await run.pause(item.delayMs ?? REACTION_PAUSE_MS);
+      if (!run.cancelled) {
         store.setState((current) => ({
           ...current,
           currentReactionEmoji: '',
           currentExpression: current.sleeping ? 'sleep' : 'idle',
         }));
-        activeQueueTurnId = null;
-        processing = false;
-        processQueue();
-      }, item.delayMs ?? REACTION_PAUSE_MS);
+      }
       return;
     }
 
     if (!item.text) {
-      activeQueueTurnId = null;
-      processQueue();
       return;
     }
 
-    processing = true;
     lastEmotion = item.emotion ?? null;
     clearSubtitleClearTimer();
     // Show text in subtitle immediately as preview before audio loads
@@ -365,22 +367,20 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       applyBeatVisuals(item.text, item.emotion, true);
     }
     startSpeechSafetyTimer();
-    void playTts(item.text, item.turnId, item.actor)
-      .catch((error) => {
-        store.appendLog('error', error instanceof Error ? error.message : 'Speech playback failed');
-        if (generation === queueGeneration) finishSpeech(item.turnId ?? null);
-      })
-      .finally(() => {
-        window.setTimeout(() => {
-          if (generation !== queueGeneration) return;
-          activeQueueTurnId = null;
-          processing = false;
-          processQueue();
-        }, INTER_UTTERANCE_PAUSE_MS);
-      });
+    try {
+      await playTts(item.text, item.turnId, item.actor, run);
+    } catch (error) {
+      store.appendLog('error', error instanceof Error ? error.message : 'Speech playback failed');
+      if (!run.cancelled) {
+        finishSpeech(item.turnId ?? null);
+      }
+    } finally {
+      clearSpeechSafetyTimer();
+    }
+    await run.pause(INTER_UTTERANCE_PAUSE_MS);
   }
 
-  async function playTts(text: string, turnId?: string | null, actor?: 'main' | 'small'): Promise<void> {
+  async function playTts(text: string, turnId?: string | null, actor?: 'main' | 'small', run?: QueueRun): Promise<void> {
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
     activeSpeechTurnId = effectiveTurnId;
     activeSpeechActor = actor ?? (mode === 'mini' ? 'small' : 'main');
@@ -428,22 +428,26 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         },
       }));
 
-      // Wait for streaming playback to complete via speak_end
+      // Wait until the streamed audio has played (speak_end + last chunk), the
+      // queue run is cancelled by an interrupt, or the safety timeout.
       await new Promise<void>((resolve) => {
+        let safety = 0;
+        const done = () => {
+          window.removeEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
+          window.clearTimeout(safety);
+          resolve();
+        };
         const onStreamDone = (event: Event) => {
           const msg = (event as CustomEvent<{ turnId?: string }>).detail;
-          console.log(`[Stream] tts-stream-done event | eventTurnId=${msg?.turnId ?? '?'} | waitingFor=${effectiveTurnId}`);
           if (!effectiveTurnId || msg?.turnId === effectiveTurnId) {
-            window.removeEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
-            resolve();
+            done();
           }
         };
         window.addEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
-        // Safety timeout
-        setTimeout(() => {
+        run?.onCancel(done);
+        safety = window.setTimeout(() => {
           console.warn(`[Stream] WS TTS safety timeout (${SPEECH_SAFETY_MAX_MS}ms) — forcing resolve | turnId=${effectiveTurnId}`);
-          window.removeEventListener('tubs:tts-stream-done', onStreamDone as EventListener);
-          resolve();
+          done();
         }, SPEECH_SAFETY_MAX_MS);
       });
       endWsTtsSpan();
@@ -873,14 +877,12 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   function stopAllPlayback(): void {
     queue.length = 0;
-    queueGeneration += 1;
-    processing = false;
+    cancelQueueRun();
     lastEmotion = null;
     activeQueueTurnId = null;
     activeSpeechTurnId = null;
     pendingInferencePlayback = null;
     clearSpeechSafetyTimer();
-    clearRemoteWaitTimer();
     resetStreamingAudio();
     remoteActorSpeaking = false;
     remoteActorSpeakingUntil = 0;
@@ -1010,12 +1012,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       },
     }));
     markRemoteActorSpeaking(false, message.ts);
-    if (!store.getState().audioPlaying && queue.length > 0) {
-      clearRemoteWaitTimer();
-      window.setTimeout(() => {
-        processQueue();
-      }, 0);
-    }
+    // A queue pass waiting for the other head re-checks right away.
+    queueRun?.wake();
   }
 
   function demoteQueueSpeakToReact(): void {
@@ -1033,7 +1031,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
     queue.length = 0;
     queue.push(...visualOnly);
-    if (!processing && visualOnly.length > 0) {
+    if (visualOnly.length > 0) {
       processQueue();
     }
   }
@@ -1062,39 +1060,22 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     return true;
   }
 
-  function waitForRemoteActor(item: SpeakQueueItem): boolean {
-    const now = Date.now();
-    if (!item.waitRemoteStartedAt) {
-      item.waitRemoteStartedAt = now;
-      item.waitRemoteSawStart = false;
+  /**
+   * Two-head mode without server streaming: wait until the other head has
+   * started and finished its line (or never started within the limit).
+   */
+  async function waitForRemoteActor(run: QueueRun): Promise<void> {
+    const startedAt = Date.now();
+    let sawStart = false;
+    while (!run.cancelled) {
+      const remoteSpeaking = isRemoteActorSpeakingNow();
+      sawStart ||= remoteSpeaking;
+      const timedOut = !sawStart && Date.now() - startedAt >= REMOTE_WAIT_MAX_MS;
+      if ((sawStart && !remoteSpeaking) || timedOut) {
+        return;
+      }
+      await run.pause(REMOTE_WAIT_POLL_MS, { wakeable: true });
     }
-    const remoteSpeaking = isRemoteActorSpeakingNow();
-    if (remoteSpeaking) {
-      item.waitRemoteSawStart = true;
-    }
-    const elapsed = now - item.waitRemoteStartedAt;
-    const timedOut = !item.waitRemoteSawStart && elapsed >= REMOTE_WAIT_MAX_MS;
-    const done = (item.waitRemoteSawStart && !remoteSpeaking) || timedOut;
-    if (done) {
-      return true;
-    }
-    queue.unshift(item);
-    clearRemoteWaitTimer();
-    remoteWaitTimer = window.setTimeout(() => {
-      remoteWaitTimer = null;
-      activeQueueTurnId = null;
-      processing = false;
-      processQueue();
-    }, REMOTE_WAIT_POLL_MS);
-    return false;
-  }
-
-  function clearRemoteWaitTimer(): void {
-    if (remoteWaitTimer == null) {
-      return;
-    }
-    window.clearTimeout(remoteWaitTimer);
-    remoteWaitTimer = null;
   }
 
   function clearReactionResetTimer(): void {
@@ -1154,13 +1135,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       for (const id of stoppedTurnIds) {
         rememberInterruptedTurn(id);
       }
-      queueGeneration += 1;
-      processing = false;
+      cancelQueueRun();
       lastEmotion = null;
       activeQueueTurnId = null;
       pendingInferencePlayback = null;
       clearSpeechSafetyTimer();
-      clearRemoteWaitTimer();
       resetStreamingAudio();
       activeSpeechTurnId = null;
       remoteActorSpeaking = false;
