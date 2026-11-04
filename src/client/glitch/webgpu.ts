@@ -1,4 +1,5 @@
 import { GPU_UNIFORM_FLOATS } from './constants.js';
+import { INSTANCE_FLOATS } from './morph.js';
 import { WEBGPU_POST_SHADER, WEBGPU_SHADER } from './shaders.js';
 
 const GPU_SCENE_FORMAT = 'rgba8unorm';
@@ -28,6 +29,8 @@ export interface WebGpuState {
   gpuSceneWidth: number;
   gpuSceneHeight: number;
   gpuInstanceCount: number;
+  /** Instances the current instance buffer can hold. */
+  gpuInstanceCapacity: number;
   gpuFormat: string;
 }
 
@@ -50,6 +53,7 @@ export function createWebGpuState(): WebGpuState {
     gpuSceneWidth: 0,
     gpuSceneHeight: 0,
     gpuInstanceCount: 0,
+    gpuInstanceCapacity: 0,
     gpuFormat: 'bgra8unorm',
   };
 }
@@ -83,6 +87,7 @@ export function resetWebGpuResources(gpu: WebGpuState): void {
   gpu.gpuSceneWidth = 0;
   gpu.gpuSceneHeight = 0;
   gpu.gpuInstanceCount = 0;
+  gpu.gpuInstanceCapacity = 0;
 }
 
 function updateGpuPixelBindGroup(gpu: WebGpuState): void {
@@ -137,41 +142,31 @@ export function configureWebGpuCanvas(gpu: WebGpuState, canvas: HTMLCanvasElemen
   createGpuSceneTarget(gpu, canvas);
 }
 
-export function updateGpuInstanceBuffer(gpu: WebGpuState, pixelGrid: Array<{ x: number; y: number; hueOff: number; brightOff: number; overrideHSL: { h: number; s: number } | null }>, shapeGroups: number[]): void {
+/**
+ * Uploads count instances (INSTANCE_FLOATS each) from data. A morph uploads
+ * every frame, so the buffer is reused and only replaced, with headroom,
+ * when it is too small.
+ */
+export function writeGpuInstances(gpu: WebGpuState, data: Float32Array, count: number): void {
   if (!gpu.gpuDevice) return;
 
-  const instanceCount = pixelGrid.length;
-  const minFloats = 8;
-  const floatCount = Math.max(minFloats, instanceCount * 8);
-  const packed = new Float32Array(floatCount);
-
-  for (let i = 0; i < instanceCount; i += 1) {
-    const point = pixelGrid[i];
-    if (!point) continue;
-    const off = i * 8;
-    packed[off] = point.x;
-    packed[off + 1] = point.y;
-    packed[off + 2] = point.hueOff;
-    packed[off + 3] = point.brightOff;
-    packed[off + 4] = shapeGroups[i] || 0;
-    const override = point.overrideHSL;
-    packed[off + 5] = override ? 1 : 0;
-    packed[off + 6] = override ? (((override.h % 360) + 360) % 360) / 360 : 0;
-    packed[off + 7] = override ? override.s / 100 : 0;
-  }
-
-  if (gpu.gpuInstanceBuffer) {
-    try { gpu.gpuInstanceBuffer.destroy(); } catch {}
-  }
-
+  if (!gpu.gpuInstanceBuffer || gpu.gpuInstanceCapacity < count) {
+    if (gpu.gpuInstanceBuffer) {
+      try { gpu.gpuInstanceBuffer.destroy(); } catch {}
+    }
+    const capacity = Math.max(1, Math.ceil(count * 1.5));
     gpu.gpuInstanceBuffer = gpu.gpuDevice.createBuffer({
-      size: packed.byteLength,
+      size: capacity * INSTANCE_FLOATS * 4,
       usage: (gpuBufferUsage?.STORAGE ?? 0x80) | (gpuBufferUsage?.COPY_DST ?? 0x08),
-  });
+    });
+    gpu.gpuInstanceCapacity = capacity;
+    updateGpuPixelBindGroup(gpu);
+  }
 
-  gpu.gpuDevice.queue.writeBuffer(gpu.gpuInstanceBuffer, 0, packed.buffer, packed.byteOffset, packed.byteLength);
-  gpu.gpuInstanceCount = instanceCount;
-  updateGpuPixelBindGroup(gpu);
+  if (count > 0) {
+    gpu.gpuDevice.queue.writeBuffer(gpu.gpuInstanceBuffer, 0, data.buffer, data.byteOffset, count * INSTANCE_FLOATS * 4);
+  }
+  gpu.gpuInstanceCount = count;
 }
 
 async function createShaderModuleChecked(device: GpuHandle, code: string, label: string): Promise<GpuHandle> {
@@ -285,7 +280,7 @@ export async function initWebGpuRenderer(gpu: WebGpuState, canvas: HTMLCanvasEle
             usage: (gpuBufferUsage?.UNIFORM ?? 0x40) | (gpuBufferUsage?.COPY_DST ?? 0x08),
         });
 
-    const placeholder = new Float32Array(8);
+    const placeholder = new Float32Array(INSTANCE_FLOATS);
         const instanceBuffer = device.createBuffer({
             size: placeholder.byteLength,
             usage: (gpuBufferUsage?.STORAGE ?? 0x80) | (gpuBufferUsage?.COPY_DST ?? 0x08),
@@ -308,6 +303,7 @@ export async function initWebGpuRenderer(gpu: WebGpuState, canvas: HTMLCanvasEle
     gpu.gpuInstanceBuffer = instanceBuffer;
     gpu.gpuSampler = sampler;
     gpu.gpuInstanceCount = 0;
+    gpu.gpuInstanceCapacity = 1;
     gpu.gpuFormat = format;
 
     updateGpuPixelBindGroup(gpu);

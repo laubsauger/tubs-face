@@ -15,9 +15,15 @@ import { hexToHSL, testShapeHit } from './utils.js';
 export interface PixelGridPoint {
   x: number;
   y: number;
+  /** Shape the pixel belongs to: 0 left eye, 1 right eye, 2 mouth, 3+ tears. */
+  group: number;
+  /** Size factor. Below 1 only while the pixel grows in or shrinks away in a morph. */
+  scale: number;
   hueOff: number;
   brightOff: number;
-  overrideHSL: { h: number; s: number; l: number } | null;
+  /** Override colour in GPU units (hue and saturation 0..1); a hue below 0 keeps the base colour. */
+  overrideH: number;
+  overrideS: number;
 }
 
 export interface ShapeCenter {
@@ -27,7 +33,6 @@ export interface ShapeCenter {
 
 export interface PixelGridBuildResult {
   pixelGrid: PixelGridPoint[];
-  shapeGroups: number[];
   shapeCenters: ShapeCenter[];
 }
 
@@ -45,7 +50,6 @@ export function buildPixelGrid(
   effectivePixelGap: number,
 ): PixelGridBuildResult {
   const pixelGrid: PixelGridPoint[] = [];
-  const shapeGroups: number[] = [];
   const shapeCenters: ShapeCenter[] = [];
 
   const expression: ExpressionName = state.sleeping ? 'sleep' : state.currentExpression;
@@ -96,11 +100,14 @@ export function buildPixelGrid(
       if (si === 2 && profile.mouthShape) hitTest = profile.mouthShape;
     }
 
-    let shapeOverrideHSL: { h: number; s: number; l: number } | null = null;
+    let overrideHex: string | undefined;
     if (profile) {
-      if (si <= 1 && profile.colorHex) shapeOverrideHSL = hexToHSL(profile.colorHex);
-      if (si >= 3 && profile.tearColorHex) shapeOverrideHSL = hexToHSL(profile.tearColorHex);
+      if (si <= 1 && profile.colorHex) overrideHex = profile.colorHex;
+      if (si >= 3 && profile.tearColorHex) overrideHex = profile.tearColorHex;
     }
+    const override = overrideHex ? hexToHSL(overrideHex) : null;
+    const overrideH = override ? (((override.h % 360) + 360) % 360) / 360 : -1;
+    const overrideS = override ? override.s / 100 : 0;
 
     const cols = Math.max(1, Math.floor(sw / stride));
     const rows = Math.max(1, Math.floor(sh / stride));
@@ -128,18 +135,19 @@ export function buildPixelGrid(
         pixelGrid.push({
           x: px,
           y: finalY,
+          group: si,
+          scale: 1,
           hueOff: hOff,
           brightOff: bOff,
-          overrideHSL: shapeOverrideHSL,
+          overrideH,
+          overrideS,
         });
-        shapeGroups.push(si);
       }
     }
   }
 
   return {
     pixelGrid,
-    shapeGroups,
     shapeCenters,
   };
 }

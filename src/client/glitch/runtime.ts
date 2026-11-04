@@ -1,8 +1,21 @@
-import type { AppStore } from '../state/app-state.js';
-import { DEFAULT_CONFIG, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
+import type { ExpressionName } from '../../shared/contracts/config.js';
+import type { AppState, AppStore } from '../state/app-state.js';
+import {
+  DEFAULT_CONFIG,
+  EXPRESSION_PROFILES,
+  MORPH,
+  MORPH_SLEEP,
+  MORPH_WAKE,
+  SPEAK_CYCLE_MS,
+  SPEAK_MAX_SCALE,
+  SPEAK_MIN_SCALE,
+  setExpressionProfiles,
+  type GlitchConfig,
+} from './constants.js';
 import { computeFrameState, renderFrameWebGpu } from './frame.js';
+import { INSTANCE_FLOATS, createMorphPlan, easeOutCubic, packPixels, planMorph, snapshotMorph, writeMorphFrame } from './morph.js';
 import { buildPixelGrid, featureFitScale, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
-import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
+import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, writeGpuInstances, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';
 import { NEUTRAL_TINT, moodTint } from './mood-tint.js';
@@ -31,11 +44,21 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let containerCssH = 0;
   let effectivePixelSize = DEFAULT_CONFIG.pixel.size;
   let effectivePixelGap = DEFAULT_CONFIG.pixel.gap;
+  // The grid of the expression on screen; during a morph, the one it morphs to.
   let pixelGrid: PixelGridPoint[] = [];
-  let shapeGroups: number[] = [];
   let shapeCenters: ShapeCenter[] = [];
-  let lastBuiltExpression = '';
-  let lastSleepingState = false;
+  // Centres the blink and speech mouth squash around; they travel with a morph.
+  const drawnCenters: ShapeCenter[] = [{ cx: 0, cy: 0 }, { cx: 0, cy: 0 }, { cx: 0, cy: 0 }];
+  const morphFromCenters: ShapeCenter[] = [{ cx: 0, cy: 0 }, { cx: 0, cy: 0 }, { cx: 0, cy: 0 }];
+  const morph = createMorphPlan();
+  let morphing = false;
+  let morphStart = 0;
+  let instanceData = new Float32Array(0);
+  // Expression the grid was built for ('sleep' while asleep) and its profile.
+  let builtFaceKey: ExpressionName | '' = '';
+  let builtProfileSignature = '';
+  // Pixel size, shapes or profiles changed: rebuild at once, no morph.
+  let gridDirty = true;
   let lastBurstState = false;
   let glitchBurstSeed = Math.random() * 1000;
   let rendererConfig: GlitchConfig = structuredClone(DEFAULT_CONFIG);
@@ -90,7 +113,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       if (signature !== lastProfileSignature) {
         lastProfileSignature = signature;
         setExpressionProfiles(structuredClone(nextProfiles));
-        lastBuiltExpression = '';
+        gridDirty = true;
       }
     }
     rendererConfig = mergeConfig(DEFAULT_CONFIG);
@@ -196,7 +219,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       return;
     }
     updateEffectivePixelMetrics();
-    lastBuiltExpression = '';
+    gridDirty = true;
   }
 
   function setupCanvas(): void {
@@ -275,23 +298,73 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     effectivePixelGap = Math.max(0, rendererConfig.pixel.gap * scale);
   }
 
+  /** Rebuilds the grid at once: first draw, resize, FX editor edits. */
   function buildGrid(): void {
     if (!faceEl) return;
-    const rect = faceEl.getBoundingClientRect();
-    const next = buildPixelGrid(
-      store.getState(),
-      rendererConfig,
-      rect.width,
-      rect.height,
-      effectivePixelSize,
-      effectivePixelGap,
-    );
+    const next = buildNextGrid(faceEl);
+    morphing = false;
     pixelGrid = next.pixelGrid;
-    shapeGroups = next.shapeGroups;
     shapeCenters = next.shapeCenters;
-    lastBuiltExpression = store.getState().currentExpression;
-    lastSleepingState = store.getState().sleeping;
-    updateGpuInstanceBuffer(gpu, pixelGrid, shapeGroups);
+    copyCenters(shapeCenters, drawnCenters);
+    gridDirty = false;
+    uploadPixels(pixelGrid);
+  }
+
+  /** The expression changed: pixels flow from what is on screen now (even mid-morph) to the new shape. */
+  function morphGrid(now: number, previousKey: string, nextKey: string): void {
+    if (!faceEl) return;
+    const from = morphing ? snapshotMorph(morph, now - morphStart) : pixelGrid;
+    copyCenters(drawnCenters, morphFromCenters);
+    const next = buildNextGrid(faceEl);
+    const timing = nextKey === 'sleep' ? MORPH_SLEEP : previousKey === 'sleep' ? MORPH_WAKE : MORPH;
+    planMorph(from, next.pixelGrid, timing, morph, effectivePixelSize + effectivePixelGap);
+    morphing = true;
+    morphStart = now;
+    pixelGrid = next.pixelGrid;
+    shapeCenters = next.shapeCenters;
+    ensureInstanceData(morph.count);
+  }
+
+  /** Uploads this frame of the morph; per-frame uploads stop once it lands. */
+  function stepMorph(now: number): void {
+    const elapsed = now - morphStart;
+    if (elapsed >= morph.durationMs) {
+      morphing = false;
+      copyCenters(shapeCenters, drawnCenters);
+      uploadPixels(pixelGrid);
+      return;
+    }
+    const count = writeMorphFrame(morph, elapsed, instanceData);
+    writeGpuInstances(gpu, instanceData, count);
+    const p = easeOutCubic(elapsed / morph.durationMs);
+    for (let i = 0; i < drawnCenters.length; i += 1) {
+      const drawn = drawnCenters[i];
+      const from = morphFromCenters[i];
+      const to = shapeCenters[i];
+      if (!drawn || !from || !to) continue;
+      drawn.cx = from.cx + (to.cx - from.cx) * p;
+      drawn.cy = from.cy + (to.cy - from.cy) * p;
+    }
+  }
+
+  function buildNextGrid(face: HTMLElement): ReturnType<typeof buildPixelGrid> {
+    const rect = face.getBoundingClientRect();
+    const state = store.getState();
+    const key = faceKey(state);
+    builtFaceKey = key;
+    builtProfileSignature = profileSignature(key);
+    return buildPixelGrid(state, rendererConfig, rect.width, rect.height, effectivePixelSize, effectivePixelGap);
+  }
+
+  function uploadPixels(pixels: PixelGridPoint[]): void {
+    ensureInstanceData(pixels.length);
+    writeGpuInstances(gpu, instanceData, packPixels(pixels, instanceData));
+  }
+
+  function ensureInstanceData(count: number): void {
+    if (instanceData.length < count * INSTANCE_FLOATS) {
+      instanceData = new Float32Array(Math.ceil(count * 1.5) * INSTANCE_FLOATS);
+    }
   }
 
   /** WebGPU only. If it can't start the face stays blank, so the event log says why. */
@@ -338,8 +411,21 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       return;
     }
 
-    if (state.currentExpression !== lastBuiltExpression || state.sleeping !== lastSleepingState) {
+    if (gridDirty) {
       buildGrid();
+    } else {
+      const key = faceKey(state);
+      if (key !== builtFaceKey) {
+        if (profileSignature(key) === builtProfileSignature) {
+          // Same shape under another name (idle and speaking): nothing to redraw.
+          builtFaceKey = key;
+        } else {
+          morphGrid(now, builtFaceKey, key);
+        }
+      }
+    }
+    if (morphing) {
+      stepMorph(now);
     }
 
     // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
@@ -392,7 +478,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       config: rendererConfig,
       faceW: faceEl.getBoundingClientRect().width,
       faceH: faceEl.getBoundingClientRect().height,
-      shapeCenters,
+      shapeCenters: drawnCenters,
       baseHSL: moodHSL,
       glitchBurstSeed,
       sleeping: state.sleeping,
@@ -434,5 +520,24 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     }
     const phase = ((now - startTime) % SPEAK_CYCLE_MS) / SPEAK_CYCLE_MS;
     return SPEAK_MIN_SCALE + range * (0.5 + 0.5 * Math.sin(phase * Math.PI * 2));
+  }
+}
+
+/** The expression the grid shows: asleep always draws the sleep face. */
+function faceKey(state: AppState): ExpressionName {
+  return state.sleeping ? 'sleep' : state.currentExpression;
+}
+
+function profileSignature(expression: ExpressionName): string {
+  return JSON.stringify(EXPRESSION_PROFILES[expression] ?? null);
+}
+
+function copyCenters(from: readonly ShapeCenter[], to: ShapeCenter[]): void {
+  for (let i = 0; i < to.length; i += 1) {
+    const source = from[i];
+    const target = to[i];
+    if (!source || !target) continue;
+    target.cx = source.cx;
+    target.cy = source.cy;
   }
 }

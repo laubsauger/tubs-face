@@ -27,7 +27,8 @@ struct VSOut {
   @location(3) uv: vec2f,
   @location(4) visible: f32,
   @location(5) group: f32,
-  @location(6) overrideColor: vec3f
+  @location(6) overrideColor: vec3f,
+  @location(7) scale: f32
 };
 
 fn hash12(p: vec2f) -> f32 {
@@ -73,6 +74,8 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
   let brightOff = a.w;
 
   let group = b.x;
+  // Below 1 only while a morph grows the pixel in or shrinks it away.
+  let scale = b.y;
   var drawH = u.motion.y;
   let drawW = u.motion.y;
 
@@ -124,8 +127,11 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
     default: { corner = vec2f(1.0, 1.0); }
   }
 
-  let px = x + corner.x * drawW;
-  let py = y + corner.y * drawH;
+  // Scaled around the pixel's own centre, so it grows and shrinks in place.
+  let w = drawW * scale;
+  let h = drawH * scale;
+  let px = x + (drawW - w) * 0.5 + corner.x * w;
+  let py = y + (drawH - h) * 0.5 + corner.y * h;
 
   let ndcX = (px / max(1.0, u.canvas.x)) * 2.0 - 1.0;
   let ndcY = 1.0 - (py / max(1.0, u.canvas.y)) * 2.0;
@@ -138,7 +144,9 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
   out.uv = corner;
   out.visible = visible;
   out.group = group;
-  out.overrideColor = vec3f(b.y, b.z, b.w);
+  // b.z is the override hue, negative for the base colour.
+  out.overrideColor = vec3f(select(0.0, 1.0, b.z >= 0.0), b.z, b.w);
+  out.scale = scale;
   return out;
 }
 
@@ -193,6 +201,8 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   if (in.group > 2.5) {
     alpha = alpha * (0.5 + 0.5 * sin(u.canvas.w * 2.0 + in.group * 3.14159));
   }
+  // Pixels fade as they shrink, so they melt into the new shape instead of popping.
+  alpha = alpha * clamp(in.scale * 1.5, 0.0, 1.0);
 
   return vec4f(clamp(color, vec3f(0.0), vec3f(1.0)), clamp(alpha, 0.0, 1.0));
 }

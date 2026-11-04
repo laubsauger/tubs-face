@@ -74,6 +74,24 @@ export const BLINK_CLOSE_MS = 80;
 export const BLINK_HOLD_MS = 60;
 export const BLINK_OPEN_MS = 80;
 
+/**
+ * Expression changes morph the pixels from the old shape to the new one.
+ * Each pixel starts within the stagger and travels for duration - stagger.
+ */
+export const MORPH = {
+  durationMs: 280,
+  staggerMs: 70,
+} as const;
+/** Falling asleep is slow and heavy; waking is quicker, but not a snap. */
+export const MORPH_SLEEP = {
+  durationMs: 720,
+  staggerMs: 160,
+} as const;
+export const MORPH_WAKE = {
+  durationMs: 420,
+  staggerMs: 90,
+} as const;
+
 export const SPEAK_CYCLE_MS = 320;
 export const SPEAK_MIN_SCALE = 0.75;
 export const SPEAK_MAX_SCALE = 1.05;
