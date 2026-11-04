@@ -8,7 +8,6 @@ const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'face_blink',
   'head_speech_state',
   'presence',
-  'face_greeting',
   'proactive',
   'camera_frame',
   'appearance_frame',
@@ -81,7 +80,7 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case 'ping':
       return optNumber(m.ts);
     case 'incoming':
-      return text(m.text, MAX_TEXT_CHARS) && (m.frame === undefined || m.frame === null || frame(m.frame));
+      return text(m.text, MAX_TEXT_CHARS);
     case 'interrupt':
       return optString(m.turnId, MAX_ID_CHARS);
     case 'face_motion':
@@ -93,8 +92,6 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
         && optNullableString(m.turnId, MAX_ID_CHARS) && optNumber(m.ts) && optNumber(m.durationMs);
     case 'presence':
       return typeof m.present === 'boolean' && optBoolean(m.newVisitor) && optNames(m.faces) && optNumber(m.count);
-    case 'face_greeting':
-      return true;
     case 'proactive':
       return optString(m.context, MAX_TEXT_CHARS) && optNames(m.faces);
     case 'camera_frame':

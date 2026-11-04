@@ -9,17 +9,6 @@ export function createTurnId(): string {
   return randomBytes(6).toString('hex');
 }
 
-// Replies given since start; donation nudges are paced by it.
-let assistantReplyCount = 0;
-
-export function countReply(): void {
-  assistantReplyCount += 1;
-}
-
-export function replyCount(): number {
-  return assistantReplyCount;
-}
-
 let activeTurnEpoch = 0;
 
 let activeTurnId: string | null = null;

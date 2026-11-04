@@ -7,7 +7,7 @@ import type { TurnTimer } from '../turn-timing.js';
 import type { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
-import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
+import { buildDonationPayload, extractDonationSignal } from './donation.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
 import { MAX_OUTPUT_SENTENCES, clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from './text.js';
 import { buildContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
@@ -16,7 +16,7 @@ import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
 import { logRawModelOutput } from './llm-log.js';
 import { type AssistantReply, type AssistantTurnResult, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
-import { countReply, emitIfActive, isAssistantTurnActive, onTurnSuperseded, replyCount } from './turn-state.js';
+import { emitIfActive, isAssistantTurnActive, onTurnSuperseded } from './turn-state.js';
 
 /**
  * Streaming assistant turn: LLM tokens stream in via SSE, get split into sentences,
@@ -337,13 +337,10 @@ export async function runStreamingAssistantTurn(args: {
     if (qrMarkerSeen && !donationSignal.donation.show) {
       donationSignal.donation = buildDonationPayload(true, 'marker');
     }
-    const nudged = maybeInjectDonationNudge(donationSignal.text, Boolean(donationSignal.donation.show), replyCount());
-    const donation = nudged.forcedQr
-      ? buildDonationPayload(true, 'periodic_nudge')
-      : donationSignal.donation;
+    const donation = donationSignal.donation;
     // Already capped sentence by sentence above; the character clamp would cut
     // the chat and history text short of what was spoken.
-    fullText = nudged.text;
+    fullText = donationSignal.text;
 
     if (turnTimer) {
       if (context.meta?.imageAttached) {
@@ -367,7 +364,6 @@ export async function runStreamingAssistantTurn(args: {
 
     const tokensIn = Number(llmResult.usage.promptTokenCount || 0) || estimateTokens(normalized);
     const tokensOut = Number(llmResult.usage.candidatesTokenCount || 0) || estimateTokens(fullText);
-    countReply();
     if (!historyRecorded) {
       pushHistory('user', normalized);
       pushHistory('model', fullText);

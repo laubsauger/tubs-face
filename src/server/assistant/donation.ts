@@ -10,11 +10,6 @@ export interface DonationSignalResult {
   donation: TurnDonation;
 }
 
-export interface DonationNudgeResult {
-  text: string;
-  forcedQr: boolean;
-}
-
 export function buildDonationPayload(show: boolean, reason = 'none'): TurnDonation {
   return {
     show,
@@ -46,13 +41,6 @@ export function extractDonationSignal(text: string): DonationSignalResult {
     text: cleaned,
     donation: buildDonationPayload(show, reason),
   };
-}
-
-export function maybeInjectDonationNudge(text: string, alreadyShowingQr: boolean, replyCount: number): DonationNudgeResult {
-  void text;
-  void alreadyShowingQr;
-  void replyCount;
-  return { text, forcedQr: false };
 }
 
 export function stripDonationMarkers(text: string): string {

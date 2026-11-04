@@ -42,7 +42,6 @@ export interface WsPingClientMessage {
 export interface WsIncomingClientMessage {
   type: 'incoming';
   text: string;
-  frame?: string | null;
 }
 
 export interface WsInterruptClientMessage {
@@ -83,10 +82,6 @@ export interface WsPresenceClientMessage {
   count?: number;
 }
 
-export interface WsFaceGreetingClientMessage {
-  type: 'face_greeting';
-}
-
 export interface WsProactiveClientMessage {
   type: 'proactive';
   context?: string;
@@ -124,7 +119,6 @@ export type WsClientMessage =
   | WsFaceBlinkClientMessage
   | WsHeadSpeechStateClientMessage
   | WsPresenceClientMessage
-  | WsFaceGreetingClientMessage
   | WsProactiveClientMessage
   | WsCameraFrameClientMessage
   | WsAppearanceFrameClientMessage

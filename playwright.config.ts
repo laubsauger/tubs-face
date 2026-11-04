@@ -22,8 +22,13 @@ export default defineConfig({
     launchOptions: {
       args: [
         '--autoplay-policy=no-user-gesture-required',
+        // Fake camera/mic, and no real audio output: test runs used to open
+        // and close the machine's audio devices, which on Bluetooth headphones
+        // flips the audio profile and drops sound in other apps.
         '--use-fake-ui-for-media-stream',
         '--use-fake-device-for-media-stream',
+        '--disable-audio-output',
+        '--mute-audio',
       ],
     },
   },

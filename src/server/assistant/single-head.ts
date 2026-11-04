@@ -6,14 +6,13 @@ import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
-import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
+import { buildDonationPayload, extractDonationSignal } from './donation.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { logRawModelOutput } from './llm-log.js';
 import { maybeRepairPersonaDrift } from './persona-drift.js';
 import { type AssistantReply, assistantUnavailable } from './reply-types.js';
-import { countReply, replyCount } from './turn-state.js';
 
 /** This turn's variety direction, also shown in the turn timing log so odd replies can be explained. */
 export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): string {
@@ -48,7 +47,6 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
   if (greeting) {
     const parsed = splitTrailingEmotionEmoji(greeting);
     const text = parsed.text || 'Hey.';
-    countReply();
     pushHistory('user', normalized);
     pushHistory('model', text);
     return {
@@ -104,22 +102,14 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
     const donationSignal = extractDonationSignal(unwrapJsonSpeechText(parsed.text));
-    const nudged = maybeInjectDonationNudge(
-      donationSignal.text,
-      Boolean(donationSignal.donation.show),
-      replyCount(),
-    );
-    const text = clampOutput(stripSpeakerLabels(nudged.text));
+    const text = clampOutput(stripSpeakerLabels(donationSignal.text));
     if (!text) {
       throw assistantUnavailable('[assistant] LLM returned empty reply text');
     }
 
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repaired.usageIn) || estimateTokens(normalized);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repaired.usageOut) || estimateTokens(text);
-    const donation = nudged.forcedQr
-      ? buildDonationPayload(true, 'periodic_nudge')
-      : donationSignal.donation;
-    countReply();
+    const donation = donationSignal.donation;
     pushHistory('user', normalized);
     pushHistory('model', text);
 
@@ -188,7 +178,6 @@ export async function generateProactiveReply(context: string): Promise<Assistant
     }
 
     pushHistory('model', text);
-    countReply();
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repaired.usageIn) || estimateTokens(context);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repaired.usageOut) || estimateTokens(text);
     return {

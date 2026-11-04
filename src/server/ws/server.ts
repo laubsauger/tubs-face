@@ -144,9 +144,6 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
       }
       return;
-    case 'face_greeting':
-      startProactiveTurn('Someone just appeared. Greet them in a way that gets an immediate response.', broadcast);
-      return;
     case 'proactive':
       startProactiveTurn(message.context ?? '', broadcast);
       return;

@@ -7,7 +7,7 @@ import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { buildDualHeadSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
-import { buildDonationPayload, maybeInjectDonationNudge } from './donation.js';
+import { buildDonationPayload } from './donation.js';
 import { defaultDualHeadSpeakEmotion } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
@@ -15,7 +15,6 @@ import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, mergeDonationSi
 import { logDualHeadInvalidScript, logRawModelOutput } from './llm-log.js';
 import { type DualHeadReply, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
-import { countReply, replyCount } from './turn-state.js';
 
 async function maybeRepairDualHeadScript(args: {
   rawText: string;
@@ -176,22 +175,6 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
       .join(' ')
       .trim();
 
-    const nudged = maybeInjectDonationNudge(fullText, Boolean(donation.show), replyCount());
-    if (nudged.forcedQr) {
-      donation = buildDonationPayload(true, 'periodic_nudge');
-      const nudgeText = `Venmo @${donation.venmoHandle ?? 'TubsBot'}.`;
-      beats = [
-        ...beats,
-        {
-          actor: 'main',
-          action: 'speak',
-          text: nudgeText,
-          emotion: toTurnEmotion(defaultDualHeadSpeakEmotion('main')),
-        },
-      ];
-      fullText = `${fullText} ${nudgeText}`.trim();
-    }
-
     fullText = clampOutput(stripSpeakerLabels(fullText));
     if (!fullText) {
       throw new Error('Dual-head script produced empty output');
@@ -200,7 +183,6 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(normalized);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
-    countReply();
     pushHistory('user', normalized);
     pushHistory('model', fullText);
     console.log(`[LLM:dual] turn_script beats=${beats.length} donation=${donation.show ? donation.reason : 'none'}${summarizeDualHeadBeatsForLog(beats, { userInput: normalized })}`);
@@ -291,26 +273,12 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       .join(' ')
       .trim();
 
-    const nudged = maybeInjectDonationNudge(fullText, Boolean(donation.show), replyCount());
-    if (nudged.forcedQr) {
-      donation = buildDonationPayload(true, 'periodic_nudge');
-      const nudgeText = `Venmo @${donation.venmoHandle ?? 'TubsBot'}.`;
-      beats = [...beats, {
-        actor: 'main',
-        action: 'speak',
-        text: nudgeText,
-        emotion: toTurnEmotion(defaultDualHeadSpeakEmotion('main')),
-      }];
-      fullText = `${fullText} ${nudgeText}`.trim();
-    }
-
     fullText = clampOutput(stripSpeakerLabels(fullText));
     if (!fullText) {
       return null;
     }
 
     pushHistory('model', fullText);
-    countReply();
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(context);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
