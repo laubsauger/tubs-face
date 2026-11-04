@@ -21,7 +21,8 @@ vi.mock('../observability/conversation-log.js', () => ({
 vi.mock('../observability/langfuse.js', () => ({ captureTurnTrace: () => {} }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { cancelAppearanceGreeting, isInConversation, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS } = await import('./turns.js');
+const { cancelAppearanceGreeting, isInConversation, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, VISITOR_GONE_MS } = await import('./turns.js');
+const { buildContents, getVisualContext, pushHistory, updateVisualContext } = await import('./context.js');
 
 function collect() {
   const messages: WsServerMessage[] = [];
@@ -104,5 +105,23 @@ describe('turns', () => {
     scheduleAppearanceGreeting('Someone is nearby.', ws.broadcast);
     await vi.advanceTimersByTimeAsync(2000);
     expect(service.runProactiveTurn).toHaveBeenCalledWith('Someone is nearby.', ws.broadcast);
+  });
+  // Visitors come and go all evening. The next one must not hear about the
+  // last one's jacket, but a visitor who is still talking off-camera must not
+  // lose the thread.
+  it('forgets the conversation once the visitor has left, not while they still talk', async () => {
+    vi.setSystemTime(2_000_000);
+    await startUserTurn({ text: 'nice hat', source: 'voice', broadcast: collect().broadcast });
+    pushHistory('user', 'nice hat');
+    pushHistory('model', 'Thanks, it is a lid.');
+    updateVisualContext('red hoodie', 2_000_000);
+
+    expect(onVisitorLeft(2_000_000 + 5_000)).toBe(false);
+    expect(buildContents('next').meta.historyMessages).toBe(2);
+
+    expect(onVisitorLeft(2_000_000 + VISITOR_GONE_MS)).toBe(true);
+    expect(buildContents('next').meta.historyMessages).toBe(0);
+    expect(getVisualContext(2_000_000 + VISITOR_GONE_MS)).toBe('');
+    expect(isInConversation(2_000_000 + VISITOR_GONE_MS)).toBe(false);
   });
 });

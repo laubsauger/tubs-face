@@ -90,6 +90,13 @@ export function buildProactiveContents(context: string, direction = ''): BuiltCo
   };
 }
 
+/** The visitor is gone: the next person starts fresh, not with their jacket. */
+export function forgetConversation(): void {
+  conversationHistory.length = 0;
+  visualContextText = '';
+  visualContextAt = 0;
+}
+
 /** Tubs's most recent replies (newest last), within the history window. */
 export function recentModelReplies(limit: number): string[] {
   pruneConversationHistory();

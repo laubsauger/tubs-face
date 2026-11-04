@@ -19,7 +19,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
-import { cancelAppearanceGreeting, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
+import { cancelAppearanceGreeting, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
@@ -152,6 +152,9 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'proactive':
       startProactiveTurn(message.context ?? '', broadcast);
+      return;
+    case 'presence':
+      if (!message.present) onVisitorLeft();
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.

@@ -4,6 +4,7 @@ import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { logConversation, logTubsReply } from '../observability/conversation-log.js';
 import { captureTurnTrace } from '../observability/langfuse.js';
 import { noteReplyEmoji } from './variety.js';
+import { forgetConversation } from './context.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 
 /**
@@ -28,6 +29,25 @@ export function isInConversation(now = Date.now()): boolean {
 
 export function endConversation(): void {
   lastConversationAt = 0;
+}
+
+/** The face saw nobody for this long before reporting the visitor gone. */
+export const VISITOR_GONE_MS = 20_000;
+
+/**
+ * The camera has seen nobody for a while. Unless someone spoke in that time
+ * (camera blocked, visitor still talking), the next face is a new person and
+ * should not hear about the last one's jacket.
+ */
+export function onVisitorLeft(now = Date.now()): boolean {
+  if (now - lastConversationAt < VISITOR_GONE_MS) {
+    return false;
+  }
+  cancelAppearanceGreeting();
+  endConversation();
+  forgetConversation();
+  console.log('[turn] visitor left; conversation forgotten');
+  return true;
 }
 
 function interruptCurrentTurn(broadcast: Broadcast, source: NonNullable<WsInterruptServerMessage['source']>): void {

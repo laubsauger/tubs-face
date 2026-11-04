@@ -57,6 +57,10 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
   let lastAppearanceSignature = '';
+  // Same threshold as the server's VISITOR_GONE_MS.
+  const VISITOR_GONE_MS = 20_000;
+  let emptySince = 0;
+  let reportedGone = false;
   let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
@@ -79,6 +83,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     },
     onFaces: (packet) => {
       const wasEmpty = stableFaces.length === 0;
+      const detectedAt = Date.now();
       const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
       const recognizedNames = [...new Set(
         faces
@@ -130,6 +135,19 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
         lastVisionFrameAt = Date.now();
       } else if (faces.length === 0) {
         lastAppearanceSignature = '';
+      }
+
+      // Tell the server once per absence that the visitor is gone, so the
+      // next person is not greeted with the last one's conversation.
+      if (faces.length > 0) {
+        emptySince = 0;
+        reportedGone = false;
+      } else {
+        emptySince ||= detectedAt;
+        if (!reportedGone && sender && detectedAt - emptySince >= VISITOR_GONE_MS) {
+          reportedGone = true;
+          sender({ type: 'presence', present: false, count: 0 });
+        }
       }
 
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
