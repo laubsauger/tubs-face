@@ -21,7 +21,7 @@ vi.mock('../observability/conversation-log.js', () => ({
 vi.mock('../observability/langfuse.js', () => ({ captureTurnTrace: () => {} }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { appearancePrompt, cancelAppearanceGreeting, startProactiveTurn, isInConversation, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, STILL_TALKING_MS } = await import('./turns.js');
+const { APPEARANCE_GREETING_COOLDOWN_MS, appearancePrompt, cancelAppearanceGreeting, startProactiveTurn, isInConversation, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, STILL_TALKING_MS } = await import('./turns.js');
 const { buildContents, getVisualContext, pushHistory, updateVisualContext } = await import('./context.js');
 
 function collect() {
@@ -106,6 +106,24 @@ describe('turns', () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(service.runProactiveTurn).toHaveBeenCalledWith('Someone is nearby.', ws.broadcast);
   });
+  // Recognition flicker, or a second tab with the camera on, can report the
+  // same person arriving again and again. Tubs greets once, not every few seconds.
+  it('greets at most once per cooldown window', async () => {
+    const ws = collect();
+    vi.setSystemTime(Date.now() + 10 * APPEARANCE_GREETING_COOLDOWN_MS); // clear of greetings in earlier tests
+    scheduleAppearanceGreeting('Known person nearby: Flo.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    scheduleAppearanceGreeting('Known person nearby: Flo.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(service.runProactiveTurn).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(APPEARANCE_GREETING_COOLDOWN_MS);
+    scheduleAppearanceGreeting('Someone new is nearby.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(service.runProactiveTurn).toHaveBeenCalledTimes(2);
+    expect(service.runProactiveTurn).toHaveBeenLastCalledWith('Someone new is nearby.', ws.broadcast);
+  });
+
   it('clears the thinking face when a proactive line produces nothing', async () => {
     const ws = collect();
     service.runProactiveTurn.mockResolvedValueOnce(null);

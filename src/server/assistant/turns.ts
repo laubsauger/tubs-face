@@ -19,6 +19,9 @@ type Broadcast = (message: WsServerMessage) => void;
 /** After a reply, follow-up speech within this window needs no wake word. */
 export const CONVERSATION_WINDOW_MS = 45_000;
 const APPEARANCE_GREETING_DEBOUNCE_MS = 700;
+/** Flickering recognition, or two open tabs with the camera on, can each report an arrival. */
+export const APPEARANCE_GREETING_COOLDOWN_MS = 30_000;
+let lastAppearanceGreetingAt = -Infinity;
 
 let lastConversationAt = 0;
 let pendingGreetingTimer: NodeJS.Timeout | null = null;
@@ -225,6 +228,12 @@ export function scheduleAppearanceGreeting(prompt: string, broadcast: Broadcast)
     if (!nextPrompt || hasActiveAssistantTurn()) {
       return;
     }
+    const sinceLast = Date.now() - lastAppearanceGreetingAt;
+    if (sinceLast < APPEARANCE_GREETING_COOLDOWN_MS) {
+      console.log(`[Greeting] Skipped, greeted ${Math.round(sinceLast / 1000)} s ago`);
+      return;
+    }
+    lastAppearanceGreetingAt = Date.now();
     startProactiveTurn(nextPrompt, broadcast);
   }, APPEARANCE_GREETING_DEBOUNCE_MS);
 }

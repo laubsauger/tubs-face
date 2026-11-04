@@ -51,7 +51,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let stableFacesAt = 0;
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
-  let lastAppearanceSignature = '';
   let uploadPending = false;
   const visitorTracker = createVisitorTracker();
   const peopleTracker = createPeopleTracker();
@@ -92,9 +91,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           .filter((name): name is string => Boolean(name?.trim()))
           .map((name) => name.trim()),
       )];
-      const appearanceSignature = faces.length === 0
-        ? ''
-        : `${faces.length}:${recognizedNames.slice().sort((left, right) => left.localeCompare(right)).join('|')}`;
       store.setState((current) => ({
         ...current,
         faceWorkerBusy: false,
@@ -111,20 +107,20 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       drawOverlay(faces);
 
       const now = Date.now();
-      const greeting = handleVisitorEvents(visitorTracker.update(faces, now, now < store.getState().conversationUntil), faces.length);
-      reportPeople(peopleTracker.update(faces, captureCanvas.width, now), now);
-      // Someone joined, or a face got recognized, while people stayed in view.
-      const groupChanged = faces.length > 0 && !wasEmpty && appearanceSignature !== lastAppearanceSignature;
-      if (faces.length > 0) {
-        lastAppearanceSignature = appearanceSignature;
-      }
+      const people = peopleTracker.update(faces, captureCanvas.width, now);
+      const greeting = handleVisitorEvents(visitorTracker.update(faces, now, now < store.getState().conversationUntil, people.map((person) => person.id)), faces.length);
+      reportPeople(people, now);
+      // Someone new joined people already in view. Not on recognition or
+      // face-count flicker: each flicker used to send a fresh greeting.
+      const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
       const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && faces.length > 0 && (greeting || groupChanged));
 
       if (shouldSendAppearance && sender) {
         sender({
           type: 'appearance_frame',
           frame: captureCanvas.toDataURL('image/jpeg', 0.6),
-          faces: recognizedNames,
+          // Names stick to a person once recognized, so a missed frame still greets by name.
+          faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])],
           count: faces.length,
           ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
@@ -277,7 +273,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stableFaces = [];
     stableFacesAt = 0;
     emptyFrameCount = 0;
-    lastAppearanceSignature = '';
     appStore.setState((current) => ({
       ...current,
       faceCameraActive: false,
@@ -450,7 +445,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     lastPeopleSignature = signature;
     sender({
       type: 'people',
-      people: people.map(({ face: _face, ...person }, index) => ({ ...person, ...(counts[index] ? { snapshots: counts[index] } : {}) })),
+      people: people.map(({ face: _face, joined: _joined, ...person }, index) => ({ ...person, ...(counts[index] ? { snapshots: counts[index] } : {}) })),
     });
   }
 

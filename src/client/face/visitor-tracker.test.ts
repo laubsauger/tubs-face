@@ -107,4 +107,14 @@ describe('visitor tracker', () => {
       expect(types(run(tracker, 1500, 60_000, [], talking))).toEqual([]);
     }
   });
+
+  // The people tracker follows a face by position when its embedding comes
+  // out poor. Then it is still the same visitor: no new greeting, no reset.
+  it('keeps the visitor while the same tracked person is in view, whatever the embedding says', () => {
+    const tracker = createVisitorTracker(() => 0.99);
+    expect(types(tracker.update([face(ANNA)], 0, false, ['p1']))).toEqual(['arrived']);
+    const events: VisitorEvent[] = [];
+    for (let t = 500; t <= 10_000; t += 500) events.push(...tracker.update([face(STRANGER)], t, false, ['p1']));
+    expect(types(events)).toEqual([]);
+  });
 });

@@ -51,4 +51,21 @@ describe('people tracker', () => {
     const [anna] = tracker.update([at(ANNA, 300, 'Anna')], 600, 0);
     expect(tracker.update([at(BEN, 300, 'Anna')], 600, 500)[0]!.id).toBe(anna!.id);
   });
+
+  // Recognition drops in and out (head down, side-on, bad light). A face that
+  // stays where someone just was is still them, or Tubs greets them again.
+  it('keeps the id while recognition misses, as long as the face stays put', () => {
+    const tracker = createPeopleTracker(() => 0.5);
+    const [anna] = tracker.update([at(ANNA, 300, 'Anna')], 600, 0);
+    expect(anna!.joined).toBe(true);
+    // Same spot, no name, an embedding that matches nobody.
+    const [still] = tracker.update([at(BEN, 304)], 600, 500);
+    expect(still!.id).toBe(anna!.id);
+    expect(still!.joined).toBeUndefined();
+    expect(still!.names).toEqual(['Anna']);
+    // A poor embedding somewhere else is someone else.
+    const both = tracker.update([at(ANNA, 300, 'Anna'), at(CARL, 520)], 600, 1000);
+    expect(both[1]!.id).not.toBe(anna!.id);
+    expect(both[1]!.joined).toBe(true);
+  });
 });

@@ -1,4 +1,4 @@
-import type { DetectedFace } from '../../shared/contracts/faces.js';
+import type { DetectedFace, FaceBox } from '../../shared/contracts/faces.js';
 import { cosineSimilarity } from './matching.js';
 
 /**
@@ -24,6 +24,8 @@ export interface PersonInView {
 /** A person in view with the face matched to them in this frame (stays on the client). */
 export interface TrackedPerson extends PersonInView {
   face: DetectedFace;
+  /** First frame of this person in view: someone new, or back from the archive. */
+  joined?: true;
 }
 
 /** Below this, a face is someone else. */
@@ -33,6 +35,15 @@ const LEAVE_AFTER_MS = 8000;
 const ARCHIVE_SIZE = 120;
 const MAX_SAMPLES = 6;
 const SAMPLE_EVERY_MS = 2000;
+/**
+ * A face where a person just was is that person, even when recognition misses
+ * the frame or the embedding comes out poor (head down, side-on, bad light).
+ * Without this, each miss looked like a new person and Tubs greeted again.
+ */
+const CONTINUITY_MS = 5000;
+const CONTINUITY_OVERLAP = 0.3;
+/** Below a name match (1) and above typical embedding matches, so those still decide swaps. */
+const CONTINUITY_SCORE = 0.9;
 
 interface Person {
   id: string;
@@ -41,6 +52,7 @@ interface Person {
   lastSampleAt: number;
   lastSeenAt: number;
   x: number;
+  box: FaceBox | null;
   face: DetectedFace | null;
   /** When they came back from the archive, how long they had been gone. */
   awayMs?: number;
@@ -69,11 +81,18 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
     return Math.max(...person.samples.map((sample) => cosineSimilarity(sample, embedding)));
   }
 
+  /** Likeness, or position: a face overlapping where they were a moment ago. */
+  function matchScore(person: Person, face: DetectedFace, now: number): number {
+    const nearby = person.box && now - person.lastSeenAt <= CONTINUITY_MS && overlap(person.box, face.box) >= CONTINUITY_OVERLAP;
+    return Math.max(likeness(person, face), nearby ? CONTINUITY_SCORE : 0);
+  }
+
   function remember(person: Person, face: DetectedFace, x: number, now: number): void {
     const name = nameOf(face);
     if (name) person.names.add(name);
     person.lastSeenAt = now;
     person.x = x;
+    person.box = face.box;
     person.face = face;
     const embedding = embeddingOf(face);
     if (embedding && now - person.lastSampleAt >= SAMPLE_EVERY_MS) {
@@ -92,12 +111,13 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
     update(faces, frameWidth, now) {
       const unmatched = faces.map((face, index) => ({ face, index, x: (face.box[0] + face.box[2]) / 2 }));
       const claimed = new Set<string>();
+      const joined = new Set<string>();
 
       // Greedy: best face-person pairs first, among people already in view.
       const pairs: Array<{ person: Person; item: (typeof unmatched)[number]; score: number }> = [];
       for (const person of present.values()) {
         for (const item of unmatched) {
-          const score = likeness(person, item.face);
+          const score = matchScore(person, item.face, now);
           if (score >= SAME_PERSON_SIMILARITY) pairs.push({ person, item, score });
         }
       }
@@ -126,10 +146,11 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
           person = archive.splice(pastIndex, 1)[0]!;
           person.awayMs = now - person.lastSeenAt;
         } else {
-          person = { id: `${session}-p${nextId++}`, names: new Set(), samples: [], lastSampleAt: -Infinity, lastSeenAt: now, x: item.x, face: null };
+          person = { id: `${session}-p${nextId++}`, names: new Set(), samples: [], lastSampleAt: -Infinity, lastSeenAt: now, x: item.x, box: null, face: null };
         }
         present.set(person.id, person);
         claimed.add(person.id);
+        joined.add(person.id);
         remember(person, item.face, item.x, now);
       }
 
@@ -151,7 +172,17 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
           position: positionOf(person.x, frameWidth),
           face: person.face!,
           ...(person.awayMs !== undefined ? { awayMs: person.awayMs } : {}),
+          ...(joined.has(person.id) ? { joined: true as const } : {}),
         }));
     },
   };
+}
+
+/** Intersection over union of two face boxes ([x1, y1, x2, y2]). */
+function overlap(a: FaceBox, b: FaceBox): number {
+  const width = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const height = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  const shared = width * height;
+  const union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - shared;
+  return union > 0 ? shared / union : 0;
 }
