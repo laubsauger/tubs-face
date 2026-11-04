@@ -37,28 +37,13 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       }
 
       const config = state.config;
-      // The pixel canvas is the face; glitchFxEnabled only turns its effects off.
-      const chromaticOffset = Math.max(
-        Math.abs(config?.glitchChromaticOffsetX ?? 0),
-        Math.abs(config?.glitchChromaticOffsetY ?? 4.5),
-      );
       syncGlitchFaceChildren(face);
       face.dataset.expression = state.currentExpression;
       face.dataset.renderQuality = config?.renderQuality ?? 'high';
       face.classList.toggle('is-speaking', state.audioPlaying);
       face.classList.toggle('is-sleeping', state.sleeping);
       face.classList.toggle('is-blinking', state.blinkActive);
-      face.classList.toggle('is-glitch-enabled', Boolean(config?.glitchFxEnabled));
       syncGaze();
-      const baseColor = mode === 'mini'
-        ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
-        : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
-      face.style.setProperty('--fx-base-color', baseColor);
-      face.style.setProperty('--fx-scanline-intensity', String(config?.glitchScanlineIntensity ?? 0.41));
-      face.style.setProperty('--fx-pixel-jitter', `${(config?.glitchPixelJitter ?? 0).toFixed(2)}px`);
-      face.style.setProperty('--fx-flicker-depth', String(config?.glitchFlickerDepth ?? 0.02));
-      face.style.setProperty('--fx-glow-strength', `${(config?.glitchGlowStrength ?? 14).toFixed(0)}px`);
-      face.style.setProperty('--fx-chromatic-offset', `${chromaticOffset.toFixed(2)}px`);
     },
     syncGaze,
   };

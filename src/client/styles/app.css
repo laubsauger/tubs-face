@@ -610,19 +610,12 @@ a {
   border-radius: 0;
 }
 
-/* Only the face moves over; its tint and scanlines run on behind both heads,
-   so the stage reads as one scene rather than two boxes. */
 .stage.has-mini-side > .main-visual-shell > .visual-stage {
   right: var(--mini-side-width);
 }
 
 .stage.has-mini-side .main-visual-face {
   background: none;
-}
-
-.stage.has-mini-side .main-visual-face::before,
-.stage.has-mini-side .main-visual-face::after {
-  right: calc(-1 * var(--mini-side-width));
 }
 
 /* Top-corner tiles: the subtitle stays clear of them. */
@@ -688,11 +681,6 @@ a {
   background: transparent;
 }
 
-:root.is-embedded .visual-face.is-glitch-enabled::before,
-:root.is-embedded .visual-face.is-glitch-enabled::after {
-  display: none;
-}
-
 .button-compact {
   padding: 6px 12px;
   font-size: 0.75rem;
@@ -710,22 +698,8 @@ a {
 
 .main-visual-shell {
   z-index: 1;
-  background:
-    radial-gradient(circle at 18% 34%, rgba(168, 85, 247, 0.2), transparent 34%),
-    radial-gradient(circle at 78% 14%, rgba(34, 211, 238, 0.14), transparent 32%),
-    linear-gradient(180deg, rgba(8, 12, 26, 0.96), rgba(4, 8, 18, 0.98));
-}
-
-.main-visual-shell::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(rgba(125, 211, 252, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(125, 211, 252, 0.03) 1px, transparent 1px);
-  background-size: 100% 6px, 6px 100%;
-  opacity: 0.4;
-  pointer-events: none;
+  /* Near black: the face is the only light in the room. */
+  background: radial-gradient(ellipse at 50% 45%, #0a0910 0%, #040406 75%);
 }
 
 .visual-stage {
@@ -771,12 +745,6 @@ a {
 .visual-face {
   --gaze-x: 0;
   --gaze-y: 0;
-  --fx-base-color: #a855f7;
-  --fx-scanline-intensity: 0.32;
-  --fx-pixel-jitter: 1.4px;
-  --fx-flicker-depth: 0.035;
-  --fx-glow-strength: 18px;
-  --fx-chromatic-offset: 1.4px;
   position: relative;
   width: min(360px, 72vw);
   aspect-ratio: 16 / 10;
@@ -806,9 +774,7 @@ a {
   width: 100%;
   height: 100%;
   border-radius: 0;
-  background:
-    linear-gradient(180deg, rgba(10, 16, 30, 0.44), rgba(8, 12, 22, 0.2)),
-    radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.14), rgba(4, 8, 16, 0.01));
+  background: none;
 }
 
 .glitch-face-canvas {
@@ -820,36 +786,6 @@ a {
   pointer-events: none;
   border-radius: inherit;
   z-index: 2;
-}
-
-.visual-face::before,
-.visual-face::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-}
-
-.visual-face.is-glitch-enabled::before {
-  opacity: var(--fx-scanline-intensity);
-  background:
-    repeating-linear-gradient(180deg,
-      rgba(255, 255, 255, 0.12) 0 2px,
-      rgba(0, 0, 0, 0) 2px 8px);
-  mix-blend-mode: screen;
-}
-
-.visual-face.is-glitch-enabled::after {
-  inset: calc(var(--fx-pixel-jitter) * -1);
-  border-radius: inherit;
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--fx-base-color) 65%, transparent), transparent 40%, rgba(255, 255, 255, 0.12)),
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, calc(var(--fx-flicker-depth) + 0.02)), transparent 64%);
-  filter:
-    drop-shadow(calc(var(--fx-chromatic-offset) * -1) 0 0 rgba(255, 0, 102, 0.38)) drop-shadow(var(--fx-chromatic-offset) 0 0 rgba(0, 221, 255, 0.34)) drop-shadow(0 0 var(--fx-glow-strength) color-mix(in srgb, var(--fx-base-color) 70%, transparent));
-  opacity: calc(0.38 + var(--fx-flicker-depth));
-  animation: fx-flicker 0.8s infinite ease-in-out;
 }
 
 .visual-speech-bubble {
@@ -2220,50 +2156,12 @@ a {
   }
 }
 
-@keyframes fx-flicker {
-
-  0%,
-  100% {
-    opacity: calc(0.32 + var(--fx-flicker-depth));
-    transform: translate3d(0, 0, 0);
-  }
-
-  20% {
-    opacity: calc(0.48 + var(--fx-flicker-depth));
-    transform: translate3d(var(--fx-pixel-jitter), 0, 0);
-  }
-
-  21% {
-    transform: translate3d(calc(var(--fx-pixel-jitter) * -1), 0, 0);
-  }
-
-  52% {
-    opacity: calc(0.26 + var(--fx-flicker-depth));
-  }
-
-  73% {
-    transform: translate3d(0, calc(var(--fx-pixel-jitter) * 0.35), 0);
-  }
-}
-
 /* Spectator mode */
 .spectator-shell {
   touch-action: manipulation;
   -webkit-user-select: none;
   user-select: none;
   overflow: hidden;
-}
-
-/* Tone down CSS overlay effects on spectator — high-DPR phones make them too intense */
-.spectator-shell .visual-face.is-glitch-enabled::before {
-  opacity: calc(var(--fx-scanline-intensity) * 0.35);
-}
-
-.spectator-shell .visual-face.is-glitch-enabled::after {
-  animation: none;
-  opacity: 0.18;
-  filter:
-    drop-shadow(0 0 calc(var(--fx-glow-strength) * 0.5) color-mix(in srgb, var(--fx-base-color) 40%, transparent));
 }
 
 .spectator-subtitle {

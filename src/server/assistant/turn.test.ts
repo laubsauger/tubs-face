@@ -295,6 +295,8 @@ describe('assistant turn', () => {
     });
 
     it('speaks at most two sentences but still reads the emotion emoji at the end', async () => {
+      // A normal turn, not one of the occasional bits (which may run to six sentences).
+      vi.spyOn(Math, 'random').mockReturnValue(0.5);
       fakes.provider = streamingProvider(['One thing. ', 'Two things. ', 'Three things. 😏']);
       const ws = collect();
 
