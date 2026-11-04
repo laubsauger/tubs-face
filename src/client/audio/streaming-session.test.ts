@@ -39,7 +39,9 @@ function setup() {
   const context = new FakeContext();
   const decodes = new Map<string, ReturnType<typeof deferred<{ duration: number }>>>();
   const onFinished = vi.fn();
+  const started: string[] = [];
   const session = createStreamingSession({
+    onChunkStarted: (chunk) => started.push(`${chunk.text}@${chunk.scheduledAt}`),
     turnId: 't1',
     getContext: async () => context as unknown as AudioContext,
     decode: (_ctx, audio) => {
@@ -50,7 +52,7 @@ function setup() {
     onFinished,
   });
   const flush = () => vi.advanceTimersByTimeAsync(0);
-  return { context, decodes, onFinished, session, flush };
+  return { context, decodes, onFinished, session, flush, started };
 }
 
 describe('createStreamingSession', () => {
@@ -75,6 +77,36 @@ describe('createStreamingSession', () => {
     decodes.get('a')!.resolve({ duration: 2 });
     await flush();
     expect(context.sources.map((s) => [s.buffer?.duration, s.startedAt])).toEqual([[2, 0], [1, 2]]);
+  });
+
+  // Subtitles follow this: TTS delivers sentence two while sentence one is
+  // still playing, and its words must not show before its audio starts.
+  it('reports each chunk with its text when its audio starts, not when it arrives', async () => {
+    const { decodes, session, flush, started } = setup();
+    session.addChunk('a', 'First sentence.');
+    session.addChunk('b', 'Second sentence.');
+    await flush();
+    decodes.get('a')!.resolve({ duration: 2 });
+    decodes.get('b')!.resolve({ duration: 1 });
+    await flush();
+    expect(started).toEqual(['First sentence.@0']);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(started).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(started).toEqual(['First sentence.@0', 'Second sentence.@2']);
+  });
+
+  it('reports no chunk starts after stop', async () => {
+    const { decodes, session, flush, started } = setup();
+    session.addChunk('a', 'First.');
+    session.addChunk('b', 'Second.');
+    await flush();
+    decodes.get('a')!.resolve({ duration: 2 });
+    decodes.get('b')!.resolve({ duration: 1 });
+    await flush();
+    session.stop();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(started).toEqual(['First.@0']);
   });
 
   it('finishes once, when the last chunk ends after speak_end', async () => {

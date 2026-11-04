@@ -106,3 +106,24 @@ test('a plain speak line is voiced through the TTS stream', async ({ page, reque
   await expect(page.locator('#visual-subtitle')).toContainText('speaker test');
   await expect(page.locator('#visual-face')).not.toHaveClass(/is-speaking/, { timeout: 5000 });
 });
+
+// Subtitles used to show a sentence the moment its audio arrived (TTS runs
+// ahead of playback) and only its last 36 characters, typed out at a fixed
+// speed. Now each sentence starts with its audio and pages through.
+test('subtitles follow the audio sentence by sentence and page through long ones', async ({ page, request }) => {
+  const long = 'This second sentence is long enough that it needs two pages of subtitles to show.';
+  await send(request,
+    { type: 'turn_start', turnId: 't-sub' },
+    chunk('t-sub', 0, 'First line.', 1000),
+    chunk('t-sub', 1, long, 2400),
+    { type: 'speak_end', turnId: 't-sub', fullText: `First line. ${long}` },
+  );
+  const subtitle = page.locator('#visual-subtitle');
+  await expect(subtitle).toContainText('First line.');
+  expect(await subtitle.textContent()).not.toContain('second');
+
+  // Sentence two begins with its first page, not its last.
+  await expect(subtitle).toContainText('This second sentence', { timeout: 2000 });
+  expect(await subtitle.textContent()).not.toContain('to show.');
+  await expect(subtitle).toContainText('to show.', { timeout: 3000 });
+});

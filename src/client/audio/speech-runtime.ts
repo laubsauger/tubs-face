@@ -47,7 +47,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let streamSession: StreamingSession | null = null;
   // speak_end with no audio: lets a waiting playTts move on after a grace period.
   let pendingEndTimer: number | null = null;
-  let streamingSubtitleText = '';
   let activeSpeechTurnId: string | null = null;
   let activeSpeechActor: 'main' | 'small' | null = null;
   let activeQueueTurnId: string | null = null;
@@ -632,8 +631,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       endStreamingSession(streamSession.turnId);
     }
     const session = streamSession ?? beginStreamingSession(effectiveTurnId, effectiveActor);
-    updateStreamingSubtitle(text || store.getState().currentSpeechText || 'Streaming audio');
-    session.addChunk(audioBase64);
+    // The subtitle starts when this chunk's audio does (see onChunkStarted),
+    // not now: TTS runs ahead of playback.
+    session.addChunk(audioBase64, text ?? '');
   }
 
   function beginStreamingSession(turnId: string | null, actor?: 'main' | 'small'): StreamingSession {
@@ -651,6 +651,9 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         if (streamSession === session) {
           endStreamingSession(sessionTurnId);
         }
+      },
+      onChunkStarted: (chunk) => {
+        if (chunk.text) updateStreamingSubtitle(chunk.text, chunk.duration);
       },
       onChunkScheduled: (_chunk, buffer) => {
         store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
@@ -759,17 +762,17 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }, STREAMING_GAP_GRACE_MS);
   }
 
-  function updateStreamingSubtitle(text: string): void {
+  /** One chunk's words, paged and highlighted over that chunk's audio. */
+  function updateStreamingSubtitle(text: string, durationSec: number): void {
     const normalized = String(text || '').trim();
-    if (!normalized || normalized === streamingSubtitleText) {
+    if (!normalized) {
       return;
     }
-    streamingSubtitleText = normalized;
     const subtitlesEnabled = mode === 'mini'
       ? store.getState().config?.secondarySubtitleEnabled !== false
       : true;
     if (subtitlesEnabled) {
-      subtitles.streamSentence(normalized);
+      subtitles.start(normalized, durationSec);
     } else {
       subtitles.stop();
     }
@@ -880,7 +883,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     clearPendingEndTimer();
     streamSession?.stop();
     streamSession = null;
-    streamingSubtitleText = '';
     pendingBeatMeta = [];
     lastStreamingBeatIndex = -1;
   }

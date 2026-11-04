@@ -22,12 +22,14 @@ export interface ScheduledChunk {
   /** AudioContext time when it was scheduled. */
   ctxTime: number;
   activeNodes: number;
+  /** What this chunk says (from the server), for subtitles. */
+  text: string;
 }
 
 export interface StreamingSession {
   readonly turnId: string | null;
   /** Queue one base64 audio chunk; chunks play in the order they were added. */
-  addChunk(audioBase64: string): void;
+  addChunk(audioBase64: string, text?: string): void;
   /** The server said the turn has no more audio (speak_end). */
   markEnd(): void;
   /** Silence everything now and ignore anything still decoding. */
@@ -43,6 +45,8 @@ export interface StreamingSessionOptions {
   /** All audio played after markEnd (or the wait timed out). Called once. */
   onFinished: () => void;
   onChunkScheduled?: (chunk: ScheduledChunk, buffer: AudioBuffer) => void;
+  /** A chunk's audio starts now (chunks are scheduled ahead of time). Not called after stop(). */
+  onChunkStarted?: (chunk: ScheduledChunk) => void;
   /** Where sources connect (the lip-sync meter); the destination by default. */
   output?: (context: AudioContext) => AudioNode;
   onError?: (message: string) => void;
@@ -56,6 +60,7 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
   const timers = new Set<number>();
   const decoded = new Map<number, AudioBuffer>();
   const failed = new Set<number>();
+  const texts = new Map<number, string>();
   const scheduled: ScheduledChunk[] = [];
   let received = 0;
   let nextToSchedule = 0;
@@ -134,9 +139,14 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
       source.start(scheduledAt);
       nextStartTime += buffer.duration;
 
-      const chunk: ScheduledChunk = { index, decodedAt: performance.now(), scheduledAt, duration: buffer.duration, ctxTime: now, activeNodes };
+      const chunk: ScheduledChunk = { index, decodedAt: performance.now(), scheduledAt, duration: buffer.duration, ctxTime: now, activeNodes, text: texts.get(index) ?? '' };
+      texts.delete(index);
       scheduled.push(chunk);
       options.onChunkScheduled?.(chunk, buffer);
+      if (options.onChunkStarted) {
+        const started = options.onChunkStarted;
+        later(() => started(chunk), Math.max(0, (scheduledAt - now) * 1000));
+      }
       log(`chunk #${index} scheduled at ${scheduledAt.toFixed(3)} for ${buffer.duration.toFixed(3)}s`);
 
       let ended = false;
@@ -169,11 +179,12 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
   return {
     turnId,
     scheduled,
-    addChunk(audioBase64: string): void {
+    addChunk(audioBase64: string, text = ''): void {
       if (stopped) return;
       clearFinalizeTimer();
       const index = received;
       received += 1;
+      texts.set(index, text);
       void (async () => {
         try {
           context ??= await getContext();
