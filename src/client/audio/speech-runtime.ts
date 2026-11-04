@@ -5,6 +5,7 @@ import { pushStreamDebugEntry } from '../chat/state.js';
 import { buildLocalTurnTimeline } from '../turn-script.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
+import { STREAMING_GAP_GRACE_MS, createStreamingSession, type ScheduledChunk, type StreamingSession } from './streaming-session.js';
 
 interface SpeakQueueItem {
   type: 'speak' | 'wait' | 'react' | 'wait_remote';
@@ -25,9 +26,7 @@ const REMOTE_SPEECH_STALE_MS = 20_000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_MAX_MS = 45_000;
 const SPEECH_SAFETY_MAX_MS = 60_000;
-const STREAMING_GAP_GRACE_MS = 280;
 const STREAMING_SUBTITLE_HOLD_SEC = 12;
-const STREAMING_FINALIZE_MAX_ATTEMPTS = 40; // ~40 * 280ms ≈ 11s hard limit
 
 export interface SpeechRuntime {
   init(): void;
@@ -45,21 +44,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let disposed = false;
   let pendingInferencePlayback: { blob: Blob; turnId: string | null } | null = null;
   let streamingAudioContext: AudioContext | null = null;
-  let streamingNextStartTime = 0;
-  let streamingActiveNodes = 0;
-  let streamingFinalizeTimer: number | null = null;
-  let streamingFinalizeAttempts = 0;
-  let streamingSessionActive = false;
-  let streamingSessionTurnId: string | null = null;
-  let streamingSpeakEndReceived = false;
-  let streamingChunkLog: Array<{
-    idx: number;
-    decodedAt: number;
-    scheduledAt: number;
-    duration: number;
-    ctxTime: number;
-    activeNodes: number;
-  }> = [];
+  // The turn whose streamed audio is playing; it owns its sources and timers.
+  let streamSession: StreamingSession | null = null;
+  // speak_end with no audio: lets a waiting playTts move on after a grace period.
+  let pendingEndTimer: number | null = null;
   let streamingSubtitleText = '';
   let activeSpeechTurnId: string | null = null;
   let activeSpeechActor: 'main' | 'small' | null = null;
@@ -83,16 +71,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }> = [];
   let lastStreamingBeatIndex = -1;
 
-  // Decoded buffers waiting to be scheduled, keyed by chunk index.
-  // Chunks decode in parallel but schedule in order.
-  let pendingBuffers: Map<number, { buffer: AudioBuffer; turnId: string | null }> = new Map();
-  let nextScheduleIdx = 0;
-  let chunkReceiveCount = 0;
-  // Scheduled sources, so an interrupt can silence audio that is already queued
-  // in the AudioContext. Bumping streamingGeneration invalidates pending decodes,
-  // onended callbacks and safety timers that belong to a previous session.
-  const streamingSources = new Set<AudioBufferSourceNode>();
-  let streamingGeneration = 0;
   // Bumped when active playback is interrupted, so timers from the interrupted
   // queue item cannot release the queue while a newer item is playing.
   let queueGeneration = 0;
@@ -142,7 +120,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
             return;
           }
           try {
-            console.log(`[STREAM-v2] chunk_in #${message.chunkIndex ?? '?'} | len=${message.audio?.length ?? 0} | turn=${message.turnId ?? '?'} | actor=${message.actor ?? '-'} | beat=${message.beatIndex ?? '-'} | session=${streamingSessionActive} | rxCount=${chunkReceiveCount} | t=${Date.now()}`);
+            console.log(`[STREAM-v2] chunk_in #${message.chunkIndex ?? '?'} | len=${message.audio?.length ?? 0} | turn=${message.turnId ?? '?'} | actor=${message.actor ?? '-'} | beat=${message.beatIndex ?? '-'} | session=${Boolean(streamSession)} | t=${Date.now()}`);
             // Sync expressions when beat changes (server-streamed dual-head)
             if (message.beatIndex != null && message.beatIndex !== lastStreamingBeatIndex) {
               lastStreamingBeatIndex = message.beatIndex;
@@ -626,173 +604,71 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     });
   }
 
+  function getStreamingContext(): Promise<AudioContext> {
+    streamingAudioContext ??= new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    return Promise.resolve(streamingAudioContext);
+  }
+
   function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small', text?: string): void {
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
     const effectiveActor = actor ?? (mode === 'mini' ? 'small' : 'main');
-
-    clearStreamingFinalizeTimer();
-
-    // Start session immediately on first chunk (synchronous, before any async work).
+    clearPendingEndTimer();
     // A chunk from a different turn ends the old session and silences its audio.
-    if (streamingSessionActive && streamingSessionTurnId && effectiveTurnId && streamingSessionTurnId !== effectiveTurnId) {
-      endStreamingSession(streamingSessionTurnId);
+    if (streamSession?.turnId && effectiveTurnId && streamSession.turnId !== effectiveTurnId) {
+      endStreamingSession(streamSession.turnId);
     }
-    if (!streamingSessionActive) {
-      beginStreamingSession(effectiveTurnId, effectiveActor);
-    }
-    // Index is taken after a possible session switch, which resets the counter.
-    const idx = chunkReceiveCount++;
+    const session = streamSession ?? beginStreamingSession(effectiveTurnId, effectiveActor);
     updateStreamingSubtitle(text || store.getState().currentSpeechText || 'Streaming audio');
-
-    // Fire-and-forget decode — scheduleReadyChunks() handles ordering
-    void decodeAndQueue(audioBase64, idx, effectiveTurnId).catch((error) => {
-      store.appendLog('error', `Chunk #${idx} decode failed: ${error instanceof Error ? error.message : 'unknown'}`);
-    });
+    session.addChunk(audioBase64);
   }
 
-  async function decodeAndQueue(audioBase64: string, idx: number, turnId: string | null): Promise<void> {
-    const generation = streamingGeneration;
-    if (!streamingAudioContext) {
-      streamingAudioContext = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-    }
-    if (streamingAudioContext.state === 'suspended') {
-      await streamingAudioContext.resume();
-    }
-
-    const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
-    const audioBuffer = await streamingAudioContext.decodeAudioData(bytes.buffer.slice(0));
-
-    console.log(`[Stream] chunk #${idx} decoded | duration=${audioBuffer.duration.toFixed(3)}s | bytes=${bytes.byteLength}`);
-    if (generation !== streamingGeneration) {
-      // Session was interrupted or ended while decoding; its indices are stale.
-      return;
-    }
-
-    pendingBuffers.set(idx, { buffer: audioBuffer, turnId });
-    scheduleReadyChunks();
-  }
-
-  /** Schedule decoded buffers in order. Only advances when the next index is ready. */
-  function scheduleReadyChunks(): void {
-    if (!streamingAudioContext) return;
-
-    while (pendingBuffers.has(nextScheduleIdx)) {
-      const entry = pendingBuffers.get(nextScheduleIdx)!;
-      pendingBuffers.delete(nextScheduleIdx);
-      const chunkIdx = nextScheduleIdx;
-      nextScheduleIdx++;
-
-      const now = streamingAudioContext.currentTime;
-      if (streamingNextStartTime < now) {
-        streamingNextStartTime = now;
-      }
-
-      const source = streamingAudioContext.createBufferSource();
-      source.buffer = entry.buffer;
-      source.connect(streamingAudioContext.destination);
-
-      const scheduledAt = streamingNextStartTime;
-      const generation = streamingGeneration;
-      streamingActiveNodes += 1;
-      streamingSources.add(source);
-      source.start(streamingNextStartTime);
-      streamingNextStartTime += entry.buffer.duration;
-
-      console.log(`[Stream] chunk #${chunkIdx} scheduled | at=${scheduledAt.toFixed(3)} | dur=${entry.buffer.duration.toFixed(3)} | next=${streamingNextStartTime.toFixed(3)} | ctxNow=${now.toFixed(3)} | active=${streamingActiveNodes}`);
-
-      streamingChunkLog.push({
-        idx: chunkIdx,
-        decodedAt: performance.now(),
-        scheduledAt,
-        duration: entry.buffer.duration,
-        ctxTime: now,
-        activeNodes: streamingActiveNodes,
-      });
-
-      store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
-        turnId: entry.turnId ?? current.currentTurnId,
-        audioBytes: entry.buffer.length,
-        audioDurationSec: entry.buffer.duration,
-        ts: Date.now(),
-      }));
-
-      let chunkEnded = false;
-      const onChunkEnd = () => {
-        if (chunkEnded) return;
-        chunkEnded = true;
-        streamingSources.delete(source);
-        if (generation !== streamingGeneration) return;
-        streamingActiveNodes = Math.max(0, streamingActiveNodes - 1);
-        console.log(`[Stream] chunk #${chunkIdx} ended | remaining=${streamingActiveNodes} | speakEndReceived=${streamingSpeakEndReceived}`);
-        if (streamingActiveNodes === 0) {
-          // Only finalize right away if no later chunk is still decoding.
-          if (streamingSpeakEndReceived && chunkReceiveCount === nextScheduleIdx) {
-            console.log(`[Stream] last chunk done after speak_end — finalizing`);
-            endStreamingSession(entry.turnId);
-          } else {
-            // All audio finished but no speak_end yet — schedule a grace period
-            // in case speak_end is in-flight, then force-finalize
-            console.log(`[Stream] all audio done but no speak_end — scheduling grace finalize`);
-            streamingFinalizeAttempts = 0;
-            tryFinalizeStreaming(entry.turnId);
-          }
-        }
-      };
-      source.onended = onChunkEnd;
-      // Safety: if the AudioContext is suspended (e.g. iOS autoplay policy),
-      // onended will never fire. Set a fallback timeout that accounts for both
-      // the wait until the chunk is scheduled to start AND its playback duration.
-      const waitUntilStartMs = Math.max(0, (scheduledAt - now) * 1000);
-      const safetyMs = waitUntilStartMs + entry.buffer.duration * 1000 + 3000;
-      window.setTimeout(() => {
-        if (!chunkEnded) {
-          console.warn(`[Stream] chunk #${chunkIdx} safety timeout (${safetyMs.toFixed(0)}ms) — onended never fired, ctx.state=${streamingAudioContext?.state ?? '?'}`);
-          onChunkEnd();
-        }
-      }, safetyMs);
-    }
-  }
-
-  function beginStreamingSession(turnId: string | null, actor?: 'main' | 'small'): void {
-    if (streamingSessionActive) {
-      return;
-    }
-    streamingSessionActive = true;
-    streamingSpeakEndReceived = false;
-    streamingChunkLog = [];
+  function beginStreamingSession(turnId: string | null, actor?: 'main' | 'small'): StreamingSession {
     lastStreamingBeatIndex = -1;
-    // Don't reset pendingBuffers/nextScheduleIdx/chunkReceiveCount here —
-    // the first chunk already incremented chunkReceiveCount before calling us.
-    // These are reset in endStreamingSession/stopAllPlayback instead.
-    streamingSessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
-    activeSpeechTurnId = streamingSessionTurnId;
+    const sessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    const session = createStreamingSession({
+      turnId: sessionTurnId,
+      getContext: getStreamingContext,
+      decode: (context, audioBase64) => {
+        const bytes = Uint8Array.from(atob(audioBase64), (char) => char.charCodeAt(0));
+        return context.decodeAudioData(bytes.buffer.slice(0));
+      },
+      onFinished: () => {
+        if (streamSession === session) {
+          endStreamingSession(sessionTurnId);
+        }
+      },
+      onChunkScheduled: (_chunk, buffer) => {
+        store.setState((current) => pushStreamDebugEntry(current, 'audio_chunk_played', {
+          turnId: sessionTurnId ?? current.currentTurnId,
+          audioBytes: buffer.length,
+          audioDurationSec: buffer.duration,
+          ts: Date.now(),
+        }));
+      },
+      onError: (message) => store.appendLog('error', `Stream ${message}`),
+      log: (message) => console.log(`[Stream] ${message}`),
+    });
+    streamSession = session;
+    activeSpeechTurnId = sessionTurnId;
     activeSpeechActor = actor ?? (mode === 'mini' ? 'small' : 'main');
     const isLocalBeat = !(mode === 'main' && activeSpeechActor === 'small');
-    console.log(`[Stream] session begin | turn=${streamingSessionTurnId} | actor=${activeSpeechActor} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'}`);
+    console.log(`[Stream] session begin | turn=${sessionTurnId} | actor=${activeSpeechActor}`);
     if (isLocalBeat) updatePlaybackState(true, 'Speaking (Stream)');
-    emitHeadSpeechState('start', streamingSessionTurnId, activeSpeechActor);
+    emitHeadSpeechState('start', sessionTurnId, activeSpeechActor);
+    return session;
   }
 
   function endStreamingSession(turnId: string | null): void {
-    clearStreamingFinalizeTimer();
-    if (!streamingSessionActive) {
-      console.log(`[Stream] endStreamingSession called but no active session — dispatching tts-stream-done anyway`);
-      resetStreamingAudio();
-      // Still dispatch done event so playTts doesn't hang for 60s
-      const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
-      window.dispatchEvent(new CustomEvent('tubs:tts-stream-done', {
-        detail: { turnId: effectiveTurnId },
-      }));
-      return;
+    const session = streamSession;
+    const effectiveTurnId = turnId ?? session?.turnId ?? store.getState().currentTurnId ?? null;
+    if (session) {
+      logStreamingTimeline(session.scheduled);
     }
-
-    logStreamingTimeline();
-
-    const effectiveTurnId = turnId ?? streamingSessionTurnId ?? store.getState().currentTurnId ?? null;
     resetStreamingAudio();
-    finishSpeech(effectiveTurnId);
-
-    // Signal any waiting playTts that streaming is done
+    if (session) {
+      finishSpeech(effectiveTurnId);
+    }
+    // Signal any waiting playTts that streaming is done.
     window.dispatchEvent(new CustomEvent('tubs:tts-stream-done', {
       detail: { turnId: effectiveTurnId },
     }));
@@ -805,7 +681,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const isLocalBeat = !(mode === 'main' && effectiveActor === 'small');
 
     // Emit head_speech_state for the new actor so mini face syncs
-    emitHeadSpeechState('start', streamingSessionTurnId, effectiveActor);
+    emitHeadSpeechState('start', streamSession?.turnId ?? null, effectiveActor);
     activeSpeechActor = effectiveActor;
 
     if (beatMeta?.emotion) {
@@ -831,100 +707,40 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
   }
 
-  function logStreamingTimeline(): void {
-    if (streamingChunkLog.length === 0) {
+  function logStreamingTimeline(chunks: readonly ScheduledChunk[]): void {
+    if (chunks.length === 0) {
       return;
     }
-
-    const chunks = streamingChunkLog.slice();
-    streamingChunkLog = [];
-
     const first = chunks[0]!;
     const last = chunks[chunks.length - 1]!;
-    const firstDecoded = first.decodedAt;
-    const lines: string[] = [];
-    lines.push(`[Streaming Audio Timeline] ${chunks.length} chunk(s)`);
-    lines.push(`  #  | Decoded    | Sched @    | Duration  | Ctx Time   | Nodes | Gap`);
-    lines.push(`-----+------------+------------+-----------+------------+-------+--------`);
-
-    for (let i = 0; i < chunks.length; i++) {
-      const c = chunks[i]!;
-      const decodedRel = ((c.decodedAt - firstDecoded) / 1000).toFixed(3);
-      const schedAt = c.scheduledAt.toFixed(3);
-      const dur = c.duration.toFixed(3);
-      const ctx = c.ctxTime.toFixed(3);
-      const prev = i > 0 ? chunks[i - 1]! : null;
-      const gap = prev
-        ? (c.scheduledAt - (prev.scheduledAt + prev.duration)).toFixed(3)
-        : '—';
-      lines.push(
-        `  ${String(c.idx).padStart(2)} | ${decodedRel.padStart(10)}s | ${schedAt.padStart(10)}s | ${dur.padStart(9)}s | ${ctx.padStart(10)}s | ${String(c.activeNodes).padStart(5)} | ${String(gap).padStart(6)}s`,
-      );
-    }
-
-    // Check for overlaps: any chunk scheduled before previous chunk ends?
+    const lines = [`[Streaming Audio Timeline] ${chunks.length} chunk(s)`];
     let overlaps = 0;
-    let allStartAtSameTime = true;
-    for (let i = 1; i < chunks.length; i++) {
-      const cur = chunks[i]!;
-      const prev = chunks[i - 1]!;
-      const prevEnd = prev.scheduledAt + prev.duration;
-      if (cur.scheduledAt < prevEnd - 0.001) {
-        overlaps++;
-      }
-      if (Math.abs(cur.scheduledAt - first.scheduledAt) > 0.01) {
-        allStartAtSameTime = false;
-      }
-    }
+    chunks.forEach((chunk, i) => {
+      const previous = i > 0 ? chunks[i - 1]! : null;
+      const gap = previous ? chunk.scheduledAt - (previous.scheduledAt + previous.duration) : 0;
+      if (previous && gap < -0.001) overlaps += 1;
+      lines.push(`  #${chunk.index} decoded +${((chunk.decodedAt - first.decodedAt) / 1000).toFixed(3)}s | at ${chunk.scheduledAt.toFixed(3)}s | ${chunk.duration.toFixed(3)}s | gap ${previous ? gap.toFixed(3) : '-'}s`);
+    });
     if (overlaps > 0) {
-      lines.push(`  ⚠ ${overlaps} overlapping chunk(s) detected!`);
+      lines.push(`  ! ${overlaps} overlapping chunk(s)`);
     }
-    if (allStartAtSameTime && chunks.length > 1) {
-      lines.push(`  ⚠ All chunks scheduled at same time — serialization broken!`);
-    }
-
-    const totalDuration = chunks.reduce((sum, c) => sum + c.duration, 0);
-    const wallTime = (last.decodedAt - firstDecoded) / 1000;
-    lines.push(`  Total audio: ${totalDuration.toFixed(3)}s | Wall decode time: ${wallTime.toFixed(3)}s`);
-
+    const totalDuration = chunks.reduce((sum, chunk) => sum + chunk.duration, 0);
+    lines.push(`  Total audio ${totalDuration.toFixed(3)}s | decode span ${((last.decodedAt - first.decodedAt) / 1000).toFixed(3)}s`);
     console.log(lines.join('\n'));
   }
 
   function scheduleStreamingEnd(turnId?: string): void {
-    streamingSpeakEndReceived = true;
-    streamingFinalizeAttempts = 0;
-    const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
-    console.log(`[Stream] speak_end received | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes} | sessionActive=${streamingSessionActive} | ctxTime=${streamingAudioContext?.currentTime?.toFixed(3) ?? '?'} | nextStart=${streamingNextStartTime.toFixed(3)}`);
-    tryFinalizeStreaming(turnId ?? null);
-  }
-
-  function tryFinalizeStreaming(turnId: string | null): void {
-    clearStreamingFinalizeTimer();
-    streamingFinalizeTimer = window.setTimeout(() => {
-      streamingFinalizeTimer = null;
-      streamingFinalizeAttempts += 1;
-
-      // Hard cap: force-end after max attempts regardless of pending state
-      if (streamingFinalizeAttempts >= STREAMING_FINALIZE_MAX_ATTEMPTS) {
-        const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
-        console.warn(`[Stream] forcing session end after ${streamingFinalizeAttempts} attempts | activeNodes=${streamingActiveNodes} | pendingDecodes=${pendingDecodes}`);
-        endStreamingSession(turnId);
-        return;
+    if (streamSession && (!turnId || !streamSession.turnId || streamSession.turnId === turnId)) {
+      streamSession.markEnd();
+      return;
+    }
+    // speak_end with no audio (TTS failed, nothing to say): release a waiting playTts.
+    clearPendingEndTimer();
+    pendingEndTimer = window.setTimeout(() => {
+      pendingEndTimer = null;
+      if (!streamSession) {
+        endStreamingSession(turnId ?? null);
       }
-
-      const pendingDecodes = chunkReceiveCount - nextScheduleIdx;
-      if (pendingDecodes > 0) {
-        console.log(`[Stream] ${pendingDecodes} chunk(s) still decoding — retrying finalize (attempt ${streamingFinalizeAttempts})`);
-        tryFinalizeStreaming(turnId);
-        return;
-      }
-      if (streamingActiveNodes > 0) {
-        console.log(`[Stream] ${streamingActiveNodes} node(s) still playing — retrying (attempt ${streamingFinalizeAttempts})`);
-        tryFinalizeStreaming(turnId);
-        return;
-      }
-      console.log(`[Stream] finalizing session`);
-      endStreamingSession(turnId);
     }, STREAMING_GAP_GRACE_MS);
   }
 
@@ -944,12 +760,12 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
   }
 
-  function clearStreamingFinalizeTimer(): void {
-    if (streamingFinalizeTimer == null) {
+  function clearPendingEndTimer(): void {
+    if (pendingEndTimer == null) {
       return;
     }
-    window.clearTimeout(streamingFinalizeTimer);
-    streamingFinalizeTimer = null;
+    window.clearTimeout(pendingEndTimer);
+    pendingEndTimer = null;
   }
 
   function cleanupAudio(objectUrl: string, audio: HTMLAudioElement, turnId: string | null): void {
@@ -1044,27 +860,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   /** Silences scheduled streaming audio and resets chunk ordering for the next session. */
   function resetStreamingAudio(): void {
-    streamingGeneration += 1;
-    for (const source of streamingSources) {
-      source.onended = null;
-      try {
-        source.stop();
-      } catch {
-        // Already stopped.
-      }
-      source.disconnect();
-    }
-    streamingSources.clear();
-    clearStreamingFinalizeTimer();
-    streamingActiveNodes = 0;
-    streamingNextStartTime = 0;
-    streamingSessionActive = false;
-    streamingSpeakEndReceived = false;
-    streamingSessionTurnId = null;
+    clearPendingEndTimer();
+    streamSession?.stop();
+    streamSession = null;
     streamingSubtitleText = '';
-    pendingBuffers = new Map();
-    nextScheduleIdx = 0;
-    chunkReceiveCount = 0;
     pendingBeatMeta = [];
     lastStreamingBeatIndex = -1;
   }
@@ -1345,10 +1144,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       targetTurnId == null
       || activeQueueTurnId === targetTurnId
       || activeSpeechTurnId === targetTurnId
-      || streamingSessionTurnId === targetTurnId;
+      || streamSession?.turnId === targetTurnId;
 
     if (shouldStopActive) {
-      const stoppedTurnIds = targetTurnId ? [targetTurnId] : [activeQueueTurnId, activeSpeechTurnId, streamingSessionTurnId];
+      const stoppedTurnIds = targetTurnId ? [targetTurnId] : [activeQueueTurnId, activeSpeechTurnId, streamSession?.turnId ?? null];
       for (const id of stoppedTurnIds) {
         rememberInterruptedTurn(id);
       }
