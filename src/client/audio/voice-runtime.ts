@@ -45,6 +45,17 @@ export interface VoiceRuntime {
   dispose(): void;
 }
 
+/**
+ * Speaking counts as talking over Tubs only while he is audible. His subtitle
+ * stays up for a few seconds after he finishes; treating that as a barge-in
+ * told the server he had been cut off, and he complained about an interrupt
+ * that never happened. A reply still being generated is superseded by the
+ * server when the new turn starts, so it needs no interrupt from here.
+ */
+export function isTalkingOverTubs(state: { audioPlaying: boolean }): boolean {
+  return state.audioPlaying;
+}
+
 export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   const HANDSFREE_START_HOLD_MS = 45;
   // Plus the 300 ms voice hangover below: about 1 s of quiet ends the turn.
@@ -297,7 +308,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     // Only audible playback matters for the pre-roll: it would hold Tubs's own
     // voice. (currentSpeechText can linger after playback has ended.)
     const tubsAudible = state.audioPlaying;
-    if (state.audioPlaying || state.currentSpeechText) {
+    if (isTalkingOverTubs(state)) {
       stopLiveRecognition();
       lastLiveTranscript = '';
       store.setState((current) => ({
