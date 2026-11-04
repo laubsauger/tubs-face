@@ -1,5 +1,6 @@
 import { openTtsStream } from '../tts/stream.js';
 import { isMingVoice } from '../tts/voices.js';
+import { joinWavChunks } from '../tts/wav.js';
 
 /**
  * A short sound ("Oh.", "Right.") played the moment a voice turn starts.
@@ -54,6 +55,10 @@ export function prepareFillers(voice: string, now = Date.now()): void {
   rendering.add(voice);
 
   const rendered: Filler[] = [];
+  // Ming streams a line in several chunks; a filler plays as one clip, so they
+  // are joined when the line is done. A line that never finishes is dropped.
+  let lineText = '';
+  let lineAudio: string[] = [];
   let pending = 0;
   let finish = (): void => {};
   const done = new Promise<void>((resolve) => {
@@ -61,10 +66,20 @@ export function prepareFillers(voice: string, now = Date.now()): void {
   });
   const session = openTtsStream({
     onChunk(chunk) {
-      // The text becomes the subtitle, so it shows the word, not the phonemes.
-      if (chunk.text && chunk.audio) rendered.push({ text: chunk.text.replace(PHONEME_MARKUP, '$1'), audio: chunk.audio });
+      if (!chunk.text || !chunk.audio) return;
+      lineText = chunk.text;
+      lineAudio.push(chunk.audio);
     },
     onSentenceDone() {
+      if (lineAudio.length > 0) {
+        try {
+          // The text becomes the subtitle, so it shows the word, not the phonemes.
+          rendered.push({ text: lineText.replace(PHONEME_MARKUP, '$1'), audio: joinWavChunks(lineAudio) });
+        } catch (error) {
+          console.warn(`[fillers] dropped "${lineText}": ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      lineAudio = [];
       pending -= 1;
       if (pending <= 0) finish();
     },

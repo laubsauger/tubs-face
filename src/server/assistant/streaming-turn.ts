@@ -103,6 +103,7 @@ export async function runStreamingAssistantTurn(args: {
           chunkIndex: chunkIndex++,
           // The emoji comes first in the reply, so this is set from the first chunk on.
           ...(rawEmotion ? { emotion: rawEmotion } : {}),
+          ...(chunk.more ? { more: true } : {}),
         } satisfies WsAudioChunkServerMessage);
       },
       onSentenceDone() {

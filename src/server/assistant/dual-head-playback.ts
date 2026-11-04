@@ -154,6 +154,7 @@ async function streamDualHeadSpeakBeat(args: {
           chunkIndex: nextChunkIndex + chunkCount,
           actor,
           beatIndex,
+          ...(chunk.more ? { more: true } : {}),
         } satisfies WsAudioChunkServerMessage);
         chunkCount += 1;
       },

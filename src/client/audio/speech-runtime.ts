@@ -25,6 +25,48 @@ const REMOTE_SPEECH_STALE_MS = 20_000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_MAX_MS = 45_000;
 const SPEECH_SAFETY_MAX_MS = 60_000;
+/** Ming speaks ~0.27-0.3 s per word; sizes a streamed item's subtitle until its last chunk is in. */
+const STREAMED_SECONDS_PER_WORD = 0.3;
+
+/** What the TTS service sends (Kokoro and Ming): 24 kHz mono WAV. */
+const TTS_SAMPLE_RATE = 24_000;
+
+/**
+ * The context streamed speech plays in, at the TTS rate. decodeAudioData
+ * resamples every chunk to the context's rate on its own, and each chunk's
+ * edges ring: harmless between Kokoro sentences (silence there), a click at
+ * every seam of a Ming reply cut mid-word. At 24 kHz the chunks join sample
+ * for sample and the browser resamples the joined stream once, on output.
+ */
+function createStreamingAudioContext(): AudioContext {
+  const Context = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  try {
+    return new Context({ sampleRate: TTS_SAMPLE_RATE });
+  } catch {
+    return new Context();
+  }
+}
+
+/** One TTS item's audio, possibly over several chunks (see beginStreamingSession). */
+interface SubtitleItem {
+  text: string;
+  /** Seconds of its audio scheduled so far. */
+  duration: number;
+  /** More chunks for it are still coming. */
+  open: boolean;
+}
+
+/**
+ * How long an item's subtitle should run. Exact once its last chunk is
+ * scheduled; until then the larger of a word-count estimate and the audio
+ * scheduled so far plus a little, so the highlight neither races ahead of the
+ * voice nor reaches the last word while more audio is on its way.
+ */
+export function subtitleSeconds(item: Readonly<SubtitleItem>): number {
+  if (!item.open) return item.duration;
+  const words = item.text.split(/\s+/).filter(Boolean).length;
+  return Math.max(item.duration + 0.25, words * STREAMED_SECONDS_PER_WORD);
+}
 
 export interface SpeechRuntime {
   init(): void;
@@ -126,7 +168,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
               lastStreamingBeatIndex = message.beatIndex;
               applyStreamingBeatExpression(message.beatIndex, message.actor);
             }
-            playStreamingAudioChunk(message.audio, message.turnId, message.actor, message.text);
+            playStreamingAudioChunk(message.audio, message.turnId, message.actor, message.text, message.more);
           } catch (err) {
             console.error('[Stream] playStreamingAudioChunk THREW:', err);
           }
@@ -158,7 +200,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       // within the same user-gesture call stack. We also play a tiny silent WAV
       // via HTMLAudioElement as a second unlock vector (some WebKit builds need it).
       if (!streamingAudioContext) {
-        streamingAudioContext = new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+        streamingAudioContext = createStreamingAudioContext();
       }
       if (streamingAudioContext.state === 'suspended') {
         void streamingAudioContext.resume();
@@ -588,11 +630,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   function getStreamingContext(): Promise<AudioContext> {
-    streamingAudioContext ??= new (window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+    streamingAudioContext ??= createStreamingAudioContext();
     return Promise.resolve(streamingAudioContext);
   }
 
-  function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small', text?: string): void {
+  function playStreamingAudioChunk(audioBase64: string, turnId?: string, actor?: 'main' | 'small', text?: string, more?: boolean): void {
     const effectiveTurnId = turnId ?? store.getState().currentTurnId ?? null;
     const effectiveActor = actor ?? (mode === 'mini' ? 'small' : 'main');
     clearPendingEndTimer();
@@ -603,12 +645,19 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     const session = streamSession ?? beginStreamingSession(effectiveTurnId, effectiveActor);
     // The subtitle starts when this chunk's audio does (see onChunkStarted),
     // not now: TTS runs ahead of playback.
-    session.addChunk(audioBase64, text ?? '');
+    session.addChunk(audioBase64, text ?? '', more === true);
   }
 
   function beginStreamingSession(turnId: string | null, actor?: 'main' | 'small'): StreamingSession {
     lastStreamingBeatIndex = -1;
     const sessionTurnId = turnId ?? store.getState().currentTurnId ?? null;
+    // One subtitle per TTS item. Ming streams a reply in several chunks (all
+    // but the last flagged `more`); its subtitle starts with the first chunk
+    // and is retimed as the others are scheduled. Its total length is only
+    // known with the last chunk, so until then it's estimated from the words.
+    const itemStartingAt = new Map<number, SubtitleItem>();
+    let latestItem: SubtitleItem | null = null;
+    let runningItem: SubtitleItem | null = null;
     const session = createStreamingSession({
       turnId: sessionTurnId,
       getContext: getStreamingContext,
@@ -622,8 +671,23 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           endStreamingSession(sessionTurnId);
         }
       },
+      onChunkScheduled: (chunk) => {
+        const continues = latestItem?.open && (!chunk.text || chunk.text === latestItem.text);
+        if (latestItem && continues) {
+          latestItem.duration += chunk.duration;
+          latestItem.open = chunk.more;
+          if (runningItem === latestItem) subtitles.retime(subtitleSeconds(latestItem), latestItem.open);
+          return;
+        }
+        latestItem = { text: chunk.text, duration: chunk.duration, open: chunk.more };
+        itemStartingAt.set(chunk.index, latestItem);
+      },
       onChunkStarted: (chunk) => {
-        if (chunk.text) updateStreamingSubtitle(chunk.text, chunk.duration);
+        const item = itemStartingAt.get(chunk.index);
+        if (!item) return; // a later chunk of an item whose subtitle is already running
+        itemStartingAt.delete(chunk.index);
+        runningItem = item;
+        if (chunk.text) updateStreamingSubtitle(chunk.text, subtitleSeconds(item), item.open);
       },
       onError: (message) => store.appendLog('error', `Stream ${message}`),
       log: (message) => console.log(`[Stream] ${message}`),
@@ -716,8 +780,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }, STREAMING_GAP_GRACE_MS);
   }
 
-  /** One chunk's words, paged and highlighted over that chunk's audio. */
-  function updateStreamingSubtitle(text: string, durationSec: number): void {
+  /** One item's words, paged and highlighted over that item's audio. */
+  function updateStreamingSubtitle(text: string, durationSec: number, open = false): void {
     const normalized = String(text || '').trim();
     if (!normalized) {
       return;
@@ -726,7 +790,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       ? store.getState().config?.secondarySubtitleEnabled !== false
       : true;
     if (subtitlesEnabled) {
-      subtitles.start(normalized, durationSec);
+      subtitles.start(normalized, durationSec, open);
     } else {
       subtitles.stop();
     }

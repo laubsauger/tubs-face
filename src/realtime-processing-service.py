@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import os
@@ -688,6 +689,76 @@ def _ming_wav(text):
     return wav_bytes
 
 
+def _ming_stream(text):
+    """Yields (base64 WAV, last) for each chunk of Ming's /tts/stream as it arrives.
+    Raises if Ming fails before or during the stream (down, HTTP error, an
+    {"error"} line, or the stream cut off before its done line)."""
+    req = urllib.request.Request(
+        f"{MING_TTS_URL}/tts/stream",
+        data=json.dumps({"text": text}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    t0 = time.time()
+    chunks, first_ms = 0, None
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        for line in resp:
+            if not line.strip():
+                continue
+            msg = json.loads(line)
+            if msg.get("error"):
+                raise RuntimeError(f"Ming stream error: {msg['error']}")
+            if msg.get("done"):
+                print(f"[Realtime TTS] Ming stream {len(text)} chars: {chunks} chunk(s), first after {first_ms}ms, "
+                      f"done in {int((time.time() - t0) * 1000)}ms (render {msg.get('render_ms', '?')}ms, "
+                      f"{msg.get('audio_s', '?')}s audio)")
+                return
+            if isinstance(msg.get("audio"), str) and msg["audio"]:
+                if chunks == 0:
+                    first_ms = int((time.time() - t0) * 1000)
+                chunks += 1
+                yield msg["audio"], bool(msg.get("last"))
+    raise RuntimeError(f"Ming stream ended after {chunks} chunk(s) without its done line")
+
+
+def _send_ming_stream(ws, text):
+    """Speaks text with Ming over the TTS socket: one {"text","audio","chunk"}
+    message per chunk as Ming renders it ("more" on all but the last, so the
+    client keeps one subtitle across them), then done. Returns False if Ming
+    produced no audio at all, so the caller can speak with Kokoro instead. A
+    stream that dies midway can't be finished in another voice: the reply ends
+    there, and the done still goes out so the turn doesn't wait for it."""
+    stream = _ming_stream(text)
+    sent = 0
+    try:
+        while True:
+            try:
+                audio, last = next(stream)
+            except StopIteration:
+                break
+            except Exception as err:
+                if sent:
+                    print(f"[Realtime TTS] Ming stream failed after {sent} chunk(s) ({err}); reply ends there")
+                    break
+                if not (isinstance(err, urllib.error.HTTPError) and err.code == 404):
+                    print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {MING_FALLBACK_VOICE}")
+                    return False
+                # A Ming service without /tts/stream (the older ming_service.py): the whole reply in one chunk.
+                try:
+                    audio, last = base64.b64encode(_ming_wav(text)).decode("ascii"), True
+                except Exception as old_err:
+                    print(f"[Realtime TTS] Ming unavailable ({old_err}); speaking with {MING_FALLBACK_VOICE}")
+                    return False
+            message = {"text": text, "audio": audio, "chunk": True}
+            if not last:
+                message["more"] = True
+            ws.send(json.dumps(message))  # a closed socket raises here; finally cancels the Ming render
+            sent += 1
+    finally:
+        stream.close()
+    ws.send(json.dumps({"text": text, "done": True}))
+    return True
+
+
 @app.route("/tts", methods=["POST"])
 def tts():
     data = request.json or {}
@@ -803,14 +874,9 @@ def tts_stream(ws):
                 continue
 
             if voice.startswith("ming:"):
-                try:
-                    wav_bytes = _ming_wav(text)
-                    ws.send(json.dumps({"text": text, "audio": base64.b64encode(wav_bytes).decode("ascii"), "chunk": True}))
-                    ws.send(json.dumps({"text": text, "done": True}))
+                if _send_ming_stream(ws, text):
                     continue
-                except Exception as err:
-                    print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {MING_FALLBACK_VOICE}")
-                    voice = MING_FALLBACK_VOICE
+                voice = MING_FALLBACK_VOICE
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
                 m = model_holder

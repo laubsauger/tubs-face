@@ -266,6 +266,7 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
         text: chunk.text || text,
         ...(turnId ? { turnId } : {}),
         chunkIndex: chunkIndex++,
+        ...(chunk.more ? { more: true } : {}),
       } satisfies WsAudioChunkServerMessage);
     },
     onSentenceDone() {

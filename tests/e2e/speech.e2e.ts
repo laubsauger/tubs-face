@@ -128,6 +128,50 @@ test('subtitles follow the audio sentence by sentence and page through long ones
   await expect(subtitle).toContainText('to show.', { timeout: 3000 });
 });
 
+// Ming streams a whole reply as it renders: several chunks of the same text,
+// all but the last flagged `more`, cut wherever the audio was ready, often
+// mid-word. They must join without a gap, each played sample for sample as
+// sent (resampled one by one, every cut rang and clicked), under one subtitle
+// that pages through the reply once: restarted per chunk, it raced through
+// the whole reply during the first chunk and then started over.
+test('a reply streamed in several chunks plays seamlessly under one subtitle', async ({ page, request }) => {
+  const text = 'This reply arrives in three chunks and it needs three pages of subtitles before it ends.';
+  await page.evaluate(() => {
+    const el = document.querySelector('#visual-subtitle')!;
+    const log: Array<{ t: number; text: string }> = [];
+    (window as unknown as { __subs: typeof log }).__subs = log;
+    new MutationObserver(() => {
+      const shown = el.textContent?.trim() ?? '';
+      if (shown && shown !== log.at(-1)?.text) log.push({ t: performance.now(), text: shown });
+    }).observe(el, { childList: true, subtree: true, characterData: true });
+  });
+
+  await send(request, { type: 'turn_start', turnId: 't-ming' }, { ...chunk('t-ming', 0, text, 700), more: true });
+  // The rest renders while the first chunk plays.
+  await page.waitForTimeout(250);
+  await send(request, { ...chunk('t-ming', 1, text, 700), more: true });
+  await page.waitForTimeout(250);
+  await send(request, chunk('t-ming', 2, text, 1400), { type: 'speak_end', turnId: 't-ming', fullText: text });
+
+  await expect.poll(async () => (await speechAudio(page)).length).toBe(3);
+  const audio = await speechAudio(page);
+  expect(audio.map((rec) => rec.frames)).toEqual([16_800, 16_800, 33_600]); // 24 kHz, as sent
+  for (let i = 1; i < audio.length; i += 1) {
+    expect(audio[i]!.startAt).toBeCloseTo(audio[i - 1]!.startAt + audio[i - 1]!.duration, 6);
+  }
+  await expect(page.locator('#visual-face')).not.toHaveClass(/is-speaking/, { timeout: 6000 });
+
+  const subs = await page.evaluate(() => (window as unknown as { __subs: Array<{ t: number; text: string }> }).__subs);
+  const pages = subs.map((entry) => entry.text);
+  expect(pages[0]).toMatch(/^This reply/);
+  expect(pages.at(-1)).toMatch(/before it ends\.$/);
+  expect(new Set(pages).size).toBe(pages.length); // never back to an earlier page
+  // The last page comes with the last chunk's audio, not during the first chunk.
+  const lastPageAt = (subs.at(-1)!.t - audio[0]!.calledAt) / 1000;
+  expect(lastPageAt).toBeGreaterThan(1.4);
+  expect(lastPageAt).toBeLessThan(2.8);
+});
+
 // A new turn (Manual Beats while Tubs talks) stops the old one. The stop used
 // to be written inside a state update that then overwrote it, leaving the
 // face "speaking" and the hands-free mic deaf.

@@ -26,8 +26,14 @@ function segmentText(text: string, maxSegmentChars = DEFAULT_MAX_SEGMENT_CHARS):
 }
 
 export interface SubtitleController {
-  /** Start timed word-by-word highlight for known text (audio playback or fixed duration). */
-  start(text: string, source?: HTMLAudioElement | number): void;
+  /**
+   * Start timed word-by-word highlight for known text (audio playback or fixed
+   * duration). `open`: more audio for this text is still coming, so the
+   * duration may grow (see retime) and the last word stays lit until it's known.
+   */
+  start(text: string, source?: HTMLAudioElement | number, open?: boolean): void;
+  /** The running fixed-duration subtitle's audio is now this long; `open` as in start(). */
+  retime(durationSeconds: number, open: boolean): void;
   /** Show plain text immediately (no word animation). */
   setText(text: string): void;
   stop(): void;
@@ -37,6 +43,9 @@ export interface SubtitleController {
 export function createSubtitleController(element: HTMLElement | null, maxSegmentChars = DEFAULT_MAX_SEGMENT_CHARS): SubtitleController {
   let rafId = 0;
   let audioRef: HTMLAudioElement | null = null;
+  // The running fixed-duration subtitle's timing (start() and retime()).
+  let durationSeconds = 0;
+  let open = false;
 
   function renderSegment(words: string[]): void {
     if (!element) {
@@ -93,7 +102,15 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
     element.classList.add('is-visible');
   }
 
-  function start(text: string, source?: HTMLAudioElement | number): void {
+  function retime(seconds: number, stillOpen: boolean): void {
+    if (!rafId || audioRef) {
+      return;
+    }
+    durationSeconds = seconds;
+    open = stillOpen;
+  }
+
+  function start(text: string, source?: HTMLAudioElement | number, startOpen = false): void {
     stop();
     if (!element) {
       return;
@@ -126,6 +143,8 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
 
     let currentSegmentIndex = 0;
     let lastWordIndex = -1;
+    // A retimed (longer) duration must not move the highlight back.
+    let furthestIndex = -1;
     renderSegment(segmentBounds[0]?.words ?? []);
 
     const timeToWordIndex = (ratio: number): number => {
@@ -144,6 +163,10 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
     };
 
     const updateHighlight = (globalIndex: number) => {
+      if (globalIndex < furthestIndex) {
+        return;
+      }
+      furthestIndex = globalIndex;
       const segmentIndex = segmentBounds.findIndex((segment) => globalIndex >= segment.start && globalIndex < segment.end);
       const nextSegmentIndex = segmentIndex === -1 ? 0 : segmentIndex;
       const activeSegment = segmentBounds[nextSegmentIndex];
@@ -177,11 +200,12 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
       lastWordIndex = localIndex;
     };
 
-    const durationSeconds = typeof source === 'number'
+    durationSeconds = typeof source === 'number'
       ? source
       : source instanceof HTMLAudioElement && Number.isFinite(source.duration) && source.duration > 0
         ? source.duration
         : allWords.length * 0.35;
+    open = startOpen;
 
     if (source instanceof HTMLAudioElement) {
       audioRef = source;
@@ -197,7 +221,7 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
       const wordIndex = Math.min(allWords.length - 1, timeToWordIndex(ratio));
       updateHighlight(wordIndex);
 
-      if ((useAudioClock && (ratio >= 0.99 || Boolean(audioRef?.ended))) || (!useAudioClock && ratio >= 0.99)) {
+      if ((useAudioClock && (ratio >= 0.99 || Boolean(audioRef?.ended))) || (!useAudioClock && ratio >= 0.99 && !open)) {
         finish();
         return;
       }
@@ -210,6 +234,7 @@ export function createSubtitleController(element: HTMLElement | null, maxSegment
 
   return {
     start,
+    retime,
     setText,
     stop,
     finish,

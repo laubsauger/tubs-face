@@ -96,6 +96,26 @@ describe('createStreamingSession', () => {
     expect(started).toEqual(['First sentence.@0', 'Second sentence.@2']);
   });
 
+  // Ming streams one reply in several chunks; the runtime keeps one subtitle
+  // across them only if it learns which chunks continue the text.
+  it('tells which scheduled chunks are continued by the next one', async () => {
+    const context = new FakeContext();
+    const scheduled: Array<[string, boolean]> = [];
+    const session = createStreamingSession({
+      turnId: 't1',
+      getContext: async () => context as unknown as AudioContext,
+      decode: async () => ({ duration: 1 }) as unknown as AudioBuffer,
+      onFinished: () => {},
+      onChunkScheduled: (chunk) => scheduled.push([chunk.text, chunk.more]),
+    });
+    session.addChunk('a', 'Whole reply.', true);
+    session.addChunk('b', 'Whole reply.', true);
+    session.addChunk('c', 'Whole reply.');
+    session.addChunk('d', 'Next sentence.');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(scheduled).toEqual([['Whole reply.', true], ['Whole reply.', true], ['Whole reply.', false], ['Next sentence.', false]]);
+  });
+
   it('reports no chunk starts after stop', async () => {
     const { decodes, session, flush, started } = setup();
     session.addChunk('a', 'First.');

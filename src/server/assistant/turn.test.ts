@@ -20,6 +20,8 @@ const fakes = vi.hoisted(() => ({
   // When true, TTS accepts text but never answers (a slow or stuck generator).
   ttsHang: false,
   ttsClosed: 0,
+  // How TTS answers one text; by default one chunk, then done.
+  ttsChunks: null as ((text: string) => TtsStreamChunk[]) | null,
 }));
 
 vi.mock('../llm/provider.js', () => ({
@@ -34,6 +36,13 @@ vi.mock('../tts/stream.js', () => ({
       send(text: string) {
         fakes.ttsSent.push(text);
         if (fakes.ttsHang) return;
+        const chunks = fakes.ttsChunks?.(text);
+        if (chunks) {
+          // Several chunks for one text (Ming), arriving one by one as they render.
+          chunks.forEach((chunk, i) => setTimeout(() => options.onChunk(chunk), i * 5));
+          setTimeout(() => options.onSentenceDone(), chunks.length * 5);
+          return;
+        }
         setTimeout(() => {
           options.onChunk({ text, audio: 'UklGRg==' });
           options.onSentenceDone();
@@ -142,6 +151,7 @@ describe('assistant turn', () => {
     fakes.ttsSent.length = 0;
     fakes.ttsHang = false;
     fakes.ttsClosed = 0;
+    fakes.ttsChunks = null;
     runtimeConfig.dualHeadEnabled = false;
     runtimeConfig.ttsStreamingEnabled = false;
     interruptAssistantTurns();
@@ -268,6 +278,52 @@ describe('assistant turn', () => {
       } finally {
         runtimeConfig.kokoroVoice = previousVoice;
       }
+    });
+
+    // Ming streams the whole reply in chunks so the first sound comes in a few
+    // hundred ms instead of after the whole render. The face has to get every
+    // chunk, in order, with the feeling and the "more follows" flag that keeps
+    // one subtitle across them, and the turn ends after the last one.
+    it('passes a Ming reply streamed in several chunks to the face in order, then ends the turn', async () => {
+      runtimeConfig.kokoroVoice = 'ming:friend';
+      fakes.ttsChunks = (text) => [
+        { text, audio: 'QQ==', more: true },
+        { text, audio: 'Qg==', more: true },
+        { text, audio: 'Qw==' },
+      ];
+      fakes.provider = streamingProvider(['😤 Oh, ', 'you again. ', 'Great.']);
+      const ws = collect();
+
+      await runAssistantTurn('I am back to bother you', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['Oh, you again. Great.']);
+      const chunks = ws.ofType('audio_chunk');
+      expect(chunks.map((chunk) => [chunk.audio, chunk.chunkIndex, chunk.more ?? false])).toEqual([
+        ['QQ==', 0, true],
+        ['Qg==', 1, true],
+        ['Qw==', 2, false],
+      ]);
+      expect(chunks.map((chunk) => chunk.text)).toEqual(Array(3).fill('Oh, you again. Great.'));
+      expect(chunks.map((chunk) => chunk.emotion?.expression)).toEqual(['angry', 'angry', 'angry']);
+      const types = ws.types();
+      expect(types.indexOf('speak_end')).toBeGreaterThan(types.lastIndexOf('audio_chunk'));
+    });
+
+    // The speech service sends done when Ming dies midway (no Kokoro restart in
+    // the middle of a sentence). The turn must end on that, not hang for 30 s.
+    it('ends the turn when a streamed Ming reply stops after its first chunk', async () => {
+      runtimeConfig.kokoroVoice = 'ming:friend';
+      fakes.ttsChunks = (text) => [{ text, audio: 'QQ==', more: true }];
+      fakes.provider = streamingProvider(['Nice hat. ', 'Did it come with instructions?']);
+      const ws = collect();
+
+      const startedAt = Date.now();
+      const result = await runAssistantTurn('do you like my hat', ws.broadcast);
+
+      expect(Date.now() - startedAt).toBeLessThan(2000);
+      expect(ws.ofType('audio_chunk')).toHaveLength(1);
+      expect(ws.ofType('speak_end')[0]?.fullText).toBe('Nice hat. Did it come with instructions?');
+      expect(result.superseded).toBe(false);
     });
 
     // The emoji comes first so the face can show the feeling from the first

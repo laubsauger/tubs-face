@@ -5,6 +5,9 @@ export const MOCK = 'http://127.0.0.1:39010';
 export interface AudioRecord {
   id: number;
   duration: number;
+  /** Sample frames in the buffer, and the rate of the context it plays in. */
+  frames: number;
+  contextRate: number;
   /** AudioContext time the source was scheduled to start. */
   startAt: number;
   /** performance.now() when start() was called, and when it stopped or ended. */
@@ -30,6 +33,8 @@ export async function instrumentAudio(page: Page): Promise<void> {
       const rec: AudioRecord = {
         id: nextId++,
         duration: this.buffer?.duration ?? 0,
+        frames: this.buffer?.length ?? 0,
+        contextRate: ctx.sampleRate,
         startAt: when || ctx.currentTime,
         calledAt: performance.now(),
         stoppedAt: null,

@@ -4,6 +4,8 @@ import { getTtsProxyTarget } from '../processing/speech-service.js';
 export interface TtsStreamChunk {
   text: string;
   audio: string;
+  /** More audio for the same text follows (Ming streams one reply in several chunks). */
+  more?: boolean;
 }
 
 export interface TtsStreamSession {
@@ -50,6 +52,7 @@ export function openTtsStream(options: {
         chunk?: boolean;
         audio?: string;
         text?: string;
+        more?: boolean;
         done?: boolean;
       };
 
@@ -62,6 +65,7 @@ export function openTtsStream(options: {
         options.onChunk({
           text: msg.text ?? '',
           audio: msg.audio,
+          ...(msg.more ? { more: true } : {}),
         });
       }
 

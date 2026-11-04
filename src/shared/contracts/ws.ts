@@ -192,6 +192,12 @@ export interface WsAudioChunkServerMessage {
   emotion?: SpeechEmotionPayload | null;
   /** A pre-rendered filler ("Um, okay.") played while the reply is generated, not model output. */
   filler?: boolean;
+  /**
+   * More audio for the same text follows in the next chunk. Ming streams a
+   * whole reply in several chunks; the client plays them back to back and
+   * keeps one subtitle across them.
+   */
+  more?: boolean;
 }
 
 export interface WsTurnStartServerMessage {

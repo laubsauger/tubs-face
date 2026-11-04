@@ -24,12 +24,14 @@ export interface ScheduledChunk {
   activeNodes: number;
   /** What this chunk says (from the server), for subtitles. */
   text: string;
+  /** The next chunk carries more audio for the same text (one subtitle across both). */
+  more: boolean;
 }
 
 export interface StreamingSession {
   readonly turnId: string | null;
   /** Queue one base64 audio chunk; chunks play in the order they were added. */
-  addChunk(audioBase64: string, text?: string): void;
+  addChunk(audioBase64: string, text?: string, more?: boolean): void;
   /** The server said the turn has no more audio (speak_end). */
   markEnd(): void;
   /** Silence everything now and ignore anything still decoding. */
@@ -60,7 +62,7 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
   const timers = new Set<number>();
   const decoded = new Map<number, AudioBuffer>();
   const failed = new Set<number>();
-  const texts = new Map<number, string>();
+  const texts = new Map<number, { text: string; more: boolean }>();
   const scheduled: ScheduledChunk[] = [];
   let received = 0;
   let nextToSchedule = 0;
@@ -139,7 +141,8 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
       source.start(scheduledAt);
       nextStartTime += buffer.duration;
 
-      const chunk: ScheduledChunk = { index, decodedAt: performance.now(), scheduledAt, duration: buffer.duration, ctxTime: now, activeNodes, text: texts.get(index) ?? '' };
+      const { text = '', more = false } = texts.get(index) ?? {};
+      const chunk: ScheduledChunk = { index, decodedAt: performance.now(), scheduledAt, duration: buffer.duration, ctxTime: now, activeNodes, text, more };
       texts.delete(index);
       scheduled.push(chunk);
       options.onChunkScheduled?.(chunk, buffer);
@@ -179,12 +182,12 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
   return {
     turnId,
     scheduled,
-    addChunk(audioBase64: string, text = ''): void {
+    addChunk(audioBase64: string, text = '', more = false): void {
       if (stopped) return;
       clearFinalizeTimer();
       const index = received;
       received += 1;
-      texts.set(index, text);
+      texts.set(index, { text, more });
       void (async () => {
         try {
           context ??= await getContext();
