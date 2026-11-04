@@ -50,6 +50,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - TTS: Kokoro (MLX on macOS, native elsewhere), streamed per sentence over `/tts/stream`; or system TTS (macOS `say`, pyttsx3 elsewhere)
 - LLM proxy for Ollama / OpenAI-compatible models: `/llm/generate`, `/llm/stream`
 - Endpoints: `/transcribe`, `/tts`, `/tts/stream`, `/llm/*`, `/health`
+- Voices starting with `ming:` (e.g. `ming:friend`, main Tubs' cloned voice) are forwarded to a separate Ming TTS service at `MING_TTS_URL` (default `127.0.0.1:3003`). It needs a newer mlx than STT, so it runs from its own venv outside the repo: see `~/Movies/tubs-voice-lab/README.md`. Ming gets whole replies, not sentences.
 
 ### Client (`src/client/`) — React + TypeScript + Zustand
 
