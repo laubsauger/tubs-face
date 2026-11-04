@@ -388,9 +388,6 @@ function selectVisualSlice(state: AppState) {
     currentExpression: state.currentExpression,
     idleVariant: state.idleVariant,
     blinkActive: state.blinkActive,
-    moodPos: state.moodPos,
-    moodNeg: state.moodNeg,
-    moodArousal: state.moodArousal,
     fxBaseColorDraft: state.fxBaseColorDraft,
     config: state.config,
   };

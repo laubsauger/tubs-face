@@ -20,6 +20,7 @@ const EXPRESSION_PULSE_DURATIONS_MS: Record<string, number> = Object.freeze({
 // the face forgot an insult before the reply was over. Now a run of insults
 // adds up to a grumpy Tubs that calms down over a minute or so.
 export const MOOD_HALF_LIFE_MS = 30_000;
+const MOOD_WRITE_EPSILON = 0.002;
 const SLEEP_MOOD_HALF_LIFE_MS = 8000;
 // Idle flickers of the current mood, spaced so they read as moods, not tics.
 const AUTO_PULSE_MIN_GAP_MS = 3500;
@@ -110,6 +111,13 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
   }
 
   function applyMoodState(): void {
+    // Written every frame this re-ran every mood subscriber 60 times a second.
+    const state = store.getState();
+    if (Math.abs(state.moodPos - currentMood.pos) < MOOD_WRITE_EPSILON
+      && Math.abs(state.moodNeg - currentMood.neg) < MOOD_WRITE_EPSILON
+      && Math.abs(state.moodArousal - currentMood.arousal) < MOOD_WRITE_EPSILON) {
+      return;
+    }
     store.setState((current) => ({
       ...current,
       moodPos: currentMood.pos,

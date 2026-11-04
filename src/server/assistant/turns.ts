@@ -181,12 +181,19 @@ export function startProactiveTurn(context: string, broadcast: Broadcast): void 
   sessionStats.lastActivity = Date.now();
   broadcast({ type: 'thinking' });
   const startedAt = Date.now();
+  // "thinking" went out above; without a reply nothing else would clear it
+  // and the face stayed looking away with the thinking bar up.
+  const clearThinking = () => {
+    if (!hasActiveAssistantTurn()) broadcast({ type: 'expression', expression: 'idle' });
+  };
   void runProactiveTurn(context, broadcast)
     .then((result) => {
       if (result) recordTurn('proactive', context, result, startedAt);
+      else clearThinking();
     })
     .catch((error: unknown) => {
       console.error('[turn] proactive turn failed', error);
+      clearThinking();
     });
 }
 

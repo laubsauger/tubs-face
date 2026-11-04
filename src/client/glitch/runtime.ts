@@ -503,14 +503,16 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     setCanvasVisible(rendererState.kind === 'webgpu' || drawn);
   }
 
-  function getBlinkFactor(now: number): number {
-    return Math.max(blinkAmount(now), moodSquint());
+  function getBlinkFactor(): number {
+    return Math.max(blinkAmount(), moodSquint());
   }
 
-  function blinkAmount(now: number): number {
+  function blinkAmount(): number {
     const lastBlinkAt = store.getState().lastBlinkAt;
     if (!store.getState().blinkActive || !lastBlinkAt) return 0;
-    const elapsed = now - lastBlinkAt;
+    // lastBlinkAt is Date.now(); the frame clock is performance.now(). Mixing
+    // them made elapsed hugely negative and the pixel face never blinked.
+    const elapsed = Date.now() - lastBlinkAt;
     if (elapsed < 80) return elapsed / 80;
     if (elapsed < 140) return 1;
     if (elapsed < 220) return 1 - (elapsed - 140) / 80;

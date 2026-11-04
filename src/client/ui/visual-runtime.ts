@@ -64,9 +64,6 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       face.classList.toggle('is-blinking', state.blinkActive);
       face.classList.toggle('is-glitch-enabled', Boolean(config?.glitchFxEnabled));
       syncGaze();
-      face.style.setProperty('--mood-pos', state.moodPos.toFixed(3));
-      face.style.setProperty('--mood-neg', state.moodNeg.toFixed(3));
-      face.style.setProperty('--mood-arousal', state.moodArousal.toFixed(3));
       const baseColor = mode === 'mini'
         ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
         : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);

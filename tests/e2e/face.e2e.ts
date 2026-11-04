@@ -44,6 +44,10 @@ test('speaks with the reply’s feeling on its face, then lets it go', async ({ 
   const face = page.locator('#visual-face');
   await expect(face).toHaveClass(/is-speaking/);
   await expect(face).toHaveAttribute('data-expression', 'angry');
+  // The server echoes main's own head_speech_state back; it must not reset the face to plain 'speaking'.
+  await send(request, { type: 'head_speech_state', actor: 'main', state: 'start', turnId: 't-mood' });
+  await page.waitForTimeout(150);
+  await expect(face).toHaveAttribute('data-expression', 'angry');
 
   // Not stuck on anger once the line is over: back to idle, where the mood takes over.
   await expect(face).not.toHaveClass(/is-speaking/, { timeout: 5000 });

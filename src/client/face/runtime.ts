@@ -58,6 +58,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
   let lastAppearanceSignature = '';
+  let uploadPending = false;
   const visitorTracker = createVisitorTracker();
   let enrollmentActive = false;
 
@@ -80,6 +81,12 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       }));
     },
     onFaces: (packet) => {
+      // A detection still in flight when the camera was turned off would
+      // refill the faces, and with the loop stopped they stayed "present"
+      // forever (no sleep, proactive lines to an empty room).
+      if (!stream && !uploadPending) {
+        return;
+      }
       const wasEmpty = stableFaces.length === 0;
       const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
       const recognizedNames = [...new Set(
@@ -177,8 +184,13 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stopCamera(): void {
       stopCamera(store);
     },
-    detectFile(file: File): Promise<void> {
-      return detectUploadedFile(worker, file, store);
+    async detectFile(file: File): Promise<void> {
+      uploadPending = true;
+      try {
+        await detectUploadedFile(worker, file, store);
+      } finally {
+        uploadPending = false;
+      }
     },
     saveDetectedFace(): Promise<void> {
       return saveDetectedFace(store, refreshFaceLibraryState, captureCanvas);
@@ -273,6 +285,8 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       faceWorkerBusy: false,
       faceFrameWidth: null,
       faceFrameHeight: null,
+      faceLastFaces: [],
+      faceLastDetectedCount: 0,
       faceStatus: current.faceWorkerReady ? 'Ready' : 'Idle',
     }));
     appStore.appendLog('info', 'Camera off');

@@ -127,3 +127,15 @@ test('subtitles follow the audio sentence by sentence and page through long ones
   expect(await subtitle.textContent()).not.toContain('to show.');
   await expect(subtitle).toContainText('to show.', { timeout: 3000 });
 });
+
+// A new turn (Manual Beats while Tubs talks) stops the old one. The stop used
+// to be written inside a state update that then overwrote it, leaving the
+// face "speaking" and the hands-free mic deaf.
+test('a new turn stops the one still playing and leaves the face idle', async ({ page, request }) => {
+  await send(request, { type: 'turn_start', turnId: 't-old' }, chunk('t-old', 0, 'A long line that keeps going.', 4000));
+  const face = page.locator('#visual-face');
+  await expect(face).toHaveClass(/is-speaking/);
+
+  await send(request, { type: 'turn_start', turnId: 't-new' });
+  await expect(face).not.toHaveClass(/is-speaking/, { timeout: 1500 });
+});

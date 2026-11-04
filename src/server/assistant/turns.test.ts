@@ -21,7 +21,7 @@ vi.mock('../observability/conversation-log.js', () => ({
 vi.mock('../observability/langfuse.js', () => ({ captureTurnTrace: () => {} }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { appearancePrompt, cancelAppearanceGreeting, isInConversation, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, STILL_TALKING_MS } = await import('./turns.js');
+const { appearancePrompt, cancelAppearanceGreeting, startProactiveTurn, isInConversation, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, STILL_TALKING_MS } = await import('./turns.js');
 const { buildContents, getVisualContext, pushHistory, updateVisualContext } = await import('./context.js');
 
 function collect() {
@@ -106,6 +106,22 @@ describe('turns', () => {
     await vi.advanceTimersByTimeAsync(2000);
     expect(service.runProactiveTurn).toHaveBeenCalledWith('Someone is nearby.', ws.broadcast);
   });
+  it('clears the thinking face when a proactive line produces nothing', async () => {
+    const ws = collect();
+    service.runProactiveTurn.mockResolvedValueOnce(null);
+    startProactiveTurn('Someone is nearby.', ws.broadcast);
+    await vi.waitFor(() => expect(ws.types()).toContain('expression'));
+    expect(ws.types()).toEqual(['interrupt', 'thinking', 'expression']);
+  });
+
+  it('never kills a reply that is still being generated for a proactive line', () => {
+    const ws = collect();
+    service.active = true;
+    startProactiveTurn('Someone is nearby.', ws.broadcast);
+    expect(ws.types()).toEqual([]);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+  });
+
   // Visitors come and go all evening. The next one must not hear about the
   // last one's jacket, but a visitor who is still talking off-camera must not
   // lose the thread.

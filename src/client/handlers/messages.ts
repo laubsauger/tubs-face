@@ -31,6 +31,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
   if (message.type === 'face_motion' && !targetActor && message.actor === myActor) {
     return;
   }
+  // Same for main's own head_speech_state: the echo set 'speaking' a few ms
+  // after the first audio chunk set the reply's emotion face, so one-sentence
+  // replies never showed their feeling.
+  if (message.type === 'head_speech_state' && mode === 'main' && !targetActor && message.actor === 'main') {
+    return;
+  }
   const dualHeadActive = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
   store.setState((current) => ({
     ...current,
@@ -154,25 +160,30 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       activeTurnScriptBeats = [];
       streamedBeatChatKeys = new Set();
       streamedTurnActorChatEntryIds = new Map();
-      store.setState((current) => {
-        if (current.currentTurnId && current.currentTurnId !== message.turnId && (current.audioPlaying || current.currentSpeechText)) {
+      {
+        // Stop the old turn after this state write, not inside it: the stop
+        // writes audioPlaying:false, and an updater returning its stale
+        // snapshot threw that away (mic stayed deaf, mouth kept flapping).
+        const before = store.getState();
+        const stopPrevious = Boolean(before.currentTurnId && before.currentTurnId !== message.turnId && (before.audioPlaying || before.currentSpeechText));
+        store.setState((current) => ({
+          ...resetStreamDebugState(clearChatDraft(clearChatDraft(current, 'out'), 'in'), message.turnId),
+          currentTurnId: message.turnId,
+          currentSpeechText: '',
+          subtitleText: '',
+          currentReactionEmoji: '',
+        }));
+        if (stopPrevious) {
           window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
             detail: {
-              turnId: current.currentTurnId,
-              previousTurnId: current.currentTurnId,
+              turnId: before.currentTurnId,
+              previousTurnId: before.currentTurnId,
               nextTurnId: message.turnId,
               source: 'turn_start',
             },
           }));
         }
-        return {
-          ...resetStreamDebugState(clearChatDraft(clearChatDraft(current, 'out'), 'in'), message.turnId),
-        currentTurnId: message.turnId,
-        currentSpeechText: '',
-        subtitleText: '',
-        currentReactionEmoji: '',
-        };
-      });
+      }
       store.appendLog('info', `Turn started: ${message.turnId}`);
       return;
     case 'interrupt':
