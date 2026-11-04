@@ -9,11 +9,26 @@ import { openTtsStream } from '../tts/stream.js';
  * row, so it does not become a tic.
  */
 
-// Kokoro garbles "Hm", "Mm" and "Uh huh" (speech-to-text heard "Am I?",
-// "MESS", "As high"). These come out clean. No "Wow.": as a reaction to
-// whatever was just said it sounds wrong far more often than right.
-export const FILLER_LINES = ['Oh.', 'Okay.', 'Right.', 'Well.', 'Oh boy.'] as const;
+// Kokoro (hm_omega) can't do a lone hum or hesitation sound: "Hm", "Mm",
+// "Mhm", "Um" and "Ahm" all come out clipped or garbled, with plain spellings
+// and phoneme overrides alike. The same sounds work as the start of a short
+// phrase, so those are paired with a word. Kokoro's dictionary has no "Ähm"
+// or "Ahm" (it drops them silently), hence the [word](/phonemes/) markup.
+// No "Wow." or "Oh boy.": as a reaction to whatever was just said they sound
+// wrong far more often than right.
+export const FILLER_LINES = [
+  'Oh.',
+  'Okay.',
+  'Right.',
+  'Well.',
+  'Um, okay.',
+  'Hum, right.',
+  'Uh, well.',
+  '[Ähm](/ˈɛːm/), okay.',
+  '[Ahm](/ˈɑːm/), right.',
+] as const;
 export const FILLER_CHANCE = 0.4;
+const PHONEME_MARKUP = /\[([^\]]+)\]\(\/[^)]*\/\)/g;
 const RENDER_RETRY_MS = 60_000;
 const RENDER_TIMEOUT_MS = 15_000;
 
@@ -45,7 +60,8 @@ export function prepareFillers(voice: string, now = Date.now()): void {
   });
   const session = openTtsStream({
     onChunk(chunk) {
-      if (chunk.text && chunk.audio) rendered.push({ text: chunk.text, audio: chunk.audio });
+      // The text becomes the subtitle, so it shows the word, not the phonemes.
+      if (chunk.text && chunk.audio) rendered.push({ text: chunk.text.replace(PHONEME_MARKUP, '$1'), audio: chunk.audio });
     },
     onSentenceDone() {
       pending -= 1;

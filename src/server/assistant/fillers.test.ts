@@ -58,6 +58,25 @@ describe('fillers', () => {
     expect(pickFiller('af_heart', () => 0)?.text).not.toBe(first);
   });
 
+  // The filler's text is shown as the subtitle. Kokoro needs phoneme markup
+  // for "Ähm", but visitors must read the word, never "[Ähm](/ˈɛːm/)".
+  it('subtitles show the plain words, not the phoneme markup sent to Kokoro', async () => {
+    const { pickFiller, prepareFillers, FILLER_LINES } = await loadFresh();
+    prepareFillers('af_heart');
+    await flush();
+    expect(tts.sent.some((line) => line.includes('/'))).toBe(true);
+    const shown = new Set<string>();
+    for (let k = 0; k < 50; k += 1) {
+      const rolls = [0, k / 50];
+      const filler = pickFiller('af_heart', () => rolls.shift() ?? 0);
+      if (filler) shown.add(filler.text);
+      pickFiller('af_heart', () => 0); // the turn after a filler goes without
+    }
+    expect(shown.size).toBe(FILLER_LINES.length);
+    expect([...shown]).toContain('Ähm, okay.');
+    for (const text of shown) expect(text).not.toMatch(/[[\]()/]/);
+  });
+
   it('goes without fillers when the TTS is down, and does not retry every turn', async () => {
     tts.opened = false;
     const { pickFiller } = await loadFresh();
