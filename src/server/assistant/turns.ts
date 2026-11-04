@@ -72,7 +72,7 @@ export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnRes
   turnTimer.setMeta('User', text);
   const startedAt = Date.now();
   void logConversation(source === 'voice' ? 'USER' : 'USER (typed)', text);
-  return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer))
+  return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer, { filler: source === 'voice' }))
     .then((result) => {
       recordTurn(source, text, result, startedAt, turnTimer);
       return result;

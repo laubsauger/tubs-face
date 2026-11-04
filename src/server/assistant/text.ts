@@ -131,6 +131,20 @@ export function extractJsonBlock(text: string): string | null {
   return null;
 }
 
+/**
+ * Streamed replies reach TTS in clause-sized chunks. The cap counts whole
+ * sentences, so a reply never stops on a comma (it used to count chunks and
+ * cut off "...judging by the dread in this room," mid-thought).
+ */
+export function createSentenceCap(max = MAX_OUTPUT_SENTENCES): (chunk: string) => boolean {
+  let ended = 0;
+  return (chunk) => {
+    if (ended >= max) return false;
+    if (/[.!?]["')\]]*$/.test(chunk.trim())) ended += 1;
+    return true;
+  };
+}
+
 export function clampOutput(text: string): string {
   const normalized = normalizeInput(text);
   if (!normalized) {

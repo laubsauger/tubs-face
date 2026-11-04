@@ -1,7 +1,9 @@
 const SENTENCE_END_RE = /[.!?](?=\s|$)/;
 const CLAUSE_END_RE = /[,;:](?=\s)/g;
 const SOFT_SPLIT_MIN_CHARS = 56;
-const HARD_SPLIT_MAX_CHARS = 120;
+// A hard split restarts the TTS voice mid-phrase ("...women with six" |
+// "fingers."), so it is only a safety net for runaway text, not a latency trick.
+const HARD_SPLIT_MAX_CHARS = 200;
 
 export interface SentenceSplitter {
   push(delta: string): void;

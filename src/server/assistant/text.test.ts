@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizeForTts, unwrapJsonSpeechText } from './text.js';
+import { createSentenceCap, sanitizeForTts, unwrapJsonSpeechText } from './text.js';
 
 describe('unwrapJsonSpeechText', () => {
   it('extracts main text from a JSON envelope', () => {
@@ -22,5 +22,15 @@ describe('sanitizeForTts', () => {
 
   it('removes structural JSON characters after unwrapping', () => {
     expect(sanitizeForTts(unwrapJsonSpeechText('😏 { "main": "Donate a nickel." }'))).toBe('Donate a nickel.');
+  });
+});
+
+// Streamed replies arrive in clause chunks. Counting chunks as sentences made
+// two-sentence replies stop on a comma.
+describe('createSentenceCap', () => {
+  it('lets clause chunks through until two whole sentences were spoken', () => {
+    const admit = createSentenceCap(2);
+    const chunks = ['I cannot drink it, but judging by the dread in this room,', 'it is terrible.', 'Ask the barista.', 'Third sentence.'];
+    expect(chunks.map(admit)).toEqual([true, true, true, false]);
   });
 });

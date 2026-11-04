@@ -7,9 +7,10 @@ import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
+import { pickFiller } from './fillers.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
-import { MAX_OUTPUT_SENTENCES, clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
+import { MAX_OUTPUT_SENTENCES, clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -510,11 +511,16 @@ function logDualHeadInvalidScript(rawText: string, reason: string): void {
   process.stderr.write(`${block}\n`);
 }
 
-export async function runAssistantTurn(userText: string, broadcast: (message: WsServerMessage) => void, turnTimer?: TurnTimer): Promise<AssistantTurnResult> {
+export async function runAssistantTurn(
+  userText: string,
+  broadcast: (message: WsServerMessage) => void,
+  turnTimer?: TurnTimer,
+  options: { filler?: boolean } = {},
+): Promise<AssistantTurnResult> {
   const turnId = createTurnId();
   const epoch = activateAssistantTurn(turnId);
   try {
-    return await runAssistantTurnBody(userText, broadcast, turnTimer, turnId, epoch);
+    return await runAssistantTurnBody(userText, broadcast, turnTimer, turnId, epoch, options.filler ?? false);
   } finally {
     finishAssistantTurn(turnId, epoch);
   }
@@ -526,6 +532,7 @@ async function runAssistantTurnBody(
   turnTimer: TurnTimer | undefined,
   turnId: string,
   epoch: number,
+  allowFiller: boolean,
 ): Promise<AssistantTurnResult> {
   const normalizedUserText = normalizeInput(userText);
   if (normalizedUserText) {
@@ -535,6 +542,14 @@ async function runAssistantTurnBody(
     type: 'turn_start',
     turnId,
   } satisfies WsTurnStartServerMessage);
+
+  // Plays at once, ahead of the reply's audio in the same turn. Two-head
+  // turns route audio per head, so they go without.
+  const filler = allowFiller && !shouldUseDualHeadDirectedMode() ? pickFiller(runtimeConfig.kokoroVoice ?? 'af_heart') : null;
+  if (filler) {
+    turnTimer?.mark(`Filler "${filler.text}"`);
+    broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId } satisfies WsAudioChunkServerMessage);
+  }
 
   if (shouldUseDualHeadDirectedMode()) {
     const dualHead = await generateDualHeadReply(userText, turnTimer);
@@ -769,6 +784,7 @@ async function runStreamingAssistantTurn(args: {
   // Sentences handed to TTS (or to the client as speak_chunk). Audio for them may
   // still be in flight when the LLM stream ends, so chunkIndex can still be 0.
   let sentencesQueued = 0;
+  const admitToSpeech = createSentenceCap();
   let fullText = '';
   let sawFirstDelta = false;
   let rawEmotion: SpeechEmotionPayload | null = null;
@@ -922,7 +938,7 @@ async function runStreamingAssistantTurn(args: {
     if (!text) return;
     // Same limit clampOutput applies to non-streamed replies. Later sentences
     // are still parsed above so a trailing emotion emoji is not lost.
-    if (sentencesQueued >= MAX_OUTPUT_SENTENCES) {
+    if (!admitToSpeech(text)) {
       console.log(`\x1b[33m[Streaming TTS]\x1b[0m over ${MAX_OUTPUT_SENTENCES} sentences, not spoken → "${text}"`);
       return;
     }
@@ -1018,7 +1034,9 @@ async function runStreamingAssistantTurn(args: {
     const donation = nudged.forcedQr
       ? buildDonationPayload(true, 'periodic_nudge')
       : donationSignal.donation;
-    fullText = clampOutput(nudged.text);
+    // Already capped sentence by sentence above; the character clamp would cut
+    // the chat and history text short of what was spoken.
+    fullText = nudged.text;
 
     if (turnTimer) {
       if (context.meta?.imageAttached) {

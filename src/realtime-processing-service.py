@@ -53,6 +53,23 @@ stt_model = None
 tts_model = None
 
 
+def trim_silence(audio, sample_rate=24000, lead_keep_s=0.04, tail_keep_s=0.28, rel_threshold=0.02):
+    """Kokoro pads every clip with ~0.5 s of silence at both ends. Streamed
+    sentence by sentence, that made the first word arrive half a second late
+    and left ~1.1 s of dead air between sentences. Keep a short natural pause."""
+    if audio.size == 0:
+        return audio
+    peak = float(np.max(np.abs(audio)))
+    if peak <= 0:
+        return audio
+    voiced = np.flatnonzero(np.abs(audio) > peak * rel_threshold)
+    if voiced.size == 0:
+        return audio
+    start = max(0, int(voiced[0]) - int(lead_keep_s * sample_rate))
+    end = min(audio.size, int(voiced[-1]) + int(tail_keep_s * sample_rate))
+    return audio[start:end]
+
+
 def pcm_to_wav_bytes(pcm_float32, sample_rate=24000):
     pcm_int16 = np.clip(pcm_float32 * 32767, -32768, 32767).astype(np.int16)
     num_samples = len(pcm_int16)
@@ -687,7 +704,7 @@ def _tts_kokoro(text, voice):
 
         if not segments:
             return jsonify({"error": "Kokoro generated no audio"}), 500
-        audio = np.concatenate(segments)
+        audio = trim_silence(np.concatenate(segments))
         wav_bytes = pcm_to_wav_bytes(audio, sample_rate=24000)
         elapsed = int((time.time() - t0) * 1000)
         backend_label = f"Kokoro/{_KOKORO_BACKEND}"
@@ -755,7 +772,7 @@ def tts_stream(ws):
                 if not segments:
                     ws.send(json.dumps({"error": "Kokoro generated no audio"}))
                     continue
-                wav_bytes = pcm_to_wav_bytes(np.concatenate(segments), sample_rate=24000)
+                wav_bytes = pcm_to_wav_bytes(trim_silence(np.concatenate(segments)), sample_rate=24000)
                 ws.send(json.dumps({
                     "text": text,
                     "audio": base64.b64encode(wav_bytes).decode('ascii'),

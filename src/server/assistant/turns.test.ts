@@ -59,7 +59,8 @@ describe('turns', () => {
     await startUserTurn({ text: 'what is that hat', source: 'text', broadcast: ws.broadcast });
 
     expect(ws.types()).toEqual(['interrupt', 'incoming', 'conversation_mode', 'thinking']);
-    expect(service.runAssistantTurn).toHaveBeenCalledWith('what is that hat', ws.broadcast, expect.anything());
+    // Typed chat shows up instantly; only spoken turns get a filler sound.
+    expect(service.runAssistantTurn).toHaveBeenCalledWith('what is that hat', ws.broadcast, expect.anything(), { filler: false });
     // Typed chat counts too: the next spoken line needs no wake word.
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS - 1)).toBe(true);
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS + 1)).toBe(false);
@@ -68,6 +69,7 @@ describe('turns', () => {
   it('writes both sides of the exchange to the conversation log', async () => {
     recorded.lines.length = 0;
     await startUserTurn({ text: 'nice hat', source: 'voice', broadcast: collect().broadcast });
+    expect(service.runAssistantTurn).toHaveBeenLastCalledWith('nice hat', expect.any(Function), expect.anything(), { filler: true });
     expect(recorded.lines).toEqual(['USER: nice hat', 'TUBS: ok']);
   });
 

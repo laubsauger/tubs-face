@@ -46,12 +46,17 @@ describe('createSentenceSplitter', () => {
     expect(chunks).toEqual(['I built this whole body from two plastic tubs, some ratchet straps,']);
   });
 
-  it('hard-splits at word boundaries when no punctuation shows up within 120 characters', () => {
-    const words = Array.from({ length: 60 }, (_value, index) => `word${index}`).join(' ');
+  it('keeps an ordinary long sentence whole so the voice does not restart mid-phrase', () => {
+    const sentence = 'Humanity spent thousands of years perfecting painting just to train algorithms to make fake pictures of women with six fingers.';
+    expect(run([sentence])).toEqual([sentence]);
+  });
+
+  it('hard-splits runaway text at word boundaries past 200 characters', () => {
+    const words = Array.from({ length: 80 }, (_value, index) => `word${index}`).join(' ');
     const chunks = run([words]);
     expect(chunks.length).toBeGreaterThan(2);
     for (const chunk of chunks) {
-      expect(chunk.length).toBeLessThanOrEqual(120);
+      expect(chunk.length).toBeLessThanOrEqual(200);
     }
     // No word is cut in half and nothing is dropped.
     expect(chunks.join(' ')).toBe(words);
