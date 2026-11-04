@@ -22,6 +22,7 @@ const config: Record<string, unknown> = {
   ttsStreamingEnabled: true,
 };
 
+const defaultConfig = structuredClone(config);
 const clients = new Set<WebSocket>();
 let wsReceived: unknown[] = [];
 let httpReceived: Array<{ method: string; path: string; body: unknown }> = [];
@@ -98,6 +99,18 @@ const server = http.createServer(async (request, response) => {
     return;
   }
   if (path === '/__test/reset' && method === 'POST') {
+    wsReceived = [];
+    httpReceived = [];
+    // Config changes from one test must not leak into the next.
+    if (JSON.stringify(config) !== JSON.stringify(defaultConfig)) {
+      for (const key of Object.keys(config)) delete config[key];
+      Object.assign(config, structuredClone(defaultConfig));
+      broadcast({ type: 'config', ...config });
+    }
+    json(response, 200, { ok: true });
+    return;
+  }
+  if (path === '/__test/reset-received' && method === 'POST') {
     wsReceived = [];
     httpReceived = [];
     json(response, 200, { ok: true });
