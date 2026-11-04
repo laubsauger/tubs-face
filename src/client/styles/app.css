@@ -981,11 +981,13 @@ a {
   100% { transform: translateX(400%); }
 }
 
-/* Floating "z z z" over the face while asleep. */
+/* Floating "z z z" rising from just above the sleeping right eye, sized to
+   the screen so it reads from across the room. */
 .visual-zzz {
+  --zzz: clamp(56px, 10vmin, 160px);
   position: absolute;
-  top: 15%;
-  right: 20%;
+  top: 36%;
+  right: 12%;
   width: 0;
   height: 0;
   z-index: 30;
@@ -996,7 +998,8 @@ a {
   position: absolute;
   font-family: var(--font-sans);
   font-weight: 800;
-  font-size: 48px;
+  font-size: var(--zzz);
+  line-height: 1;
   color: rgba(234, 245, 255, 0.96);
   text-shadow: 0 0 14px rgba(218, 236, 255, 0.95), 0 0 32px rgba(132, 182, 255, 0.55);
   opacity: 0;
@@ -1005,14 +1008,14 @@ a {
 }
 
 .visual-zzz > span:nth-child(1) { right: 0; top: 0; }
-.visual-zzz > span:nth-child(2) { right: 22px; top: -22px; font-size: 32px; animation-delay: -1.2s; }
-.visual-zzz > span:nth-child(3) { right: -16px; top: -40px; font-size: 22px; animation-delay: -2.4s; }
+.visual-zzz > span:nth-child(2) { right: calc(var(--zzz) * -0.45); top: calc(var(--zzz) * -0.55); font-size: calc(var(--zzz) * 0.7); animation-delay: -1.2s; }
+.visual-zzz > span:nth-child(3) { right: calc(var(--zzz) * -0.8); top: calc(var(--zzz) * -1); font-size: calc(var(--zzz) * 0.48); animation-delay: -2.4s; }
 
 @keyframes zzzFloat {
   0% { opacity: 0; transform: translate(0, 0) scale(0.82); }
   12% { opacity: 0.92; }
   75% { opacity: 0.7; }
-  100% { opacity: 0; transform: translate(16px, -55px) scale(1.08); }
+  100% { opacity: 0; transform: translate(0.35em, -1.2em) scale(1.08); }
 }
 
 @media (prefers-reduced-motion: reduce) {

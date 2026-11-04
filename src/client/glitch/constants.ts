@@ -137,8 +137,10 @@ export const MOTION = {
 } as const;
 
 export const SPEAK_CYCLE_MS = 320;
-export const SPEAK_MIN_SCALE = 0.75;
-export const SPEAK_MAX_SCALE = 1.05;
+// Talking, the mouth goes from nearly shut to wide open; with 0.75..1.05 it
+// read as a static mouth.
+export const SPEAK_MIN_SCALE = 0.2;
+export const SPEAK_MAX_SCALE = 1.5;
 
 export const GAZE_EYE_RANGE_X = 0.14;
 export const GAZE_EYE_RANGE_Y = 0.09;

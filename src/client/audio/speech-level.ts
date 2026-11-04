@@ -5,8 +5,12 @@
  * flapping at a fixed rate.
  */
 
-// Kokoro speech peaks around 0.1-0.25 RMS; this maps it to roughly 0..1.
-const LEVEL_GAIN = 5;
+// Voices differ in loudness (Ming speaks about a third quieter than Kokoro),
+// so the level is measured against the loudest recent syllable: any voice
+// uses the mouth's full range. Below the gate it is a pause.
+const PEAK_FLOOR = 0.05;
+const PEAK_DECAY_MS = 1500;
+const GATE = 0.025;
 // A jaw opens fast and closes a little slower.
 const ATTACK_MS = 30;
 const RELEASE_MS = 90;
@@ -20,6 +24,7 @@ interface Meter {
 const meters = new WeakMap<AudioContext, Meter>();
 let active: Meter | null = null;
 let envelope = 0;
+let peak = PEAK_FLOOR;
 let lastReadAt = 0;
 
 /** Where speech sources connect instead of the destination. */
@@ -44,9 +49,11 @@ export function readSpeechLevel(now: number): number | null {
   active.analyser.getFloatTimeDomainData(active.samples);
   let sum = 0;
   for (const sample of active.samples) sum += sample * sample;
-  const target = Math.min(1, Math.sqrt(sum / active.samples.length) * LEVEL_GAIN);
+  const rms = Math.sqrt(sum / active.samples.length);
   const dt = lastReadAt ? Math.min(100, Math.max(0, now - lastReadAt)) : 16;
   lastReadAt = now;
+  peak = Math.max(rms, PEAK_FLOOR + (peak - PEAK_FLOOR) * Math.exp(-dt / PEAK_DECAY_MS));
+  const target = rms < GATE ? 0 : Math.min(1, rms / peak);
   const tau = target > envelope ? ATTACK_MS : RELEASE_MS;
   envelope += (target - envelope) * (1 - Math.exp(-dt / tau));
   return envelope;

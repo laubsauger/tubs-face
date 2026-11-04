@@ -112,6 +112,9 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
     y = y + u.gaze.w;
     let centerY = u.shapeCenters.z * xf.y + xf.w + u.face.y + u.gaze.w;
     y = centerY + (y - centerY) * u.motion.x;
+    // Closing, the pixels flatten too (like a blink); moving only the rows
+    // left the mouth looking the same.
+    drawH = max(2.0, drawH * clamp(u.motion.x, 0.2, 1.0));
   } else {
     x = x + u.gaze.x;
     y = y + u.gaze.y;
