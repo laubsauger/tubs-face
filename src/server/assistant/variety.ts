@@ -1,6 +1,7 @@
 import { recentModelReplies, wasLastReplyCutOff } from './context.js';
 import { hasNotesInView, markNameAsked, nameAskCandidate, peopleInView, pickGossip, type Position } from './field-notes.js';
 import { runtimeConfig } from '../config/runtime.js';
+import { BIT_MAX_SENTENCES, MAX_OUTPUT_SENTENCES } from './text.js';
 
 // Now and then Tubs brings up what an earlier visitor said, so separate
 // visitors feel like one audience he is keeping track of.
@@ -57,6 +58,7 @@ const LENGTHS = {
   short: 'Six words or fewer. One quick jab, nothing else.',
   one: 'One sentence.',
   two: 'Two short sentences this time: a line, then a follow-up that escalates or twists it.',
+  bit: 'Do a bit this time: three to six short sentences, each under twelve words. Set it up in plain beats, escalate, and land a deadpan punchline in the last one. Not one long sentence.',
 } as const;
 type LengthKey = keyof typeof LENGTHS;
 
@@ -74,7 +76,8 @@ export function lengthOf(text: string): LengthKey {
   const words = text.split(/\s+/).filter(Boolean).length;
   if (words <= 6) return 'short';
   if (words <= 20) return 'one';
-  return 'two';
+  if (words <= 38) return 'two';
+  return 'bit';
 }
 
 // Emotion emojis of the last replies; the face shows them, so a run of the
@@ -91,16 +94,19 @@ function opener(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).join(' ');
 }
 
-function pickLength(recent: string[], random: Random): LengthKey {
+export function pickLength(recent: string[], random: Random): LengthKey {
   const lastTwo = recent.slice(-2).map(lengthOf);
-  const weights: Record<LengthKey, number> = { short: 0.25, one: 0.5, two: 0.25 };
-  // Never the same length three times running.
+  // A bit now and then: the longer riff is where the character shines, but
+  // most of the time short is funnier.
+  const weights: Record<LengthKey, number> = { short: 0.23, one: 0.44, two: 0.21, bit: 0.12 };
+  // Never the same length three times running, and never two bits in a row.
   if (lastTwo.length === 2 && lastTwo[0] === lastTwo[1]) {
     weights[lastTwo[0]!] = 0;
   }
-  const total = weights.short + weights.one + weights.two;
+  if (lastTwo.at(-1) === 'bit') weights.bit = 0;
+  const total = weights.short + weights.one + weights.two + weights.bit;
   let roll = random() * total;
-  for (const key of ['short', 'one', 'two'] as const) {
+  for (const key of ['short', 'one', 'two', 'bit'] as const) {
     roll -= weights[key];
     if (roll < 0) return key;
   }
@@ -125,6 +131,7 @@ export function buildTurnDirection(
     useName: Math.random() < NAME_CHANCE ? pickName(peopleInView(), Math.random) : null,
     askName: runtimeConfig.autoEnrollEnabled && Math.random() < ASK_NAME_CHANCE ? nameAskCandidate() : null,
   },
+  chosenLength: LengthKey | null = null,
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -136,7 +143,7 @@ export function buildTurnDirection(
 
   let length: LengthKey | null = null;
   if (mode === 'single') {
-    length = pickLength(recent, random);
+    length = chosenLength ?? pickLength(recent, random);
     // The shape is Tubs's call, not the visitor's: "tell me a long story"
     // getting "I do not have any." is the character.
     lines.push(LENGTHS[length]);
@@ -201,4 +208,15 @@ export function buildTurnDirection(
   }
 
   return `${HEADER}\n${lines.map((line) => `- ${line}`).join('\n')}`;
+}
+
+/**
+ * The stage direction for a turn plus how many sentences may be spoken. Both
+ * come from one length roll: a bit asked for in the direction must not be cut
+ * off after two sentences by the speech cap.
+ */
+export function directTurn(mode: 'single' | 'dual'): { text: string; maxSentences: number } {
+  const length = mode === 'single' ? pickLength(recentModelReplies(6), Math.random) : null;
+  const text = buildTurnDirection(mode, Math.random, undefined, undefined, undefined, undefined, undefined, length);
+  return { text, maxSentences: length === 'bit' ? BIT_MAX_SENTENCES : MAX_OUTPUT_SENTENCES };
 }

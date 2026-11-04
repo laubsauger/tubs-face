@@ -58,7 +58,7 @@ const CHARACTER_DYNAMICS: Record<PromptMode, string> = {
 };
 
 const BREVITY_RULE: Record<PromptMode, string> = {
-  single: 'Usually one sentence; add a second only when it is the punchline. Brevity IS the personality.',
+  single: 'The stage direction sets the length of each reply; follow it. Mostly that is one short sentence, and brevity is the personality. When it asks for a bit, take the room: a few short beats, punchline last.',
   dual: 'Each speak beat is usually one short sentence. Small can be a single word.',
 };
 

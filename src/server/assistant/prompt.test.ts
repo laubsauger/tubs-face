@@ -22,7 +22,7 @@ describe('system instructions built from the persona template', () => {
   it('single mode carries the solo persona, the brevity rule and plain-text output rules', () => {
     const prompt = buildAssistantSystemInstruction();
     expect(prompt).toContain('Standup social critic energy');
-    expect(prompt).toContain('Brevity IS the personality');
+    expect(prompt).toContain('brevity is the personality');
     expect(prompt).toContain('# OUTPUT FORMAT (Text Only)');
     expect(prompt).toContain('Plain text only.');
   });

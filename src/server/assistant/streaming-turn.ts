@@ -8,7 +8,7 @@ import type { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
-import { MAX_OUTPUT_SENTENCES, clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from './text.js';
+import { clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from './text.js';
 import { buildContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -36,7 +36,8 @@ export async function runStreamingAssistantTurn(args: {
   const { userText, turnId, epoch, broadcast, turnTimer, provider, authState } = args;
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized, directionFor('single', turnTimer));
+  const direction = directionFor('single', turnTimer);
+  const context = buildContents(normalized, direction.text);
 
   if (!normalized) {
     console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m empty input — falling through to sequential');
@@ -63,7 +64,7 @@ export async function runStreamingAssistantTurn(args: {
   // Sentences handed to TTS (or to the client as speak_chunk). Audio for them may
   // still be in flight when the LLM stream ends, so chunkIndex can still be 0.
   let sentencesQueued = 0;
-  const admitToSpeech = createSentenceCap();
+  const admitToSpeech = createSentenceCap(direction.maxSentences);
   let fullText = '';
   let sawFirstDelta = false;
   let rawEmotion: SpeechEmotionPayload | null = null;
@@ -220,7 +221,7 @@ export async function runStreamingAssistantTurn(args: {
     // Same limit clampOutput applies to non-streamed replies. Later sentences
     // are still parsed above so a trailing emotion emoji is not lost.
     if (!admitToSpeech(text)) {
-      console.log(`\x1b[33m[Streaming TTS]\x1b[0m over ${MAX_OUTPUT_SENTENCES} sentences, not spoken → "${text}"`);
+      console.log(`\x1b[33m[Streaming TTS]\x1b[0m over ${direction.maxSentences} sentences, not spoken → "${text}"`);
       return;
     }
 
@@ -328,7 +329,7 @@ export async function runStreamingAssistantTurn(args: {
     }
 
     if (!fullText) {
-      fullText = clampOutput(sanitizeForTts(stripFormatting(unwrapJsonSpeechText(llmResult.text))));
+      fullText = clampOutput(sanitizeForTts(stripFormatting(unwrapJsonSpeechText(llmResult.text))), direction.maxSentences);
     }
 
     if (!fullText) {

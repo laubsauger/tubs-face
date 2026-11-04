@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTurnDirection, lengthOf, pickName, pickRoastMirror } from './variety.js';
+import { buildTurnDirection, lengthOf, pickLength, pickName, pickRoastMirror } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -114,5 +114,18 @@ describe('buildTurnDirection', () => {
   it('classifies reply length by words', () => {
     expect(lengthOf('Nice hat.')).toBe('short');
     expect(lengthOf('That jacket screams I want to look outdoorsy but I fear grass.')).toBe('one');
+  });
+});
+
+// The longer bit (a short standup riff) is where the character shines, but a
+// run of them turns Tubs into a lecturer.
+describe('bits', () => {
+  const BIT = 'Let me tell you something about this studio. People come in, they look at me, they ask if I am alive, and I say, define alive. Then they laugh nervously and ask if I can dance. I cannot dance.';
+  it('comes up now and then', () => {
+    expect(pickLength(['Nice hat.', 'That jacket screams I want to look outdoorsy but I fear grass.'], () => 0.999)).toBe('bit');
+    expect(buildTurnDirection('single', () => 0.999, ['Nice hat.'])).toContain('three to six short sentences, each under twelve words');
+  });
+  it('never twice in a row', () => {
+    for (const roll of [0, 0.3, 0.6, 0.9, 0.999]) expect(pickLength(['Nice hat.', BIT], () => roll)).not.toBe('bit');
   });
 });

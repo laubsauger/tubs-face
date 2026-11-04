@@ -6,7 +6,7 @@ import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction } from './prompt.js';
-import { buildTurnDirection } from './variety.js';
+import { buildTurnDirection, directTurn } from './variety.js';
 import { splitTrailingEmotionEmoji } from './emotion.js';
 import { clampOutput, estimateCostUsd, estimateTokens, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
@@ -15,16 +15,17 @@ import { maybeRepairPersonaDrift } from './persona-drift.js';
 import { type AssistantReply, assistantUnavailable } from './reply-types.js';
 
 /** This turn's variety direction, also shown in the turn timing log so odd replies can be explained. */
-export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): string {
-  const direction = buildTurnDirection(mode);
-  turnTimer?.setMeta('Direction', direction.split('\n').slice(1).map((line) => line.replace(/^- /, '')).join(' | '));
+export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): { text: string; maxSentences: number } {
+  const direction = directTurn(mode);
+  turnTimer?.setMeta('Direction', direction.text.split('\n').slice(1).map((line) => line.replace(/^- /, '')).join(' | '));
   return direction;
 }
 
 export async function generateAssistantReply(userText: string, turnTimer?: TurnTimer): Promise<AssistantReply> {
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized, directionFor('single', turnTimer));
+  const direction = directionFor('single', turnTimer);
+  const context = buildContents(normalized, direction.text);
   if (!normalized) {
     const text = 'I did not catch that. Try again.';
     return {
@@ -100,7 +101,7 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
       cleaned = repaired.text;
     }
     const parsed = splitTrailingEmotionEmoji(cleaned);
-    const text = clampOutput(stripSpeakerLabels(unwrapJsonSpeechText(parsed.text)));
+    const text = clampOutput(stripSpeakerLabels(unwrapJsonSpeechText(parsed.text)), direction.maxSentences);
     if (!text) {
       throw assistantUnavailable('[assistant] LLM returned empty reply text');
     }

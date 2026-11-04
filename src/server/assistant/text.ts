@@ -1,5 +1,8 @@
 const OUTPUT_CHAR_LIMIT = 180;
 export const MAX_OUTPUT_SENTENCES = 2;
+/** A bit (a short standup riff) needs room to build before the punchline lands. */
+export const BIT_MAX_SENTENCES = 6;
+const BIT_CHAR_LIMIT = 420;
 const INPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_INPUT_COST_PER_MTOKENS || '0');
 const OUTPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_OUTPUT_COST_PER_MTOKENS || '0');
 
@@ -147,7 +150,7 @@ export function createSentenceCap(max = MAX_OUTPUT_SENTENCES): (chunk: string) =
   };
 }
 
-export function clampOutput(text: string): string {
+export function clampOutput(text: string, maxSentences = MAX_OUTPUT_SENTENCES): string {
   const normalized = normalizeInput(text);
   if (!normalized) {
     return '';
@@ -157,15 +160,16 @@ export function clampOutput(text: string): string {
   const limited = sentences
     .map((sentence) => sentence.trim())
     .filter(Boolean)
-    .slice(0, MAX_OUTPUT_SENTENCES)
+    .slice(0, maxSentences)
     .join(' ')
     .trim();
 
-  if (limited.length <= OUTPUT_CHAR_LIMIT) {
+  const charLimit = maxSentences > MAX_OUTPUT_SENTENCES ? BIT_CHAR_LIMIT : OUTPUT_CHAR_LIMIT;
+  if (limited.length <= charLimit) {
     return limited;
   }
 
-  const shortened = limited.slice(0, OUTPUT_CHAR_LIMIT);
+  const shortened = limited.slice(0, charLimit);
   const sentenceEnd = Math.max(shortened.lastIndexOf('.'), shortened.lastIndexOf('!'), shortened.lastIndexOf('?'));
   if (sentenceEnd > 70) {
     return shortened.slice(0, sentenceEnd + 1).trim();

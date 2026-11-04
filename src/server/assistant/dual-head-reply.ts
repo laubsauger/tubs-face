@@ -85,7 +85,7 @@ async function maybeRepairDualHeadScript(args: {
 export async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
-  const context = buildContents(normalized, directionFor('dual', turnTimer));
+  const context = buildContents(normalized, directionFor('dual', turnTimer).text);
   const provider = resolveLlmProvider();
   const authState = provider.getAuthState();
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createSentenceCap, sanitizeForTts, unwrapJsonSpeechText } from './text.js';
+import { BIT_MAX_SENTENCES, clampOutput, createSentenceCap, sanitizeForTts, unwrapJsonSpeechText } from './text.js';
 
 describe('unwrapJsonSpeechText', () => {
   it('extracts main text from a JSON envelope', () => {
@@ -32,5 +32,17 @@ describe('createSentenceCap', () => {
     const admit = createSentenceCap(2);
     const chunks = ['I cannot drink it, but judging by the dread in this room,', 'it is terrible.', 'Ask the barista.', 'Third sentence.'];
     expect(chunks.map(admit)).toEqual([true, true, true, false]);
+  });
+});
+
+// A bit lands on its last line. The default two-sentence clamp would cut the
+// punchline off; a normal reply must still be held to two.
+describe('clampOutput with a bit budget', () => {
+  const BIT = 'Let me tell you something about this studio. People come in and ask if I am alive. I say, define alive. Then they ask if I can dance. I cannot dance. I have standards.';
+  it('keeps the whole bit, punchline included', () => {
+    expect(clampOutput(BIT, BIT_MAX_SENTENCES)).toBe(BIT);
+  });
+  it('still holds a normal reply to two sentences', () => {
+    expect(clampOutput(BIT)).toBe('Let me tell you something about this studio. People come in and ask if I am alive.');
   });
 });
