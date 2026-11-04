@@ -34,7 +34,12 @@ export interface BuiltContentsResult {
   meta: TurnContextMeta;
 }
 
-export function buildContents(nextUserText: string): BuiltContentsResult {
+/**
+ * `direction` (per-turn variety, see variety.ts) rides as a second part of the
+ * newest user message, never stored in history. In the system prompt the model
+ * ignored it and copied the length of its own earlier replies instead.
+ */
+export function buildContents(nextUserText: string, direction = ''): BuiltContentsResult {
   pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
   const contents: LlmContent[] = recent.map((entry) => ({
@@ -45,7 +50,7 @@ export function buildContents(nextUserText: string): BuiltContentsResult {
   const normalized = compactForHistory(nextUserText);
   contents.push({
     role: 'user',
-    parts: [{ text: normalized }],
+    parts: direction ? [{ text: normalized }, { text: direction }] : [{ text: normalized }],
   });
 
   const historyChars = recent.reduce((sum, entry) => sum + entry.text.length, 0);
@@ -60,7 +65,7 @@ export function buildContents(nextUserText: string): BuiltContentsResult {
   };
 }
 
-export function buildProactiveContents(context: string): BuiltContentsResult {
+export function buildProactiveContents(context: string, direction = ''): BuiltContentsResult {
   pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
   const contents: LlmContent[] = recent.map((entry) => ({
@@ -70,7 +75,7 @@ export function buildProactiveContents(context: string): BuiltContentsResult {
 
   contents.push({
     role: 'user',
-    parts: [{ text: compactForHistory(context) }],
+    parts: direction ? [{ text: compactForHistory(context) }, { text: direction }] : [{ text: compactForHistory(context) }],
   });
 
   const historyChars = recent.reduce((sum, entry) => sum + entry.text.length, 0);
@@ -83,6 +88,12 @@ export function buildProactiveContents(context: string): BuiltContentsResult {
       historyChars,
     },
   };
+}
+
+/** Tubs's most recent replies (newest last), within the history window. */
+export function recentModelReplies(limit: number): string[] {
+  pruneConversationHistory();
+  return conversationHistory.filter((entry) => entry.role === 'model').slice(-limit).map((entry) => entry.text);
 }
 
 export function pushHistory(role: 'user' | 'model', text: string): void {

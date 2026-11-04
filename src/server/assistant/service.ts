@@ -6,6 +6,7 @@ import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { pickGreetingResponse } from '../persona/index.js';
 import { buildAssistantSystemInstruction, buildDualHeadSystemInstruction } from './prompt.js';
+import { buildTurnDirection } from './variety.js';
 import { buildDonationPayload, extractDonationSignal, maybeInjectDonationNudge } from './donation.js';
 import { defaultDualHeadSpeakEmotion, splitTrailingEmotionEmoji } from './emotion.js';
 import { MAX_OUTPUT_SENTENCES, clampOutput, estimateCostUsd, estimateTokens, normalizeInput, sanitizeForTts, stripFormatting, stripSpeakerLabels, unwrapJsonSpeechText } from './text.js';
@@ -152,7 +153,7 @@ function emitIfActive(
 export async function generateAssistantReply(userText: string, turnTimer?: TurnTimer): Promise<AssistantReply> {
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized);
+  const context = buildContents(normalized, buildTurnDirection('single'));
   if (!normalized) {
     const text = 'I did not catch that. Try again.';
     return {
@@ -741,7 +742,7 @@ async function runStreamingAssistantTurn(args: {
   const { userText, turnId, epoch, broadcast, turnTimer, provider, authState } = args;
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized);
+  const context = buildContents(normalized, buildTurnDirection('single'));
 
   if (!normalized) {
     console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m empty input — falling through to sequential');
@@ -1486,7 +1487,7 @@ async function runProactiveTurnBody(
 async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
-  const context = buildContents(normalized);
+  const context = buildContents(normalized, buildTurnDirection('dual'));
   const provider = resolveLlmProvider();
   const authState = provider.getAuthState();
 
@@ -1636,7 +1637,7 @@ async function generateProactiveReply(context: string): Promise<AssistantReply |
     return null;
   }
 
-  const contents = buildProactiveContents(context);
+  const contents = buildProactiveContents(context, buildTurnDirection('proactive'));
   const proactiveInstruction = `${buildAssistantSystemInstruction(getVisualContext())}\n\nPROACTIVE: You are starting conversation unprompted. ${context}\nOne punchy sentence. Be curious, weird, or provocative and make them want to respond.`;
 
   try {
@@ -1704,7 +1705,7 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
     return null;
   }
 
-  const contents = buildProactiveContents(context);
+  const contents = buildProactiveContents(context, buildTurnDirection('proactive'));
   const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: You are starting conversation unprompted. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.`;
 
   try {
