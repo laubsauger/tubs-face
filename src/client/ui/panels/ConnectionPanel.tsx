@@ -58,12 +58,6 @@ function RuntimeControls({ store, config }: { store: AppStore; config: Config })
   return (
     <>
       <ControlGroup title="Face">
-        <SelectControl
-          label="Render"
-          value={config.faceRenderMode}
-          options={[{ value: 'glitch', label: 'Glitch' }, { value: 'css', label: 'CSS' }]}
-          onChange={(faceRenderMode) => void patchConfig(store, { faceRenderMode })}
-        />
         <SelectControl label="Quality" value={config.renderQuality} options={RENDER_QUALITIES} onChange={(renderQuality) => void patchConfig(store, { renderQuality })} />
         <SelectControl
           label={`Renderer${glitchBackend ? ` (${glitchBackend === 'webgpu' ? 'WebGPU' : 'Canvas2D'})` : ''}`}

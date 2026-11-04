@@ -1,4 +1,3 @@
-export const FACE_RENDER_MODES = ['css', 'svg', 'glitch'] as const;
 export const GLITCH_RENDERERS = ['auto', 'webgpu', 'canvas2d'] as const;
 export const RENDER_QUALITIES = ['high', 'balanced', 'low'] as const;
 export const TTS_BACKENDS = ['kokoro', 'system'] as const;
@@ -43,7 +42,6 @@ export const KOKORO_VOICES = [
   'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
 ] as const;
 
-export type FaceRenderMode = (typeof FACE_RENDER_MODES)[number];
 export type GlitchRenderer = (typeof GLITCH_RENDERERS)[number];
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];
 export type TtsBackend = (typeof TTS_BACKENDS)[number];
@@ -110,7 +108,6 @@ export interface RuntimeConfig {
   sttModel: string;
   llmModel: string;
   llmMaxOutputTokens: number;
-  faceRenderMode: FaceRenderMode;
   renderQuality: RenderQuality;
   ttsBackend: TtsBackend;
   sttBackend: SttBackend;

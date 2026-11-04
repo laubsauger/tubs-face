@@ -175,7 +175,6 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
 
       {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
       <div className="hidden">
-        <ConfigPanel store={store} />
         <AssistantPanel store={store} />
         {/* Stream debug stays hidden: the server never sends stream_debug, so it would be empty. */}
         <StreamDebugPanel store={store} />
@@ -307,11 +306,7 @@ function TopBar({ store }: { store: AppStore }): JSX.Element {
 const StableFaceContainer = memo(
   function StableFaceContainer({ id, className }: { id: string; className: string }): JSX.Element {
     return (
-      <div
-        id={id}
-        className={className}
-        data-render-mode="glitch"
-      />
+      <div id={id} className={className} />
     );
   },
   // Never re-render — props don't change and all DOM updates are imperative
@@ -520,31 +515,6 @@ function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
         </span>
       )}
     </div>
-  );
-}
-
-function ConfigPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.config),
-    config: current.config,
-    ambientAudioEnabled: current.ambientAudioEnabled,
-  }));
-  const faceRenderMode = state.config?.faceRenderMode ?? 'glitch';
-  const renderQuality = state.config?.renderQuality ?? 'high';
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="config" title="Config" meta={state.config?.llmModel ?? 'n/a'} />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Model</dt><dd>{state.config?.llmModel ?? 'n/a'}</dd></div>
-          <div><dt>Render</dt><dd>{faceRenderMode}</dd></div>
-          <div><dt>Quality</dt><dd>{renderQuality}</dd></div>
-          <div><dt>Muted</dt><dd>{state.config?.muted ? 'yes' : 'no'}</dd></div>
-          <div><dt>Ambient</dt><dd>{state.ambientAudioEnabled ? 'on' : 'off'}</dd></div>
-        </dl>
-      </div>
-    </article>
   );
 }
 

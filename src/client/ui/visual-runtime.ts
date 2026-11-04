@@ -1,8 +1,7 @@
 import type { AppStore } from '../state/app-state.js';
-import { renderFaceVisualMarkup } from './face-visual.js';
 
 /**
- * Owns the `#visual-face` element only: its CSS-mode markup, data attributes and
+ * Owns the `#visual-face` element only: its data attributes and
  * CSS variables. Overlays (subtitle visibility, live transcript, donation card)
  * are rendered by React in app-shell.tsx, and subtitle words by the subtitle
  * controller in speech-runtime.ts. Writing those nodes here too made the last
@@ -15,7 +14,6 @@ export interface VisualRuntime {
 }
 
 export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): VisualRuntime {
-  let lastFaceMarkup = '';
   let face: HTMLElement | null = null;
 
   function syncGaze(): void {
@@ -39,25 +37,14 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       }
 
       const config = state.config;
-      // The pixel canvas is the face in glitch mode; glitchFxEnabled only turns its effects off.
-      const usingGlitchCanvas = config?.faceRenderMode === 'glitch';
+      // The pixel canvas is the face; glitchFxEnabled only turns its effects off.
       const chromaticOffset = Math.max(
         Math.abs(config?.glitchChromaticOffsetX ?? 0),
         Math.abs(config?.glitchChromaticOffsetY ?? 4.5),
       );
-      if (usingGlitchCanvas) {
-        syncGlitchFaceChildren(face);
-        lastFaceMarkup = '';
-      } else {
-        const nextMarkup = renderFaceVisualMarkup(state);
-        if (nextMarkup !== lastFaceMarkup) {
-          face.innerHTML = nextMarkup;
-          lastFaceMarkup = nextMarkup;
-        }
-      }
+      syncGlitchFaceChildren(face);
       face.dataset.expression = state.currentExpression;
       face.dataset.idleVariant = state.idleVariant;
-      face.dataset.renderMode = config?.faceRenderMode ?? 'css';
       face.dataset.renderQuality = config?.renderQuality ?? 'high';
       face.classList.toggle('is-speaking', state.audioPlaying);
       face.classList.toggle('is-sleeping', state.sleeping);

@@ -238,15 +238,12 @@ a {
   --fx-chromatic-offset: 1.4px;
   position: relative;
   width: min(360px, 72vw);
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 16 / 10;
   margin: 0 auto;
   border-radius: 999px;
-  background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.16), transparent 16%),
-    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--fx-base-color) 36%, rgba(59, 130, 246, 0.18)), transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--fx-base-color) 55%, #1d4ed8), #0f172a);
-  border: 1px solid rgba(147, 197, 253, 0.36);
-  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.5);
+  background: radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.2), rgba(4, 8, 16, 0.01));
+  border: none;
+  box-shadow: none;
   z-index: 1;
 }
 
@@ -258,13 +255,6 @@ a {
   margin: 0;
 }
 
-.visual-face[data-render-mode="glitch"] {
-  aspect-ratio: 16 / 10;
-  background: radial-gradient(circle at 50% 50%, rgba(16, 24, 40, 0.2), rgba(4, 8, 16, 0.01));
-  border: none;
-  box-shadow: none;
-}
-
 .main-visual-frame,
 .mini-visual-frame {
   width: 100%;
@@ -274,9 +264,6 @@ a {
 .main-visual-face {
   width: 100%;
   height: 100%;
-}
-
-.main-visual-face[data-render-mode="glitch"] {
   border-radius: 0;
   background:
     linear-gradient(180deg, rgba(10, 16, 30, 0.44), rgba(8, 12, 22, 0.2)),
@@ -292,12 +279,6 @@ a {
   pointer-events: none;
   border-radius: inherit;
   z-index: 2;
-}
-
-.visual-face.is-glitch-active .face-svg,
-.visual-face.is-glitch-active .visual-eyes,
-.visual-face.is-glitch-active .visual-mouth {
-  display: none;
 }
 
 .visual-face::before,
@@ -328,135 +309,6 @@ a {
     drop-shadow(calc(var(--fx-chromatic-offset) * -1) 0 0 rgba(255, 0, 102, 0.38)) drop-shadow(var(--fx-chromatic-offset) 0 0 rgba(0, 221, 255, 0.34)) drop-shadow(0 0 var(--fx-glow-strength) color-mix(in srgb, var(--fx-base-color) 70%, transparent));
   opacity: calc(0.38 + var(--fx-flicker-depth));
   animation: fx-flicker 0.8s infinite ease-in-out;
-}
-
-.face-svg {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.face-svg-eyes {
-  transform: translate(calc(var(--gaze-x) * 4px),
-      calc(var(--gaze-y) * 3px));
-}
-
-.face-svg-mouth-group {
-  transform: translate(calc(var(--gaze-x) * 2px),
-      calc(var(--gaze-y) * 2px));
-}
-
-.face-svg-eye,
-.face-svg-mouth,
-.face-svg-decor {
-  vector-effect: non-scaling-stroke;
-}
-
-.face-svg-eye {
-  fill: rgba(248, 251, 255, 0.96);
-  stroke: rgba(226, 232, 240, 0.1);
-  stroke-width: 1.1;
-}
-
-.face-svg-mouth {
-  fill: none;
-  stroke: rgba(248, 250, 252, 0.96);
-  stroke-width: 4.5;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.visual-face.is-speaking .face-svg-mouth,
-.visual-face[data-expression="speaking"] .face-svg-mouth {
-  animation: face-svg-mouth-talk 190ms ease-in-out infinite alternate;
-}
-
-.face-svg-decor {
-  fill: none;
-  stroke: rgba(147, 197, 253, 0.94);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.face-svg-decor.tear-left,
-.face-svg-decor.tear-right {
-  fill: rgba(125, 211, 252, 0.72);
-  stroke: rgba(125, 211, 252, 0.9);
-}
-
-.face-svg-decor.zzz {
-  stroke: rgba(191, 219, 254, 0.88);
-}
-
-.visual-eyes {
-  position: absolute;
-  top: 36%;
-  left: 50%;
-  width: 54%;
-  display: flex;
-  justify-content: space-between;
-  transform: translateX(-50%);
-}
-
-.visual-eye {
-  width: 54px;
-  height: 54px;
-  border-radius: 999px;
-  background: #f8fbff;
-  box-shadow: inset 0 -8px 0 rgba(14, 165, 233, 0.24);
-  transform: translate(calc(var(--gaze-x) * 12px),
-      calc(var(--gaze-y) * 9px));
-  transition: height 90ms ease, transform 110ms ease;
-}
-
-.visual-mouth {
-  position: absolute;
-  left: 50%;
-  bottom: 23%;
-  width: 96px;
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(248, 250, 252, 0.92);
-  transform: translate(calc(-50% + (var(--gaze-x) * 6px)),
-      calc(var(--gaze-y) * 5px));
-  transition: height 110ms ease, width 110ms ease, transform 110ms ease, border-radius 110ms ease;
-}
-
-.visual-face.is-speaking .visual-mouth,
-.visual-face[data-expression="speaking"] .visual-mouth,
-.visual-face[data-expression="happy"] .visual-mouth,
-.visual-face[data-expression="love"] .visual-mouth {
-  height: 42px;
-  border-radius: 32px 32px 40px 40px;
-}
-
-.visual-face[data-expression="sleep"] .visual-eye,
-.visual-face.is-sleeping .visual-eye,
-.visual-face.is-blinking .visual-eye {
-  height: 8px;
-  border-radius: 999px;
-}
-
-.visual-face[data-idle-variant="flat"][data-expression="idle"] .visual-mouth {
-  width: 76px;
-  height: 12px;
-}
-
-.visual-face[data-expression="thinking"] .visual-mouth {
-  width: 72px;
-  transform: translateX(-50%) rotate(-6deg);
-}
-
-.visual-face[data-expression="sad"] .visual-mouth,
-.visual-face[data-expression="crying"] .visual-mouth {
-  height: 14px;
-  border-radius: 999px;
-  transform: translateX(-50%) scaleX(0.85);
-}
-
-.visual-face[data-expression="smile"] .visual-mouth {
-  height: 22px;
 }
 
 .visual-speech-bubble {
@@ -2277,16 +2129,6 @@ a {
 
   73% {
     transform: translate3d(0, calc(var(--fx-pixel-jitter) * 0.35), 0);
-  }
-}
-
-@keyframes face-svg-mouth-talk {
-  from {
-    transform: scaleY(0.9);
-  }
-
-  to {
-    transform: scaleY(1.14);
   }
 }
 

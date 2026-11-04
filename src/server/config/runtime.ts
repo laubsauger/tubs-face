@@ -16,7 +16,6 @@ import {
   DEFAULT_EXPRESSION_PROFILES,
   DUAL_HEAD_MODES,
   DUAL_HEAD_TURN_POLICIES,
-  FACE_RENDER_MODES,
   GLITCH_RENDERERS,
   KOKORO_VOICES,
   RENDER_QUALITIES,
@@ -39,7 +38,6 @@ export const runtimeConfig: RuntimeConfig = {
   sttModel: DEFAULT_STT_MODEL,
   llmModel: DEFAULT_LLM_MODEL,
   llmMaxOutputTokens: parseIntegerInRange(process.env.GEMINI_MAX_OUTPUT_TOKENS, 256, 32, 1024),
-  faceRenderMode: pickOne(FACE_RENDER_MODES, process.env.FACE_RENDER_MODE, 'glitch'),
   renderQuality: pickOne(RENDER_QUALITIES, process.env.RENDER_QUALITY, 'high'),
   ttsBackend: pickOne(TTS_BACKENDS, process.env.REALTIME_TTS_BACKEND, 'kokoro'),
   sttBackend: pickOne(STT_BACKENDS, process.env.REALTIME_STT_BACKEND, 'mlx'),
@@ -171,9 +169,6 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   if (patch.llmModel !== undefined) runtimeConfig.llmModel = requireNonEmptyString(patch.llmModel, 'llmModel');
   if (patch.llmMaxOutputTokens !== undefined) {
     runtimeConfig.llmMaxOutputTokens = parseIntegerInRange(patch.llmMaxOutputTokens, runtimeConfig.llmMaxOutputTokens, 32, 1024);
-  }
-  if (patch.faceRenderMode !== undefined) {
-    runtimeConfig.faceRenderMode = expectOne(FACE_RENDER_MODES, patch.faceRenderMode, 'faceRenderMode');
   }
   if (patch.renderQuality !== undefined) {
     runtimeConfig.renderQuality = expectOne(RENDER_QUALITIES, patch.renderQuality, 'renderQuality');

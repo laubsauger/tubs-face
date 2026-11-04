@@ -87,7 +87,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       }
 
       syncConfig();
-      if (!faceEl || store.getState().config?.faceRenderMode !== 'glitch') {
+      if (!faceEl) {
         stopRenderLoop();
         setCanvasVisible(false);
         return;
@@ -424,7 +424,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   function renderFrame(now: number): void {
     animFrameId = requestAnimationFrame(renderFrame);
     const state = store.getState();
-    if (!canvas || !faceEl || state.config?.faceRenderMode !== 'glitch') {
+    if (!canvas || !faceEl) {
       stopRenderLoop();
       setCanvasVisible(false);
       return;
