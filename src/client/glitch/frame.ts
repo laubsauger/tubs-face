@@ -37,8 +37,8 @@ export function computeFrameState(
     containerCssW: number;
     containerCssH: number;
     effectivePixelSize: number;
-    currentGazeX: number;
-    currentGazeY: number;
+    gazeX: number;
+    gazeY: number;
     faceW: number;
     faceH: number;
     getBlinkFactor: (time: number) => number;
@@ -49,7 +49,7 @@ export function computeFrameState(
     tint?: { burstInterval: number; chroma: number };
   },
 ): { frame: FrameState; lastBurstState: boolean; glitchBurstSeed: number } {
-  const { config, startTime, cachedDpr, canvas, containerCssW, containerCssH, effectivePixelSize, currentGazeX, currentGazeY, faceW, faceH, getBlinkFactor, getSpeakMouthScale, lastBurstState, glitchBurstSeed } = args;
+  const { config, startTime, cachedDpr, canvas, containerCssW, containerCssH, effectivePixelSize, gazeX, gazeY, faceW, faceH, getBlinkFactor, getSpeakMouthScale, lastBurstState, glitchBurstSeed } = args;
   const chromaScale = args.tint?.chroma ?? 1;
 
   const t = (now - startTime) / 1000;
@@ -62,10 +62,10 @@ export function computeFrameState(
   const faceOX = 0;
   const faceOY = 0;
 
-  const eyeGazeX = currentGazeX * faceW * GAZE_EYE_RANGE_X;
-  const eyeGazeY = currentGazeY * faceH * GAZE_EYE_RANGE_Y;
-  const mouthGazeX = currentGazeX * faceW * GAZE_MOUTH_RANGE_X;
-  const mouthGazeY = currentGazeY * faceH * GAZE_MOUTH_RANGE_Y;
+  const eyeGazeX = gazeX * faceW * GAZE_EYE_RANGE_X;
+  const eyeGazeY = gazeY * faceH * GAZE_EYE_RANGE_Y;
+  const mouthGazeX = gazeX * faceW * GAZE_MOUTH_RANGE_X;
+  const mouthGazeY = gazeY * faceH * GAZE_MOUTH_RANGE_Y;
   const blinkF = getBlinkFactor(now);
   const mouthScale = getSpeakMouthScale(now);
 

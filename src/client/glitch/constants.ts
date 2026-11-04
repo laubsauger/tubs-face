@@ -82,7 +82,6 @@ export const GAZE_EYE_RANGE_X = 0.14;
 export const GAZE_EYE_RANGE_Y = 0.09;
 export const GAZE_MOUTH_RANGE_X = 0.06;
 export const GAZE_MOUTH_RANGE_Y = 0.04;
-export const GAZE_LERP = 0.12;
 
 export const GLOW_ALPHA = 0.65;
 /**

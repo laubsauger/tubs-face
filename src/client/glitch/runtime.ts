@@ -1,5 +1,5 @@
 import type { AppStore } from '../state/app-state.js';
-import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
+import { DEFAULT_CONFIG, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
 import { computeFrameState, renderFrameWebGpu } from './frame.js';
 import { buildPixelGrid, featureFitScale, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
@@ -38,8 +38,6 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let lastSleepingState = false;
   let lastBurstState = false;
   let glitchBurstSeed = Math.random() * 1000;
-  let currentGazeX = 0;
-  let currentGazeY = 0;
   let rendererConfig: GlitchConfig = structuredClone(DEFAULT_CONFIG);
   let lastProfileSignature = '';
   let lastRendererSignature = '';
@@ -340,9 +338,6 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       return;
     }
 
-    currentGazeX += (state.gazeX - currentGazeX) * GAZE_LERP;
-    currentGazeY += (state.gazeY - currentGazeY) * GAZE_LERP;
-
     if (state.currentExpression !== lastBuiltExpression || state.sleeping !== lastSleepingState) {
       buildGrid();
     }
@@ -367,8 +362,10 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       containerCssW,
       containerCssH,
       effectivePixelSize,
-      currentGazeX,
-      currentGazeY,
+      // The face behaviour runtime's gaze model is the only smoothing; easing
+      // it again here made saccades drag.
+      gazeX: state.gazeX,
+      gazeY: state.gazeY,
       faceW: faceEl.getBoundingClientRect().width,
       faceH: faceEl.getBoundingClientRect().height,
       getBlinkFactor,

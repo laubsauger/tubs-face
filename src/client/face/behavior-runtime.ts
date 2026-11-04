@@ -1,5 +1,6 @@
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
+import { createGazeController, nearestFaceIndex, type GazeSample } from './gaze.js';
 
 const BLINK_MIN_MS = 3800;
 const BLINK_MAX_MS = 6400;
@@ -7,19 +8,25 @@ const BEHAVIOR_MIN_MS = 3600;
 const BEHAVIOR_MAX_MS = 5800;
 const WANDER_X_RANGE = 0.32;
 const WANDER_Y_RANGE = 0.2;
+// A wander holds long enough to read as a look, and doesn't come back to back.
+const WANDER_HOLD_MIN_MS = 1500;
+const WANDER_HOLD_MAX_MS = 4000;
+const WANDER_MIN_GAP_MS = 10_000;
 const INPUT_DEADZONE = 0.035;
 const INPUT_SHAPE_EXPONENT = 0.82;
-const SPRING_STIFFNESS = 185;
-const SPRING_DAMPING = 22;
-const STOP_POS_EPS = 0.0012;
-const STOP_VEL_EPS = 0.0012;
-const FACE_TARGET_SWITCH_MIN_MS = 1900;
-const FACE_TARGET_SWITCH_MAX_MS = 3600;
+// With several people in view, stay with each one for a while.
+const FACE_TARGET_SWITCH_MIN_MS = 2500;
+const FACE_TARGET_SWITCH_MAX_MS = 6000;
 const PARTNER_MOTION_IDLE_BLOCK_MS = 1800;
 const PARTNER_BLINK_MIN_GAP_MS = 900;
-const MICRO_SACCADE_INTERVAL_MS = 1200;
-const MICRO_SACCADE_MAX_INTERVAL_MS = 3200;
-const MICRO_SACCADE_AMPLITUDE = 0.045;
+// The partner's motion arrives ~30 times a second while its eyes move. Small
+// reacts once they come to rest, and only sometimes, so the two don't mirror.
+const PARTNER_SETTLE_MS = 200;
+const PARTNER_GLANCE_CHANCE = 0.35;
+const MICRO_SACCADE_INTERVAL_MS = 1500;
+const MICRO_SACCADE_MAX_INTERVAL_MS = 3500;
+// Barely visible on purpose: a still eye looks dead, a twitchy one nervous.
+const MICRO_SACCADE_AMPLITUDE = 0.018;
 // People look away while working out what to say and back when they start
 // talking. A face that stares while "thinking" reads as a frozen screen.
 const THINKING_GAZE_CHANCE = 0.7;
@@ -44,26 +51,25 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let smileResetTimer: number | null = null;
   let rafId: number | null = null;
   let sender: ((message: WsClientMessage) => void) | null = null;
-  let currentX = 0;
-  let currentY = 0;
-  let velocityX = 0;
-  let velocityY = 0;
-  let targetX = 0;
-  let targetY = 0;
-  let lastTickMs = 0;
+  // One model drives the eyes; the renderer draws its output as is.
+  const gaze = createGazeController();
+  const gazeSample: GazeSample = { x: 0, y: 0, moving: false };
   let lastPointerAt = 0;
-  let activeFaceIndex = 0;
+  // Centre of the face being looked at, in camera frame pixels.
+  let activeFaceX = Number.NaN;
+  let activeFaceY = Number.NaN;
   let nextFaceSwitchAt = 0;
+  let lastWanderAt = Number.NEGATIVE_INFINITY;
   let partnerMotionAt = 0;
+  let partnerX = 0;
+  let partnerY = 0;
+  let partnerSettleTimer: number | null = null;
+  let partnerGlanceTimer: number | null = null;
   let partnerBlinkTimer: number | null = null;
   let lastPartnerBlinkAt = 0;
   let partnerMotionHandler: ((event: Event) => void) | null = null;
   let partnerBlinkHandler: ((event: Event) => void) | null = null;
   let microSaccadeTimer: number | null = null;
-  let saccadeOffsetX = 0;
-  let saccadeOffsetY = 0;
-  let faceTrackBaseX = 0;
-  let faceTrackBaseY = 0;
   let lastMotionSentAt = 0;
   let lastSentX = Number.NaN;
   let lastSentY = Number.NaN;
@@ -89,7 +95,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
         const normalizedX = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         const normalizedY = ((event.clientY - rect.top) / rect.height) * 2 - 1;
         lastPointerAt = Date.now();
-        lookAt(normalizedX * 0.8, normalizedY * 0.6);
+        trackTarget(normalizedX * 0.8, normalizedY * 0.6);
       };
 
       rootEl.onpointerleave = () => {
@@ -133,6 +139,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(lookResetTimer);
       clearManagedTimer(smileResetTimer);
       clearManagedTimer(partnerBlinkTimer);
+      clearManagedTimer(partnerSettleTimer);
+      clearManagedTimer(partnerGlanceTimer);
       clearManagedTimer(microSaccadeTimer);
       clearManagedTimer(thinkingGazeTimer);
       if (rafId != null) {
@@ -224,14 +232,15 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     }
 
     // Only wander when not tracking a face
-    if (!tracking) {
+    if (!tracking && Date.now() - lastWanderAt >= WANDER_MIN_GAP_MS) {
+      lastWanderAt = Date.now();
       const nextX = (Math.random() * 2 - 1) * WANDER_X_RANGE;
       const nextY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
       lookAt(nextX, nextY);
       clearManagedTimer(lookResetTimer);
       lookResetTimer = window.setTimeout(() => {
         resetGaze();
-      }, randBetween(650, 1350));
+      }, randBetween(WANDER_HOLD_MIN_MS, WANDER_HOLD_MAX_MS));
     }
   }
 
@@ -265,9 +274,12 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     microSaccadeTimer = window.setTimeout(() => {
       if (shouldAnimate() && hasTrackedFaces() && !thinkingGaze) {
         // Small involuntary eye movements while fixating on a face
-        saccadeOffsetX = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
-        saccadeOffsetY = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
-        lookAt(faceTrackBaseX + saccadeOffsetX, faceTrackBaseY + saccadeOffsetY);
+        gaze.microSaccade(
+          (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE,
+          (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE,
+          performance.now(),
+        );
+        startAnimationLoop();
       }
       scheduleMicroSaccade();
     }, randBetween(MICRO_SACCADE_INTERVAL_MS, MICRO_SACCADE_MAX_INTERVAL_MS));
@@ -305,19 +317,28 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       if (typeof detail.x !== 'number' || typeof detail.y !== 'number') {
         return;
       }
-      // De-sync: Only occasionally mirror motion (20% of the time), OR do it with a large delay
-      if (Math.random() > 0.2) {
-        return;
-      }
-      partnerMotionAt = Number(detail.ts) || Date.now();
-      
-      // Delay it playfully
-      window.setTimeout(() => {
-         // Add some jitter so they don't look EXACTLY at the same coordinate footprint
-         const jitterX = (Math.random() - 0.5) * 0.15;
-         const jitterY = (Math.random() - 0.5) * 0.15;
-         lookAt(detail.x! + jitterX, detail.y! + jitterY);
-      }, randBetween(400, 1800));
+      partnerX = detail.x;
+      partnerY = detail.y;
+      clearManagedTimer(partnerSettleTimer);
+      partnerSettleTimer = window.setTimeout(() => {
+        partnerSettleTimer = null;
+        // De-sync: only sometimes look where the partner looks, and late.
+        if (Math.random() > PARTNER_GLANCE_CHANCE) {
+          return;
+        }
+        partnerMotionAt = Date.now();
+        clearManagedTimer(partnerGlanceTimer);
+        partnerGlanceTimer = window.setTimeout(() => {
+          partnerGlanceTimer = null;
+          if (store.getState().sleeping) {
+            return;
+          }
+          // Add some jitter so they don't look EXACTLY at the same coordinate footprint
+          const jitterX = (Math.random() - 0.5) * 0.15;
+          const jitterY = (Math.random() - 0.5) * 0.15;
+          lookAt(partnerX + jitterX, partnerY + jitterY);
+        }, randBetween(400, 1800));
+      }, PARTNER_SETTLE_MS);
     };
 
     partnerBlinkHandler = (event: Event) => {
@@ -357,16 +378,20 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     }
   }
 
+  /** A deliberate look: wander, thinking, back to centre, another person. */
   function lookAt(x: number, y: number): void {
-    targetX = easeInput(x);
-    targetY = easeInput(y);
+    gaze.lookAt(easeInput(x), easeInput(y), performance.now());
+    startAnimationLoop();
+  }
+
+  /** A continuous, noisy target (face box, pointer); the gaze model filters it. */
+  function trackTarget(x: number, y: number): void {
+    gaze.track(easeInput(x), easeInput(y), performance.now());
     startAnimationLoop();
   }
 
   function resetGaze(): void {
-    targetX = 0;
-    targetY = 0;
-    startAnimationLoop();
+    lookAt(0, 0);
   }
 
   function startAnimationLoop(): void {
@@ -383,43 +408,20 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       steerTowardDetectedFace();
     }
 
-    if (!lastTickMs) {
-      lastTickMs = nowMs;
-    }
-    const deltaSeconds = clamp((nowMs - lastTickMs) / 1000, 0.008, 0.04);
-    lastTickMs = nowMs;
-
-    [currentX, velocityX] = stepAxis(currentX, velocityX, targetX, deltaSeconds);
-    [currentY, velocityY] = stepAxis(currentY, velocityY, targetY, deltaSeconds);
-
-    const doneX = Math.abs(targetX - currentX) < STOP_POS_EPS && Math.abs(velocityX) < STOP_VEL_EPS;
-    const doneY = Math.abs(targetY - currentY) < STOP_POS_EPS && Math.abs(velocityY) < STOP_VEL_EPS;
-    const settled = doneX && doneY;
-    if (settled) {
-      currentX = targetX;
-      currentY = targetY;
-      velocityX = 0;
-      velocityY = 0;
-      lastTickMs = 0;
-    }
-
+    gaze.sample(nowMs, gazeSample);
+    const settled = !gazeSample.moving;
     const state = store.getState();
-    if (state.gazeX !== currentX || state.gazeY !== currentY) {
+    if (state.gazeX !== gazeSample.x || state.gazeY !== gazeSample.y) {
       store.setState((current) => ({
         ...current,
-        gazeX: currentX,
-        gazeY: currentY,
+        gazeX: gazeSample.x,
+        gazeY: gazeSample.y,
       }));
     }
     sendMotion(settled);
 
-    if (settled) {
-      // Keep the loop alive while tracking faces so we pick up bounding box changes
-      if (hasTrackedFaces()) {
-        rafId = requestAnimationFrame(tick);
-        return;
-      }
-
+    // Keep the loop alive while tracking faces so we pick up bounding box changes
+    if (settled && !hasTrackedFaces()) {
       rafId = null;
       return;
     }
@@ -432,8 +434,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     if (!sender) {
       return;
     }
-    const x = Number(currentX.toFixed(4));
-    const y = Number(currentY.toFixed(4));
+    const x = Number(gazeSample.x.toFixed(4));
+    const y = Number(gazeSample.y.toFixed(4));
     if (x === lastSentX && y === lastSentY) {
       return;
     }
@@ -465,29 +467,35 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       return false;
     }
 
+    // Stay with the person we were looking at, wherever the detector lists them.
+    let index = Number.isNaN(activeFaceX) ? 0 : nearestFaceIndex(faces, activeFaceX, activeFaceY);
     const now = Date.now();
-    if (faces.length === 1) {
-      activeFaceIndex = 0;
-    } else if (now >= nextFaceSwitchAt) {
-      activeFaceIndex = (activeFaceIndex + 1) % faces.length;
+    const switching = faces.length > 1 && now >= nextFaceSwitchAt;
+    if (switching) {
+      index = (index + 1) % faces.length;
       nextFaceSwitchAt = now + randBetween(FACE_TARGET_SWITCH_MIN_MS, FACE_TARGET_SWITCH_MAX_MS);
     }
 
-    const face = faces[Math.min(activeFaceIndex, faces.length - 1)];
+    const face = faces[index];
     if (!face) {
       return false;
     }
 
     const [x1, y1, x2, y2] = face.box;
-    const centerX = (x1 + x2) / 2;
-    const centerY = (y1 + y2) / 2;
-    const normalizedX = (centerX / frameWidth) * 2 - 1;
-    const normalizedY = (centerY / frameHeight) * 2 - 1;
+    activeFaceX = (x1 + x2) / 2;
+    activeFaceY = (y1 + y2) / 2;
+    const normalizedX = (activeFaceX / frameWidth) * 2 - 1;
+    const normalizedY = (activeFaceY / frameHeight) * 2 - 1;
 
     // Camera feed is mirrored in the UI, so invert the horizontal target.
-    faceTrackBaseX = (-normalizedX) * 0.92;
-    faceTrackBaseY = normalizedY * 0.68;
-    lookAt(faceTrackBaseX + saccadeOffsetX, faceTrackBaseY + saccadeOffsetY);
+    const targetX = (-normalizedX) * 0.92;
+    const targetY = normalizedY * 0.68;
+    // A new person is one clean saccade away; the same person's box gets filtered.
+    if (switching) {
+      lookAt(targetX, targetY);
+    } else {
+      trackTarget(targetX, targetY);
+    }
     return true;
   }
 }
@@ -515,11 +523,4 @@ function easeInput(value: number): number {
   }
   const normalized = (magnitude - INPUT_DEADZONE) / (1 - INPUT_DEADZONE);
   return sign * clamp(Math.pow(normalized, INPUT_SHAPE_EXPONENT), 0, 1);
-}
-
-function stepAxis(current: number, velocity: number, target: number, deltaSeconds: number): [number, number] {
-  const acceleration = (target - current) * SPRING_STIFFNESS;
-  const nextVelocity = (velocity + acceleration * deltaSeconds) * Math.exp(-SPRING_DAMPING * deltaSeconds);
-  const nextCurrent = current + nextVelocity * deltaSeconds;
-  return [nextCurrent, nextVelocity];
 }
