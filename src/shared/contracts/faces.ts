@@ -32,13 +32,6 @@ export interface DetectedFace {
   _trackedAge?: number;
 }
 
-export interface AppearanceFrame {
-  data: string;
-  ts: number;
-  faces: string[];
-  count: number;
-}
-
 export interface FaceSnapshotPacket {
   faces: DetectedFace[];
   inferenceMs: number;

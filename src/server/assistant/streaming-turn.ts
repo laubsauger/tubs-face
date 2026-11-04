@@ -153,7 +153,6 @@ export async function runStreamingAssistantTurn(args: {
   // the JSON envelope so only the prose reaches the sentence splitter.
   let rawAccumulator = '';
   let jsonUnwrapMode: 'unknown' | 'json' | 'plain' = 'unknown';
-  let jsonTextKey: string | null = null;
   let jsonPreambleStripped = false;
 
   function pushToSplitter(delta: string): void {
@@ -178,7 +177,6 @@ export async function runStreamingAssistantTurn(args: {
       const keyMatch = trimmed.match(/^\{\s*"(\w+)"\s*:\s*"/);
       if (keyMatch) {
         jsonUnwrapMode = 'json';
-        jsonTextKey = keyMatch[1]!;
         // Strip everything up to and including the opening quote of the value
         const valueStart = trimmed.indexOf(keyMatch[0]) + keyMatch[0].length;
         rawAccumulator = trimmed.slice(valueStart);

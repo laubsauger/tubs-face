@@ -4,7 +4,6 @@ import type {
   RuntimeConfig,
   SessionStats,
 } from './config.js';
-import type { AppearanceFrame } from './faces.js';
 import type { EmotionImpulse, TurnContextMeta, TurnDonation, TurnScript } from './turn-script.js';
 
 export interface TokenUsage {
@@ -318,10 +317,3 @@ export type WsServerMessage =
   | WsFaceMotionServerMessage
   | WsFaceBlinkServerMessage
   | WsHeadSpeechStateServerMessage;
-
-export interface LatestFrameSnapshot {
-  data: string;
-  ts: number;
-}
-
-export type AppearanceFrameSnapshot = AppearanceFrame;

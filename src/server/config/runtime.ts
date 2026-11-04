@@ -4,22 +4,14 @@ import type {
   StatsResponse,
 } from '../../shared/contracts/http.js';
 import type {
-  DonationSignalMode,
   DualHeadMode,
-  DualHeadTurnPolicy,
   ExpressionName,
   ExpressionProfile,
   ExpressionProfileMap,
-  FaceRenderMode,
   GlitchRenderer,
-  KokoroVoice,
   ProcessingMode,
-  RenderQuality,
   RuntimeConfig,
   SessionStats,
-  SttBackend,
-  TtsBackend,
-  VadModel,
 } from '../../shared/contracts/config.js';
 import {
   DEFAULT_EXPRESSION_PROFILES,
@@ -165,10 +157,6 @@ export const sessionStats: SessionStats = {
 export interface RuntimeContext {
   readonly runtimeConfig: RuntimeConfig;
   readonly sessionStats: SessionStats;
-}
-
-export function getRuntimeContext(): RuntimeContext {
-  return { runtimeConfig, sessionStats };
 }
 
 export function toHealthResponse(clientCount: number): HealthResponse {

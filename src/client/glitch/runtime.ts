@@ -3,7 +3,7 @@ import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_S
 import { rebuildScanlinePattern, initCanvas2DRenderer, recreateCanvasElement, sizeCanvasLayout } from './canvas2d.js';
 import { computeFrameState, renderFrameCanvas2D, renderFrameWebGpu } from './frame.js';
 import { buildPixelGrid, featureFitScale, recolorPixelGrid, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
-import { ensureRendererBackendReady, fallbackToCanvas2D, initializeRendererBackend } from './renderer-backend.js';
+import { ensureRendererBackendReady, initializeRendererBackend } from './renderer-backend.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig, normalizeRenderer } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';

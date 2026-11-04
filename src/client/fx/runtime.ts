@@ -2,7 +2,7 @@ import type { ConfigResponse } from '../../shared/contracts/http.js';
 import type { ExpressionName, ExpressionProfile } from '../../shared/contracts/config.js';
 import type { AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
-import { GLITCH_PRESETS, pickGlitchConfig, sanitizeImportedGlitchConfig } from './presets.js';
+import { pickGlitchConfig, sanitizeImportedGlitchConfig } from './presets.js';
 import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface FxRuntime {
@@ -79,17 +79,6 @@ type ExpressionRangeKey =
   | 'mouthW'
   | 'mouthH';
 
-type ExpressionToggleKey =
-  | 'mouthRound'
-  | 'tears';
-
-type ExpressionSelectKey =
-  | 'eyeShape'
-  | 'mouthShape';
-
-type ExpressionColorKey =
-  | 'colorHex'
-  | 'tearColorHex';
 
 export function createFxRuntime(store: AppStore): FxRuntime {
   return {
@@ -323,11 +312,6 @@ export async function importConfig(store: AppStore): Promise<void> {
     reader.readAsText(file);
   }, { once: true });
   input.click();
-}
-
-export function normalizeHex(value: string, fallback: `#${string}`): `#${string}` {
-  const normalized = value.trim().toLowerCase();
-  return /^#[0-9a-f]{6}$/.test(normalized) ? normalized as `#${string}` : fallback;
 }
 
 export function normalizeExpressionName(value: string): ExpressionName {

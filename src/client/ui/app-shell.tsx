@@ -5,7 +5,7 @@ import { FacePanel } from './panels/FacePanel.js';
 import { StatsPanel } from './panels/StatsPanel.js';
 import { ChatPanel } from './panels/ChatPanel.js';
 import { PanelHeader } from './panels/PanelHeader.js';
-import { formatCurrency, formatUptime, formatAwakeElapsed, formatTimestamp, resolveChatActor, renderChatPrefix, isChatEntryVisible } from './utils/formatters.js';
+import { formatUptime, formatAwakeElapsed, formatTimestamp } from './utils/formatters.js';
 import { useCallback, useRef, useState, useEffect, memo, type JSX } from 'react';
 import type {
   DonationConfirmRequest,
@@ -16,10 +16,10 @@ import type {
   SpeakRequest,
   SpeakResponse,
 } from '../../shared/contracts/http.js';
-import type { TurnActor, TurnAction, TurnBeat } from '../../shared/contracts/turn-script.js';
+import type { TurnAction, TurnBeat } from '../../shared/contracts/turn-script.js';
 import type { EmotionCue, ExpressionName } from '../../shared/contracts/config.js';
 import type { EnrollmentCapture } from '../face/runtime.js';
-import type { AppState, AppStore, PanelKey } from '../state/app-state.js';
+import type { AppState, AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import { patchConfig, toggleFxEditor } from '../fx/runtime.js';
 import { FxEditor } from './panels/FxEditor.js';
@@ -1101,12 +1101,6 @@ function renderPanelCardClass(collapsed: boolean): string {
   return `panel-surface panel-surface-compact transition-all ${collapsed ? 'is-collapsed h-11' : ''}`;
 }
 
-function formatFaceSummary(state: Pick<AppState, 'faceWorkerBusy' | 'faceWorkerReady' | 'faceLastDetectedCount'>): string {
-  if (state.faceWorkerBusy) return 'Running';
-  if (!state.faceWorkerReady) return 'Loading worker';
-  return state.faceLastDetectedCount > 0 ? `${state.faceLastDetectedCount} detected` : 'Ready';
-}
-
 function formatDebugPayload(payload: Record<string, unknown>): string {
   return Object.entries(payload)
     .filter(([key]) => key !== 'ts')
@@ -1125,16 +1119,6 @@ function formatDonationFromSignal(signal: AppState['currentDonationSignal']): st
   }
   const amount = signal.amount ? `${signal.amount}${signal.currency ? ` ${signal.currency}` : ''}` : 'Wheel fund';
   return [signal.certainty.toUpperCase(), signal.donor, amount].filter(Boolean).join(' · ');
-}
-
-function renderFaceMeta(face: AppState['faceLastFaces'][number]): string {
-  if (face.name) {
-    return 'Recognized from library';
-  }
-  if (face.match?.name) {
-    return `Closest match: ${face.match.name}`;
-  }
-  return 'No confident match';
 }
 
 function renderManualStatusClass(kind: 'idle' | 'ok' | 'error' | 'busy'): string {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { createPortal } from 'react-dom';
 import type { AppStore } from '../../state/app-state.js';
-import type { DetectedFace, EnrolledFace, RecognitionMatch } from '../../../shared/contracts/faces.js';
+import type { DetectedFace, EnrolledFace } from '../../../shared/contracts/faces.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import type { AppShellControls } from '../app-shell.js';

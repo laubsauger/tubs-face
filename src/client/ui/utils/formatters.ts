@@ -1,6 +1,5 @@
 import type { HealthResponse } from '../../../shared/contracts/http.js';
 import type { ChatEntry } from '../../state/app-state.js';
-import type { TurnActor } from '../../../shared/contracts/turn-script.js';
 
 export function formatCurrency(amount: number | null | undefined): string {
   if (amount == null) return '$0.00';

@@ -24,11 +24,6 @@ export interface OkResponse {
   ok: true;
 }
 
-export interface IgnoredResponse extends OkResponse {
-  ignored: true;
-  reason: string;
-}
-
 export interface SpeakRequest {
   text: string;
 }
@@ -74,26 +69,6 @@ export interface VoiceResponse extends OkResponse {
   wake?: WakeWordResult;
 }
 
-export interface VoicePreviewRequest {
-  text?: string;
-  finalized?: boolean;
-}
-
-export interface VoicePreviewResponse extends OkResponse {
-  text?: string;
-  shouldReply?: boolean;
-}
-
-export interface VoiceSegmentRequest {
-  text?: string;
-  finalized?: boolean;
-}
-
-export interface VoiceSegmentResponse extends OkResponse {
-  text?: string;
-  turnId?: string;
-}
-
 export interface TtsRequest {
   text: string;
   voice?: string;
@@ -101,13 +76,6 @@ export interface TtsRequest {
   stream?: boolean;
   chunkIndex?: number;
   turnId?: string;
-}
-
-export interface TtsResponseMetadata {
-  ok: true;
-  mimeType?: string;
-  durationMs?: number;
-  voice?: string;
 }
 
 export interface PayPalOrderRequest {
@@ -155,8 +123,6 @@ export interface FaceCreateRequest {
   name: string;
   embedding: number[];
 }
-
-export type FacesListResponse = EnrolledFace[];
 
 export interface FaceCreateResponse extends OkResponse {
   face?: EnrolledFace;

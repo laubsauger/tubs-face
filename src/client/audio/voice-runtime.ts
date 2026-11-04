@@ -713,17 +713,13 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
 
     // Resolve voice activity: use model provider if available, else RMS thresholds
     let isVoice: boolean;
-    let isSilence: boolean;
     if (vadProvider && vadModelId !== 'rms') {
       const result = vadProvider.process(samples);
       isVoice = result.isVoice;
-      isSilence = !result.isVoice;
     } else {
       const gate = Math.max(0.008, state.config?.vadNoiseGate ?? 0.008);
       const startThreshold = Math.max(0.018, gate * 2.5);
-      const stopThreshold = Math.max(0.01, gate * 1.5);
       isVoice = rms >= startThreshold;
-      isSilence = rms <= stopThreshold;
     }
 
     const now = Date.now();

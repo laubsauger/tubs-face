@@ -14,15 +14,6 @@ export interface FaceLibrarySummary {
   people: number;
 }
 
-export async function loadFaceLibrarySummary(): Promise<FaceLibrarySummary> {
-  const faces = await loadFaceLibrary();
-  const names = new Set(faces.map((face) => face.name).filter(Boolean));
-  return {
-    embeddings: faces.length,
-    people: names.size,
-  };
-}
-
 export async function loadFaceLibrary(): Promise<EnrolledFace[]> {
   const payload = await fetchJson<FaceLibraryResponse>('/faces');
   return Array.isArray(payload.faces) ? payload.faces : [];

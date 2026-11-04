@@ -1,4 +1,4 @@
-import type { ExpressionName, ExpressionProfile, ExpressionProfileMap } from '../../shared/contracts/config.js';
+import type { ExpressionProfileMap } from '../../shared/contracts/config.js';
 import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface GlitchConfig {
@@ -68,10 +68,6 @@ export const DEFAULT_CONFIG: GlitchConfig = {
 
 export let EXPRESSION_PROFILES: ExpressionProfileMap = structuredClone(DEFAULT_EXPRESSION_PROFILES);
 
-export function updateExpressionProfile(name: ExpressionName, profile: ExpressionProfile | null): void {
-  EXPRESSION_PROFILES[name] = profile;
-}
-
 export function setExpressionProfiles(profiles: ExpressionProfileMap): void {
   EXPRESSION_PROFILES = profiles;
 }
@@ -79,7 +75,6 @@ export function setExpressionProfiles(profiles: ExpressionProfileMap): void {
 export const BLINK_CLOSE_MS = 80;
 export const BLINK_HOLD_MS = 60;
 export const BLINK_OPEN_MS = 80;
-export const BLINK_TOTAL_MS = BLINK_CLOSE_MS + BLINK_HOLD_MS + BLINK_OPEN_MS;
 
 export const SPEAK_CYCLE_MS = 320;
 export const SPEAK_MIN_SCALE = 0.75;
@@ -103,7 +98,5 @@ export const FEATURE_BOX_GLOBAL_SCALE_X = 0.84;
 export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.88;
 export const FEATURE_MOUTH_SCALE_X = 0.88;
 export const FEATURE_MOUTH_SCALE_Y = 0.88;
-export const FEATURE_BOX_MAIN_BOOST = 0.07;
-export const GLITCH_DIAG = true;
 
 export const GPU_UNIFORM_FLOATS = 64;

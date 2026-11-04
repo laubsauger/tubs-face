@@ -49,7 +49,7 @@ export function computeFrameState(
     glitchBurstSeed: number;
   },
 ): { frame: FrameState; lastBurstState: boolean; glitchBurstSeed: number } {
-  const { state, config, startTime, cachedDpr, canvas, containerCssW, containerCssH, effectivePixelSize, currentGazeX, currentGazeY, faceW, faceH, getBlinkFactor, getSpeakMouthScale, lastBurstState, glitchBurstSeed } = args;
+  const { config, startTime, cachedDpr, canvas, containerCssW, containerCssH, effectivePixelSize, currentGazeX, currentGazeY, faceW, faceH, getBlinkFactor, getSpeakMouthScale, lastBurstState, glitchBurstSeed } = args;
 
   const t = (now - startTime) / 1000;
   const dpr = cachedDpr;

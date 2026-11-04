@@ -66,8 +66,6 @@ export const GLITCH_CONFIG_KEYS = [
   'glitchSliceBurstDurationMs',
 ] as const satisfies readonly (keyof ConfigResponse)[];
 
-export type GlitchConfigKey = (typeof GLITCH_CONFIG_KEYS)[number];
-
 export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
   default: {
     glitchFxEnabled: true,

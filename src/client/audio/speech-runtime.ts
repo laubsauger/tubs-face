@@ -26,7 +26,6 @@ const REMOTE_SPEECH_STALE_MS = 20_000;
 const REMOTE_WAIT_POLL_MS = 90;
 const REMOTE_WAIT_MAX_MS = 45_000;
 const SPEECH_SAFETY_MAX_MS = 60_000;
-const STREAMING_SUBTITLE_HOLD_SEC = 12;
 
 export interface SpeechRuntime {
   init(): void;
@@ -91,7 +90,6 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         return;
       }
       const localActor: 'main' | 'small' = targetActor ?? (mode === 'mini' ? 'small' : 'main');
-      const dualHeadActive = Boolean(store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off');
 
       switch (message.type) {
         case 'speak':
