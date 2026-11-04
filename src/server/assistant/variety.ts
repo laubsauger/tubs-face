@@ -59,9 +59,12 @@ type Random = () => number;
 
 const LENGTHS = {
   short: 'Six words or fewer. One quick jab, nothing else.',
-  one: 'One sentence.',
-  two: 'Two short sentences this time: a line, then a follow-up that escalates or twists it.',
+  // Word limits: told just "one sentence", the model wrote 40-word run-ons.
+  one: 'One sentence, under twenty words.',
+  two: 'Two short sentences this time, each under fifteen words: a line, then a follow-up that escalates or twists it.',
   bit: 'Do a bit this time: three to six short sentences, each under twelve words. Set it up in plain beats, escalate, and land a deadpan punchline in the last one. Not one long sentence.',
+  // The model knows when a moment has a bit in it; a dice roll alone doesn't.
+  open: 'Your call how long. A quick line if that is funnier; if there is a real bit in this, take the room: up to six short sentences, each under twelve words, punchline last. Never pad, never one long sentence.',
 } as const;
 type LengthKey = keyof typeof LENGTHS;
 
@@ -152,19 +155,34 @@ function opener(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).join(' ');
 }
 
+/**
+ * The shape of a two-head turn. One head gets the room for a bit on some
+ * turns: two heads trading one-liners every time read as a sketch with no
+ * jokes in it.
+ */
+export function dualShape(roll: number): string {
+  // Outside a bit each beat is spelled out as one short line: told only the
+  // beat count, main wrote a five-sentence riff on most turns.
+  if (roll < 0.3) return 'Only one head speaks this time, one short sentence; the other stays quiet or just reacts.';
+  if (roll < 0.62) return 'Two speak beats this time, one short sentence each.';
+  if (roll < 0.8) return 'Three beats this time, a quick back-and-forth of short lines.';
+  return 'One head takes the room for a bit this time: three to six short sentences in its speak beat, punchline last. The other may heckle once, briefly, or stay quiet.';
+}
+
 export function pickLength(recent: string[], random: Random): LengthKey {
   const lastTwo = recent.slice(-2).map(lengthOf);
   // A bit now and then: the longer riff is where the character shines, but
-  // most of the time short is funnier.
-  const weights: Record<LengthKey, number> = { short: 0.23, one: 0.44, two: 0.21, bit: 0.12 };
+  // most of the time short is funnier. "open" leaves it to the moment, so a
+  // conversation that has a bit in it gets one instead of a forced one-liner.
+  const weights: Record<LengthKey, number> = { short: 0.18, one: 0.34, two: 0.2, bit: 0.13, open: 0.15 };
   // Never the same length three times running, and never two bits in a row.
   if (lastTwo.length === 2 && lastTwo[0] === lastTwo[1]) {
     weights[lastTwo[0]!] = 0;
   }
   if (lastTwo.at(-1) === 'bit') weights.bit = 0;
-  const total = weights.short + weights.one + weights.two + weights.bit;
+  const total = weights.short + weights.one + weights.two + weights.bit + weights.open;
   let roll = random() * total;
-  for (const key of ['short', 'one', 'two', 'bit'] as const) {
+  for (const key of ['short', 'one', 'two', 'bit', 'open'] as const) {
     roll -= weights[key];
     if (roll < 0) return key;
   }
@@ -206,10 +224,7 @@ export function buildTurnDirection(
     // getting "I do not have any." is the character.
     lines.push(LENGTHS[length]);
   } else {
-    const roll = random();
-    lines.push(roll < 0.35
-      ? 'Only one head speaks this time; the other stays quiet or just reacts.'
-      : roll < 0.8 ? 'Two speak beats this time.' : 'Three beats this time, a quick back-and-forth.');
+    lines.push(dualShape(random()));
   }
 
   const lastThree = recent.slice(-3);
@@ -286,5 +301,5 @@ export function buildTurnDirection(
 export function directTurn(mode: 'single' | 'dual'): { text: string; maxSentences: number } {
   const length = mode === 'single' ? pickLength(recentModelReplies(6), Math.random) : null;
   const text = buildTurnDirection(mode, Math.random, undefined, undefined, undefined, undefined, undefined, length);
-  return { text, maxSentences: length === 'bit' ? BIT_MAX_SENTENCES : MAX_OUTPUT_SENTENCES };
+  return { text, maxSentences: length === 'bit' || length === 'open' ? BIT_MAX_SENTENCES : MAX_OUTPUT_SENTENCES };
 }

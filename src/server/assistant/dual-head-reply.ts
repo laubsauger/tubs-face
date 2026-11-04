@@ -9,7 +9,7 @@ import { resolveLlmProvider } from '../llm/provider.js';
 import { buildDualHeadSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
 import { defaultDualHeadSpeakEmotion } from './emotion.js';
-import { clampOutput, estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
+import { estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
 import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
 import { logDualHeadInvalidScript, logRawModelOutput } from './llm-log.js';
@@ -56,7 +56,7 @@ async function maybeRepairDualHeadScript(args: {
     model: args.model,
     systemInstruction: repairSystemInstruction,
     contents: [{ role: 'user', parts: [{ text: repairPrompt }] }],
-    maxOutputTokens: Math.min(180, Number(runtimeConfig.llmMaxOutputTokens || 256)),
+    maxOutputTokens: dualHeadMaxOutputTokens(),
     temperature: 0,
     timeoutMs: 12_000,
     responseMimeType: 'application/json',
@@ -129,7 +129,7 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
       model: dualHeadModel,
       systemInstruction: buildDualHeadSystemInstruction(getVisualContext()),
       contents: context.contents,
-      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      maxOutputTokens: dualHeadMaxOutputTokens(),
       temperature: Math.max(0, Math.min(1.2, Number.parseFloat(String(process.env.DUAL_HEAD_TEMPERATURE || '0.25')) || 0.25)),
       timeoutMs: 18_000,
       responseMimeType: 'application/json',
@@ -175,7 +175,9 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
       .join(' ')
       .trim();
 
-    fullText = clampOutput(stripSpeakerLabels(fullText));
+    // Each beat is already clamped. Clamping the whole turn again stored every
+    // two-head turn in the history as two sentences, and the model copied that.
+    fullText = normalizeInput(stripSpeakerLabels(fullText));
     if (!fullText) {
       throw new Error('Dual-head script produced empty output');
     }
@@ -229,7 +231,7 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       model: dualHeadModel,
       systemInstruction,
       contents: contents.contents,
-      maxOutputTokens: runtimeConfig.llmMaxOutputTokens,
+      maxOutputTokens: dualHeadMaxOutputTokens(),
       temperature: Math.max(0, Math.min(1.2, Number.parseFloat(String(process.env.DUAL_HEAD_TEMPERATURE || '0.25')) || 0.25)),
       timeoutMs: 18_000,
       responseMimeType: 'application/json',
@@ -273,7 +275,9 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       .join(' ')
       .trim();
 
-    fullText = clampOutput(stripSpeakerLabels(fullText));
+    // Each beat is already clamped. Clamping the whole turn again stored every
+    // two-head turn in the history as two sentences, and the model copied that.
+    fullText = normalizeInput(stripSpeakerLabels(fullText));
     if (!fullText) {
       return null;
     }
@@ -304,6 +308,16 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
     }
     return null;
   }
+}
+
+/**
+ * The JSON beats of a two-head turn with a bit in it run past 256 tokens; at
+ * the old cap the reply was cut off mid-JSON and fell back to the rescue parser.
+ */
+const DUAL_HEAD_MIN_OUTPUT_TOKENS = 640;
+
+function dualHeadMaxOutputTokens(): number {
+  return Math.max(DUAL_HEAD_MIN_OUTPUT_TOKENS, Number(runtimeConfig.llmMaxOutputTokens || 0));
 }
 
 function toTurnEmotion(emotion: SpeechEmotionPayload): TurnEmotion {

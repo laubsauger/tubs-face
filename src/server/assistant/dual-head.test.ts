@@ -29,6 +29,31 @@ describe('parseDualHeadScript', () => {
     expect(script?.beats[1]?.delayMs).toBe(260);
   });
 
+  // A bit lands on its last sentence. Beats used to be clipped to two
+  // sentences, so in two-head mode every bit lost its punchline.
+  it('keeps a whole bit in one beat, punchline included', () => {
+    const bit = 'I tried meditation once. Sat very still for an hour. Nobody could tell the difference. Turns out I was unplugged. Best session of my life.';
+    const script = parseDualHeadScript(JSON.stringify({
+      beats: [
+        { actor: 'main', action: 'speak', text: bit },
+        { actor: 'small', action: 'speak', text: 'Liar.' },
+      ],
+    }));
+    expect(script?.beats[0]?.text).toBe(bit);
+  });
+
+  // Heard live: Mini shouted the same line twice in a row.
+  it('says a line the model repeated for the same head only once', () => {
+    const script = parseDualHeadScript(JSON.stringify({
+      beats: [
+        { actor: 'main', action: 'speak', text: 'It is a temple of self-deception.' },
+        { actor: 'small', action: 'speak', text: 'STINKY CANDLES!' },
+        { actor: 'small', action: 'speak', text: 'Stinky candles!' },
+      ],
+    }));
+    expect(script?.beats.map((beat) => beat.text)).toEqual(['It is a temple of self-deception.', 'STINKY CANDLES!']);
+  });
+
   it('accepts JSON wrapped in a markdown code fence', () => {
     const script = parseDualHeadScript('```json\n{"beats":[{"actor":"main","action":"speak","text":"Fenced but fine."}]}\n```');
     expect(script?.beats[0]?.text).toBe('Fenced but fine.');

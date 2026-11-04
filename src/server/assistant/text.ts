@@ -1,4 +1,5 @@
-const OUTPUT_CHAR_LIMIT = 180;
+// Room for two full sentences; 180 cut the second one off mid-thought.
+const OUTPUT_CHAR_LIMIT = 240;
 export const MAX_OUTPUT_SENTENCES = 2;
 /** A bit (a short standup riff) needs room to build before the punchline lands. */
 export const BIT_MAX_SENTENCES = 6;

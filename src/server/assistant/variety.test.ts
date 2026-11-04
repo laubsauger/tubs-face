@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { buildTurnDirection, lengthOf, pickLength, pickName, pickRoastMirror, wornMotifs } from './variety.js';
+import { describe, expect, it, vi } from 'vitest';
+import { BIT_MAX_SENTENCES } from './text.js';
+import { buildTurnDirection, directTurn, dualShape, lengthOf, pickLength, pickName, pickRoastMirror, wornMotifs } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -41,7 +42,16 @@ describe('buildTurnDirection', () => {
 
   it('varies the number of beats in two-head mode', () => {
     expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain('Only one head speaks');
-    expect(buildTurnDirection('dual', fixed(0.9, 0.99, 0.99), [])).toContain('Three beats');
+    expect(buildTurnDirection('dual', fixed(0.7, 0.99, 0.99), [])).toContain('Three beats');
+  });
+
+  // Two heads trading one-liners every turn never got to a joke: on some
+  // turns one head gets the room for a whole bit.
+  it('gives one head room for a bit on some two-head turns', () => {
+    const shapes = Array.from({ length: 100 }, (_, i) => dualShape(i / 100));
+    const bits = shapes.filter((shape) => shape.includes('takes the room for a bit')).length;
+    expect(bits).toBeGreaterThanOrEqual(15);
+    expect(bits).toBeLessThanOrEqual(35);
   });
 
   it('proactive lines keep their own length and only avoid recent openers', () => {
@@ -122,8 +132,21 @@ describe('buildTurnDirection', () => {
 describe('bits', () => {
   const BIT = 'Let me tell you something about this studio. People come in, they look at me, they ask if I am alive, and I say, define alive. Then they laugh nervously and ask if I can dance. I cannot dance.';
   it('comes up now and then', () => {
-    expect(pickLength(['Nice hat.', 'That jacket screams I want to look outdoorsy but I fear grass.'], () => 0.999)).toBe('bit');
-    expect(buildTurnDirection('single', () => 0.999, ['Nice hat.'])).toContain('three to six short sentences, each under twelve words');
+    expect(pickLength(['Nice hat.', 'That jacket screams I want to look outdoorsy but I fear grass.'], () => 0.8)).toBe('bit');
+    expect(buildTurnDirection('single', () => 0.8, ['Nice hat.'])).toContain('three to six short sentences, each under twelve words');
+  });
+
+  // Forced one-liners at all costs killed the bits a conversation had in it.
+  // Some turns leave the length to the moment, and the speech cap must then
+  // leave room for the whole bit, or its punchline (the last line) is cut.
+  it('leaves the length to the moment on some turns, with room for a whole bit', () => {
+    expect(buildTurnDirection('single', () => 0.999, ['Nice hat.'])).toContain('Your call how long');
+    const random = vi.spyOn(Math, 'random').mockReturnValue(0.999);
+    try {
+      expect(directTurn('single').maxSentences).toBe(BIT_MAX_SENTENCES);
+    } finally {
+      random.mockRestore();
+    }
   });
   it('never twice in a row', () => {
     for (const roll of [0, 0.3, 0.6, 0.9, 0.999]) expect(pickLength(['Nice hat.', BIT], () => roll)).not.toBe('bit');

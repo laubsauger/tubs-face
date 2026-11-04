@@ -7,7 +7,7 @@ import {
   pickSupportedEmotionEmoji,
   splitTrailingEmotionEmoji,
 } from './emotion.js';
-import { clampOutput, extractJsonBlock, normalizeInput, stripEmojiClusters, stripFormatting, stripSpeakerLabels } from './text.js';
+import { BIT_MAX_SENTENCES, clampOutput, extractJsonBlock, normalizeInput, stripEmojiClusters, stripFormatting, stripSpeakerLabels } from './text.js';
 
 const DUAL_HEAD_ACTORS = new Set(['main', 'small']);
 const DUAL_HEAD_ACTIONS = new Set(['speak', 'react']);
@@ -63,7 +63,7 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
   const rawText = normalizeInput(String(record.text ?? ''));
   const parsed = splitTrailingEmotionEmoji(rawText);
   const strippedText = stripSpeakerLabels(stripFormatting(parsed.text || stripEmojiClusters(rawText)));
-  const text = clampOutput(strippedText);
+  const text = clampOutput(strippedText, BIT_MAX_SENTENCES);
   const emojiFromField = pickSupportedEmotionEmoji(String(record.emoji ?? ''));
   const emotion = toTurnEmotion((emojiFromField ? buildEmotionFromEmoji(emojiFromField) : null) || parsed.emotion || null);
 
@@ -94,6 +94,18 @@ export function normalizeScriptBeat(beat: unknown): NormalizedBeat | null {
     emotion: emotion ?? toTurnEmotion(defaultDualHeadSpeakEmotion(actor)),
     ...(safeDelayMs !== undefined ? { delayMs: safeDelayMs } : {}),
   };
+}
+
+/** The model sometimes repeats a head's line as the next beat ("STINKY CANDLES!" twice); it is said once. */
+function dropRepeatedLines(beats: NormalizedBeat[]): NormalizedBeat[] {
+  const lastLine = new Map<string, string>();
+  return beats.filter((beat) => {
+    if (beat.action !== 'speak' || !beat.text) return true;
+    const line = beat.text.trim().toLowerCase();
+    if (lastLine.get(beat.actor) === line) return false;
+    lastLine.set(beat.actor, line);
+    return true;
+  });
 }
 
 export function reorderDualHeadBeats(beats: NormalizedBeat[]): NormalizedBeat[] {
@@ -145,7 +157,7 @@ export function parseDualHeadScript(rawText: string): ParsedDualHeadScript | nul
     return null;
   }
   return {
-    beats: reorderDualHeadBeats(beats),
+    beats: reorderDualHeadBeats(dropRepeatedLines(beats)),
     raw: parsed,
   };
 }
@@ -176,7 +188,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
     if (!rawBeatText || rawBeatText.length < 2) {
       continue;
     }
-    const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(rawBeatText)));
+    const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(rawBeatText)), BIT_MAX_SENTENCES);
     if (!cleanText) {
       continue;
     }
@@ -203,7 +215,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
     let lineMatch: RegExpExecArray | null = null;
     while ((lineMatch = linePattern.exec(text)) !== null) {
       const actor = String(lineMatch[1] ?? 'main').toLowerCase() === 'small' ? 'small' : 'main';
-      const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(decodeJsonString(lineMatch[2] ?? ''))));
+      const cleanText = clampOutput(stripSpeakerLabels(stripFormatting(decodeJsonString(lineMatch[2] ?? ''))), BIT_MAX_SENTENCES);
       if (!cleanText) {
         continue;
       }
@@ -222,7 +234,7 @@ export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | 
 
   console.log(`[LLM:dual] Recovered ${beats.length} beats via regex from malformed JSON`);
   return {
-    beats: reorderDualHeadBeats(beats.slice(0, DUAL_HEAD_MAX_BEATS)),
+    beats: reorderDualHeadBeats(dropRepeatedLines(beats.slice(0, DUAL_HEAD_MAX_BEATS))),
     raw: null,
   };
 }

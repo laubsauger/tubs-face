@@ -190,7 +190,8 @@ async function streamDualHeadSpeakBeat(args: {
         const streamedPlaybackMs = firstChunkAt > 0 ? Math.max(0, Date.now() - firstChunkAt) : 0;
         const remainingPlaybackMs = Math.max(
           0,
-          Math.min(8_000, estimateSpeechDurationMs(text) - streamedPlaybackMs),
+          // A bit runs well past 8 s; a shorter wait let the other head talk over it.
+          Math.min(20_000, estimateSpeechDurationMs(text) - streamedPlaybackMs),
         );
         if (remainingPlaybackMs <= 0 || !isAssistantTurnActive(turnId, epoch)) {
           finishResolve();
