@@ -12,18 +12,19 @@ const PROACTIVE_MAX_DOUBLINGS = 4;
 // means the next face is a new visitor.
 const NEW_VISITOR_ABSENCE_MS = 10_000;
 
+// Tubs speaks up because he has something to say, not to fish for engagement.
 const KNOWN_PERSON_PROMPTS = [
-  (name: string) => `${name} is standing nearby, silent. Say something that makes it impossible not to reply.`,
-  (name: string) => `${name} has been quiet for a while. Make a weird observation or ask something unexpected.`,
-  (name: string) => `${name} is just standing there. Tease them about the silence or make up a theory about what they're thinking.`,
-  (name: string) => `${name} is being quiet. Challenge them to something small and silly, or share a wild opinion.`,
+  (name: string) => `${name} is nearby and quiet. Think out loud about something that has been on your mind.`,
+  (name: string) => `${name} has been quiet for a while. Share a theory you have about them or about humans in general.`,
+  (name: string) => `${name} is just standing there. Comment on the silence, or ignore them and muse about your own situation.`,
+  (name: string) => `${name} is being quiet. Say a strong opinion you have been holding back.`,
 ];
 
 const UNKNOWN_PERSON_PROMPTS = [
-  'Someone is nearby but has not spoken. Break the ice with something unexpected.',
-  'A stranger is standing there silently. Say something that demands a response.',
-  'You can see someone but they will not talk. Make a wild guess about who they are or what they want.',
-  'Person detected, zero words spoken. React to the awkward silence.',
+  'Someone is nearby but has not spoken. Think out loud about something that has been on your mind.',
+  'A stranger is standing there silently. Form a theory about who they are and say it.',
+  'Someone is in the room, not talking. Say a strong opinion you have been holding back.',
+  'Person detected, zero words spoken. Comment on the silence, or muse about your own situation.',
 ];
 
 export interface ProactiveRuntime {

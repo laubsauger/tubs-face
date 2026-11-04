@@ -1672,7 +1672,7 @@ async function generateProactiveReply(context: string): Promise<AssistantReply |
   }
 
   const contents = buildProactiveContents(context, buildTurnDirection('proactive'));
-  const proactiveInstruction = `${buildAssistantSystemInstruction(getVisualContext())}\n\nPROACTIVE: You are starting conversation unprompted. ${context}\nOne punchy sentence. Be curious, weird, or provocative and make them want to respond.`;
+  const proactiveInstruction = `${buildAssistantSystemInstruction(getVisualContext())}\n\nPROACTIVE: Nobody asked you anything; you are speaking up on your own. ${context}\nOne punchy sentence. Say what is on your mind. You are not begging for their attention.`;
 
   try {
     const result = await provider.generateContent({
@@ -1740,7 +1740,7 @@ async function generateDualHeadProactiveReply(context: string): Promise<DualHead
   }
 
   const contents = buildProactiveContents(context, buildTurnDirection('proactive'));
-  const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: You are starting conversation unprompted. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.`;
+  const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: Nobody asked you anything; you are speaking up on your own. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.`;
 
   try {
     const dualHeadModel = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel;

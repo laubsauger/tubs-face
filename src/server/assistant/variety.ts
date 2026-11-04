@@ -84,8 +84,9 @@ export function buildTurnDirection(
   let length: LengthKey | null = null;
   if (mode === 'single') {
     length = pickLength(recent, random);
-    // The dice set the shape; an explicit ask from the visitor still wins.
-    lines.push(`${LENGTHS[length]} If they explicitly asked for something long or short, give them that instead.`);
+    // The shape is Tubs's call, not the visitor's: "tell me a long story"
+    // getting "I do not have any." is the character.
+    lines.push(LENGTHS[length]);
   } else {
     const roll = random();
     lines.push(roll < 0.35
@@ -117,7 +118,10 @@ export function buildTurnDirection(
     lines.push(`Your face has shown ${lastEmojis[0]} three replies in a row. Feel something else this time and pick a different emoji.`);
   }
 
-  if (random() < 0.3) {
+  // Tubs has things on his mind; now and then they win over the visitor's topic.
+  if (mode === 'single' && random() < 0.12) {
+    lines.push('Skip their topic and say what has actually been on your mind.');
+  } else if (random() < 0.3) {
     lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
   }
 

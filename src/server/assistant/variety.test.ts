@@ -62,6 +62,12 @@ describe('buildTurnDirection', () => {
     expect(buildTurnDirection('single', fixed(0.5, 0.1, 0.99), [], [], false)).not.toContain('talked over');
   });
 
+  // Tubs is not a service: some turns his own thoughts beat the visitor's topic.
+  it('now and then lets Tubs ignore the topic for what is on his mind', () => {
+    expect(buildTurnDirection('single', fixed(0.5, 0.05), [])).toContain('what has actually been on your mind');
+    expect(buildTurnDirection('single', fixed(0.5, 0.5, 0.99), [])).not.toContain('on your mind');
+  });
+
   it('classifies reply length by words', () => {
     expect(lengthOf('Nice hat.')).toBe('short');
     expect(lengthOf('That jacket screams I want to look outdoorsy but I fear grass.')).toBe('one');
