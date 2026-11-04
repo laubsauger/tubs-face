@@ -199,17 +199,22 @@ export function memoryContext(now = Date.now()): string {
 }
 
 /** A recent quote from someone not in view, for gossip. */
-export function pickGossip(random: () => number = Math.random, now = Date.now()): string | null {
+export function pickGossip(random: () => number = Math.random, now = Date.now()): { text: string; name: string | null } | null {
   prune(now);
   const here = new Set([ANONYMOUS, GROUP, ...inView.map((person) => person.id)]);
   const others = quotes.filter((quote) => !here.has(quote.personId));
   if (others.length === 0) return null;
-  return others[Math.floor(random() * others.length)]!.text;
+  const quote = others[Math.floor(random() * others.length)]!;
+  // Enrolled people can be named; everyone else stays anonymous.
+  return { text: quote.text, name: records.get(quote.personId)?.names[0] ?? null };
 }
 
-/** Who is in view, with how much Tubs knows about each, for the roast mirror. */
-export function peopleInView(): Array<{ position: Position; noteCount: number }> {
-  return inView.map((person) => ({ position: person.position, noteCount: records.get(person.id)?.notes.length ?? 0 }));
+/** Who is in view: where, their name if enrolled, and how much Tubs knows about them. */
+export function peopleInView(): Array<{ position: Position; name: string | null; noteCount: number }> {
+  return inView.map((person) => {
+    const record = records.get(person.id);
+    return { position: person.position, name: record?.names[0] ?? person.names[0] ?? null, noteCount: record?.notes.length ?? 0 };
+  });
 }
 
 /** True when the people in view have any notes (for "call back a note"). */

@@ -9,13 +9,18 @@ const GOSSIP_CHANCE = 0.1;
 const NOTE_CALLBACK_CHANCE = 0.2;
 // With two or more people, now and then side with one against another.
 const ROAST_MIRROR_CHANCE = 0.3;
+// Enrolled visitors should hear their name now and then.
+const NAME_CHANCE = 0.3;
 const SIDE: Record<Position, string> = { left: 'on the left', center: 'in the middle', right: 'on the right' };
+
+interface PersonRef { position: Position; name: string | null }
+const refer = (person: PersonRef) => person.name ?? `the one ${SIDE[person.position]}`;
 
 /** Ally and target for the roast mirror: the target is preferably someone Tubs knows things about. */
 export function pickRoastMirror(
-  people: Array<{ position: Position; noteCount: number }>,
+  people: Array<PersonRef & { noteCount: number }>,
   random: () => number,
-): { ally: Position; target: Position } | null {
+): { ally: PersonRef; target: PersonRef } | null {
   if (people.length < 2) return null;
   const known = people.filter((person) => person.noteCount > 0);
   const pool = known.length > 0 && random() < 0.7 ? known : people;
@@ -23,7 +28,13 @@ export function pickRoastMirror(
   const allies = people.filter((person) => person !== target && person.position !== target.position);
   if (allies.length === 0) return null;
   const ally = allies[Math.floor(random() * allies.length)]!;
-  return { ally: ally.position, target: target.position };
+  return { ally: { position: ally.position, name: ally.name }, target: { position: target.position, name: target.name } };
+}
+
+/** A known name among the people in view, if any. */
+export function pickName(people: Array<{ name: string | null }>, random: () => number): string | null {
+  const named = people.map((person) => person.name).filter((name): name is string => Boolean(name));
+  return named.length > 0 ? named[Math.floor(random() * named.length)]! : null;
 }
 
 const HEADER = '[Stage direction for this reply, not said by the visitor]';
@@ -98,10 +109,11 @@ export function buildTurnDirection(
   recent: string[] = recentModelReplies(6),
   emojis: readonly string[] = recentEmojis,
   cutOff: boolean = wasLastReplyCutOff(),
-  gossip: string | null = Math.random() < GOSSIP_CHANCE ? pickGossip() : null,
-  group: { mirror: { ally: Position; target: Position } | null; callBackNote: boolean } = {
+  gossip: { text: string; name: string | null } | null = Math.random() < GOSSIP_CHANCE ? pickGossip() : null,
+  group: { mirror: { ally: PersonRef; target: PersonRef } | null; callBackNote: boolean; useName: string | null } = {
     mirror: Math.random() < ROAST_MIRROR_CHANCE ? pickRoastMirror(peopleInView(), Math.random) : null,
     callBackNote: hasNotesInView() && Math.random() < NOTE_CALLBACK_CHANCE,
+    useName: Math.random() < NAME_CHANCE ? pickName(peopleInView(), Math.random) : null,
   },
 ): string {
   const lines: string[] = [];
@@ -151,13 +163,18 @@ export function buildTurnDirection(
 
   if (group.mirror) {
     const { ally, target } = group.mirror;
-    lines.push(`There are several people here. Side with the one ${SIDE[ally]} and roast the one ${SIDE[target]} to them, using what you see or know about them. Point at people by what they wear or do, not by left or right.`);
+    lines.push(`There are several people here. Side with ${refer(ally)} and roast ${refer(target)} to them, using what you see or know about them. Call people by name where you know it, otherwise by what they wear or do, never by left or right.`);
   } else if (group.callBackNote) {
     lines.push('Call back one thing from your notes on them, in passing.');
   }
+  if (group.useName && !group.mirror) {
+    lines.push(`Use ${group.useName}'s name this time.`);
+  }
 
   if (mode !== 'dual' && gossip) {
-    lines.push(`Earlier tonight another visitor said: "${gossip}". Bring it up if it fits, without saying who.`);
+    lines.push(gossip.name
+      ? `Earlier tonight ${gossip.name} said: "${gossip.text}". Bring it up if it fits, by name.`
+      : `Earlier tonight another visitor said: "${gossip.text}". Bring it up if it fits, without saying who.`);
   }
 
   // Tubs has things on his mind; now and then they win over the visitor's topic.

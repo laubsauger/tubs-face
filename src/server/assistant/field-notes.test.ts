@@ -61,7 +61,12 @@ describe('field notes', () => {
     recordFieldNotes('Fine. [[QUOTE: marketing is art]]', 0);
     expect(pickGossip(() => 0, 1)).toBeNull();
     setPeople([ben], 10);
-    expect(pickGossip(() => 0, 11)).toBe('marketing is art');
+    expect(pickGossip(() => 0, 11)).toEqual({ text: 'marketing is art', name: null });
+    // Enrolled people are named in gossip.
+    setPeople([{ id: 'c3', names: ['Cleo'], position: 'center' }], 20);
+    recordFieldNotes('[[QUOTE: robots cannot love]]', 21);
+    setPeople([ben], 30);
+    expect(pickGossip(() => 0.99, 31)).toEqual({ text: 'robots cannot love', name: 'Cleo' });
   });
 
   it('drops anonymous and group notes when the visit ends, keeps personal ones', () => {
@@ -74,7 +79,7 @@ describe('field notes', () => {
   it('tells the roast mirror who is here and how much Tubs knows about each', () => {
     setPeople([anna, ben], 0);
     recordFieldNotes('[[NOTE right: owns three phones]]', 1);
-    expect(peopleInView()).toEqual([{ position: 'left', noteCount: 0 }, { position: 'right', noteCount: 1 }]);
+    expect(peopleInView()).toEqual([{ position: 'left', name: null, noteCount: 0 }, { position: 'right', name: null, noteCount: 1 }]);
     expect(hasNotesInView()).toBe(true);
   });
 });

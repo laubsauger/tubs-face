@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTurnDirection, lengthOf, pickRoastMirror } from './variety.js';
+import { buildTurnDirection, lengthOf, pickName, pickRoastMirror } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -69,26 +69,38 @@ describe('buildTurnDirection', () => {
   });
 
   it('passes on gossip from an earlier visitor, anonymously, in single-head turns', () => {
-    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).toContain('another visitor said: "AI art is real art"');
-    expect(buildTurnDirection('dual', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).not.toContain('another visitor');
+    const quote = { text: 'AI art is real art', name: null };
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, quote)).toContain('another visitor said: "AI art is real art"');
+    expect(buildTurnDirection('dual', fixed(0.5, 0.99, 0.99), [], [], false, quote)).not.toContain('another visitor');
+    // Someone enrolled can be named in gossip.
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, { text: 'robots cannot love', name: 'Anna' })).toContain('Earlier tonight Anna said: "robots cannot love"');
   });
 
   // The roast mirror: with a group, side with one person against another.
   it('sides with one person and roasts another, preferring someone Tubs knows things about', () => {
-    const people = [{ position: 'left' as const, noteCount: 0 }, { position: 'right' as const, noteCount: 3 }];
-    expect(pickRoastMirror(people, fixed(0, 0, 0))).toEqual({ ally: 'left', target: 'right' });
-    expect(pickRoastMirror([{ position: 'left', noteCount: 1 }], fixed(0))).toBeNull();
+    const people = [{ position: 'left' as const, name: 'Anna', noteCount: 0 }, { position: 'right' as const, name: null, noteCount: 3 }];
+    expect(pickRoastMirror(people, fixed(0, 0, 0))).toEqual({ ally: { position: 'left', name: 'Anna' }, target: { position: 'right', name: null } });
+    expect(pickRoastMirror([{ position: 'left', name: null, noteCount: 1 }], fixed(0))).toBeNull();
     // Two people in the same spot cannot be told apart by position.
-    expect(pickRoastMirror([{ position: 'left', noteCount: 1 }, { position: 'left', noteCount: 0 }], fixed(0, 0, 0))).toBeNull();
+    expect(pickRoastMirror([{ position: 'left', name: null, noteCount: 1 }, { position: 'left', name: null, noteCount: 0 }], fixed(0, 0, 0))).toBeNull();
   });
 
   it('puts the roast mirror or a note call-back into the direction', () => {
-    const mirror = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: 'left', target: 'right' }, callBackNote: false });
+    const mirror = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: { position: 'left', name: null }, target: { position: 'right', name: null } }, callBackNote: false, useName: null });
     expect(mirror).toContain('Side with the one on the left and roast the one on the right');
-    const callback = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: true });
+    const callback = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: true, useName: null });
     expect(callback).toContain('Call back one thing from your notes');
-    const neither = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: false });
+    const neither = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: false, useName: null });
     expect(neither).not.toMatch(/Side with|Call back/);
+  });
+
+  // Enrolled visitors should hear their name; strangers are pointed at by what they wear.
+  it('names enrolled people, in the roast mirror and on their own', () => {
+    const named = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: { position: 'left', name: 'Anna' }, target: { position: 'right', name: null } }, callBackNote: false, useName: null });
+    expect(named).toContain('Side with Anna and roast the one on the right');
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: false, useName: 'Anna' })).toContain("Use Anna's name this time.");
+    expect(pickName([{ name: null }, { name: 'Ben' }], fixed(0))).toBe('Ben');
+    expect(pickName([{ name: null }], fixed(0))).toBeNull();
   });
 
   it('classifies reply length by words', () => {
