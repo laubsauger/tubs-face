@@ -117,6 +117,8 @@ export interface RuntimeConfig {
   secondaryAudioGain: number;
   dualHeadTurnPolicy: DualHeadTurnPolicy;
   muted: boolean;
+  /** Quietly take face snapshots of unnamed people and enroll them when they tell Tubs their name. */
+  autoEnrollEnabled: boolean;
   ambientAudioEnabled: boolean;
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;

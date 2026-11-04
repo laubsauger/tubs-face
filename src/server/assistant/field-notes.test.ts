@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   createTagFilter, endVisit, extractFieldNotes, fieldNotesSnapshot, hasNotesInView, memoryContext, NOTES_TTL_MS, peopleInView, pickGossip,
-  recordFieldNotes, resetFieldNotes, setPeople,
+  markNameAsked, nameAskCandidate, noteTurn, onEnrollRequest, recordFieldNotes, resetFieldNotes, setPeople,
 } from './field-notes.js';
 
 // Tubs remembering things about people is the point; leaking a note into
@@ -109,5 +109,50 @@ describe('stream tag filter', () => {
     expect(filter.push('Fine. [[SHOW_QR]] ')).toBe('Fine.  ');
     expect(filter.push('[[NOTE: never closed')).toBe('');
     expect(filter.flush()).toBe('');
+  });
+});
+
+// Auto onboarding: Tubs asks an unnamed person their name once they have
+// talked a bit, and their face is saved the moment they say it.
+describe('auto onboarding', () => {
+  beforeEach(() => {
+    resetFieldNotes();
+    onEnrollRequest(null);
+  });
+
+  it('asks an unnamed person their name only after a couple of turns, and only once', () => {
+    setPeople([{ id: 'u1', names: [], position: 'center', snapshots: 2 }], 0);
+    noteTurn();
+    expect(nameAskCandidate()).toBeNull();
+    noteTurn();
+    expect(nameAskCandidate()).toEqual({ position: 'center', inGroup: false });
+    markNameAsked('center');
+    expect(nameAskCandidate()).toBeNull();
+  });
+
+  it('never asks someone already known, or without snapshots to enroll from', () => {
+    setPeople([{ id: 'k1', names: ['Anna'], position: 'left', snapshots: 0 }, { id: 'n1', names: [], position: 'right' }], 0);
+    noteTurn();
+    noteTurn();
+    expect(nameAskCandidate()).toBeNull();
+  });
+
+  it('enrolls the right person the moment they say their name, once', () => {
+    const enrolled: Array<[string, string]> = [];
+    onEnrollRequest((id, name) => enrolled.push([id, name]));
+    setPeople([{ id: 'u1', names: [], position: 'left', snapshots: 3 }, { id: 'u2', names: [], position: 'right', snapshots: 1 }], 0);
+    recordFieldNotes('Nice to meet you. [[NAME right: Ben]]', 1);
+    recordFieldNotes('[[NAME right: Ben]]', 2);
+    expect(enrolled).toEqual([['u2', 'Ben']]);
+    expect(fieldNotesSnapshot(3).people[1]!.names).toEqual(['Ben']);
+  });
+
+  it('uses a name given without snapshots for this visit, but cannot enroll it', () => {
+    const enrolled: string[] = [];
+    onEnrollRequest((_id, name) => enrolled.push(name));
+    setPeople([{ id: 'u1', names: [], position: 'center' }], 0);
+    recordFieldNotes('[[NAME: Cleo]]', 1);
+    expect(enrolled).toEqual([]);
+    expect(memoryContext(2)).toContain('Name: Cleo');
   });
 });

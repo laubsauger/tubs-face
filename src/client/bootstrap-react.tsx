@@ -233,6 +233,10 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         lastImpulseTurnId = message.turnId;
         emotionRuntime?.pushImpulse(message.emotion.impulse, 'spoken');
       }
+      // Only the main face holds the camera snapshots.
+      if (message.type === 'enroll_request') {
+        void faceRuntime?.autoEnroll(message.personId, message.name);
+      }
       if (message.type === 'thinking') {
         emotionRuntime?.pushImpulse({ arousal: 0.52 }, 'system');
       }

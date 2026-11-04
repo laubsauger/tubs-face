@@ -101,6 +101,8 @@ export interface WsPeopleClientMessage {
     position: 'left' | 'center' | 'right';
     /** Seen earlier tonight and gone this long. */
     awayMs?: number;
+    /** Face snapshots the face page holds for auto-onboarding (unnamed people only). */
+    snapshots?: number;
   }>;
 }
 
@@ -226,6 +228,13 @@ export interface WsStatsServerMessage {
   session?: SessionStats;
 }
 
+/** Someone told Tubs their name: the face page enrolls them from its snapshots. */
+export interface WsEnrollRequestServerMessage {
+  type: 'enroll_request';
+  personId: string;
+  name: string;
+}
+
 /** Tubs's field notes on the people in front of him, for the operator. */
 export interface WsFieldNotesServerMessage {
   type: 'field_notes';
@@ -297,6 +306,7 @@ export type WsServerMessage =
   | WsStatsServerMessage
   | WsConversationModeServerMessage
   | WsFieldNotesServerMessage
+  | WsEnrollRequestServerMessage
   | WsSleepServerMessage
   | WsWakeServerMessage
   | WsErrorServerMessage

@@ -33,6 +33,7 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'stats',
   'conversation_mode',
   'field_notes',
+  'enroll_request',
   'sleep',
   'wake',
   'error',
@@ -96,7 +97,7 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
         if (!person || typeof person !== 'object') return false;
         const p = person as Record<string, unknown>;
         return text(p.id, MAX_ID_CHARS) && Array.isArray(p.names) && optNames(p.names)
-          && (p.position === 'left' || p.position === 'center' || p.position === 'right') && optNumber(p.awayMs);
+          && (p.position === 'left' || p.position === 'center' || p.position === 'right') && optNumber(p.awayMs) && optNumber(p.snapshots);
       });
     case 'proactive':
       return optString(m.context, MAX_TEXT_CHARS) && optNames(m.faces);

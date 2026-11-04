@@ -19,7 +19,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
-import { fieldNotesSnapshot, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
+import { fieldNotesSnapshot, onEnrollRequest, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
@@ -31,6 +31,11 @@ const WS_PATH = '/ws';
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   onFieldNotesChange(() => broadcast({ type: 'field_notes', ...fieldNotesSnapshot() }));
+  onEnrollRequest((personId, name) => {
+    if (!runtimeConfig.autoEnrollEnabled) return;
+    console.log(`[faces] auto onboarding: enrolling ${name}`);
+    broadcast({ type: 'enroll_request', personId, name });
+  });
 
   server.on('upgrade', (request, socket, head) => {
     if (!isWebSocketRequest(request)) {

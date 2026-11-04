@@ -1,5 +1,6 @@
 import { recentModelReplies, wasLastReplyCutOff } from './context.js';
-import { hasNotesInView, peopleInView, pickGossip, type Position } from './field-notes.js';
+import { hasNotesInView, markNameAsked, nameAskCandidate, peopleInView, pickGossip, type Position } from './field-notes.js';
+import { runtimeConfig } from '../config/runtime.js';
 
 // Now and then Tubs brings up what an earlier visitor said, so separate
 // visitors feel like one audience he is keeping track of.
@@ -11,6 +12,9 @@ const NOTE_CALLBACK_CHANCE = 0.2;
 const ROAST_MIRROR_CHANCE = 0.3;
 // Enrolled visitors should hear their name now and then.
 const NAME_CHANCE = 0.3;
+// Auto onboarding: once an unnamed person has talked a bit, ask their name
+// on some turns (once per person), so it comes up naturally.
+const ASK_NAME_CHANCE = 0.35;
 const SIDE: Record<Position, string> = { left: 'on the left', center: 'in the middle', right: 'on the right' };
 
 interface PersonRef { position: Position; name: string | null }
@@ -110,10 +114,16 @@ export function buildTurnDirection(
   emojis: readonly string[] = recentEmojis,
   cutOff: boolean = wasLastReplyCutOff(),
   gossip: { text: string; name: string | null } | null = Math.random() < GOSSIP_CHANCE ? pickGossip() : null,
-  group: { mirror: { ally: PersonRef; target: PersonRef } | null; callBackNote: boolean; useName: string | null } = {
+  group: {
+    mirror: { ally: PersonRef; target: PersonRef } | null;
+    callBackNote: boolean;
+    useName: string | null;
+    askName?: { position: Position; inGroup: boolean } | null;
+  } = {
     mirror: Math.random() < ROAST_MIRROR_CHANCE ? pickRoastMirror(peopleInView(), Math.random) : null,
     callBackNote: hasNotesInView() && Math.random() < NOTE_CALLBACK_CHANCE,
     useName: Math.random() < NAME_CHANCE ? pickName(peopleInView(), Math.random) : null,
+    askName: runtimeConfig.autoEnrollEnabled && Math.random() < ASK_NAME_CHANCE ? nameAskCandidate() : null,
   },
 ): string {
   const lines: string[] = [];
@@ -161,7 +171,13 @@ export function buildTurnDirection(
     lines.push(`Your face has shown ${lastEmojis[0]} three replies in a row. Feel something else this time and pick a different emoji.`);
   }
 
-  if (group.mirror) {
+  if (group.askName) {
+    const { position, inGroup } = group.askName;
+    lines.push(inGroup
+      ? `Ask the one ${SIDE[position]} their name, your way, pointing at them by what they wear. You collect names.`
+      : 'Ask them their name, your way. You collect names.');
+    markNameAsked(position);
+  } else if (group.mirror) {
     const { ally, target } = group.mirror;
     lines.push(`There are several people here. Side with ${refer(ally)} and roast ${refer(target)} to them, using what you see or know about them. Call people by name where you know it, otherwise by what they wear or do, never by left or right.`);
   } else if (group.callBackNote) {

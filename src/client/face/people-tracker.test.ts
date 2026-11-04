@@ -43,7 +43,7 @@ describe('people tracker', () => {
     const tracker = createPeopleTracker(() => 0.5);
     const [anna] = tracker.update([at(ANNA, 300)], 600, 0);
     tracker.update([], 600, 1000);
-    expect(tracker.update([at(ANNA, 300)], 600, 3000)[0]).toEqual({ id: anna!.id, names: [], position: 'center' });
+    expect(tracker.update([at(ANNA, 300)], 600, 3000)[0]).toMatchObject({ id: anna!.id, names: [], position: 'center' });
   });
 
   it('matches enrolled names even when the embedding is off', () => {

@@ -17,9 +17,13 @@ export interface PersonInView {
   names: string[];
   position: Position;
   awayMs?: number;
+  /** Face snapshots the face page holds for auto-onboarding. */
+  snapshots?: number;
 }
 
-const TAG_RE = /\[\[\s*(NOTE|QUOTE)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]/gi;
+const TAG_RE = /\[\[\s*(NOTE|QUOTE|NAME)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]/gi;
+/** Talked with this many turns before Tubs asks an unnamed person their name. */
+const ASK_NAME_AFTER_TURNS = 2;
 const MAX_NOTES_PER_PERSON = 10;
 const MAX_PEOPLE = 300;
 const MAX_QUOTES = 20;
@@ -37,6 +41,11 @@ interface PersonRecord {
   names: string[];
   lastSeenAt: number;
   returning: boolean;
+  /** In the face library (recognised by name, or just auto-enrolled). */
+  enrolled: boolean;
+  snapshots: number;
+  turns: number;
+  askedName: boolean;
 }
 
 interface QuoteRecord {
@@ -49,6 +58,12 @@ const records = new Map<string, PersonRecord>();
 const quotes: QuoteRecord[] = [];
 let inView: PersonInView[] = [];
 let changeListener: (() => void) | null = null;
+let enrollListener: ((personId: string, name: string) => void) | null = null;
+
+/** Called when someone told Tubs their name and the face page can enroll them. */
+export function onEnrollRequest(listener: ((personId: string, name: string) => void) | null): void {
+  enrollListener = listener;
+}
 
 /** Called when the people in view or their notes change (the server broadcasts to the operator panel). */
 export function onFieldNotesChange(listener: (() => void) | null): void {
@@ -66,12 +81,13 @@ function normalizePosition(value: string | undefined): Position | null {
 }
 
 /** The note and quote tags in a raw reply (dual-head JSON included). */
-export function extractFieldNotes(rawText: string): Array<{ kind: 'note' | 'quote'; position: Position | null; text: string }> {
-  const found: Array<{ kind: 'note' | 'quote'; position: Position | null; text: string }> = [];
+export function extractFieldNotes(rawText: string): Array<{ kind: 'note' | 'quote' | 'name'; position: Position | null; text: string }> {
+  const found: Array<{ kind: 'note' | 'quote' | 'name'; position: Position | null; text: string }> = [];
   for (const match of String(rawText).matchAll(TAG_RE)) {
     const text = clean(match[3] ?? '');
     if (!text) continue;
-    found.push({ kind: match[1]!.toUpperCase() === 'NOTE' ? 'note' : 'quote', position: normalizePosition(match[2]), text });
+    const kind = match[1]!.toLowerCase() as 'note' | 'quote' | 'name';
+    found.push({ kind, position: normalizePosition(match[2]), text });
   }
   return found;
 }
@@ -86,7 +102,7 @@ function prune(now: number): void {
 function recordFor(id: string, now: number): PersonRecord {
   let record = records.get(id);
   if (!record) {
-    record = { notes: [], names: [], lastSeenAt: now, returning: false };
+    record = { notes: [], names: [], lastSeenAt: now, returning: false, enrolled: false, snapshots: 0, turns: 0, askedName: false };
     records.set(id, record);
     if (records.size > MAX_PEOPLE) {
       const oldest = [...records.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt)[0];
@@ -105,6 +121,9 @@ export function setPeople(people: PersonInView[], now = Date.now()): void {
     const back = person.awayMs !== undefined ? person.awayMs >= RETURNING_AFTER_MS : Boolean(existing && now - existing.lastSeenAt >= RETURNING_AFTER_MS);
     if (back) record.returning = true;
     record.lastSeenAt = now;
+    record.snapshots = person.snapshots ?? 0;
+    // Names from the tracker come from the face library.
+    if (person.names.length > 0) record.enrolled = true;
     for (const name of person.names) if (!record.names.includes(name)) record.names.push(name);
   }
   inView = people.map((person) => ({ id: person.id, names: person.names, position: person.position }));
@@ -156,6 +175,18 @@ export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
       const record = recordFor(owner, now);
       record.lastSeenAt = now;
       changed = addFacts(record, tag.text) || changed;
+    } else if (tag.kind === 'name') {
+      if (owner === ANONYMOUS || owner === GROUP) continue;
+      const record = recordFor(owner, now);
+      if (!record.names.includes(tag.text)) {
+        record.names.unshift(tag.text);
+        changed = true;
+      }
+      // Told their name with snapshots ready: remember their face from now on.
+      if (!record.enrolled && record.snapshots > 0) {
+        record.enrolled = true;
+        enrollListener?.(owner, tag.text);
+      }
     } else if (!quotes.some((quote) => quote.text === tag.text)) {
       quotes.push({ personId: owner, text: tag.text, at: now });
       changed = true;
@@ -215,6 +246,30 @@ export function peopleInView(): Array<{ position: Position; name: string | null;
     const record = records.get(person.id);
     return { position: person.position, name: record?.names[0] ?? person.names[0] ?? null, noteCount: record?.notes.length ?? 0 };
   });
+}
+
+/** A user turn happened: everyone in view has now talked with Tubs a bit more. */
+export function noteTurn(): void {
+  for (const person of inView) {
+    const record = records.get(person.id);
+    if (record) record.turns += 1;
+  }
+}
+
+/** Someone unnamed Tubs has talked with a while and can enroll: time to ask their name. */
+export function nameAskCandidate(): { position: Position; inGroup: boolean } | null {
+  const person = inView.find((candidate) => {
+    const record = records.get(candidate.id);
+    return record && !record.enrolled && record.names.length === 0 && record.snapshots > 0 && record.turns >= ASK_NAME_AFTER_TURNS && !record.askedName;
+  });
+  return person ? { position: person.position, inGroup: inView.length > 1 } : null;
+}
+
+/** Asked once per person, so it does not become a routine. */
+export function markNameAsked(position: Position): void {
+  const person = inView.find((candidate) => candidate.position === position);
+  const record = person ? records.get(person.id) : undefined;
+  if (record) record.askedName = true;
 }
 
 /** True when the people in view have any notes (for "call back a note"). */

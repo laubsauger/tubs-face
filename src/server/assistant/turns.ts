@@ -5,7 +5,7 @@ import { logConversation, logTubsReply } from '../observability/conversation-log
 import { captureTurnTrace } from '../observability/langfuse.js';
 import { noteReplyEmoji } from './variety.js';
 import { forgetConversation } from './context.js';
-import { endVisit } from './field-notes.js';
+import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 
 /**
@@ -201,6 +201,7 @@ export function startProactiveTurn(context: string, broadcast: Broadcast): void 
 
 /** Transcript line and Langfuse trace for every reply that was actually given. */
 function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, result: AssistantTurnResult, startedAt: number, turnTimer?: TurnTimer): void {
+  if (source !== 'proactive') noteTurn();
   if (!result.superseded) {
     void logTubsReply(result.reply.text, result.beats);
     noteReplyEmoji(result.reply.emotion?.emoji);

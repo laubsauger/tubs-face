@@ -21,6 +21,11 @@ export interface PersonInView {
   awayMs?: number;
 }
 
+/** A person in view with the face matched to them in this frame (stays on the client). */
+export interface TrackedPerson extends PersonInView {
+  face: DetectedFace;
+}
+
 /** Below this, a face is someone else. */
 const SAME_PERSON_SIMILARITY = 0.5;
 /** Out of view this long, a person leaves the group (they can still come back). */
@@ -36,13 +41,14 @@ interface Person {
   lastSampleAt: number;
   lastSeenAt: number;
   x: number;
+  face: DetectedFace | null;
   /** When they came back from the archive, how long they had been gone. */
   awayMs?: number;
 }
 
 export interface PeopleTracker {
   /** Feed every detection; returns who is in view, left to right. */
-  update(faces: DetectedFace[], frameWidth: number, now: number): PersonInView[];
+  update(faces: DetectedFace[], frameWidth: number, now: number): TrackedPerson[];
 }
 
 export function createPeopleTracker(random: () => number = Math.random): PeopleTracker {
@@ -68,6 +74,7 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
     if (name) person.names.add(name);
     person.lastSeenAt = now;
     person.x = x;
+    person.face = face;
     const embedding = embeddingOf(face);
     if (embedding && now - person.lastSampleAt >= SAMPLE_EVERY_MS) {
       person.lastSampleAt = now;
@@ -119,7 +126,7 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
           person = archive.splice(pastIndex, 1)[0]!;
           person.awayMs = now - person.lastSeenAt;
         } else {
-          person = { id: `${session}-p${nextId++}`, names: new Set(), samples: [], lastSampleAt: -Infinity, lastSeenAt: now, x: item.x };
+          person = { id: `${session}-p${nextId++}`, names: new Set(), samples: [], lastSampleAt: -Infinity, lastSeenAt: now, x: item.x, face: null };
         }
         present.set(person.id, person);
         claimed.add(person.id);
@@ -142,6 +149,7 @@ export function createPeopleTracker(random: () => number = Math.random): PeopleT
           id: person.id,
           names: [...person.names],
           position: positionOf(person.x, frameWidth),
+          face: person.face!,
           ...(person.awayMs !== undefined ? { awayMs: person.awayMs } : {}),
         }));
     },

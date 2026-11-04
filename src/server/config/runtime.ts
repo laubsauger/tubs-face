@@ -49,6 +49,7 @@ export const runtimeConfig: RuntimeConfig = {
   secondaryAudioGain: parseFloatInRange(process.env.SECONDARY_AUDIO_GAIN, 1.0, 0, 1.2),
   dualHeadTurnPolicy: pickOne(DUAL_HEAD_TURN_POLICIES, process.env.DUAL_HEAD_TURN_POLICY, 'llm_order'),
   muted: parseBoolean(process.env.MUTED, false),
+  autoEnrollEnabled: parseBoolean(process.env.AUTO_ENROLL, true),
   ambientAudioEnabled: parseBoolean(process.env.AMBIENT_AUDIO_ENABLED, true),
   glitchFxEnabled: true,
   glitchFxBaseColor: normalizeHexColor(process.env.GLITCH_FX_BASE_COLOR, '#a855f7'),
@@ -197,6 +198,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
     runtimeConfig.dualHeadTurnPolicy = expectOne(DUAL_HEAD_TURN_POLICIES, patch.dualHeadTurnPolicy, 'dualHeadTurnPolicy');
   }
   if (patch.muted !== undefined) runtimeConfig.muted = Boolean(patch.muted);
+  if (patch.autoEnrollEnabled !== undefined) runtimeConfig.autoEnrollEnabled = Boolean(patch.autoEnrollEnabled);
   if (patch.ambientAudioEnabled !== undefined) runtimeConfig.ambientAudioEnabled = Boolean(patch.ambientAudioEnabled);
   if (patch.glitchFxEnabled !== undefined) runtimeConfig.glitchFxEnabled = Boolean(patch.glitchFxEnabled);
   if (patch.glitchFxBaseColor !== undefined) {

@@ -103,6 +103,14 @@ describe('buildTurnDirection', () => {
     expect(pickName([{ name: null }], fixed(0))).toBeNull();
   });
 
+  it('asks for a name when auto onboarding picks someone, instead of the roast mirror', () => {
+    const solo = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: null, callBackNote: false, useName: null, askName: { position: 'center', inGroup: false } });
+    expect(solo).toContain('Ask them their name, your way.');
+    const group = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: { position: 'left', name: null }, target: { position: 'right', name: null } }, callBackNote: false, useName: null, askName: { position: 'right', inGroup: true } });
+    expect(group).toContain('Ask the one on the right their name');
+    expect(group).not.toContain('Side with');
+  });
+
   it('classifies reply length by words', () => {
     expect(lengthOf('Nice hat.')).toBe('short');
     expect(lengthOf('That jacket screams I want to look outdoorsy but I fear grass.')).toBe('one');

@@ -59,3 +59,10 @@ test('Mind shows the field notes on the visitor in front of Tubs', async ({ page
   await expect(notes).toContainText('The group: came as a couple');
   await expect(page.locator('#mind-quotes')).toContainText('AI art is real art');
 });
+
+// Without camera snapshots there is nothing to enroll from; the operator sees why.
+test('an enroll request without face snapshots is logged, not silently dropped', async ({ page, request }) => {
+  await page.getByRole('button', { name: /Event Log/ }).click();
+  await send(request, { type: 'enroll_request', personId: 'p-none', name: 'Dana' });
+  await expect(page.locator('#event-log-list')).toContainText('Auto onboarding: no face snapshots for Dana');
+});

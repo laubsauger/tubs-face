@@ -77,6 +77,7 @@ function RuntimeControls({ store, config }: { store: AppStore; config: Config })
           options={withCurrent(LLM_MODEL_CHOICES, config.llmModel)}
           onChange={(llmModel) => void patchConfig(store, { llmModel })}
         />
+        <ToggleControl label="Auto onboard (ask names)" checked={config.autoEnrollEnabled} onChange={(autoEnrollEnabled) => void patchConfig(store, { autoEnrollEnabled })} />
       </ControlGroup>
 
       <ControlGroup title="Voice">

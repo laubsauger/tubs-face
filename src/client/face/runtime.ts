@@ -3,10 +3,11 @@ import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { loadFaceLibrary } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
+import { type Snapshot, wantsSnapshot } from './auto-onboarding.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
-import { createPeopleTracker, type PersonInView } from './people-tracker.js';
+import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
-import { type EnrollmentCapture, captureEnrollmentSample, saveEnrollment } from './enrollment.js';
+import { type EnrollmentCapture, captureEnrollmentSample, captureFaceThumbnail, saveEnrollment } from './enrollment.js';
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
 
 export interface FaceShellRuntime {
@@ -24,6 +25,8 @@ export interface FaceShellRuntime {
   /** Grab one pose; null when no single face was found. */
   captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
   saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number>;
+  /** Enroll a person from the snapshots taken while they were in view (auto onboarding). */
+  autoEnroll(personId: string, name: string): Promise<void>;
   refreshLibrary(): Promise<void>;
   renameFace(id: string, name: string): Promise<void>;
   deleteFace(id: string): Promise<void>;
@@ -52,6 +55,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let uploadPending = false;
   const visitorTracker = createVisitorTracker();
   const peopleTracker = createPeopleTracker();
+  const snapshots = new Map<string, Snapshot[]>();
   let lastPeopleSignature = '';
   let enrollmentActive = false;
 
@@ -108,7 +112,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
 
       const now = Date.now();
       const greeting = handleVisitorEvents(visitorTracker.update(faces, now, now < store.getState().conversationUntil), faces.length);
-      reportPeople(peopleTracker.update(faces, captureCanvas.width, now));
+      reportPeople(peopleTracker.update(faces, captureCanvas.width, now), now);
       // Someone joined, or a face got recognized, while people stayed in view.
       const groupChanged = faces.length > 0 && !wasEmpty && appearanceSignature !== lastAppearanceSignature;
       if (faces.length > 0) {
@@ -206,6 +210,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number> {
       return saveEnrollment(store, refreshFaceLibraryState, name, samples);
     },
+    autoEnroll,
     refreshLibrary(): Promise<void> {
       return refreshFaceLibraryState(store);
     },
@@ -433,13 +438,54 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
    * detection deserves: a first arrival or a new visitor gets one, the same
    * visitor back after a while gets a "welcome back", a glance away gets none.
    */
-  /** Tells the server who is in view when the group or where they stand changes. */
-  function reportPeople(people: PersonInView[]): void {
-    const signature = people.map((person) => `${person.id}:${person.position}:${person.names.join(',')}`).join('|');
+  /** Tells the server who is in view when the group, positions or snapshot counts change. */
+  function reportPeople(people: TrackedPerson[], now: number): void {
+    if (store.getState().config?.autoEnrollEnabled) {
+      for (const person of people) takeSnapshot(person, now);
+    }
+    const counts = people.map((person) => (person.names.length === 0 ? snapshots.get(person.id)?.length ?? 0 : 0));
+    const signature = people.map((person, index) => `${person.id}:${person.position}:${person.names.join(',')}:${counts[index]}`).join('|');
     const someoneBack = people.some((person) => person.awayMs !== undefined);
     if (!sender || (signature === lastPeopleSignature && !someoneBack)) return;
     lastPeopleSignature = signature;
-    sender({ type: 'people', people });
+    sender({
+      type: 'people',
+      people: people.map(({ face: _face, ...person }, index) => ({ ...person, ...(counts[index] ? { snapshots: counts[index] } : {}) })),
+    });
+  }
+
+  /**
+   * Up to three snapshots of an unnamed person, a few seconds apart and only
+   * of a big, clear face, so Tubs can enroll them the moment they say their
+   * name. Memory only until then.
+   */
+  function takeSnapshot(person: TrackedPerson, now: number): void {
+    const taken = snapshots.get(person.id) ?? [];
+    if (!wantsSnapshot(person, taken, now, captureCanvas.height)) return;
+    const thumbnail = captureFaceThumbnail(captureCanvas, person.face);
+    if (!thumbnail) return;
+    taken.push({ embedding: person.face.embedding!, thumbnail, at: now });
+    snapshots.set(person.id, taken);
+    // Old snapshots of people long gone are not kept around.
+    for (const [id, samples] of snapshots) {
+      if (now - (samples.at(-1)?.at ?? 0) > 30 * 60_000) snapshots.delete(id);
+    }
+  }
+
+  /** The server heard a name: enroll that person from their snapshots. */
+  async function autoEnroll(personId: string, name: string): Promise<void> {
+    const samples = snapshots.get(personId);
+    if (!samples || samples.length === 0) {
+      store.appendLog('error', `Auto onboarding: no face snapshots for ${name}`);
+      return;
+    }
+    try {
+      await saveEnrollment(store, refreshFaceLibraryState, name, samples.map(({ embedding, thumbnail }) => ({ embedding, thumbnail })));
+      snapshots.delete(personId);
+      store.appendLog('info', `Auto onboarding: remembered ${name} (${samples.length} photo${samples.length === 1 ? '' : 's'})`);
+    } catch (error) {
+      store.appendLog('error', `Auto onboarding failed for ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   function handleVisitorEvents(events: VisitorEvent[], count: number): { returning: boolean; awayMs?: number } | null {
