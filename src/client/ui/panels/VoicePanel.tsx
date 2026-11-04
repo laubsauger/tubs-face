@@ -16,7 +16,6 @@ export function VoicePanel({
   controls?: AppShellControls | undefined;
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.voice),
     micReady: current.micReady,
     micDenied: current.micDenied,
     micLevel: current.micLevel,
@@ -39,10 +38,10 @@ export function VoicePanel({
   const pending = !state.recording && (state.listenState === 'Uploading...' || state.listenState === 'Thinking...');
 
   return (
-    <article className={`panel-surface panel-surface-voice transition-all flex flex-col ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
-      <PanelHeader store={store} panelKey="voice" title="Input Status" meta={state.recording ? 'REC' : state.listenState} />
+    <article className="dock-section">
+      <PanelHeader title="Input Status" meta={state.recording ? 'REC' : state.listenState} />
       
-      <div className={`panel-body panel-content flex flex-col gap-4 overflow-y-auto ${state.collapsed ? 'hidden' : ''}`}>
+      <div className="panel-body panel-content flex flex-col gap-4">
         
         {/* Mic Meter block */}
         <div className="flex flex-col gap-2 p-3 bg-slate-950/50 rounded-xl border border-slate-800">

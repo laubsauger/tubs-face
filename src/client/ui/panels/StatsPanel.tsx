@@ -6,16 +6,15 @@ import { formatCurrency } from '../utils/formatters.js';
 
 export function StatsPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.stats),
     stats: current.stats,
     lastResponseMs: current.lastResponseMs,
     config: current.config,
   }));
 
   return (
-    <article className={`panel-surface panel-surface-compact transition-all text-left ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
-      <PanelHeader store={store} panelKey="stats" title="Bot Stats" meta={`$${(state.stats?.costUsd ?? 0).toFixed(4)}`} />
-      <div className={`panel-body panel-content flex flex-col gap-3 ${state.collapsed ? 'hidden' : ''}`}>
+    <article className="dock-section text-left">
+      <PanelHeader title="Bot Stats" meta={`$${(state.stats?.costUsd ?? 0).toFixed(4)}`} />
+      <div className="panel-body panel-content flex flex-col gap-3">
         <dl className="grid grid-cols-[90px_1fr] gap-x-2 gap-y-3 text-xs font-mono">
           <dt className="text-slate-500">Tokens In</dt>
           <dd className="text-slate-300 font-bold">{state.stats?.tokensIn?.toLocaleString() ?? 0}</dd>

@@ -11,11 +11,11 @@ import {
   patchExpressionProfile,
   previewExpression,
   patchConfigLive,
-  toggleFxEditor,
 } from '../../fx/runtime.js';
 import { GLITCH_PRESETS } from '../../fx/presets.js';
 import type { AppStore } from '../../state/app-state.js';
 import { useAppSelector } from '../react-store.js';
+import { closeFxTab } from '../hud/dock-state.js';
 import { ColorControl, ControlGroup, RangeControl, SelectControl, ToggleControl } from './controls.js';
 
 type Config = ConfigResponse;
@@ -132,28 +132,27 @@ const PROFILE_RANGES = [
 ] as const;
 
 /**
- * Side drawer over the live face, so every change is previewed on the real
- * renderer. Sliders apply locally while dragging and save to the server once
- * they settle.
+ * The FX dock tab, beside the live face, so every change is previewed on the
+ * real renderer. Sliders apply locally while dragging and save to the server
+ * once they settle.
  */
-export function FxEditor({ store }: { store: AppStore }): JSX.Element | null {
+export function FxEditor({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    open: current.fxEditorOpen,
     config: current.config,
     expression: current.fxExpressionSelected,
   }));
   const [tab, setTab] = useState<'glitch' | 'expressions'>('glitch');
 
-  if (!state.open || !state.config) {
-    return null;
+  if (!state.config) {
+    return <section className="dock-section"><p className="panel-content text-xs text-slate-500">Waiting for the server's config…</p></section>;
   }
   const config = state.config;
 
   return (
-    <aside className="fx-editor-drawer" aria-label="FX editor">
-      <header className="fx-editor-drawer-header">
+    <section className="dock-section dock-section-fill fx-editor" aria-label="FX editor">
+      <header className="fx-editor-header">
         <h2>FX Editor</h2>
-        <div className="fx-editor-drawer-actions">
+        <div className="fx-editor-actions">
           <select
             className="mini-select"
             value=""
@@ -168,7 +167,7 @@ export function FxEditor({ store }: { store: AppStore }): JSX.Element | null {
           </select>
           <button type="button" className="button button-secondary button-compact" onClick={() => exportConfig(store.getState().config)}>Export</button>
           <button type="button" className="button button-secondary button-compact" onClick={() => void importConfig(store)}>Import</button>
-          <button type="button" className="button button-secondary button-compact" onClick={() => toggleFxEditor(store)}>Close (E)</button>
+          <button type="button" className="button button-secondary button-compact" onClick={() => store.setState(closeFxTab)}>Close (E)</button>
         </div>
       </header>
 
@@ -179,7 +178,7 @@ export function FxEditor({ store }: { store: AppStore }): JSX.Element | null {
 
       <PreviewActions store={store} />
 
-      <div className="fx-editor-drawer-body">
+      <div className="fx-editor-body">
         {tab === 'glitch'
           ? GLITCH_GROUPS.map((group) => (
             <ControlGroup key={group.title} title={group.title}>
@@ -188,7 +187,7 @@ export function FxEditor({ store }: { store: AppStore }): JSX.Element | null {
           ))
           : <ExpressionControls store={store} config={config} expression={state.expression} />}
       </div>
-    </aside>
+    </section>
   );
 }
 

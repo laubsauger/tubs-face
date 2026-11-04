@@ -1,9 +1,10 @@
 // The face itself and what floats over it: subtitles, live transcript,
-// thinking bar and the listening indicator.
+// thinking bar and the listening dot.
 
-import { memo, type JSX } from 'react';
+import { memo, type CSSProperties, type JSX } from 'react';
 import type { AppStore } from '../state/app-state.js';
 import { useAppSelector } from './react-store.js';
+import { listenLabel, resolveListenMode } from './hud/listening.js';
 
 /**
  * Absolutely stable face container — never re-renders.
@@ -22,25 +23,22 @@ export const StableFaceContainer = memo(
   () => true,
 );
 
-/** Overlays that sit on top of the face (subtitle, transcript, waveform) */
+/** Overlays that sit on top of the face; the stage settings switch them on and off. */
 function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
     sleeping: current.sleeping,
     liveTranscriptText: current.liveTranscriptText,
     liveTranscriptDraft: current.liveTranscriptDraft,
-    micLevel: current.micLevel,
-    recording: current.recording,
-    listenState: current.listenState,
-    voiceWakeWordEnabled: current.voiceWakeWordEnabled,
-    voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
-    conversationActive: current.conversationActive,
+    showSubtitles: current.stage.subtitles,
+    showListening: current.stage.listening,
     thinking: current.currentExpression === 'thinking',
   }));
 
   return (
     <>
-      {/* Audience-facing subtitle: big and at the top, as on main. */}
-      <div className="visual-overlay visual-overlay-top">
+      {/* Audience-facing subtitle: big and at the top. Hidden by the wrapper,
+          because the speech runtime sets classes on #visual-subtitle itself. */}
+      <div className="visual-overlay visual-overlay-top" hidden={!state.showSubtitles}>
         <div id="visual-subtitle" className={`visual-subtitle ${state.sleeping ? 'is-hidden' : ''}`} />
       </div>
 
@@ -56,22 +54,15 @@ function VisualOverlays({ store }: { store: AppStore }): JSX.Element {
         <div className={`visual-thinking-bar ${state.thinking && !state.sleeping ? 'is-active' : ''}`} aria-hidden="true">
           <span />
         </div>
-        <div
-          id="visual-live-transcript"
-          className={`visual-live-transcript ${state.liveTranscriptText.trim() ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
-        >
-          {state.liveTranscriptText}
+        <div hidden={!state.showListening} className="visual-listening">
+          <div
+            id="visual-live-transcript"
+            className={`visual-live-transcript ${state.liveTranscriptText.trim() ? 'is-visible' : ''} ${state.liveTranscriptDraft ? 'is-draft' : ''}`}
+          >
+            {state.liveTranscriptText}
+          </div>
+          {state.sleeping ? null : <ListeningDot store={store} />}
         </div>
-        <VoiceWaveformIndicator
-          micLevel={state.micLevel}
-          recording={state.recording}
-          listenState={state.listenState}
-          conversationActive={state.conversationActive}
-          voiceWakeWordEnabled={state.voiceWakeWordEnabled}
-          voiceHandsFreeEnabled={state.voiceHandsFreeEnabled}
-          hidden={state.sleeping}
-        />
-        <CompactAssistantStatus store={store} />
       </div>
     </>
   );
@@ -95,121 +86,23 @@ export function VisualShell({ store, mode }: { store: AppStore; mode: 'main' | '
   );
 }
 
-function VoiceWaveformIndicator(props: {
-  micLevel: number;
-  recording: boolean;
-  listenState: string;
-  conversationActive: boolean;
-  voiceWakeWordEnabled: boolean;
-  voiceHandsFreeEnabled: boolean;
-  hidden: boolean;
-}): JSX.Element {
-  const bars = Array.from({ length: 20 }, (_, index) => {
-    const normalizedLevel = Math.max(0.02, Math.min(1, props.micLevel));
-    const centerBias = 1 - Math.abs(index - 9.5) / 10.5;
-    const seeded = ((index * 17) % 11) / 10;
-    const height = 6 + Math.round((normalizedLevel * 26 * (0.45 + centerBias * 0.9)) + (seeded * 6));
-    return (
-      <span
-        key={index}
-        className="visual-wave-bar"
-        style={{ height: `${Math.max(6, Math.min(34, height))}px` }}
-      />
-    );
-  });
-
-  const mode = resolveWaveformMode(props);
-  const label = resolveWaveformLabel(props, mode);
-
-  return (
-    <div className={`visual-wave-shell visual-wave-${mode} ${props.hidden ? 'is-hidden' : ''}`}>
-      <div className="visual-waveform" aria-hidden="true">
-        {bars}
-      </div>
-      <div className="visual-wave-label">{label}</div>
-    </div>
-  );
-}
-
-function resolveWaveformMode(props: {
-  recording: boolean;
-  listenState: string;
-  conversationActive: boolean;
-  voiceWakeWordEnabled: boolean;
-  voiceHandsFreeEnabled: boolean;
-}): 'idle' | 'always-on' | 'wake' | 'conversation' | 'transcribing' | 'recording' {
-  if (props.recording) {
-    return 'recording';
-  }
-  if (props.listenState === 'Uploading...' || props.listenState === 'Thinking...') {
-    return 'transcribing';
-  }
-  if (props.conversationActive) {
-    return 'conversation';
-  }
-  if (props.voiceHandsFreeEnabled && props.voiceWakeWordEnabled) {
-    return 'wake';
-  }
-  if (props.voiceHandsFreeEnabled) {
-    return 'always-on';
-  }
-  return 'idle';
-}
-
-function resolveWaveformLabel(
-  props: {
-    listenState: string;
-    voiceWakeWordEnabled: boolean;
-    voiceHandsFreeEnabled: boolean;
-  },
-  mode: ReturnType<typeof resolveWaveformMode>,
-): string {
-  if (mode === 'recording' || mode === 'transcribing') {
-    return props.listenState;
-  }
-  if (mode === 'conversation') {
-    return 'Conversation Open';
-  }
-  if (mode === 'wake') {
-    return 'Wake Word Armed';
-  }
-  if (mode === 'always-on') {
-    return props.voiceWakeWordEnabled ? 'Always Listening' : 'Always On';
-  }
-  return 'Push To Talk';
-}
-
-function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
+/** A small dot for the audience: its colour says how Tubs listens, its glow follows the mic. */
+function ListeningDot({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    sleeping: current.sleeping,
-    currentExpression: current.currentExpression,
-    lastMessageType: current.lastMessageType,
-    config: current.config,
+    micLevel: Math.round(current.micLevel * 20) / 20,
+    recording: current.recording,
+    listenState: current.listenState,
     conversationActive: current.conversationActive,
+    voiceWakeWordEnabled: current.voiceWakeWordEnabled,
+    voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
   }));
-
-  if (state.sleeping || !state.config) return <></>;
-
-  const dualEnabled = state.config.dualHeadEnabled && state.config.dualHeadMode !== 'off';
-  const miniStatus = state.conversationActive ? 'active' : 'idle';
-
+  const mode = resolveListenMode(state);
   return (
-    <div className="compact-sys-status">
-      <span className="compact-sys-badge">
-        <span className="compact-sys-label">LV</span>
-        <span className="compact-sys-value">{state.lastMessageType}</span>
-      </span>
-      <span className="compact-sys-badge">
-        <span className="compact-sys-label">MN</span>
-        <span className="compact-sys-value">{state.currentExpression}</span>
-      </span>
-      {dualEnabled && (
-        <span className="compact-sys-badge">
-          <span className="compact-sys-label">SM</span>
-          <span className="compact-sys-value">{miniStatus}</span>
-        </span>
-      )}
-    </div>
+    <span
+      id="visual-listening-dot"
+      className={`visual-listening-dot listen-${mode}`}
+      title={listenLabel(state, mode)}
+      style={{ '--mic-level': Math.max(0, Math.min(1, state.micLevel)) } as CSSProperties}
+    />
   );
 }
-

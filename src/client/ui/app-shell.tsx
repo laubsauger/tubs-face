@@ -1,25 +1,23 @@
-import { ConnectionPanel } from './panels/ConnectionPanel.js';
-import { VoicePanel } from './panels/VoicePanel.js';
-import { FacePanel } from './panels/FacePanel.js';
-import { StatsPanel } from './panels/StatsPanel.js';
-import { MindPanel } from './panels/MindPanel.js';
-import { EventLogPanel } from './panels/EventLogPanel.js';
-import { ChatPanel } from './panels/ChatPanel.js';
-import { useCallback, useRef, useState, useEffect, type JSX } from 'react';
+import { useCallback, useRef, useState, useEffect, type CSSProperties, type JSX } from 'react';
 import type { EnrollmentCapture } from '../face/enrollment.js';
 import type { AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
-import { patchConfig, toggleFxEditor } from '../fx/runtime.js';
-import { FxEditor } from './panels/FxEditor.js';
+import { patchConfig } from '../fx/runtime.js';
 import { EnrollmentWizard } from './panels/EnrollmentWizard.js';
+import { ChatPanel } from './panels/ChatPanel.js';
 import { useAppSelector } from './react-store.js';
 import { openMiniWindow, toggleFullscreen } from './window-runtime.js';
-import { ControlsPanel } from './panels/ControlsPanel.js';
-import { ManualPanel } from './panels/ManualPanel.js';
+import type { FaceCommand } from './window-link.js';
 import { StableFaceContainer, VisualShell } from './visual-shell.js';
+import { Dock } from './hud/Dock.js';
+import { FloatingTranscript } from './hud/FloatingTranscript.js';
+import { MiniTile } from './hud/MiniTile.js';
+import { StatusBar } from './hud/StatusBar.js';
+import { closeFxTab, toggleDockFolded, toggleFxTab } from './hud/dock-state.js';
+import { resolveHotkey, type HotkeyAction } from './hud/hotkeys.js';
 
 export interface AppShellProps {
-  mode: 'main' | 'mini' | 'spectator';
+  mode: 'main' | 'dashboard' | 'mini' | 'spectator';
   store: AppStore;
   controls?: AppShellControls | undefined;
 }
@@ -46,127 +44,153 @@ export interface AppShellControls {
     renameFace(id: string, name: string): Promise<void>;
     deleteFace(id: string): Promise<void>;
   } | undefined;
+  /** Dashboard: things only the face window can do (camera, perform mode). */
+  remote?: {
+    faceCommand(command: FaceCommand): void;
+  } | undefined;
 }
 
 export function AppShell(props: AppShellProps): JSX.Element {
   if (props.mode === 'spectator') {
     return <SpectatorAppShell store={props.store} />;
   }
+  if (props.mode === 'dashboard') {
+    return <DashboardAppShell store={props.store} controls={props.controls} />;
+  }
   return props.mode === 'mini'
     ? <MiniAppShell store={props.store} />
-    : <MainAppShell store={props.store} {...(props.controls ? { controls: props.controls } : {})} />;
+    : <MainAppShell store={props.store} controls={props.controls} />;
 }
 
-// Single-letter shortcuts; typing any other letter focuses the chat input.
-const SHORTCUT_KEYS = new Set([' ', 'c', 'd', 'e', 'f', 'm', 'o', 's', 'x', 'z']);
+// Mini tile beside the face ('side' placement), as a share of the stage width.
+const SIDE_TILE_WIDTH = { small: '26cqw', medium: '33cqw', large: '40cqw' } as const;
 
-function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls }): JSX.Element {
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      
-      const key = e.key.toLowerCase();
-
-      if (store.getState().fxEditorOpen) {
-        // Escape is handled by window-runtime; everything else waits for the editor to close.
-        if (!inInput && key === 'e') {
-          e.preventDefault();
-          toggleFxEditor(store);
-        }
-        return;
-      }
-
-      // Non-input strict binds
-      if (!inInput) {
-        if (key === 'e') {
-          e.preventDefault();
-          toggleFxEditor(store);
-        } else if (key === 'm') {
-          e.preventDefault();
-          void patchConfig(store, { muted: !store.getState().config?.muted });
-        } else if (key === 's') {
-          e.preventDefault();
-          const isSleep = store.getState().sleeping;
-          void postJson(isSleep ? '/wake' : '/sleep', {});
-        } else if (key === 'c') {
-          e.preventDefault();
-          void controls?.face?.toggleCamera();
-        } else if (key === 'f') {
-          e.preventDefault();
-          store.setState((s) => ({ ...s, faceEnrollOpen: true }));
-        } else if (key === 'd') {
-          e.preventDefault();
-          store.setState(s => ({ ...s, debugOverlayActive: !s.debugOverlayActive }));
-        } else if (key === 'enter') {
-           // Allow starting to type immediately by focusing the chat input?
-           // The user says "Type any characters, then Enter". 
-           // If they hit Enter while NOT in input, maybe we focus logic?
-           document.getElementById('chat-panel-input')?.focus();
-        }
-      }
-    };
-    
-    // Key presses on letter keys (if not in input) should focus the chat so users can just type text.
-    const handleTypeFocus = (e: KeyboardEvent) => {
-      const inInput = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-      if (store.getState().fxEditorOpen) return;
-      if (!inInput && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !SHORTCUT_KEYS.has(e.key.toLowerCase())) {
-        const input = document.getElementById('chat-panel-input') as HTMLInputElement | null;
-        if (input) {
-          input.focus();
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKey);
-    window.addEventListener('keydown', handleTypeFocus);
-    return () => {
-      window.removeEventListener('keydown', handleKey);
-      window.removeEventListener('keydown', handleTypeFocus);
-    };
-  }, [store, controls]);
-
-  const shellState = useAppSelector(store, (state) => ({
-    uiHidden: state.uiHidden,
-    fullscreenActive: state.fullscreenActive,
-    fxEditorOpen: state.fxEditorOpen,
+/** The face window: status bar, the face stage and the dock, or just the face in perform mode. */
+function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls | undefined }): JSX.Element {
+  useOperatorHotkeys(store, controls, 'face');
+  const state = useAppSelector(store, (current) => ({
+    perform: current.uiHidden,
+    fullscreenActive: current.fullscreenActive,
+    miniSide: Boolean(current.config?.dualHeadEnabled && current.config.dualHeadMode !== 'off')
+      && !current.peers.mini
+      && current.stage.miniTile
+      && current.stage.miniPlacement === 'side',
+    miniSize: current.stage.miniSize,
   }));
 
   return (
-    <main className={`shell shell-main ${shellState.uiHidden ? 'shell-ui-hidden' : ''} ${shellState.fullscreenActive ? 'fullscreen-active' : ''} ${shellState.fxEditorOpen ? 'fx-editor-open' : ''}`}>
-      <VisualShell store={store} mode="main" />
-
-      {!shellState.uiHidden && !shellState.fxEditorOpen && (
-        <div className="hud-layer">
-          <div className="hud-stack hud-stack-top-left">
-            <ConnectionPanel store={store} />
-            <VoicePanel store={store} controls={controls} />
-            <MindPanel store={store} />
-            <StatsPanel store={store} />
-            <ControlsPanel store={store} {...(controls ? { controls } : {})} />
-            <ManualPanel store={store} />
-            <EventLogPanel store={store} />
-          </div>
-
-          <div className="hud-corner hud-corner-bottom-left">
-            <ChatPanel store={store} />
-          </div>
-
-          <div className="hud-corner hud-corner-top-right">
-            <TopBar store={store} />
-          </div>
-
-          <div className="hud-stack hud-stack-bottom-right">
-            <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
-          </div>
-        </div>
-      )}
-
-      <FxEditor store={store} />
+    <main className={`shell shell-main ${state.perform ? 'is-perform' : ''} ${state.fullscreenActive ? 'fullscreen-active' : ''}`}>
+      <StatusBar store={store} view="face" controls={controls} />
+      <div
+        className={`stage ${state.miniSide ? 'has-mini-side' : ''}`}
+        style={{ '--mini-side-width': SIDE_TILE_WIDTH[state.miniSize] } as CSSProperties}
+      >
+        <VisualShell store={store} mode="main" />
+        <FloatingTranscript store={store} />
+        <MiniTile store={store} />
+      </div>
+      {/* Mounted in perform mode too, just hidden: it holds the camera video. */}
+      <Dock store={store} controls={controls} view="face" />
       <EnrollmentWizard store={store} {...(controls?.face ? { controls: controls.face } : {})} />
-
     </main>
   );
+}
+
+/**
+ * The operator dashboard for a separate screen: the chat log and the dock, no
+ * face. It plays no audio and opens no mic or camera; the face window does.
+ */
+function DashboardAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls | undefined }): JSX.Element {
+  useOperatorHotkeys(store, controls, 'dashboard');
+  return (
+    <main className="shell shell-main shell-dashboard">
+      <StatusBar store={store} view="dashboard" controls={controls} />
+      <div className="stage dashboard-stage">
+        <ChatPanel store={store} />
+      </div>
+      <Dock store={store} controls={controls} view="dashboard" defaultWidth={560} />
+    </main>
+  );
+}
+
+/** One keydown listener for every operator shortcut, routed by ui/hud/hotkeys.ts. */
+function useOperatorHotkeys(store: AppStore, controls: AppShellControls | undefined, view: 'face' | 'dashboard'): void {
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      const state = store.getState();
+      const action = resolveHotkey({
+        key: event.key,
+        code: event.code,
+        modifier: event.ctrlKey || event.metaKey || event.altKey,
+        inTextField: isTextField(event.target),
+        view,
+        fxOpen: state.fxEditorOpen,
+        perform: view === 'face' && state.uiHidden,
+        chatInputVisible: state.dockTab === 'chat' && !state.dockFolded && !state.uiHidden,
+      });
+      if (!action) return;
+      // A typed letter must still land in the input it focuses; Enter must not submit.
+      const typing = (action === 'focus-chat' || action === 'focus-quick') && event.key !== 'Enter';
+      if (!typing) event.preventDefault();
+      runHotkey(action, store, controls);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [store, controls, view]);
+}
+
+function runHotkey(action: HotkeyAction, store: AppStore, controls: AppShellControls | undefined): void {
+  switch (action) {
+    case 'fx-toggle':
+      store.setState(toggleFxTab);
+      return;
+    case 'fx-close':
+      store.setState(closeFxTab);
+      return;
+    case 'sleep-toggle':
+      void postJson(store.getState().sleeping ? '/wake' : '/sleep', {});
+      return;
+    case 'mute':
+      void patchConfig(store, { muted: !store.getState().config?.muted });
+      return;
+    case 'camera':
+      void controls?.face?.toggleCamera();
+      return;
+    case 'enroll':
+      store.setState((current) => ({ ...current, faceEnrollOpen: true }));
+      return;
+    case 'debug':
+      store.setState((current) => ({ ...current, debugOverlayActive: !current.debugOverlayActive }));
+      return;
+    case 'transcript-toggle':
+      store.setState((current) => ({ ...current, stage: { ...current.stage, transcript: !current.stage.transcript } }));
+      return;
+    case 'dock-fold':
+      store.setState(toggleDockFolded);
+      return;
+    case 'fullscreen':
+      void toggleFullscreen(store);
+      return;
+    case 'perform-toggle':
+      store.setState((current) => ({ ...current, uiHidden: !current.uiHidden }));
+      return;
+    case 'open-mini':
+      openMiniWindow(store, true);
+      return;
+    case 'focus-chat':
+      document.getElementById('chat-panel-input')?.focus();
+      return;
+    case 'focus-quick':
+      document.getElementById('quick-chat-input')?.focus();
+      return;
+  }
+}
+
+// Fields that take typed text. Shortcuts still work with a toggle or slider focused.
+function isTextField(target: EventTarget | null): boolean {
+  if (target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  if (target instanceof HTMLElement && target.isContentEditable) return true;
+  return target instanceof HTMLInputElement && !['checkbox', 'radio', 'range', 'color', 'button', 'submit', 'file'].includes(target.type);
 }
 
 function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
@@ -250,33 +274,5 @@ function SpectatorAppShell({ store }: { store: AppStore }): JSX.Element {
         )}
       </section>
     </main>
-  );
-}
-
-function TopBar({ store }: { store: AppStore }): JSX.Element {
-  const fullscreenActive = useAppSelector(store, (state) => state.fullscreenActive);
-  return (
-    <div className="top-bar">
-      <button
-        id="window-open-mini"
-        className="button button-secondary button-compact"
-        type="button"
-        onClick={() => {
-          openMiniWindow(store, true);
-        }}
-      >
-        Mini
-      </button>
-      <button
-        id="window-fullscreen"
-        className="button button-compact"
-        type="button"
-        onClick={async () => {
-          await toggleFullscreen(store);
-        }}
-      >
-        {fullscreenActive ? 'Exit FS' : 'Fullscreen'}
-      </button>
-    </div>
   );
 }

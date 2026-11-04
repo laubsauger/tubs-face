@@ -7,7 +7,6 @@ import type { AppStore } from '../../state/app-state.js';
 import { postJson } from '../../transport/http.js';
 import { useAppSelector } from '../react-store.js';
 import type { AppShellControls } from '../app-shell.js';
-import { renderPanelCardClass } from './panel-card.js';
 
 export function ControlsPanel({
   store,
@@ -17,7 +16,6 @@ export function ControlsPanel({
   controls?: AppShellControls;
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.controls),
     chatVerbosity: current.chatVerbosity,
     ambientAudioEnabled: current.ambientAudioEnabled,
     sleeping: current.sleeping,
@@ -25,9 +23,9 @@ export function ControlsPanel({
   }));
 
   return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="controls" title="Controls" meta="Actions" />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
+    <article className="dock-section">
+      <PanelHeader title="Controls" meta="Actions" />
+      <div className="panel-body panel-content">
         <div className="face-actions">
           <div className="face-action-row">
             <button

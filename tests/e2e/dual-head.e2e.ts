@@ -18,6 +18,8 @@ test('each screen plays only its own head in a two-head turn', async ({ context,
   }
   await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
   await main.waitForTimeout(500);
+  // With a mini screen open, the main screen shows no mini tile of its own (it would voice Small too).
+  await expect(main.locator('#mini-tile')).toHaveCount(0);
 
   // Ignore the config post above in what the pages sent.
   await request.post(`${MOCK}/__test/reset-received`);

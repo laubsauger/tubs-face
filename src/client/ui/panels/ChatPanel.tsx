@@ -1,92 +1,62 @@
-import { useEffect, useRef, useState, type FormEvent, type JSX, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
-import type { IncomingRequest, IncomingResponse } from '../../../shared/contracts/http.js';
-import { postJson } from '../../transport/http.js';
+import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { sendChatComposer } from '../../chat/send.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
 import { isChatEntryVisible, formatTimestamp, renderChatPrefix, resolveChatActor } from '../utils/formatters.js';
 
 export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.chat),
-    chatPanelWidth: current.chatPanelWidth,
     chatComposerText: current.chatComposerText,
     chatEntries: current.chatEntries,
     chatVerbosity: current.chatVerbosity,
   }));
-  const cardRef = useRef<HTMLElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const [sending, setSending] = useState(false);
 
   const entries = state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type));
-  const panelWidth = state.chatPanelWidth ?? 420;
 
   useEffect(() => {
     const list = listRef.current;
-    if (!list || state.collapsed) {
-      return;
+    if (list) {
+      list.scrollTop = list.scrollHeight;
     }
-    list.scrollTop = list.scrollHeight;
-  }, [entries.length, state.collapsed]);
+  }, [entries.length]);
 
-  function handleResizeStart(event: ReactPointerEvent<HTMLDivElement>): void {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = cardRef.current?.getBoundingClientRect().width ?? panelWidth;
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      const maxWidth = Math.min(window.innerWidth - 32, 720);
-      const nextWidth = Math.max(320, Math.min(maxWidth, startWidth + (moveEvent.clientX - startX)));
-      store.setState((current) => ({
-        ...current,
-        chatPanelWidth: nextWidth,
-      }));
-    };
-
-    const handlePointerUp = () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp, { once: true });
-  }
+  // Lines that arrive while the Chat tab is closed can't scroll a hidden list;
+  // start at the newest line once the tab shows it again.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    let wasHidden = list.clientHeight === 0;
+    const observer = new ResizeObserver(() => {
+      const hidden = list.clientHeight === 0;
+      if (wasHidden && !hidden) list.scrollTop = list.scrollHeight;
+      wasHidden = hidden;
+    });
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const text = state.chatComposerText.trim();
-    if (!text || sending) {
+    if (sending) {
       return;
     }
-
     setSending(true);
-    store.setState((current) => ({
-      ...current,
-      chatComposerText: '',
-    }));
     try {
-      await postJson<IncomingRequest, IncomingResponse>('/incoming', { text });
-    } catch (error) {
-      store.setState((current) => ({
-        ...current,
-        chatComposerText: current.chatComposerText ? current.chatComposerText : text,
-      }));
-      store.appendLog('error', error instanceof Error ? error.message : 'Failed to send text turn');
+      await sendChatComposer(store);
     } finally {
       setSending(false);
     }
   }
 
   return (
-    <section
-      id="chat-panel-card"
-      ref={cardRef}
-      className={`panel-surface panel-surface-chat flex flex-col relative max-w-[calc(100vw-32px)] ${state.collapsed ? 'is-collapsed h-11' : ''}`}
-      style={state.collapsed ? undefined : { width: panelWidth }}
-    >
-      <PanelHeader store={store} panelKey="chat" title="Chat Log" meta={`${state.chatEntries.length} msgs`} />
-      
-      <div className={`panel-body panel-chat-body flex flex-col flex-1 min-h-0 overflow-hidden relative ${state.collapsed ? 'hidden' : ''}`}>
+    <section id="chat-panel-card" className="dock-section dock-section-fill">
+      <PanelHeader title="Chat Log" meta={`${state.chatEntries.length} msgs`} />
+
+      <div className="panel-body panel-chat-body flex flex-col flex-1 min-h-0">
         <ul
           id="chat-log-list"
           ref={listRef}
@@ -98,15 +68,21 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
               const actor = resolveChatActor(entry);
               const isAssistant = actor === 'main' || actor === 'small';
               const isSystem = actor === 'system';
+              // Reply emojis go next to the name; the stored text keeps them.
+              const { emoji, body } = isAssistant ? splitLeadingEmoji(entry.text) : { emoji: '', body: entry.text };
               return (
-                <li key={entry.id} className={`flex flex-col gap-1 ${isAssistant ? 'items-start' : isSystem ? 'items-center opacity-70' : 'items-end'} ${entry.draft ? 'opacity-50' : ''}`}>
-                  <div className={`flex items-baseline gap-2 text-[10px] ${isAssistant ? 'text-cyan-400/80 flex-row' : isSystem ? 'text-slate-500' : 'text-emerald-400/80 flex-row-reverse'}`}>
-                    <strong className="uppercase tracking-wider">{renderChatPrefix(entry.type, entry.actor)}</strong>
+                <li
+                  key={entry.id}
+                  className={`chat-entry chat-tone-${isAssistant ? actor : isSystem ? 'system' : 'user'} ${entry.filler ? 'is-filler' : ''} flex flex-col gap-1 ${isAssistant ? 'items-start' : isSystem ? 'items-center opacity-70' : 'items-end'} ${entry.draft ? 'opacity-50' : ''}`}
+                >
+                  <div className={`chat-entry-head flex items-baseline gap-2 text-[10px] ${isAssistant ? 'flex-row' : isSystem ? '' : 'flex-row-reverse'}`}>
+                    <strong className="chat-entry-name uppercase tracking-wider">{renderChatPrefix(entry.type, entry.actor)}</strong>
+                    {emoji ? <span className="chat-entry-emoji" aria-label="reaction">{emoji}</span> : null}
                     {entry.filler ? <span className="text-slate-500">filler</span> : null}
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
-                  <div className={`px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${entry.filler ? 'bg-transparent text-slate-500 italic rounded-tl-sm border border-dashed border-slate-700' : isAssistant ? 'bg-slate-800 text-slate-300 rounded-tl-sm border border-slate-700' : isSystem ? 'bg-transparent text-slate-500 text-center italic text-[11px]' : 'bg-emerald-900/40 text-emerald-200 rounded-tr-sm border border-emerald-800/50'}`}>
-                    {entry.text}
+                  <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
+                    {body}
                   </div>
                 </li>
               );
@@ -134,19 +110,6 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
             {sending ? 'Sending' : 'Send'}
           </button>
         </form>
-
-        <div
-          id="chat-panel-resize"
-          className="panel-resize-handle"
-          aria-hidden="true"
-          onDoubleClick={() => {
-            store.setState((current) => ({
-              ...current,
-              chatPanelWidth: null,
-            }));
-          }}
-          onPointerDown={handleResizeStart}
-        />
       </div>
     </section>
   );

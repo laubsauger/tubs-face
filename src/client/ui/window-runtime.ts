@@ -1,5 +1,4 @@
 import type { AppStore } from '../state/app-state.js';
-import { toggleFxEditor } from '../fx/runtime.js';
 import { postJson } from '../transport/http.js';
 
 const FULLSCREEN_STORAGE_KEY = 'tubs.dualFullscreenDesired';
@@ -11,12 +10,11 @@ export interface WindowRuntime {
 }
 
 let sharedMiniWindowRef: Window | null = null;
-let sharedMiniWindowCloseMonitor: number | null = null;
 
+// Keys live in the operator shell's hotkey router (ui/hud/hotkeys.ts); this
+// runtime keeps fullscreen in step between the face and mini windows.
 export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): WindowRuntime {
-  let keyHandler: ((event: KeyboardEvent) => void) | null = null;
   let clickHandler: (() => void) | null = null;
-  let beforeUnloadHandler: (() => void) | null = null;
 
   return {
     init(): void {
@@ -27,18 +25,8 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
       }
     },
     dispose(): void {
-      if (keyHandler) {
-        window.removeEventListener('keydown', keyHandler);
-      }
       if (clickHandler) {
         window.removeEventListener('click', clickHandler);
-      }
-      if (beforeUnloadHandler) {
-        window.removeEventListener('beforeunload', beforeUnloadHandler);
-      }
-      if (mode === 'main' && sharedMiniWindowCloseMonitor != null) {
-        window.clearInterval(sharedMiniWindowCloseMonitor);
-        sharedMiniWindowCloseMonitor = null;
       }
     },
   };
@@ -49,62 +37,12 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
         ...current,
         fullscreenActive: isFullscreenActive(),
       }));
-      syncMiniFullscreenIntent(isFullscreenActive(), false);
+      syncMiniFullscreenIntent(isFullscreenActive());
     };
 
     document.addEventListener('fullscreenchange', syncState);
     document.addEventListener('webkitfullscreenchange', syncState as EventListener);
     syncState();
-
-    keyHandler = (event: KeyboardEvent) => {
-      // While the FX editor is open, Escape closes it instead of toggling sleep,
-      // and the other global shortcuts are off (same as main).
-      if (store.getState().fxEditorOpen) {
-        if (event.code === 'Escape') {
-          event.preventDefault();
-          toggleFxEditor(store);
-        }
-        return;
-      }
-      const target = event.target;
-      const inInput = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLButtonElement;
-
-      if (event.code === 'Escape') {
-        event.preventDefault();
-        if (store.getState().sleeping) {
-          void postJson<undefined, { ok: true }>('/wake');
-        } else {
-          void postJson<undefined, { ok: true }>('/sleep');
-        }
-        return;
-      }
-
-      if (inInput) {
-        return;
-      }
-
-      if (event.key === 'x' || event.key === 'X') {
-        event.preventDefault();
-        void toggleFullscreen(store);
-        return;
-      }
-
-      if (event.key === 'z' || event.key === 'Z') {
-        event.preventDefault();
-        store.setState((current) => ({
-          ...current,
-          uiHidden: !current.uiHidden,
-        }));
-        return;
-      }
-
-      if (event.key === 'o' || event.key === 'O') {
-        event.preventDefault();
-        openMiniWindow(store, true);
-      }
-    };
-
-    window.addEventListener('keydown', keyHandler);
 
     clickHandler = () => {
       if (store.getState().sleeping) {
@@ -112,23 +50,6 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
       }
     };
     window.addEventListener('click', clickHandler);
-
-    beforeUnloadHandler = () => {
-      if (sharedMiniWindowRef && !sharedMiniWindowRef.closed) {
-        void syncDualHeadWindowMode(store, false);
-      }
-    };
-    window.addEventListener('beforeunload', beforeUnloadHandler);
-
-    if (sharedMiniWindowCloseMonitor == null) {
-      sharedMiniWindowCloseMonitor = window.setInterval(() => {
-        if (!sharedMiniWindowRef || !sharedMiniWindowRef.closed) {
-          return;
-        }
-        sharedMiniWindowRef = null;
-        void syncDualHeadWindowMode(store, false);
-      }, 600);
-    }
   }
 
   function initMiniSync(): void {
@@ -158,11 +79,11 @@ export function createWindowRuntime(store: AppStore, mode: 'main' | 'mini'): Win
     });
   }
 
-  function syncMiniFullscreenIntent(enabled: boolean, openIfNeeded: boolean): void {
+  function syncMiniFullscreenIntent(enabled: boolean): void {
     if (mode !== 'main') {
       return;
     }
-    syncMiniFullscreenIntentShared(store, enabled, openIfNeeded);
+    syncMiniFullscreenIntentShared(enabled);
   }
 }
 
@@ -179,15 +100,22 @@ export async function toggleFullscreen(store: AppStore): Promise<void> {
       ...current,
       fullscreenActive: next,
     }));
-    syncMiniFullscreenIntentShared(store, next, next);
+    // Only a mini window that is already open follows. Opening one here would
+    // pull Small out of the face window's tile, which a one-screen show needs.
+    syncMiniFullscreenIntentShared(next);
   } catch (error) {
     store.appendLog('error', error instanceof Error ? error.message : 'Fullscreen unavailable');
   }
 }
 
+/**
+ * Opens (or focuses) mini Tubs in its own window, for a second screen, and
+ * turns two-head mode on. Closing it again hands Small back to the face
+ * window's tile; two-head mode stays until the operator turns it off.
+ */
 export function openMiniWindow(store: AppStore, focus: boolean): Window | null {
   if (sharedMiniWindowRef && !sharedMiniWindowRef.closed) {
-    void syncDualHeadWindowMode(store, true);
+    void enableDualHead(store);
     if (focus) {
       sharedMiniWindowRef.focus();
     }
@@ -200,30 +128,21 @@ export function openMiniWindow(store: AppStore, focus: boolean): Window | null {
     return null;
   }
   sharedMiniWindowRef = opened;
-  void syncDualHeadWindowMode(store, true);
+  void enableDualHead(store);
   if (focus) {
     opened.focus();
   }
-  opened.addEventListener('beforeunload', () => {
-    if (sharedMiniWindowRef === opened) {
-      sharedMiniWindowRef = null;
-      void syncDualHeadWindowMode(store, false);
-    }
-  });
   if (store.getState().fullscreenActive) {
     window.setTimeout(() => {
-      syncMiniFullscreenIntentShared(store, true, false);
+      syncMiniFullscreenIntentShared(true);
     }, 300);
   }
   return opened;
 }
 
-function syncMiniFullscreenIntentShared(store: AppStore, enabled: boolean, openIfNeeded: boolean): void {
+function syncMiniFullscreenIntentShared(enabled: boolean): void {
   writeFullscreenIntent(enabled);
-  let targetWindow = sharedMiniWindowRef;
-  if ((!targetWindow || targetWindow.closed) && enabled && openIfNeeded) {
-    targetWindow = openMiniWindow(store, false);
-  }
+  const targetWindow = sharedMiniWindowRef;
   if (!targetWindow || targetWindow.closed) {
     return;
   }
@@ -291,20 +210,33 @@ async function applyMiniFullscreen(enabled: boolean): Promise<void> {
   }
 }
 
-async function syncDualHeadWindowMode(store: AppStore, enabled: boolean): Promise<void> {
-  try {
-    await postJson('/config', enabled
-      ? {
-        dualHeadEnabled: true,
-        dualHeadMode: 'llm_directed',
-      }
-      : {
-        dualHeadEnabled: false,
-        dualHeadMode: 'off',
-      });
-  } catch (error) {
-    store.appendLog('error', error instanceof Error
-      ? error.message
-      : `Failed to ${enabled ? 'enable' : 'disable'} dual-head mode`);
+async function enableDualHead(store: AppStore): Promise<void> {
+  if (store.getState().config?.dualHeadEnabled && store.getState().config?.dualHeadMode !== 'off') {
+    return;
   }
+  try {
+    await postJson('/config', { dualHeadEnabled: true, dualHeadMode: 'llm_directed' });
+  } catch (error) {
+    store.appendLog('error', error instanceof Error ? error.message : 'Failed to enable dual-head mode');
+  }
+}
+
+/** Opens the operator dashboard in its own window, for a third screen. */
+export function openDashboardWindow(store: AppStore): void {
+  const opened = window.open('/?view=dashboard', 'tubs-dashboard', 'popup=yes,width=1280,height=860,resizable=yes');
+  if (!opened) {
+    store.appendLog('error', 'Popup blocked: allow popups to open the dashboard');
+    return;
+  }
+  opened.focus();
+}
+
+/** Dashboard: brings the face window up (or opens it), e.g. after it was closed. */
+export function openFaceWindow(store: AppStore): void {
+  const opened = window.open('/', 'tubs-face');
+  if (!opened) {
+    store.appendLog('error', 'Popup blocked: allow popups to open the face window');
+    return;
+  }
+  opened.focus();
 }

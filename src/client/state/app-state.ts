@@ -25,17 +25,35 @@ export interface ChatEntry {
   filler?: boolean;
 }
 
-export type PanelKey =
-  | 'connection'
-  | 'stats'
-  | 'mind'
-  | 'voice'
-  | 'controls'
-  | 'fx'
-  | 'manual'
-  | 'face'
-  | 'chat'
-  | 'eventLog';
+/** Operator dock tabs, in rail order. */
+export const DOCK_TABS = ['chat', 'voice', 'mind', 'people', 'controls', 'stats', 'log', 'settings', 'fx'] as const;
+export type DockTab = (typeof DOCK_TABS)[number];
+
+export const MINI_TILE_PLACEMENTS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'side'] as const;
+export type MiniTilePlacement = (typeof MINI_TILE_PLACEMENTS)[number];
+export const MINI_TILE_SIZES = ['small', 'medium', 'large'] as const;
+export type MiniTileSize = (typeof MINI_TILE_SIZES)[number];
+
+/**
+ * What the face screen shows besides the face. Shared by every operator window
+ * in this browser, so the dashboard can set up the perform screen.
+ */
+export interface StagePrefs {
+  subtitles: boolean;
+  transcript: boolean;
+  /** The listening dot, plus the live transcript of what the mic hears. */
+  listening: boolean;
+  miniTile: boolean;
+  miniPlacement: MiniTilePlacement;
+  miniSize: MiniTileSize;
+}
+
+/** Other Tubs windows open in this browser (see ui/window-link.ts). */
+export interface WindowPeers {
+  face: boolean;
+  mini: boolean;
+  dashboard: boolean;
+}
 
 export interface AppState {
   connected: boolean;
@@ -97,11 +115,19 @@ export interface AppState {
   faceEnrollOpen: boolean;
   controlSpeakText: string;
   chatComposerText: string;
+  /** Perform mode (Z): status bar and dock hidden, the face gets the screen. */
   uiHidden: boolean;
   debugOverlayActive?: boolean;
   fullscreenActive: boolean;
-  collapsedPanels: Partial<Record<PanelKey, boolean>>;
-  chatPanelWidth: number | null;
+  dockTab: DockTab;
+  /** Where E / Escape go back to when the FX tab closes. */
+  dockReturn: { tab: DockTab; folded: boolean; uiHidden: boolean };
+  dockFolded: boolean;
+  dockWidth: number | null;
+  stage: StagePrefs;
+  peers: WindowPeers;
+  /** Dashboard only: whether the face window is in perform mode; null until it reports. */
+  facePerform: boolean | null;
   chatVerbosity: 'all' | 'chat' | 'minimal';
   manualComposerMode: 'single' | 'script';
   manualActor: TurnActor;
@@ -143,40 +169,124 @@ export interface AppStore {
 
 // Enough to see what led up to an error.
 const MAX_LOGS = 100;
-const UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs';
+export const UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs';
+export const DASHBOARD_UI_PREFS_STORAGE_KEY = 'tubs.uiPrefs.dashboard';
+export const STAGE_PREFS_STORAGE_KEY = 'tubs.stagePrefs';
 
-/** Layout choices an operator expects to survive a reload of the studio screen. */
-type UiPrefs = Pick<AppState, 'uiHidden' | 'collapsedPanels' | 'chatPanelWidth'>;
+/**
+ * Layout choices an operator expects to survive a reload. Each view keeps its
+ * own (the face window's perform mode must not follow the dashboard's layout).
+ */
+type UiPrefs = Pick<AppState, 'uiHidden' | 'dockTab' | 'dockFolded' | 'dockWidth'>;
 
-function readStoredUiPrefs(): Partial<UiPrefs> {
+export const DEFAULT_STAGE_PREFS: StagePrefs = {
+  subtitles: true,
+  transcript: true,
+  listening: true,
+  miniTile: true,
+  miniPlacement: 'bottom-right',
+  miniSize: 'medium',
+};
+
+function readStorage(key: string): Record<string, unknown> {
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(UI_PREFS_STORAGE_KEY) ?? '{}') as Partial<UiPrefs>;
-    return {
-      ...(typeof parsed.uiHidden === 'boolean' ? { uiHidden: parsed.uiHidden } : {}),
-      ...(parsed.collapsedPanels && typeof parsed.collapsedPanels === 'object' ? { collapsedPanels: parsed.collapsedPanels } : {}),
-      ...(typeof parsed.chatPanelWidth === 'number' ? { chatPanelWidth: parsed.chatPanelWidth } : {}),
-    };
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}');
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
   } catch {
     return {};
   }
 }
 
-/** Saves uiHidden, collapsed panels and chat width whenever they change. */
-export function persistUiPrefs(store: AppStore): () => void {
+function writeStorage(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Private mode or blocked storage: layout just won't persist.
+  }
+}
+
+function isOneOf<T extends string>(options: readonly T[], value: unknown): value is T {
+  return typeof value === 'string' && (options as readonly string[]).includes(value);
+}
+
+export function parseUiPrefs(stored: Record<string, unknown>): Partial<UiPrefs> {
+  return {
+    ...(typeof stored.uiHidden === 'boolean' ? { uiHidden: stored.uiHidden } : {}),
+    ...(isOneOf(DOCK_TABS, stored.dockTab) ? { dockTab: stored.dockTab } : {}),
+    ...(typeof stored.dockFolded === 'boolean' ? { dockFolded: stored.dockFolded } : {}),
+    ...(typeof stored.dockWidth === 'number' && Number.isFinite(stored.dockWidth) ? { dockWidth: stored.dockWidth } : {}),
+  };
+}
+
+/** Missing or unknown values fall back one by one, so prefs added later start at their default. */
+export function parseStagePrefs(stored: Record<string, unknown>): StagePrefs {
+  const flag = (key: 'subtitles' | 'transcript' | 'listening' | 'miniTile') => (
+    typeof stored[key] === 'boolean' ? stored[key] : DEFAULT_STAGE_PREFS[key]
+  );
+  return {
+    subtitles: flag('subtitles'),
+    transcript: flag('transcript'),
+    listening: flag('listening'),
+    miniTile: flag('miniTile'),
+    miniPlacement: isOneOf(MINI_TILE_PLACEMENTS, stored.miniPlacement) ? stored.miniPlacement : DEFAULT_STAGE_PREFS.miniPlacement,
+    miniSize: isOneOf(MINI_TILE_SIZES, stored.miniSize) ? stored.miniSize : DEFAULT_STAGE_PREFS.miniSize,
+  };
+}
+
+/**
+ * The tab saved for a reload. Never the FX editor: while it is open the face
+ * shows its true colours and never falls asleep, which an unattended
+ * installation must not boot into.
+ */
+export function persistedDockTab(state: Pick<AppState, 'dockTab' | 'dockReturn'>): DockTab {
+  return state.dockTab === 'fx' ? state.dockReturn.tab : state.dockTab;
+}
+
+/** Saves the layout prefs whenever they change, under this view's key. */
+export function persistUiPrefs(store: AppStore, storageKey: string): () => void {
   return store.subscribeSelector(
-    (state): UiPrefs => ({ uiHidden: state.uiHidden, collapsedPanels: state.collapsedPanels, chatPanelWidth: state.chatPanelWidth }),
-    (prefs) => {
-      try {
-        window.localStorage.setItem(UI_PREFS_STORAGE_KEY, JSON.stringify(prefs));
-      } catch {
-        // Private mode or blocked storage: layout just won't persist.
-      }
+    (state): UiPrefs => ({
+      uiHidden: state.uiHidden,
+      dockTab: persistedDockTab(state),
+      dockFolded: state.dockFolded,
+      dockWidth: state.dockWidth,
+    }),
+    (prefs) => writeStorage(storageKey, prefs),
+    {
+      equalityFn: (a, b) => a.uiHidden === b.uiHidden && a.dockTab === b.dockTab && a.dockFolded === b.dockFolded && a.dockWidth === b.dockWidth,
     },
-    { equalityFn: (a, b) => a.uiHidden === b.uiHidden && a.collapsedPanels === b.collapsedPanels && a.chatPanelWidth === b.chatPanelWidth },
   );
 }
 
-export function createAppStore(): AppStore {
+/**
+ * Saves the stage prefs and follows changes made in other windows (the
+ * browser fires 'storage' only in the windows that did not write).
+ */
+export function syncStagePrefs(store: AppStore): () => void {
+  const unsubscribe = store.subscribeSelector(
+    (state) => state.stage,
+    (stage) => writeStorage(STAGE_PREFS_STORAGE_KEY, stage),
+  );
+  const onStorage = (event: StorageEvent) => {
+    if (event.key !== STAGE_PREFS_STORAGE_KEY) return;
+    let stored: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(event.newValue ?? '{}');
+      if (parsed && typeof parsed === 'object') stored = parsed as Record<string, unknown>;
+    } catch {
+      // A broken value falls back to the defaults below.
+    }
+    store.setState((current) => ({ ...current, stage: parseStagePrefs(stored) }));
+  };
+  window.addEventListener('storage', onStorage);
+  return () => {
+    unsubscribe();
+    window.removeEventListener('storage', onStorage);
+  };
+}
+
+/** @param uiPrefsKey where this view's layout prefs live; omitted for views without a HUD. */
+export function createAppStore(uiPrefsKey?: string): AppStore {
   const initialState: AppState = {
     connected: false,
     connectionLabel: 'Offline',
@@ -234,16 +344,13 @@ export function createAppStore(): AppStore {
     chatComposerText: '',
     uiHidden: false,
     fullscreenActive: false,
-    collapsedPanels: {
-      connection: true,
-      voice: true,
-      stats: true,
-      controls: true,
-      manual: true,
-      mind: true,
-      eventLog: true,
-    },
-    chatPanelWidth: null,
+    dockTab: 'chat',
+    dockReturn: { tab: 'chat', folded: false, uiHidden: false },
+    dockFolded: false,
+    dockWidth: null,
+    stage: DEFAULT_STAGE_PREFS,
+    peers: { face: false, mini: false, dashboard: false },
+    facePerform: null,
     chatVerbosity: 'all',
     manualComposerMode: 'single',
     manualActor: 'main',
@@ -264,11 +371,12 @@ export function createAppStore(): AppStore {
     liveTranscriptDraft: false,
     logs: [],
   };
-  const storedPrefs = readStoredUiPrefs();
-  // Merge panel state so panels added later start with their default.
-  Object.assign(initialState, storedPrefs, {
-    collapsedPanels: { ...initialState.collapsedPanels, ...storedPrefs.collapsedPanels },
-  });
+  if (uiPrefsKey) {
+    Object.assign(initialState, parseUiPrefs(readStorage(uiPrefsKey)), {
+      stage: parseStagePrefs(readStorage(STAGE_PREFS_STORAGE_KEY)),
+    });
+    initialState.dockReturn = { tab: initialState.dockTab, folded: initialState.dockFolded, uiHidden: initialState.uiHidden };
+  }
   const store = createStore<AppState>()(subscribeWithSelector(() => initialState));
 
   return {

@@ -16,10 +16,15 @@ const MOOD_WORDS: Record<string, string> = {
   smile: 'pleased',
 };
 
+/** Tubs's mood in one word; the status bar shows it too. */
+export function moodWordFor(mood: { sleeping: boolean; pos: number; neg: number; arousal: number }): string {
+  if (mood.sleeping) return 'asleep';
+  return MOOD_WORDS[moodExpression({ pos: mood.pos, neg: mood.neg, arousal: mood.arousal }) ?? ''] ?? 'neutral';
+}
+
 /** What Tubs is feeling and doing right now, for the operator. */
 export function MindPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.mind),
     expression: current.currentExpression,
     sleeping: current.sleeping,
     conversationActive: current.conversationActive,
@@ -31,14 +36,12 @@ export function MindPanel({ store }: { store: AppStore }): JSX.Element {
     fieldNotes: current.fieldNotes,
   }));
   const notes = state.fieldNotes;
-  const moodWord = state.sleeping
-    ? 'asleep'
-    : MOOD_WORDS[moodExpression({ pos: state.pos, neg: state.neg, arousal: state.arousal }) ?? ''] ?? 'neutral';
+  const moodWord = moodWordFor(state);
 
   return (
-    <article className={`panel-surface panel-surface-compact transition-all text-left ${state.collapsed ? 'is-collapsed h-11' : ''}`}>
-      <PanelHeader store={store} panelKey="mind" title="Mind" meta={moodWord} />
-      <div className={`panel-body panel-content flex flex-col gap-3 ${state.collapsed ? 'hidden' : ''}`}>
+    <article className="dock-section text-left">
+      <PanelHeader title="Mind" meta={moodWord} />
+      <div className="panel-body panel-content flex flex-col gap-3">
         <div className="flex items-baseline justify-between gap-3 bg-slate-950/50 p-3 rounded-xl border border-slate-800 font-mono text-xs">
           <span className="text-slate-400">Feels <span id="mind-mood" className="font-bold text-cyan-300">{moodWord}</span></span>
           <span className="text-slate-400">Face <span id="mind-expression" className="font-bold text-slate-200">{state.expression}</span></span>

@@ -14,7 +14,6 @@ export function FacePanel({
   controls?: AppShellControls['face'];
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.face),
     faceWorkerReady: current.faceWorkerReady,
     faceWorkerBusy: current.faceWorkerBusy,
     faceCameraActive: current.faceCameraActive,
@@ -239,11 +238,11 @@ export function FacePanel({
     <>
       <article
         id="face-panel-card"
-        className={`panel-surface panel-surface-face face-panel-card transition-all ${state.collapsed ? 'is-collapsed h-11' : ''}`}
+        className="dock-section face-panel-card"
       >
-      <PanelHeader store={store} panelKey="face" title="Face Worker" meta={formatFaceSummary(state)} />
+      <PanelHeader title="Face Worker" meta={formatFaceSummary(state)} />
 
-      <div className={`panel-body panel-face-body ${state.collapsed ? 'hidden' : ''}`}>
+      <div className="panel-body panel-face-body">
         <div className="face-panel-stack">
           <input
             ref={uploadInputRef}

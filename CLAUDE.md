@@ -55,7 +55,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 
 **Entry:** `main.ts` → `bootstrap-react.tsx` (initializes runtimes, React root)
 
-Two build entries: `index.html` (main) and `app-mini.html` (mini display mode).
+Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). `/?view=dashboard` is the operator HUD for a separate screen (no face, no audio, mic or camera); `app-mini.html?embed=1` is the mini tile inside the face window.
 
 **Runtime-based architecture** — each subsystem is a standalone runtime with `init()`, `bind()`, `dispose()`:
 
@@ -71,7 +71,9 @@ Two build entries: `index.html` (main) and `app-mini.html` (mini display mode).
 - `transport/ws-client.ts` — Managed WebSocket with reconnection
 - `state/app-state.ts` — Zustand store with `subscribeWithSelector`
 - `handlers/messages.ts` — Routes WS messages to state updates
-- `ui/app-shell.tsx` — Main React shell with debug panels
+- `ui/app-shell.tsx` — Shells (face, dashboard, mini, spectator) and the operator hotkey router
+- `ui/hud/` — Operator HUD: status bar, tabbed dock, floating transcript, mini tile; pure rules in `dock-state.ts`, `hotkeys.ts`, `transcript.ts`
+- `ui/window-link.ts` — BroadcastChannel between face, mini and dashboard windows (presence, device-state relay)
 
 ### Shared Contracts (`src/shared/contracts/`)
 

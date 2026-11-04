@@ -7,6 +7,7 @@ import type {
   FaceUpdateRequest,
   FaceUpdateResponse,
 } from '../../shared/contracts/http.js';
+import type { AppStore } from '../state/app-state.js';
 import { fetchJson } from '../transport/http.js';
 
 export interface FaceLibrarySummary {
@@ -17,6 +18,24 @@ export interface FaceLibrarySummary {
 export async function loadFaceLibrary(): Promise<EnrolledFace[]> {
   const payload = await fetchJson<FaceLibraryResponse>('/faces');
   return Array.isArray(payload.faces) ? payload.faces : [];
+}
+
+/** Loads the library into the People tab's state; null (and a logged error) if it fails. */
+export async function loadFaceLibraryIntoStore(store: AppStore): Promise<EnrolledFace[] | null> {
+  try {
+    const faces = await loadFaceLibrary();
+    const names = new Set(faces.map((face) => String(face.name ?? '').trim().toLowerCase()).filter(Boolean));
+    store.setState((current) => ({
+      ...current,
+      faceLibraryFaces: faces,
+      faceLibraryEmbeddings: faces.length,
+      faceLibraryPeople: names.size,
+    }));
+    return faces;
+  } catch (error) {
+    store.appendLog('error', error instanceof Error ? error.message : 'Failed to load face library');
+    return null;
+  }
 }
 
 export async function createFaceEntry(payload: FaceCreateRequest & { thumbnail?: string }): Promise<FaceCreateResponse> {

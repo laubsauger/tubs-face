@@ -319,17 +319,6 @@ export function normalizeExpressionName(value: string): ExpressionName {
   return normalized in DEFAULT_EXPRESSION_PROFILES ? normalized : 'idle';
 }
 
-/** Toggled by the E key and the System Vitals "Edit" button. */
-export function toggleFxEditor(store: AppStore): void {
-  store.setState((current) => ({
-    ...current,
-    fxEditorOpen: !current.fxEditorOpen,
-    currentExpression: current.fxEditorOpen
-      ? (current.sleeping ? 'sleep' : 'idle')
-      : current.fxExpressionSelected,
-  }));
-}
-
 export function previewExpression(store: AppStore, expression: ExpressionName): void {
   store.setState((current) => ({
     ...current,

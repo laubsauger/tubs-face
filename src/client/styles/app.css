@@ -95,16 +95,602 @@ a {
   z-index: 0;
 }
 
-.shell.shell-ui-hidden .hud-layer {
+/* ── Operator HUD: a status bar on top, the face stage, the dock beside it.
+   The dock sits next to the face, never over it; the face re-fits itself to
+   whatever the stage leaves (ResizeObserver in the glitch runtime). ── */
+.shell-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas:
+    "status status"
+    "stage dock";
+}
+
+.shell-main > .status-bar { grid-area: status; }
+.shell-main > .stage { grid-area: stage; }
+.shell-main > .dock { grid-area: dock; }
+
+/* Perform mode is the audience's screen. Bar and dock stay mounted (the dock
+   holds the camera video), just out of sight. */
+.shell-main.is-perform > .status-bar,
+.shell-main.is-perform > .dock {
+  display: none;
+}
+
+.stage {
+  /* Mini tile size: its height, capped so it never takes over the stage. */
+  --tile-w: 28cqw;
+  --tile-h: min(calc(var(--tile-w) * 0.625), 42cqh);
+  --tile-gap: clamp(10px, 1.6cqw, 24px);
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  /* Overlays size against the stage, not the window (cqw / cqh). */
+  container-type: size;
+}
+
+.stage:has(.mini-tile-small) { --tile-w: 20cqw; }
+.stage:has(.mini-tile-large) { --tile-w: 36cqw; }
+
+.status-bar {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  background: rgba(5, 9, 18, 0.94);
+  border-bottom: 1px solid rgba(100, 116, 139, 0.24);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.status-chips,
+.status-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* One line: on a narrow window the last chips are cut, never wrapped. */
+.status-chips {
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.status-actions {
+  flex: 0 0 auto;
+  gap: 4px;
+}
+
+.status-chip,
+.status-action {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(203, 213, 225, 0.88);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.status-chip:hover,
+.status-action:hover {
+  border-color: rgba(148, 163, 184, 0.2);
+  background: rgba(148, 163, 184, 0.12);
+  color: #f1f5f9;
+}
+
+.status-chip:focus-visible,
+.status-action:focus-visible,
+.dock-rail-tab:focus-visible,
+.floating-transcript-lines:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 1px;
+}
+
+.status-chip.tone-ok { color: #6ee7b7; }
+.status-chip.tone-live { color: #f9a8d4; }
+.status-chip.tone-muted { color: rgba(148, 163, 184, 0.55); }
+
+.status-chip.tone-bad {
+  border-color: rgba(244, 63, 94, 0.32);
+  background: rgba(244, 63, 94, 0.12);
+  color: #fda4af;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.status-meter {
+  width: 34px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: rgba(51, 65, 85, 0.85);
+}
+
+.status-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--listen-color);
+  transform-origin: left;
+  transition: transform 90ms linear;
+}
+
+.status-action {
+  border-color: rgba(100, 116, 139, 0.36);
+  color: #cbd5e1;
+}
+
+.status-action.is-on {
+  border-color: rgba(34, 211, 238, 0.5);
+  color: #67e8f9;
+}
+
+/* How Tubs listens, shared by the status meter and the listening dot. */
+.listen-idle { --listen-color: #8b96a8; }
+.listen-always-on { --listen-color: #2dd4bf; }
+.listen-wake { --listen-color: #fbbf24; }
+.listen-conversation { --listen-color: #4cdf7a; }
+.listen-transcribing { --listen-color: #4ca8ff; }
+.listen-recording { --listen-color: #f472b6; }
+
+.dock {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  min-height: 0;
+  background: rgba(6, 10, 20, 0.96);
+  border-left: 1px solid rgba(100, 116, 139, 0.24);
+}
+
+.dock-pane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  /* The window may shrink after the width was set; the face keeps room. */
+  max-width: calc(100vw - 372px);
+  border-right: 1px solid rgba(100, 116, 139, 0.18);
+}
+
+.dock-pane[hidden],
+.dock-tabpanel[hidden] {
+  display: none;
+}
+
+.dock-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.dock-resize:hover,
+.dock-resize:active {
+  background: rgba(56, 189, 248, 0.35);
+}
+
+.dock-tabpanel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.dock-section {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+}
+
+.dock-section + .dock-section {
+  border-top: 1px solid rgba(100, 116, 139, 0.28);
+}
+
+.dock-section-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.dock-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 54px;
+  padding: 6px 4px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.dock-rail-tab,
+.dock-rail-fold {
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(148, 163, 184, 0.85);
+  cursor: pointer;
+}
+
+.dock-rail-tab {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 0 6px;
+  font: 600 8.5px/1 var(--font-mono);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.dock-rail-tab:hover,
+.dock-rail-fold:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: #e2e8f0;
+}
+
+.dock-rail-tab.is-active {
+  background: rgba(56, 189, 248, 0.14);
+  box-shadow: inset 2px 0 0 #38bdf8;
+  color: #7dd3fc;
+}
+
+.dock-rail-badge {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 9px;
+  line-height: 15px;
+}
+
+.dock-rail-fold {
+  margin-top: auto;
+  padding: 6px 0;
+  font-size: 18px;
+}
+
+/* The dashboard's chat column takes the face's place. */
+.dashboard-stage {
+  display: flex;
+  flex-direction: column;
+  background: rgba(5, 9, 18, 0.55);
+}
+
+.dashboard-stage > .dock-section {
+  flex: 1 1 auto;
+  width: min(100%, 980px);
+  min-height: 0;
+  margin: 0 auto;
+}
+
+.dashboard-stage .chat-panel-list {
+  font-size: 13px;
+}
+
+/* Who said it: main and mini Tubs each keep their colour (main violet, mini
+   cyan, like their faces), in the chat log and the floating transcript. */
+.chat-tone-main {
+  --tone: #c4b5fd;
+  --tone-card: rgba(76, 29, 149, 0.3);
+  --tone-border: rgba(167, 139, 250, 0.34);
+  --tone-text: #ede9fe;
+}
+
+.chat-tone-small {
+  --tone: #67e8f9;
+  --tone-card: rgba(8, 76, 94, 0.36);
+  --tone-border: rgba(34, 211, 238, 0.34);
+  --tone-text: #cffafe;
+}
+
+.chat-tone-user {
+  --tone: #6ee7b7;
+  --tone-card: rgba(6, 78, 59, 0.38);
+  --tone-border: rgba(16, 185, 129, 0.32);
+  --tone-text: #d1fae5;
+}
+
+.chat-tone-system {
+  --tone: #64748b;
+  --tone-card: transparent;
+  --tone-border: transparent;
+  --tone-text: #64748b;
+}
+
+.chat-entry-name {
+  color: var(--tone);
+}
+
+.chat-entry-emoji {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.chat-entry-card {
+  border: 1px solid var(--tone-border);
+  background: var(--tone-card);
+  color: var(--tone-text);
+}
+
+/* Fillers stay in the log, muted, so nobody takes them for model output. */
+.chat-entry.is-filler .chat-entry-card {
+  border-style: dashed;
+  border-color: rgba(71, 85, 105, 0.9);
+  background: transparent;
+  color: #64748b;
+  font-style: italic;
+}
+
+.chat-entry.is-filler .chat-entry-name {
+  opacity: 0.6;
+}
+
+.floating-transcript {
+  position: absolute;
+  left: var(--tile-gap);
+  bottom: var(--tile-gap);
+  z-index: 26;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: clamp(220px, 30cqw, 420px);
+  pointer-events: none;
+}
+
+/* A mini tile in the same corner sits under the transcript. */
+.stage:has(.mini-tile-bottom-left:not(.is-concealed)) .floating-transcript {
+  bottom: calc(var(--tile-h) + 2 * var(--tile-gap));
+}
+
+.floating-transcript-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 700ms ease, transform 700ms ease;
+  cursor: pointer;
+}
+
+.floating-transcript-lines.is-shown {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.floating-transcript.is-perform .floating-transcript-lines {
+  pointer-events: none;
+}
+
+.transcript-line {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 100%;
+  padding: 5px 10px 6px;
+  border: 1px solid var(--tone-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--tone-card) 70%, rgba(3, 7, 16, 0.84));
+  backdrop-filter: blur(10px);
+  color: var(--tone-text);
+  font-size: 13px;
+  line-height: 1.32;
+}
+
+.transcript-line.is-draft {
+  opacity: 0.72;
+}
+
+.transcript-line.is-filler {
+  border-style: dashed;
+  border-color: rgba(71, 85, 105, 0.9);
+  background: rgba(3, 7, 16, 0.62);
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.transcript-speaker {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--tone);
+  font: 700 9.5px/1.25 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.transcript-emoji {
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.transcript-filler-tag {
+  color: #64748b;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.transcript-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* Rendered invisible rather than removed, so a typed key can focus it at once. */
+.quick-compose {
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  pointer-events: none;
+}
+
+.quick-compose.is-open,
+.quick-compose:focus-within {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+
+.quick-compose-input {
+  width: 100%;
+  padding: 8px 11px;
+  border: 1px solid rgba(56, 189, 248, 0.6);
+  border-radius: 10px;
+  outline: none;
+  background: rgba(2, 6, 23, 0.94);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.14);
+  color: #e2e8f0;
+  font: inherit;
+  font-size: 13px;
+}
+
+.mini-tile {
+  position: absolute;
+  z-index: 25;
+  width: calc(var(--tile-h) * 1.6);
+  height: var(--tile-h);
+  border-radius: 14px;
+  transition: opacity 200ms ease;
+}
+
+.mini-tile-bottom-right { right: var(--tile-gap); bottom: var(--tile-gap); }
+.mini-tile-bottom-left { left: var(--tile-gap); bottom: var(--tile-gap); }
+.mini-tile-top-right { top: var(--tile-gap); right: var(--tile-gap); }
+.mini-tile-top-left { top: var(--tile-gap); left: var(--tile-gap); }
+
+/* Side by side: the stage splits, main Tubs keeps the larger share. */
+.mini-tile-side {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--mini-side-width);
+  height: auto;
+  border-radius: 0;
+}
+
+/* Only the face moves over; its tint and scanlines run on behind both heads,
+   so the stage reads as one scene rather than two boxes. */
+.stage.has-mini-side > .main-visual-shell > .visual-stage {
+  right: var(--mini-side-width);
+}
+
+.stage.has-mini-side .main-visual-face {
+  background: none;
+}
+
+.stage.has-mini-side .main-visual-face::before,
+.stage.has-mini-side .main-visual-face::after {
+  right: calc(-1 * var(--mini-side-width));
+}
+
+/* Top-corner tiles: the subtitle stays clear of them. */
+.stage:has(.mini-tile-top-left:not(.is-concealed)) .visual-overlay-top,
+.stage:has(.mini-tile-top-right:not(.is-concealed)) .visual-overlay-top {
+  width: calc(100% - 2 * (var(--tile-h) * 1.6 + 2 * var(--tile-gap)));
+}
+
+.mini-tile-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color-scheme: dark;
+}
+
+.mini-tile:not(.is-perform) {
+  outline: 1px solid rgba(34, 211, 238, 0.26);
+}
+
+/* Hidden but still running, so Small keeps speaking. */
+.mini-tile.is-concealed {
   opacity: 0;
   pointer-events: none;
 }
 
-.top-bar {
+.mini-tile.is-perform {
+  pointer-events: none;
+}
+
+.mini-tile-bar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  left: 8px;
   display: flex;
-  gap: 10px;
   align-items: center;
+  justify-content: space-between;
+  color: rgba(103, 232, 249, 0.8);
+  font: 600 9px/1 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.mini-tile-bar button {
+  padding: 3px 7px;
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  border-radius: 6px;
+  background: rgba(3, 8, 18, 0.85);
+  color: #a5f3fc;
+  font: inherit;
+  cursor: pointer;
   pointer-events: auto;
+}
+
+/* The mini tile's own page: transparent, so Small stands on the main stage.
+   Its full-screen tint and scanline layers would draw a box around it; the
+   main face's layers already run underneath. */
+:root.is-embedded {
+  background: transparent;
+}
+
+:root.is-embedded .visual-face.is-glitch-enabled::before,
+:root.is-embedded .visual-face.is-glitch-enabled::after {
+  display: none;
 }
 
 .button-compact {
@@ -118,7 +704,6 @@ a {
   inset: 0;
   margin: 0;
   padding: 0;
-  min-height: 100dvh;
   background: transparent;
   overflow: hidden;
 }
@@ -172,50 +757,6 @@ a {
   place-items: center;
   min-width: 0;
   min-height: 0;
-}
-
-.visual-workspace {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.42fr) minmax(0, 1.3fr) minmax(320px, 0.62fr);
-  gap: 18px;
-  align-items: stretch;
-  margin-bottom: 20px;
-}
-
-.workspace-col {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-}
-
-.flex-column-card {
-  display: flex;
-  flex-direction: column;
-}
-
-.flex-column-card>.panel-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.voice-panel-card {
-  min-height: 320px;
-}
-
-.visual-workspace .visual-shell {
-  margin-bottom: 0;
-  min-height: 520px;
-}
-
-.face-panel-card {
-  min-height: 0;
-}
-
-.face-panel-secondary {
-  display: grid;
-  gap: 8px;
 }
 
 .visual-shell.is-sleeping::after {
@@ -342,7 +883,8 @@ a {
   left: 50%;
   bottom: clamp(12px, 1.6vw, 20px);
   transform: translateX(-50%);
-  width: min(680px, calc(100vw - 28px));
+  /* The centre column, clear of the transcript and mini tile corners. */
+  width: min(560px, 44cqw);
   display: grid;
   justify-items: center;
   gap: 5px;
@@ -399,83 +941,36 @@ a {
   transform: translateY(0);
 }
 
-.visual-wave-shell {
-  --wave-color: #7c8798;
-  display: grid;
-  grid-template-rows: 34px auto;
-  justify-items: center;
-  gap: 5px;
-  width: min(100%, 300px);
-}
-
-.visual-wave-shell.is-hidden {
+.visual-overlay [hidden] {
   display: none;
 }
 
-.visual-waveform {
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 2px;
-  height: 34px;
-  padding: 0 6px;
-  overflow: hidden;
+.visual-listening {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
 }
 
-.visual-wave-bar {
-  width: 3px;
-  min-height: 4px;
-  border-radius: 999px;
-  background: var(--wave-color);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--wave-color) 42%, transparent);
-  opacity: 0.78;
-  transition: height 90ms ease-out, background-color 180ms ease, opacity 180ms ease;
+/* For the audience: colour says how Tubs listens, the glow follows the mic. */
+.visual-listening-dot {
+  --mic-level: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--listen-color);
+  box-shadow: 0 0 calc(4px + var(--mic-level) * 18px) calc(var(--mic-level) * 6px) color-mix(in srgb, var(--listen-color) 70%, transparent);
+  opacity: 0.85;
+  transition: box-shadow 90ms linear, background-color 200ms ease;
 }
 
-.visual-wave-label {
-  padding: 3px 10px;
-  border-radius: 999px;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: color-mix(in srgb, var(--wave-color) 72%, white);
-  background: rgba(5, 10, 18, 0.74);
-  border: 1px solid color-mix(in srgb, var(--wave-color) 26%, transparent);
+.visual-listening-dot.listen-recording {
+  animation: listenPulse 1s ease-in-out infinite;
 }
 
-.visual-wave-idle {
-  --wave-color: #8b96a8;
-}
-
-.visual-wave-always-on {
-  --wave-color: #2dd4bf;
-}
-
-.visual-wave-wake {
-  --wave-color: #fbbf24;
-}
-
-.visual-wave-conversation {
-  --wave-color: #4cdf7a;
-}
-
-.visual-wave-transcribing {
-  --wave-color: #4ca8ff;
-}
-
-.visual-wave-recording {
-  --wave-color: #f472b6;
-}
-
-/* Main's push-to-talk pulse: the label breathes while the mic is recording. */
-.visual-wave-recording .visual-wave-label {
-  animation: pttPulse 1s ease-in-out infinite;
-}
-
-@keyframes pttPulse {
+@keyframes listenPulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.45; }
 }
 
 .visual-live-transcript.is-draft {
@@ -515,7 +1010,7 @@ a {
   background: rgba(10, 10, 15, 0.7);
   border: none;
   font-family: var(--font-sans);
-  font-size: clamp(17px, 2.9vw, 36px);
+  font-size: clamp(17px, 2.9cqw, 36px);
   font-weight: 600;
   line-height: 1.4;
   backdrop-filter: blur(8px);
@@ -584,27 +1079,10 @@ a {
   100% { opacity: 0; transform: translate(16px, -55px) scale(1.08); }
 }
 
-/* Panels fade up on load, staggered, as on main. Fill backwards only: a kept
-   transform would turn each panel into a containing block for fixed children. */
-.hud-stack > *,
-.hud-corner > * {
-  animation: panelFadeIn 0.5s ease backwards;
-}
-
-.hud-stack > :nth-child(2) { animation-delay: 0.15s; }
-.hud-stack > :nth-child(3) { animation-delay: 0.3s; }
-
-@keyframes panelFadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .visual-zzz > span,
   .visual-thinking-bar > span,
-  .visual-wave-recording .visual-wave-label,
-  .hud-stack > *,
-  .hud-corner > * {
+  .visual-listening-dot {
     animation: none;
   }
 
@@ -706,163 +1184,20 @@ a {
   backdrop-filter: blur(14px);
 }
 
-.panel-card {
-  position: relative;
-}
-
-.hud-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 20;
-  pointer-events: none;
-}
-
-.hud-stack,
-.hud-corner {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  pointer-events: none;
-  align-items: flex-start;
-}
-
-.hud-stack>*,
-.hud-corner>* {
-  pointer-events: auto;
-}
-
-.hud-layer {
-  /* Height the chat log takes in the bottom-left corner (see .panel-surface-chat). */
-  --chat-reserve: clamp(280px, 36vh, 460px);
-}
-
-.hud-layer:has(.panel-surface-chat.is-collapsed) {
-  --chat-reserve: 56px;
-}
-
-/* The left column scrolls as one and stops above the chat log; expanded
-   panels used to run underneath it, where their buttons couldn't be clicked. */
-.hud-stack-top-left {
-  top: 16px;
-  left: 16px;
-  width: min(340px, calc(100vw - 32px));
-  align-items: flex-start;
-  max-height: calc(100dvh - 32px - var(--chat-reserve) - 14px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-}
-
-.hud-stack-top-left > * {
-  flex-shrink: 0;
-}
-
-.hud-corner-bottom-left {
-  left: 16px;
-  bottom: 16px;
-  align-items: flex-start;
-}
-
-.hud-corner-top-right {
-  top: 16px;
-  right: 16px;
-  align-items: flex-end;
-}
-
-.hud-stack-bottom-right {
-  right: 16px;
-  bottom: 16px;
-  width: min(304px, calc(100vw - 24px));
-  align-items: flex-end;
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  min-height: 0;
-  padding-left: 0;
-  scrollbar-width: thin;
-}
-
-.panel-surface {
-  width: 100%;
-  color: inherit;
-  border-radius: 22px;
-  border: 1px solid rgba(100, 116, 139, 0.28);
-  background:
-    linear-gradient(180deg, rgba(13, 18, 32, 0.9), rgba(9, 14, 26, 0.82)),
-    rgba(9, 14, 26, 0.88);
-  box-shadow:
-    0 18px 44px rgba(2, 6, 23, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  backdrop-filter: blur(18px);
-  overflow: hidden;
-}
-
-.panel-surface.is-collapsed {
-  width: fit-content !important;
-  min-width: 0;
-  max-width: calc(100vw - 32px);
-}
-
-.panel-surface-face {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-  max-width: 100%;
-  max-height: min(68vh, 560px);
-  min-height: 0;
-}
-
-.panel-surface-face .panel-header {
-  gap: 8px;
-  padding: 11px 13px 10px;
-}
-
-.panel-surface-face .panel-header h2 {
-  font-size: 0.72rem;
-  letter-spacing: 0.1em;
-}
-
-.panel-surface-face .panel-meta {
-  font-size: 0.66rem;
-  letter-spacing: 0.08em;
-}
-
-.panel-surface-chat {
-  width: min(440px, calc(100vw - 32px));
-  height: clamp(280px, 36vh, 460px);
-}
-
-.panel-surface-chat.is-collapsed {
-  height: auto;
-}
-
 .panel-header {
   width: 100%;
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
-  background: linear-gradient(180deg, rgba(20, 28, 46, 0.92), rgba(14, 20, 35, 0.9));
-  color: inherit;
-  border: 0;
-  border-bottom: 1px solid rgba(100, 116, 139, 0.24);
-  padding: 14px 16px 13px;
-  text-align: left;
-  cursor: pointer;
-  position: relative;
+  align-items: baseline;
+  border-bottom: 1px solid rgba(100, 116, 139, 0.2);
+  padding: 10px 14px 9px;
   white-space: nowrap;
-}
-
-.panel-title-wrap {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
 }
 
 .panel-header h2 {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.72rem;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: 0.12em;
@@ -871,27 +1206,12 @@ a {
   white-space: nowrap;
 }
 
-.panel-header::after {
-  content: "▾";
-  color: rgba(148, 163, 184, 0.72);
-  font-size: 0.8rem;
-  line-height: 1;
-  transform-origin: center;
-  transition: transform 140ms ease, color 140ms ease;
-}
-
-.panel-header[data-collapsed="true"]::after {
-  transform: rotate(-90deg);
-}
-
-.panel-header:hover::after {
-  color: rgba(226, 232, 240, 0.92);
-}
-
-.panel-meta,
-.panel-toggle-copy {
+.panel-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: rgba(148, 163, 184, 0.84);
-  font-size: 0.74rem;
+  font-size: 0.66rem;
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
@@ -905,7 +1225,7 @@ a {
 .panel-content,
 .panel-face-body,
 .panel-chat-body {
-  padding: 16px;
+  padding: 14px;
 }
 
 .panel-face-body {
@@ -922,7 +1242,6 @@ a {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding-right: 22px;
 }
 
 .chat-panel-list {
@@ -957,26 +1276,6 @@ a {
   border-color: rgba(56, 189, 248, 0.8);
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.14);
   background: rgba(3, 10, 26, 0.92);
-}
-
-.panel-resize-handle {
-  position: absolute;
-  top: 58px;
-  right: 6px;
-  bottom: 16px;
-  width: 8px;
-  border-radius: 999px;
-  cursor: ew-resize;
-  background:
-    linear-gradient(180deg, rgba(56, 189, 248, 0.22), rgba(251, 113, 133, 0.2)),
-    rgba(255, 255, 255, 0.04);
-  opacity: 0.52;
-  transition: opacity 120ms ease, transform 120ms ease;
-}
-
-.panel-resize-handle:hover {
-  opacity: 0.9;
-  transform: scaleX(1.08);
 }
 
 .card h2 {
@@ -1121,10 +1420,15 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+/* Dense rows in the dock: the action buttons share a line, a text field keeps its button beside it. */
 .face-action-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 5px;
+}
+
+.face-action-row:has(input) {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .face-actions-hud .button {
@@ -1214,58 +1518,65 @@ a {
 .mini-select,
 .manual-textarea {
   width: 100%;
-  border-radius: 10px;
+  border-radius: 8px;
   border: 1px solid rgba(125, 211, 252, 0.22);
   background: rgba(5, 12, 22, 0.88);
   color: #e5eefc;
-  padding: 8px 14px;
+  padding: 5px 9px;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.76rem;
 }
 
 .manual-textarea {
   resize: vertical;
-  min-height: 104px;
-  border-radius: 12px;
+  min-height: 84px;
+  border-radius: 10px;
 }
 
 .manual-beats-row {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .manual-beats-shell {
   display: none;
-  margin-top: 14px;
+  margin-top: 10px;
 }
 
 .manual-beats-shell.is-open {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .manual-fields-grid {
   display: grid;
-  gap: 12px;
+  gap: 8px;
 }
 
 .manual-field {
   display: grid;
-  gap: 8px;
-  flex: 1 1 220px;
-  color: rgba(229, 238, 252, 0.78);
+  gap: 4px;
+  flex: 1 1 120px;
+  color: rgba(229, 238, 252, 0.7);
+  font-size: 0.72rem;
 }
 
 .manual-beats-actions {
   display: flex;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
+.manual-beats-actions .button {
+  padding: 5px 12px;
+  font-size: 0.74rem;
+}
+
 .manual-beats-status {
-  min-height: 1.4rem;
+  min-height: 1.2rem;
   color: rgba(229, 238, 252, 0.68);
+  font-size: 0.74rem;
 }
 
 .manual-beats-status.is-ok {
@@ -1717,7 +2028,6 @@ a {
   padding-right: 4px;
 }
 
-.chat-log-list,
 .event-log-list {
   flex: 1;
   min-height: 0;
@@ -1725,114 +2035,26 @@ a {
   padding-right: 12px;
 }
 
-.chat-log-list {
-  gap: 0px;
-}
-
-.chat-log-list::-webkit-scrollbar,
 .event-log-list::-webkit-scrollbar {
   width: 6px;
 }
 
-.chat-log-list::-webkit-scrollbar-thumb,
 .event-log-list::-webkit-scrollbar-thumb {
   background: rgba(125, 211, 252, 0.2);
   border-radius: 999px;
 }
 
-.chat-log-list::-webkit-scrollbar-track,
 .event-log-list::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.chat-log-list .chat-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 0px;
-  align-items: stretch;
-  padding: 1px 10px;
-}
-
-.event-log-list .log,
-.debug-entry {
+.event-log-list .log {
   display: flex;
   flex-direction: column;
   gap: 0px;
   align-items: stretch;
   padding: 0px 0;
   border-bottom: 1px solid rgba(125, 211, 252, 0.08);
-}
-
-.chat-entry-meta,
-.log-meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 0px;
-}
-
-.chat-entry.is-draft {
-  opacity: 0.72;
-}
-
-.chat-entry {
-  border-radius: 10px;
-  background: rgba(10, 18, 34, 0.72);
-}
-
-.chat-entry.chat-actor-user {
-  border-left: 4px solid #7dd3fc;
-  background: rgba(8, 25, 40, 0.82);
-}
-
-.chat-entry.chat-actor-main {
-  border-left: 4px solid #c084fc;
-  background: rgba(22, 14, 40, 0.82);
-}
-
-.chat-entry.chat-actor-small {
-  border-left: 4px solid #22d3ee;
-  background: rgba(8, 29, 36, 0.82);
-}
-
-.chat-entry.chat-actor-system {
-  border-left: 4px solid rgba(148, 163, 184, 0.9);
-  background: rgba(18, 24, 34, 0.78);
-}
-
-.chat-time,
-.log-time {
-  color: rgba(229, 238, 252, 0.52);
-  font-size: 0.72rem;
-}
-
-.chat-text,
-.log-text {
-  color: rgba(229, 238, 252, 0.9);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-
-.chat-speaker {
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.chat-actor-user .chat-speaker {
-  color: #7dd3fc;
-}
-
-.chat-actor-main .chat-speaker {
-  color: #d8b4fe;
-}
-
-.chat-actor-small .chat-speaker {
-  color: #67e8f9;
-}
-
-.chat-actor-system .chat-speaker {
-  color: #cbd5e1;
 }
 
 .sr-only {
@@ -1954,31 +2176,9 @@ a {
     flex-direction: column;
   }
 
-  .visual-workspace {
-    grid-template-columns: 1fr;
-  }
-
   .face-actions>.face-action-row:first-of-type,
   .face-actions>.face-action-row:last-of-type {
     grid-template-columns: 1fr;
-  }
-
-  .hud-stack-top-left {
-    width: min(300px, calc(100vw - 24px));
-  }
-
-  .hud-stack-bottom-right {
-    width: min(300px, calc(100vw - 24px));
-    max-height: calc(100dvh - 24px);
-  }
-
-  .hud-layer {
-    --chat-reserve: clamp(250px, 34vh, 360px);
-  }
-
-  .hud-corner-bottom-left .panel-surface-chat {
-    width: min(340px, calc(100vw - 24px));
-    height: clamp(250px, 34vh, 360px);
   }
 
   .visual-overlay-bottom {
@@ -2018,45 +2218,6 @@ a {
   .face-library-embedding-list {
     grid-template-columns: 1fr;
   }
-}
-
-.compact-sys-status {
-  display: flex;
-  gap: 6px;
-  justify-content: center;
-  margin-top: 0;
-  flex-wrap: wrap;
-}
-
-.compact-sys-badge {
-  display: inline-flex;
-  align-items: center;
-  background: rgba(4, 12, 24, 0.45);
-  border: 1px solid rgba(125, 211, 252, 0.15);
-  border-radius: 7px;
-  overflow: hidden;
-  backdrop-filter: blur(8px);
-}
-
-.compact-sys-label {
-  background: rgba(125, 211, 252, 0.15);
-  padding: 3px 7px;
-  font-size: 0.64rem;
-  font-weight: 700;
-  color: #7dd3fc;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.compact-sys-value {
-  padding: 3px 8px;
-  font-size: 0.72rem;
-  color: rgba(229, 238, 252, 0.85);
-  width: 74px;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 @keyframes fx-flicker {
@@ -2158,26 +2319,12 @@ a {
   }
 }
 
-/* FX editor: side drawer beside the live face, so edits preview on the real renderer. */
-.shell-main.fx-editor-open .visual-stage {
-  left: min(380px, 100vw);
-}
-
-.fx-editor-drawer {
-  position: fixed;
-  inset: 0 auto 0 0;
-  z-index: 1200;
-  width: min(380px, 100vw);
-  display: flex;
-  flex-direction: column;
-  background: rgba(4, 10, 18, 0.94);
-  border-right: 1px solid rgba(125, 211, 252, 0.18);
-  box-shadow: 18px 0 50px rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(18px);
+/* FX editor: a dock tab beside the live face, so edits preview on the real renderer. */
+.fx-editor {
   color: rgba(229, 238, 252, 0.86);
 }
 
-.fx-editor-drawer-header {
+.fx-editor-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -2186,7 +2333,7 @@ a {
   padding: 14px 16px 10px;
 }
 
-.fx-editor-drawer-header h2 {
+.fx-editor-header h2 {
   margin: 0;
   font-family: var(--font-mono);
   font-size: 0.78rem;
@@ -2196,7 +2343,7 @@ a {
   color: #7dd3fc;
 }
 
-.fx-editor-drawer-actions {
+.fx-editor-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2231,8 +2378,9 @@ a {
   padding: 10px 16px 0;
 }
 
-.fx-editor-drawer-body {
+.fx-editor-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   display: flex;
@@ -2277,12 +2425,6 @@ a {
 .control-switch:focus-visible {
   outline: 2px solid #7dd3fc;
   outline-offset: 2px;
-}
-
-/* With the UI hidden (Z) the screen is for the audience: keep the listening
-   indicator, drop the LV/MN debug readout. */
-.shell-ui-hidden .compact-sys-status {
-  display: none;
 }
 
 /* ── Face onboarding wizard (ported from main's enroll mode) ──

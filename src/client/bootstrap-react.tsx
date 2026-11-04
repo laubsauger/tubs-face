@@ -11,20 +11,27 @@ import { createFaceShellRuntime } from './face/runtime.js';
 import { createFxRuntime } from './fx/runtime.js';
 import { createGlitchRuntime } from './glitch/runtime.js';
 import { applyServerMessage } from './handlers/messages.js';
-import { createAppStore, persistUiPrefs, type AppState, type AppStore } from './state/app-state.js';
+import { DASHBOARD_UI_PREFS_STORAGE_KEY, UI_PREFS_STORAGE_KEY, createAppStore, persistUiPrefs, syncStagePrefs, type AppState, type AppStore } from './state/app-state.js';
 import { fetchJson } from './transport/http.js';
 import { createManagedWsClient } from './transport/ws-client.js';
 import { createVisualRuntime } from './ui/visual-runtime.js';
 import { createWindowRuntime } from './ui/window-runtime.js';
+import { createWindowLink, type FaceCommand, type WindowLink } from './ui/window-link.js';
+import { applyFxEditorVisibility, dockTabsFor, isFxEditorVisible } from './ui/hud/dock-state.js';
+import { loadFaceLibraryIntoStore } from './face/library.js';
+import { removeFaceEntry, renameFaceEntry } from './face/library-actions.js';
 import { AppShell, type AppShellControls } from './ui/app-shell.js';
 import type { ConfigResponse, HealthResponse, StatsResponse } from '../shared/contracts/http.js';
 import type { WsServerMessage } from '../shared/contracts/ws.js';
 
 export interface BootstrapOptions {
-  mode: 'main' | 'mini' | 'spectator';
+  /** 'dashboard' is the operator HUD without a face, for its own screen. */
+  mode: 'main' | 'dashboard' | 'mini' | 'spectator';
   root: HTMLElement;
   /** Which face to follow in spectator mode. Defaults to 'main'. */
   actor?: 'main' | 'small';
+  /** Mini only: running as the tile inside the face window, not as its own window. */
+  embedded?: boolean;
 }
 
 export interface BootstrapHandle {
@@ -32,9 +39,14 @@ export interface BootstrapHandle {
 }
 
 export async function bootstrapClient(options: BootstrapOptions): Promise<BootstrapHandle> {
-  const store = createAppStore();
+  // The face window owns the mic, camera and speakers. The dashboard shows the
+  // same HUD on another screen but must never play speech or open a device:
+  // the server sends audio to every client, so a second player doubles it.
   const isController = options.mode === 'main';
+  const isDashboard = options.mode === 'dashboard';
+  const isOperator = isController || isDashboard;
   const isSpectator = options.mode === 'spectator';
+  const store = createAppStore(isController ? UI_PREFS_STORAGE_KEY : isDashboard ? DASHBOARD_UI_PREFS_STORAGE_KEY : undefined);
   // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
   // uses 'mini' for speech runtime (don't generate own TTS — only play broadcast audio_chunks).
   const messageMode: 'main' | 'mini' = options.mode === 'mini' ? 'mini' : 'main';
@@ -47,19 +59,28 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     ? (options.actor ?? 'main')
     : undefined;
 
-  const ambientRuntime = isSpectator ? null : createAmbientRuntime(store, messageMode);
+  const hasFace = !isDashboard;
+  const ambientRuntime = isSpectator || isDashboard ? null : createAmbientRuntime(store, messageMode);
   const emotionRuntime = isController ? createEmotionRuntime(store) : null;
-  const fxRuntime = isController ? createFxRuntime(store) : null;
-  const glitchRuntime = createGlitchRuntime(store, messageMode);
+  const fxRuntime = isOperator ? createFxRuntime(store) : null;
+  const glitchRuntime = hasFace ? createGlitchRuntime(store, messageMode) : null;
   let lastImpulseTurnId: string | undefined;
   const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
   const sleepRuntime = isController ? createSleepRuntime(store) : null;
-  const speechRuntime = createSpeechRuntime(store, speechMode);
-  const visualRuntime = createVisualRuntime(store, messageMode);
+  const speechRuntime = hasFace ? createSpeechRuntime(store, speechMode) : null;
+  const visualRuntime = hasFace ? createVisualRuntime(store, messageMode) : null;
   const voiceRuntime = isController ? createVoiceRuntime(store) : null;
-  const faceBehaviorRuntime = createFaceBehaviorRuntime(store, messageMode);
+  const faceBehaviorRuntime = hasFace ? createFaceBehaviorRuntime(store, messageMode) : null;
   const faceRuntime = isController ? createFaceShellRuntime(store) : null;
-  const windowRuntime = createWindowRuntime(store, messageMode);
+  // The mini tile follows the face window it sits in, not the fullscreen sync.
+  const windowRuntime = isDashboard || options.embedded ? null : createWindowRuntime(store, messageMode);
+  const windowLink: WindowLink | null = isController
+    ? createWindowLink(store, 'face', (command) => runFaceCommand(command))
+    : isDashboard
+      ? createWindowLink(store, 'dashboard')
+      : options.mode === 'mini' && !options.embedded
+        ? createWindowLink(store, 'mini')
+        : null;
   let unlockAudioOnGesture: ((event: Event) => void) | null = null;
   let spectatorUnlockHandler: (() => void) | null = null;
   let headSpeechStateHandler: ((event: Event) => void) | null = null;
@@ -101,7 +122,33 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         },
       } : {}),
     }
-    : undefined;
+    : isDashboard
+      ? createDashboardControls(store, (command) => windowLink?.command(command))
+      : undefined;
+
+  // The dashboard asks; the face window, which has the devices, does.
+  function runFaceCommand(command: FaceCommand): void {
+    switch (command) {
+      case 'toggleCamera':
+        void controls?.face?.toggleCamera();
+        return;
+      case 'toggleAmbient':
+        void controls?.ambient?.toggleEnabled();
+        return;
+      case 'togglePerform':
+        store.setState((current) => ({ ...current, uiHidden: !current.uiHidden }));
+        return;
+      case 'refreshFaces':
+        void controls?.face?.refreshLibrary();
+        return;
+      case 'pttStart':
+        void controls?.voice?.startManualRecording();
+        return;
+      case 'pttStop':
+        controls?.voice?.stopManualRecording();
+        return;
+    }
+  }
 
   const reactRoot = createRoot(options.root);
   // Commit synchronously: the runtimes below look up React's DOM nodes
@@ -119,18 +166,18 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   });
 
   const bindInteractiveRuntimes = () => {
-    speechRuntime.bind(options.root);
-    faceBehaviorRuntime.bind(options.root);
+    speechRuntime?.bind(options.root);
+    faceBehaviorRuntime?.bind(options.root);
     faceRuntime?.bind(options.root);
   };
   window.requestAnimationFrame(() => {
     bindInteractiveRuntimes();
-    visualRuntime.bind(options.root);
-    glitchRuntime.bind(options.root);
+    visualRuntime?.bind(options.root);
+    glitchRuntime?.bind(options.root);
   });
 
   store.subscribeSelector(selectVisualSlice, () => {
-    visualRuntime.bind(options.root);
+    visualRuntime?.bind(options.root);
   }, {
     equalityFn: shallowEqual,
     fireImmediately: false,
@@ -138,14 +185,14 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
 
   // Gaze changes every animation frame; only the two gaze CSS variables follow it.
   store.subscribeSelector((state: AppState) => ({ x: state.gazeX, y: state.gazeY }), () => {
-    visualRuntime.syncGaze();
+    visualRuntime?.syncGaze();
   }, {
     equalityFn: shallowEqual,
     fireImmediately: false,
   });
 
   store.subscribeSelector(selectGlitchSlice, () => {
-    glitchRuntime.bind(options.root);
+    glitchRuntime?.bind(options.root);
   }, {
     equalityFn: shallowEqual,
     fireImmediately: false,
@@ -163,8 +210,24 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     );
   }
 
+  if (isOperator) {
+    persistUiPrefs(store, isController ? UI_PREFS_STORAGE_KEY : DASHBOARD_UI_PREFS_STORAGE_KEY);
+    syncStagePrefs(store);
+    // The FX editor is a dock tab: it is live exactly while that tab is on screen.
+    store.subscribeSelector(isFxEditorVisible, () => store.setState(applyFxEditorVisibility), { fireImmediately: true });
+  }
+  if (isDashboard) {
+    const tabs = dockTabsFor('dashboard');
+    if (!tabs.includes(store.getState().dockTab)) {
+      store.setState((current) => ({ ...current, dockTab: tabs[0] ?? 'settings' }));
+    }
+  }
   if (isController) {
-    persistUiPrefs(store);
+    // A dashboard on another screen takes over the operator's job, so the face
+    // screen goes clean. Z brings the HUD back.
+    store.subscribeSelector((state: AppState) => state.peers.dashboard, (dashboardOpen) => {
+      if (dashboardOpen) store.setState((current) => ({ ...current, uiHidden: true }));
+    });
   }
 
   store.appendLog('info', `${options.mode} client booting`);
@@ -185,21 +248,26 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   await loadInitialState(store);
   ambientRuntime?.init();
   fxRuntime?.init();
-  glitchRuntime.init();
-  speechRuntime.init();
+  glitchRuntime?.init();
+  speechRuntime?.init();
   // Not awaited: getUserMedia can wait on a permission prompt forever, and the
   // face must still connect and run on an unattended display.
   void voiceRuntime?.init().catch((error: unknown) => {
     store.appendLog('error', `Voice init failed: ${error instanceof Error ? error.message : String(error)}`);
   });
-  faceBehaviorRuntime.init();
+  faceBehaviorRuntime?.init();
   faceRuntime?.init();
-  windowRuntime.init();
+  windowRuntime?.init();
+  if (isDashboard) {
+    void loadFaceLibraryIntoStore(store);
+  }
   emotionRuntime?.init();
   sleepRuntime?.init();
 
   const wsClient = createManagedWsClient({
-    ...(isSpectator ? { role: 'spectator' as const } : {}),
+    // The server takes nothing but pings from a spectator, so the dashboard
+    // cannot send face motion, speech state or proactive turns by mistake.
+    ...(isSpectator || isDashboard ? { role: 'spectator' as const } : {}),
     onOpen: () => {
       store.setState((current) => ({
         ...current,
@@ -242,18 +310,18 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       }
       sleepRuntime?.onServerMessage(message);
       applyServerMessage(store, message, messageMode, targetActor);
-      speechRuntime.handleServerMessage(message, targetActor);
+      speechRuntime?.handleServerMessage(message, targetActor);
     },
   });
 
-  if (!isSpectator) {
+  if (speechRuntime && !isSpectator) {
     unlockAudioOnGesture = () => {
       speechRuntime.unlockAudio();
     };
     window.addEventListener('pointerdown', unlockAudioOnGesture, true);
     window.addEventListener('keydown', unlockAudioOnGesture, true);
 
-    faceBehaviorRuntime.attachSender((message) => {
+    faceBehaviorRuntime?.attachSender((message) => {
       wsClient.send(message);
     });
 
@@ -313,7 +381,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   }
 
   // Spectator tap-to-unlock: pre-create and resume the streaming AudioContext
-  if (isSpectator) {
+  if (speechRuntime && isSpectator) {
     spectatorUnlockHandler = () => {
       speechRuntime.unlockAudio();
     };
@@ -345,10 +413,50 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         window.removeEventListener('tubs:face-enrolled', faceEnrolledHandler);
       }
       wsClient.disconnect();
+      windowLink?.dispose();
       sleepRuntime?.dispose();
-      speechRuntime.dispose();
+      speechRuntime?.dispose();
       ambientRuntime?.dispose?.();
     },
+  };
+}
+
+/**
+ * The dashboard's controls: camera, mic and ambient sound go to the face
+ * window. Library edits happen here and the face window reloads its library,
+ * which it matches visitors against. Detection and onboarding need the camera,
+ * so they stay on the face window.
+ */
+function createDashboardControls(store: AppStore, faceCommand: (command: FaceCommand) => void): AppShellControls {
+  const refreshHere = (appStore: AppStore) => loadFaceLibraryIntoStore(appStore);
+  const refreshEverywhere = async (appStore: AppStore) => {
+    await refreshHere(appStore);
+    faceCommand('refreshFaces');
+  };
+  const faceWindowOnly = async (): Promise<never> => {
+    throw new Error('Only the face window has the camera');
+  };
+  return {
+    ambient: { toggleEnabled: async () => faceCommand('toggleAmbient') },
+    voice: {
+      enableMic: async () => {},
+      startManualRecording: async () => faceCommand('pttStart'),
+      stopManualRecording: () => faceCommand('pttStop'),
+    },
+    face: {
+      toggleCamera: async () => faceCommand('toggleCamera'),
+      detectFile: async () => store.appendLog('error', 'Detect from a photo on the face window'),
+      saveDetectedFace: async () => store.appendLog('error', 'Save faces on the face window'),
+      getCameraStream: () => null,
+      beginEnrollment: () => {},
+      endEnrollment: () => {},
+      captureEnrollmentSample: faceWindowOnly,
+      saveEnrollment: faceWindowOnly,
+      refreshLibrary: () => refreshEverywhere(store),
+      renameFace: (id, name) => renameFaceEntry(store, id, name, refreshEverywhere),
+      deleteFace: (id) => removeFaceEntry(store, id, refreshEverywhere),
+    },
+    remote: { faceCommand },
   };
 }
 

@@ -1,7 +1,7 @@
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
-import { loadFaceLibrary } from './library.js';
+import { loadFaceLibraryIntoStore } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
 import { type Snapshot, wantsSnapshot } from './auto-onboarding.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
@@ -408,23 +408,9 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   }
 
   async function refreshFaceLibraryState(appStore: AppStore): Promise<void> {
-    try {
-      const faces = await loadFaceLibrary();
-      const names = new Set(
-        faces
-          .map((face) => normalizeFacePersonKey(face.name))
-          .filter(Boolean),
-      );
+    const faces = await loadFaceLibraryIntoStore(appStore);
+    if (faces) {
       faceLibrary = faces;
-      appStore.setState((current) => ({
-        ...current,
-        faceLibraryFaces: faces,
-        faceLibraryEmbeddings: faces.length,
-        faceLibraryPeople: names.size,
-      }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to load face library';
-      appStore.appendLog('error', message);
     }
   }
 
@@ -535,8 +521,4 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     stableFacesAt = 0;
     return [];
   }
-}
-
-function normalizeFacePersonKey(name: string | null | undefined): string {
-  return String(name ?? '').trim().toLowerCase();
 }
