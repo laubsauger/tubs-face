@@ -1,5 +1,6 @@
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
+import { IDLE_SETTLE_MS } from '../behavior/emotion-runtime.js';
 import { createGazeController, nearestFaceIndex, type GazeSample } from './gaze.js';
 
 const BLINK_MIN_MS = 3800;
@@ -8,6 +9,11 @@ const BEHAVIOR_MIN_MS = 3600;
 const BEHAVIOR_MAX_MS = 5800;
 const WANDER_X_RANGE = 0.32;
 const WANDER_Y_RANGE = 0.2;
+// Idle life: now and then a smile that lasts, instead of a flip every few seconds.
+const IDLE_SMILE_CHANCE = 0.15;
+const IDLE_SMILE_MIN_MS = 2500;
+const IDLE_SMILE_MAX_MS = 5000;
+const WANDER_CHANCE = 0.2;
 // A wander holds long enough to read as a look, and doesn't come back to back.
 const WANDER_HOLD_MIN_MS = 1500;
 const WANDER_HOLD_MAX_MS = 4000;
@@ -60,6 +66,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let activeFaceY = Number.NaN;
   let nextFaceSwitchAt = 0;
   let lastWanderAt = Number.NEGATIVE_INFINITY;
+  // When the face last came back to idle; idle smiles wait for it to settle.
+  let idleSince = Date.now();
   let partnerMotionAt = 0;
   let partnerX = 0;
   let partnerY = 0;
@@ -115,6 +123,16 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       store.subscribeSelector(
         (state) => state.currentExpression === 'thinking',
         (thinking) => (thinking ? startThinkingGaze() : endThinkingGaze()),
+        { fireImmediately: false },
+      );
+
+      store.subscribeSelector(
+        (state) => state.currentExpression === 'idle',
+        (idle) => {
+          if (idle) {
+            idleSince = Date.now();
+          }
+        },
         { fireImmediately: false },
       );
 
@@ -203,8 +221,12 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       return;
     }
 
-    const roll = Math.random();
-    if (roll < 0.42) {
+    const action = chooseIdleAction(Math.random(), {
+      tracking,
+      idleForMs: Date.now() - idleSince,
+      sinceWanderMs: Date.now() - lastWanderAt,
+    });
+    if (action === 'smile') {
       store.setState((current) => ({
         ...current,
         currentExpression: 'smile',
@@ -219,20 +241,11 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
           ...current,
           currentExpression: 'idle',
         }));
-      }, randBetween(900, 1800));
+      }, randBetween(IDLE_SMILE_MIN_MS, IDLE_SMILE_MAX_MS));
       return;
     }
 
-    if (roll < 0.82) {
-      store.setState((current) => ({
-        ...current,
-        idleVariant: Math.random() < 0.74 ? 'soft' : 'flat',
-      }));
-      return;
-    }
-
-    // Only wander when not tracking a face
-    if (!tracking && Date.now() - lastWanderAt >= WANDER_MIN_GAP_MS) {
+    if (action === 'wander') {
       lastWanderAt = Date.now();
       const nextX = (Math.random() * 2 - 1) * WANDER_X_RANGE;
       const nextY = (Math.random() * 2 - 1) * WANDER_Y_RANGE;
@@ -498,6 +511,24 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     }
     return true;
   }
+}
+
+export type IdleAction = 'smile' | 'wander' | 'none';
+
+/**
+ * What one idle behaviour step does, for a dice roll in 0..1. Most steps do
+ * nothing: the face lives through its breathing and gaze, and a smile that
+ * comes every few seconds stops meaning anything.
+ */
+export function chooseIdleAction(roll: number, context: { tracking: boolean; idleForMs: number; sinceWanderMs: number }): IdleAction {
+  if (roll < IDLE_SMILE_CHANCE) {
+    return context.idleForMs >= IDLE_SETTLE_MS ? 'smile' : 'none';
+  }
+  // Only wander when not tracking a face, and not right after the last time.
+  if (roll >= 1 - WANDER_CHANCE && !context.tracking && context.sinceWanderMs >= WANDER_MIN_GAP_MS) {
+    return 'wander';
+  }
+  return 'none';
 }
 
 function randBetween(min: number, max: number): number {

@@ -79,7 +79,6 @@ export interface AppState {
   currentReactionEmoji: string;
   gazeX: number;
   gazeY: number;
-  idleVariant: 'soft' | 'flat';
   blinkActive: boolean;
   lastBlinkAt: number | null;
   moodPos: number;
@@ -308,7 +307,6 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
     currentReactionEmoji: '',
     gazeX: 0,
     gazeY: 0,
-    idleVariant: 'soft',
     blinkActive: false,
     lastBlinkAt: null,
     moodPos: 0.24,

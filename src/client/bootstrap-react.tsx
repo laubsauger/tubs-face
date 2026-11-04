@@ -488,7 +488,6 @@ function selectVisualSlice(state: AppState) {
     sleeping: state.sleeping,
     audioPlaying: state.audioPlaying,
     currentExpression: state.currentExpression,
-    idleVariant: state.idleVariant,
     blinkActive: state.blinkActive,
     fxBaseColorDraft: state.fxBaseColorDraft,
     config: state.config,

@@ -44,7 +44,6 @@ export function createVisualRuntime(store: AppStore, mode: 'main' | 'mini'): Vis
       );
       syncGlitchFaceChildren(face);
       face.dataset.expression = state.currentExpression;
-      face.dataset.idleVariant = state.idleVariant;
       face.dataset.renderQuality = config?.renderQuality ?? 'high';
       face.classList.toggle('is-speaking', state.audioPlaying);
       face.classList.toggle('is-sleeping', state.sleeping);

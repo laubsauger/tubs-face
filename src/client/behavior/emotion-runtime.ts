@@ -6,15 +6,16 @@ const BASELINE = Object.freeze({
   arousal: 0.2,
 });
 
-const PULSE_DURATION_MS = 920;
+// Long enough to read as a feeling rather than a twitch.
+const PULSE_DURATION_MS = 2400;
 const EXPRESSION_PULSE_DURATIONS_MS: Record<string, number> = Object.freeze({
-  smile: 980,
-  smug: 1600,
-  happy: 1300,
-  sad: 3200,
-  angry: 1800,
-  thinking: 1100,
-  love: 1600,
+  smile: 2400,
+  smug: 3000,
+  happy: 2600,
+  sad: 4500,
+  angry: 3000,
+  thinking: 2200,
+  love: 3000,
 });
 // How long a feeling lingers. It used to fade in about a quarter second, so
 // the face forgot an insult before the reply was over. Now a run of insults
@@ -23,8 +24,14 @@ export const MOOD_HALF_LIFE_MS = 30_000;
 const MOOD_WRITE_EPSILON = 0.002;
 const SLEEP_MOOD_HALF_LIFE_MS = 8000;
 // Idle flickers of the current mood, spaced so they read as moods, not tics.
-const AUTO_PULSE_MIN_GAP_MS = 3500;
-const AUTO_PULSE_MAX_GAP_MS = 7000;
+const AUTO_PULSE_MIN_GAP_MS = 9000;
+const AUTO_PULSE_MAX_GAP_MS = 16_000;
+/**
+ * The face has to be back at idle this long before an idle change (a mood
+ * pulse, an idle smile). Without it a reply ending flipped straight into the
+ * next face, and the expression changed every second or two.
+ */
+export const IDLE_SETTLE_MS = 4000;
 
 type PulseExpression = 'smile' | 'smug' | 'happy' | 'sad' | 'angry' | 'thinking' | 'love';
 
@@ -57,6 +64,7 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
   let lastTickMs = 0;
   let pulseTimer: number | null = null;
   let nextAutoPulseAt = 0;
+  let idleSince = Date.now();
 
   return {
     init(): void {
@@ -128,7 +136,10 @@ export function createEmotionRuntime(store: AppStore): EmotionRuntime {
 
   function maybeAutoPulse(now: number): void {
     const state = store.getState();
-    if (now < nextAutoPulseAt || state.sleeping || state.audioPlaying || state.currentExpression !== 'idle') {
+    if (state.currentExpression !== 'idle') {
+      idleSince = now;
+    }
+    if (now < nextAutoPulseAt || state.sleeping || state.audioPlaying || now - idleSince < IDLE_SETTLE_MS) {
       return;
     }
     nextAutoPulseAt = now + AUTO_PULSE_MIN_GAP_MS + Math.random() * (AUTO_PULSE_MAX_GAP_MS - AUTO_PULSE_MIN_GAP_MS);
