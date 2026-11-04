@@ -219,7 +219,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       store.appendLog('error', 'WebSocket error');
     },
     onMessage: (message: WsServerMessage) => {
-      if (message.type === 'incoming' || message.type === 'speak' || message.type === 'turn_script' || message.type === 'donation_signal') {
+      if (message.type === 'incoming') {
+        proactiveRuntime?.onUserTurn();
+      } else if (message.type === 'speak' || message.type === 'speak_end' || message.type === 'turn_script' || message.type === 'donation_signal') {
         proactiveRuntime?.onActivity();
       }
       if (message.type === 'speak' && message.emotion?.impulse) {
@@ -234,7 +236,6 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       sleepRuntime?.onServerMessage(message);
       applyServerMessage(store, message, messageMode, targetActor);
       speechRuntime.handleServerMessage(message, targetActor);
-      proactiveRuntime?.onPresenceChanged();
     },
   });
 

@@ -20,6 +20,11 @@ const PARTNER_BLINK_MIN_GAP_MS = 900;
 const MICRO_SACCADE_INTERVAL_MS = 1200;
 const MICRO_SACCADE_MAX_INTERVAL_MS = 3200;
 const MICRO_SACCADE_AMPLITUDE = 0.045;
+// People look away while working out what to say and back when they start
+// talking. A face that stares while "thinking" reads as a frozen screen.
+const THINKING_GAZE_CHANCE = 0.7;
+const THINKING_GAZE_X = 0.5;
+const THINKING_GAZE_Y = -0.4;
 // face_motion feeds the partner face and spectators over the network; ~30 Hz is
 // smooth there and halves the traffic of sending every animation frame.
 const MOTION_SEND_INTERVAL_MS = 33;
@@ -62,6 +67,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let lastMotionSentAt = 0;
   let lastSentX = Number.NaN;
   let lastSentY = Number.NaN;
+  let thinkingGazeTimer: number | null = null;
+  let thinkingGaze = false;
 
   return {
     bind(root: HTMLElement): void {
@@ -99,6 +106,12 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       scheduleMicroSaccade();
       resetGaze();
 
+      store.subscribeSelector(
+        (state) => state.currentExpression === 'thinking',
+        (thinking) => (thinking ? startThinkingGaze() : endThinkingGaze()),
+        { fireImmediately: false },
+      );
+
       // Start face tracking animation immediately when faces appear
       store.subscribeSelector(
         (state) => state.faceLastFaces,
@@ -121,6 +134,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(smileResetTimer);
       clearManagedTimer(partnerBlinkTimer);
       clearManagedTimer(microSaccadeTimer);
+      clearManagedTimer(thinkingGazeTimer);
       if (rafId != null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -221,10 +235,35 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     }
   }
 
+  function startThinkingGaze(): void {
+    if (store.getState().sleeping || Math.random() >= THINKING_GAZE_CHANCE) {
+      return;
+    }
+    clearManagedTimer(thinkingGazeTimer);
+    thinkingGazeTimer = window.setTimeout(() => {
+      thinkingGazeTimer = null;
+      thinkingGaze = true;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      lookAt(side * THINKING_GAZE_X, THINKING_GAZE_Y);
+    }, randBetween(120, 320));
+  }
+
+  function endThinkingGaze(): void {
+    clearManagedTimer(thinkingGazeTimer);
+    thinkingGazeTimer = null;
+    if (!thinkingGaze) {
+      return;
+    }
+    thinkingGaze = false;
+    if (!steerTowardDetectedFace()) {
+      resetGaze();
+    }
+  }
+
   function scheduleMicroSaccade(): void {
     clearManagedTimer(microSaccadeTimer);
     microSaccadeTimer = window.setTimeout(() => {
-      if (shouldAnimate() && hasTrackedFaces()) {
+      if (shouldAnimate() && hasTrackedFaces() && !thinkingGaze) {
         // Small involuntary eye movements while fixating on a face
         saccadeOffsetX = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
         saccadeOffsetY = (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE;
@@ -415,6 +454,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   }
 
   function steerTowardDetectedFace(): boolean {
+    if (thinkingGaze) {
+      return false;
+    }
     const state = store.getState();
     const frameWidth = state.faceFrameWidth;
     const frameHeight = state.faceFrameHeight;
