@@ -6,7 +6,7 @@ import { MindPanel } from './panels/MindPanel.js';
 import { EventLogPanel } from './panels/EventLogPanel.js';
 import { ChatPanel } from './panels/ChatPanel.js';
 import { useCallback, useRef, useState, useEffect, type JSX } from 'react';
-import type { EnrollmentCapture } from '../face/runtime.js';
+import type { EnrollmentCapture } from '../face/enrollment.js';
 import type { AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import { patchConfig, toggleFxEditor } from '../fx/runtime.js';

@@ -3,18 +3,18 @@ import type { AppState } from '../state/app-state.js';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, reconcileIncomingChat, upsertChatDraft } from '../chat/state.js';
-import { detectDonationSignal, inferDonationPrompt } from '../message-handler-utils.js';
+import { detectDonationSignal } from '../message-handler-utils.js';
+import { hasRecentOutgoingAssistantEntry } from '../chat/dedupe.js';
+import { applyDonationPrompt, clearDonationPromptTimer, compactDonationSignal, nextExpression, triggerDonationJoy } from './donation-joy.js';
 
-const DONATION_JOY_DURATION_MS = 1_800;
-const DONATION_PROMPT_HIDE_MS = 12_000;
-const JOY_LOCKED_EXPRESSIONS = new Set(['idle', 'listening', 'thinking']);
 const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config']);
-let donationJoyUntil = 0;
-let donationJoyResetTimer: number | null = null;
-let donationPromptTimer: number | null = null;
+
 let activeTurnScriptId: string | null = null;
+
 let activeTurnScriptBeats: TurnBeat[] = [];
+
 let streamedBeatChatKeys = new Set<string>();
+
 let streamedTurnActorChatEntryIds = new Map<string, string>();
 
 /**
@@ -460,86 +460,6 @@ function clearLiveTranscript(store: AppStore): void {
   }));
 }
 
-function applyDonationPrompt(
-  store: AppStore,
-  explicitSignal: AppState['currentDonationSignal'] | { show?: boolean } | null,
-  text: string,
-): void {
-  const nextSignal: AppState['currentDonationSignal'] = explicitSignal && 'show' in explicitSignal
-    ? (explicitSignal.show ? {
-      certainty: 'implied',
-      source: 'assistant-explicit',
-      ts: Date.now(),
-    } : null)
-    : (explicitSignal && 'certainty' in explicitSignal ? explicitSignal : null);
-  const inferredSignal = !nextSignal && inferDonationPrompt(text)
-    ? {
-      certainty: 'implied' as const,
-      source: 'assistant-text',
-      ts: Date.now(),
-    }
-    : null;
-  const signal = nextSignal ?? inferredSignal;
-  if (!signal) {
-    return;
-  }
-  clearDonationPromptTimer();
-  store.setState((current) => ({
-    ...current,
-    currentDonationSignal: signal,
-  }));
-  donationPromptTimer = window.setTimeout(() => {
-    donationPromptTimer = null;
-    store.setState((current) => ({
-      ...current,
-      currentDonationSignal: null,
-    }));
-  }, DONATION_PROMPT_HIDE_MS);
-}
-
-function clearDonationPromptTimer(): void {
-  if (donationPromptTimer == null) {
-    return;
-  }
-  window.clearTimeout(donationPromptTimer);
-  donationPromptTimer = null;
-}
-
-function isDonationJoyActive(now = Date.now()): boolean {
-  return now < donationJoyUntil;
-}
-
-function nextExpression(currentExpression: AppState['currentExpression'], proposedExpression: AppState['currentExpression']): AppState['currentExpression'] {
-  if (isDonationJoyActive() && JOY_LOCKED_EXPRESSIONS.has(proposedExpression)) {
-    return currentExpression;
-  }
-  return proposedExpression;
-}
-
-function triggerDonationJoy(store: AppStore): void {
-  donationJoyUntil = Date.now() + DONATION_JOY_DURATION_MS;
-  store.setState((current) => ({
-    ...current,
-    currentExpression: 'love',
-  }));
-  if (donationJoyResetTimer != null) {
-    window.clearTimeout(donationJoyResetTimer);
-  }
-  donationJoyResetTimer = window.setTimeout(() => {
-    donationJoyResetTimer = null;
-    if (Date.now() < donationJoyUntil) {
-      return;
-    }
-    const state = store.getState();
-    if (!state.sleeping && !state.audioPlaying && state.currentExpression === 'love') {
-      store.setState((current) => ({
-        ...current,
-        currentExpression: 'idle',
-      }));
-    }
-  }, DONATION_JOY_DURATION_MS + 120);
-}
-
 function describeTurnContext(meta: NonNullable<Extract<WsServerMessage, { type: 'turn_context' }>['meta']>): string {
   const mode = meta.mode ?? 'text';
   const historyMessages = meta.historyMessages ?? 0;
@@ -626,48 +546,4 @@ function maybeAppendTimedDualHeadChat(
     }
     return nextState;
   });
-}
-
-function compactDonationSignal(message: Extract<WsServerMessage, { type: 'donation_signal' }>) {
-  return {
-    certainty: message.certainty,
-    ...(message.source ? { source: message.source } : {}),
-    ...(message.amount ? { amount: message.amount } : {}),
-    ...(message.currency ? { currency: message.currency } : {}),
-    ...(message.donor ? { donor: message.donor } : {}),
-    ...(message.note ? { note: message.note } : {}),
-    ...(message.reference ? { reference: message.reference } : {}),
-    ...(message.ts ? { ts: message.ts } : {}),
-  };
-}
-
-function hasRecentOutgoingAssistantEntry(
-  state: AppState,
-  text: string,
-  actor: 'main' | 'small',
-): boolean {
-  const normalized = normalizeChatComparisonText(text);
-  if (!normalized) {
-    return false;
-  }
-
-  for (let index = state.chatEntries.length - 1; index >= 0; index -= 1) {
-    const entry = state.chatEntries[index];
-    if (!entry || entry.type !== 'out' || entry.actor !== actor || entry.draft) {
-      continue;
-    }
-    if ((Date.now() - entry.ts) > 15_000) {
-      break;
-    }
-    return normalizeChatComparisonText(entry.text) === normalized;
-  }
-
-  return false;
-}
-
-function normalizeChatComparisonText(text: string): string {
-  return String(text ?? '')
-    .replace(/^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*\s*/u, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
