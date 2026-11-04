@@ -19,7 +19,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
-import { cancelAppearanceGreeting, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
+import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
 const clients = new Set<WebSocket>();
@@ -141,10 +141,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
           : [];
-        const prompt = names.length > 0
-          ? `Known person nearby: ${names.join(' and ')}. Greet them by name and make it impossible not to reply.`
-          : 'Someone is nearby but has not spoken. Break the ice with something unexpected.';
-        scheduleAppearanceGreeting(prompt, broadcast);
+        scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
       }
       return;
     case 'face_greeting':
@@ -155,6 +152,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'presence':
       if (!message.present) onVisitorLeft();
+      else if (message.newVisitor) onNewVisitor();
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.

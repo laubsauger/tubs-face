@@ -3,6 +3,7 @@ import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { createFaceEntry, deleteFaceEntry, loadFaceLibrary, updateFaceEntry } from './library.js';
 import { annotateDetectedFaces, cosineSimilarity } from './matching.js';
+import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
 import { createFaceWorkerClient, type FaceWorkerClient } from './worker-client.js';
 
 const ENROLLMENT_CAPTURE_RETRY_DELAY_MS = 250;
@@ -57,10 +58,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let emptyFrameCount = 0;
   let sender: ((message: WsClientMessage) => void) | null = null;
   let lastAppearanceSignature = '';
-  // Same threshold as the server's VISITOR_GONE_MS.
-  const VISITOR_GONE_MS = 20_000;
-  let emptySince = 0;
-  let reportedGone = false;
+  const visitorTracker = createVisitorTracker();
   let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
@@ -83,7 +81,6 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     },
     onFaces: (packet) => {
       const wasEmpty = stableFaces.length === 0;
-      const detectedAt = Date.now();
       const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
       const recognizedNames = [...new Set(
         faces
@@ -109,15 +106,14 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       lastInferenceMs = Math.max(250, packet.inferenceMs || lastInferenceMs);
       drawOverlay(faces);
 
-      const shouldSendAppearance = Boolean(
-        sender &&
-        captureCanvas.width > 0 &&
-        faces.length > 0 &&
-        (
-          wasEmpty ||
-          appearanceSignature !== lastAppearanceSignature
-        ),
-      );
+      const now = Date.now();
+      const greeting = handleVisitorEvents(visitorTracker.update(faces, now, now < store.getState().conversationUntil), faces.length);
+      // Someone joined, or a face got recognized, while people stayed in view.
+      const groupChanged = faces.length > 0 && !wasEmpty && appearanceSignature !== lastAppearanceSignature;
+      if (faces.length > 0) {
+        lastAppearanceSignature = appearanceSignature;
+      }
+      const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && faces.length > 0 && (greeting || groupChanged));
 
       if (shouldSendAppearance && sender) {
         sender({
@@ -125,29 +121,14 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           frame: captureCanvas.toDataURL('image/jpeg', 0.6),
           faces: recognizedNames,
           count: faces.length,
+          ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
-        lastAppearanceSignature = appearanceSignature;
         lastVisionFrameAt = Date.now();
       } else if (faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= VISION_REFRESH_MS) {
         // The server forgets a camera description after 60 s. While someone is
         // still in view, refresh it (vision only, no new greeting).
         sender({ type: 'camera_frame', frame: captureCanvas.toDataURL('image/jpeg', 0.6) });
         lastVisionFrameAt = Date.now();
-      } else if (faces.length === 0) {
-        lastAppearanceSignature = '';
-      }
-
-      // Tell the server once per absence that the visitor is gone, so the
-      // next person is not greeted with the last one's conversation.
-      if (faces.length > 0) {
-        emptySince = 0;
-        reportedGone = false;
-      } else {
-        emptySince ||= detectedAt;
-        if (!reportedGone && sender && detectedAt - emptySince >= VISITOR_GONE_MS) {
-          reportedGone = true;
-          sender({ type: 'presence', present: false, count: 0 });
-        }
       }
 
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
@@ -437,6 +418,41 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       const message = error instanceof Error ? error.message : 'Failed to load face library';
       appStore.appendLog('error', message);
     }
+  }
+
+  /**
+   * Tells the server who is in front of Tubs. Returns the greeting this
+   * detection deserves: a first arrival or a new visitor gets one, the same
+   * visitor back after a while gets a "welcome back", a glance away gets none.
+   */
+  function handleVisitorEvents(events: VisitorEvent[], count: number): { returning: boolean; awayMs?: number } | null {
+    let greeting: { returning: boolean; awayMs?: number } | null = null;
+    for (const event of events) {
+      switch (event.type) {
+        case 'arrived':
+          greeting = { returning: false };
+          break;
+        case 'new_visitor':
+          // Before the greeting, so the server has forgotten the last visitor.
+          sender?.({ type: 'presence', present: true, newVisitor: true, faces: event.names, count });
+          greeting = { returning: false };
+          break;
+        case 'returned':
+          if (event.awayMs >= RETURN_GREETING_MIN_AWAY_MS) greeting = { returning: true, awayMs: event.awayMs };
+          break;
+        case 'call_back':
+          sender?.({
+            type: 'proactive',
+            context: `${event.name} just walked away from you mid-conversation. Call them back by name, your way: annoyed, curious, or making it about you. Do not beg.`,
+            faces: [event.name],
+          });
+          break;
+        case 'gone':
+          sender?.({ type: 'presence', present: false, count: 0 });
+          break;
+      }
+    }
+    return greeting;
   }
 
   function stabilizeFaces(nextFaces: DetectedFace[]): DetectedFace[] {

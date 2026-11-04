@@ -21,7 +21,7 @@ vi.mock('../observability/conversation-log.js', () => ({
 vi.mock('../observability/langfuse.js', () => ({ captureTurnTrace: () => {} }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { cancelAppearanceGreeting, isInConversation, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, VISITOR_GONE_MS } = await import('./turns.js');
+const { appearancePrompt, cancelAppearanceGreeting, isInConversation, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startUserTurn, CONVERSATION_WINDOW_MS, STILL_TALKING_MS } = await import('./turns.js');
 const { buildContents, getVisualContext, pushHistory, updateVisualContext } = await import('./context.js');
 
 function collect() {
@@ -119,9 +119,25 @@ describe('turns', () => {
     expect(onVisitorLeft(2_000_000 + 5_000)).toBe(false);
     expect(buildContents('next').meta.historyMessages).toBe(2);
 
-    expect(onVisitorLeft(2_000_000 + VISITOR_GONE_MS)).toBe(true);
+    expect(onVisitorLeft(2_000_000 + STILL_TALKING_MS)).toBe(true);
     expect(buildContents('next').meta.historyMessages).toBe(0);
-    expect(getVisualContext(2_000_000 + VISITOR_GONE_MS)).toBe('');
-    expect(isInConversation(2_000_000 + VISITOR_GONE_MS)).toBe(false);
+    expect(getVisualContext(2_000_000 + STILL_TALKING_MS)).toBe('');
+    expect(isInConversation(2_000_000 + STILL_TALKING_MS)).toBe(false);
+  });
+
+  // The face only reports a new visitor when the embedding says it is someone else.
+  it('forgets at once when a different person comes into view, even mid-conversation', async () => {
+    await startUserTurn({ text: 'nice hat', source: 'voice', broadcast: collect().broadcast });
+    pushHistory('user', 'nice hat');
+    pushHistory('model', 'It is a lid.');
+    onNewVisitor();
+    expect(buildContents('hi').meta.historyMessages).toBe(0);
+    expect(isInConversation()).toBe(false);
+  });
+
+  it('welcomes a returning visitor back instead of greeting them as new', () => {
+    expect(appearancePrompt(['Anna'], true, 45_000)).toBe('Anna is back after stepping away for about 45 seconds. React to them coming back, your way.');
+    expect(appearancePrompt([], true, 150_000)).toContain('The person you were talking to is back after stepping away for about 3 minutes');
+    expect(appearancePrompt(['Anna'], false)).toContain('Greet them by name');
   });
 });

@@ -76,7 +76,10 @@ export interface WsHeadSpeechStateClientMessage {
 
 export interface WsPresenceClientMessage {
   type: 'presence';
+  /** false: nobody in view for minutes, the visitor is gone. */
   present: boolean;
+  /** A different person than the last visitor just came into view. */
+  newVisitor?: boolean;
   faces?: string[];
   count?: number;
 }
@@ -101,6 +104,9 @@ export interface WsAppearanceFrameClientMessage {
   frame: string;
   faces?: string[];
   count?: number;
+  /** The same visitor is back after stepping away for awayMs. */
+  returning?: boolean;
+  awayMs?: number;
 }
 
 export interface WsTtsRequestClientMessage {

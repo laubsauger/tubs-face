@@ -31,23 +31,44 @@ export function endConversation(): void {
   lastConversationAt = 0;
 }
 
-/** The face saw nobody for this long before reporting the visitor gone. */
-export const VISITOR_GONE_MS = 20_000;
+/** Someone spoke this recently: they are still here, whatever the camera says. */
+export const STILL_TALKING_MS = 20_000;
 
 /**
- * The camera has seen nobody for a while. Unless someone spoke in that time
- * (camera blocked, visitor still talking), the next face is a new person and
- * should not hear about the last one's jacket.
+ * The camera has seen nobody for minutes. Unless someone spoke just now
+ * (camera blocked, visitor talking off to the side), the next face is a new
+ * person and should not hear about the last one's jacket.
  */
 export function onVisitorLeft(now = Date.now()): boolean {
-  if (now - lastConversationAt < VISITOR_GONE_MS) {
+  if (now - lastConversationAt < STILL_TALKING_MS) {
     return false;
   }
+  forgetVisitor('visitor left');
+  return true;
+}
+
+/** The face saw a different person than the last visitor come into view. */
+export function onNewVisitor(): void {
+  forgetVisitor('new visitor');
+}
+
+function forgetVisitor(reason: string): void {
   cancelAppearanceGreeting();
   endConversation();
   forgetConversation();
-  console.log('[turn] visitor left; conversation forgotten');
-  return true;
+  console.log(`[turn] ${reason}; conversation forgotten`);
+}
+
+/** What Tubs is told when someone comes into view. */
+export function appearancePrompt(names: string[], returning: boolean, awayMs = 0): string {
+  const who = names.length > 0 ? names.join(' and ') : 'The person you were talking to';
+  if (returning) {
+    const away = awayMs >= 90_000 ? `${Math.round(awayMs / 60_000)} minutes` : `${Math.round(awayMs / 1000)} seconds`;
+    return `${who} is back after stepping away for about ${away}. React to them coming back, your way.`;
+  }
+  return names.length > 0
+    ? `Known person nearby: ${who}. Greet them by name, on your terms.`
+    : 'Someone new is nearby and has not spoken. Say something, on your terms.';
 }
 
 function interruptCurrentTurn(broadcast: Broadcast, source: NonNullable<WsInterruptServerMessage['source']>): void {

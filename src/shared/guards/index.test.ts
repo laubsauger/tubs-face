@@ -11,6 +11,8 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ type: 'appearance_frame', frame: 'data:image/jpeg;base64,AAAA', faces: ['Flo'] })).toBe(true);
     expect(isWsClientMessage({ type: 'proactive', context: 'Greet Flo.', faces: ['Flo'] })).toBe(true);
     expect(isWsClientMessage({ type: 'tts_request', text: 'Hi.', turnId: 'abc' })).toBe(true);
+    expect(isWsClientMessage({ type: 'presence', present: true, newVisitor: true, faces: [], count: 1 })).toBe(true);
+    expect(isWsClientMessage({ type: 'appearance_frame', frame: 'data:image/jpeg;base64,AAAA', returning: true, awayMs: 45000 })).toBe(true);
   });
 
   it('rejects payloads that would break a handler', () => {
@@ -21,6 +23,7 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ type: 'face_motion', actor: 'third', x: 0, y: 0 })).toBe(false);
     expect(isWsClientMessage({ type: 'camera_frame', frame: 'https://example.com/x.jpg' })).toBe(false);
     expect(isWsClientMessage({ type: 'tts_request', text: 42 })).toBe(false);
+    expect(isWsClientMessage({ type: 'presence', present: true, newVisitor: 'yes' })).toBe(false);
     expect(isWsClientMessage({ type: 'nope' })).toBe(false);
     expect(isWsClientMessage('incoming')).toBe(false);
   });

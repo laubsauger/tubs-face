@@ -1,0 +1,133 @@
+import type { DetectedFace } from '../../shared/contracts/faces.js';
+import { cosineSimilarity } from './matching.js';
+
+/**
+ * Who is in front of Tubs, across short absences. A visitor who steps out of
+ * view keeps their conversation; a different face, or nobody for a few
+ * minutes, starts fresh. Strangers are told apart by face embedding, so this
+ * works without enrollment.
+ */
+
+/** Nobody in view this long: the conversation is over. */
+export const FORGET_AFTER_MS = 3 * 60_000;
+/** Below this the face is someone else. Low on purpose: wrongly forgetting a
+ * visitor mid-conversation is worse than keeping a stale one a bit longer. */
+const SAME_VISITOR_SIMILARITY = 0.5;
+/** A non-matching face must stay this long before it counts as a new visitor. */
+const NEW_FACE_CONFIRM_MS = 3000;
+/** Back after less than this, it was just a look away: no new greeting. */
+export const RETURN_GREETING_MIN_AWAY_MS = 20_000;
+/** Known visitor walking off mid-conversation gets called back on some visits. */
+export const CALL_BACK_CHANCE = 0.4;
+const CALL_BACK_MIN_DELAY_MS = 6000;
+const CALL_BACK_MAX_DELAY_MS = 15_000;
+const MAX_SAMPLES = 8;
+const SAMPLE_EVERY_MS = 2000;
+
+export type VisitorEvent =
+  | { type: 'arrived'; names: string[] }
+  | { type: 'new_visitor'; names: string[] }
+  | { type: 'returned'; names: string[]; awayMs: number }
+  | { type: 'call_back'; name: string }
+  | { type: 'gone' };
+
+interface Visitor {
+  samples: number[][];
+  names: Set<string>;
+  lastSampleAt: number;
+  absentSince: number;
+  mismatchSince: number;
+  callBackAt: number;
+  calledBack: boolean;
+}
+
+export interface VisitorTracker {
+  /** Feed every detection result. `inConversation`: someone talked with Tubs just now. */
+  update(faces: DetectedFace[], now: number, inConversation: boolean): VisitorEvent[];
+}
+
+export function createVisitorTracker(random: () => number = Math.random): VisitorTracker {
+  let visitor: Visitor | null = null;
+
+  function namesOf(faces: DetectedFace[]): string[] {
+    return [...new Set(faces.map((face) => (face.match?.name ?? face.name ?? '').trim()).filter(Boolean))];
+  }
+
+  function embeddingsOf(faces: DetectedFace[]): number[][] {
+    return faces.map((face) => face.embedding).filter((embedding): embedding is number[] => Array.isArray(embedding) && embedding.length > 0);
+  }
+
+  function startVisitor(faces: DetectedFace[], now: number): Visitor {
+    return { samples: embeddingsOf(faces).slice(0, MAX_SAMPLES), names: new Set(namesOf(faces)), lastSampleAt: now, absentSince: 0, mismatchSince: 0, callBackAt: 0, calledBack: false };
+  }
+
+  /** null when there is nothing to compare (no embeddings on one side). */
+  function isSameVisitor(current: Visitor, faces: DetectedFace[]): boolean | null {
+    const names = namesOf(faces);
+    if (names.some((name) => current.names.has(name))) return true;
+    const embeddings = embeddingsOf(faces);
+    if (embeddings.length === 0 || current.samples.length === 0) return null;
+    return embeddings.some((embedding) => current.samples.some((sample) => cosineSimilarity(sample, embedding) >= SAME_VISITOR_SIMILARITY));
+  }
+
+  function remember(current: Visitor, faces: DetectedFace[], now: number): void {
+    for (const name of namesOf(faces)) current.names.add(name);
+    if (now - current.lastSampleAt < SAMPLE_EVERY_MS) return;
+    current.lastSampleAt = now;
+    current.samples.push(...embeddingsOf(faces));
+    if (current.samples.length > MAX_SAMPLES) current.samples.splice(0, current.samples.length - MAX_SAMPLES);
+  }
+
+  return {
+    update(faces, now, inConversation) {
+      if (faces.length > 0) {
+        if (!visitor) {
+          visitor = startVisitor(faces, now);
+          return [{ type: 'arrived', names: [...visitor.names] }];
+        }
+        const same = isSameVisitor(visitor, faces);
+        const wasAway = visitor.absentSince > 0;
+        if (same === false) {
+          visitor.mismatchSince ||= now;
+          // Back from an absence as someone else, or a stranger has stood
+          // there a few seconds with the old visitor nowhere in view.
+          if (wasAway || now - visitor.mismatchSince >= NEW_FACE_CONFIRM_MS) {
+            visitor = startVisitor(faces, now);
+            return [{ type: 'new_visitor', names: [...visitor.names] }];
+          }
+          return [];
+        }
+        visitor.mismatchSince = 0;
+        remember(visitor, faces, now);
+        if (wasAway) {
+          const awayMs = now - visitor.absentSince;
+          visitor.absentSince = 0;
+          visitor.callBackAt = 0;
+          return [{ type: 'returned', names: [...visitor.names], awayMs }];
+        }
+        return [];
+      }
+
+      if (!visitor) return [];
+      if (!visitor.absentSince) {
+        visitor.absentSince = now;
+        // Decide now whether this departure gets a call back, and when.
+        const name = [...visitor.names][0];
+        // At most once per visit, so a pacing visitor is not chased around.
+        visitor.callBackAt = name && inConversation && !visitor.calledBack && random() < CALL_BACK_CHANCE
+          ? now + CALL_BACK_MIN_DELAY_MS + random() * (CALL_BACK_MAX_DELAY_MS - CALL_BACK_MIN_DELAY_MS)
+          : 0;
+      }
+      if (now - visitor.absentSince >= FORGET_AFTER_MS) {
+        visitor = null;
+        return [{ type: 'gone' }];
+      }
+      if (visitor.callBackAt && now >= visitor.callBackAt) {
+        visitor.callBackAt = 0;
+        visitor.calledBack = true;
+        return [{ type: 'call_back', name: [...visitor.names][0]! }];
+      }
+      return [];
+    },
+  };
+}

@@ -80,6 +80,7 @@ const MAX_FRAME_CHARS = 4_000_000;
 const isActor = (v: unknown): boolean => v === 'main' || v === 'small';
 const isFiniteNumber = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v);
 const optNumber = (v: unknown): boolean => v === undefined || isFiniteNumber(v);
+const optBoolean = (v: unknown): boolean => v === undefined || typeof v === 'boolean';
 const optString = (v: unknown, max: number): boolean => v === undefined || (typeof v === 'string' && v.length <= max);
 const optNullableString = (v: unknown, max: number): boolean => v === null || optString(v, max);
 const text = (v: unknown, max: number): boolean => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
@@ -111,7 +112,7 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
       return isActor(m.actor) && (m.state === 'start' || m.state === 'end')
         && optNullableString(m.turnId, MAX_ID_CHARS) && optNumber(m.ts) && optNumber(m.durationMs);
     case 'presence':
-      return typeof m.present === 'boolean' && optNames(m.faces) && optNumber(m.count);
+      return typeof m.present === 'boolean' && optBoolean(m.newVisitor) && optNames(m.faces) && optNumber(m.count);
     case 'face_greeting':
       return true;
     case 'proactive':
@@ -119,7 +120,7 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case 'camera_frame':
       return frame(m.frame);
     case 'appearance_frame':
-      return frame(m.frame) && optNames(m.faces) && optNumber(m.count);
+      return frame(m.frame) && optNames(m.faces) && optNumber(m.count) && optBoolean(m.returning) && optNumber(m.awayMs);
     case 'tts_request':
       return text(m.text, MAX_TEXT_CHARS) && optString(m.voice, MAX_ID_CHARS)
         && optString(m.turnId, MAX_ID_CHARS) && optString(m.requestId, MAX_ID_CHARS);
