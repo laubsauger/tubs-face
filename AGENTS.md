@@ -36,7 +36,7 @@ Default runtime config:
 ## Active Capabilities
 
 - Speech output:
-  - Primary path: `POST /tts` on the bridge, proxied to Python service on port `3001`.
+  - Primary path: streamed over the TTS WebSocket of the Python service on port `3002`.
   - Frontend playback: returned WAV audio.
   - Fallback: browser `SpeechSynthesis` if TTS service fails.
 - Conversational replies:
@@ -94,4 +94,4 @@ Implemented on the TypeScript server path:
    - `.env` (`DONATION_VENMO`, `DONATION_QR_DATA`, optional Gemini pricing for cost estimates)
 3. If voice/TTS behavior changes, update both:
    - `src/client/audio/voice-runtime.ts`
-   - `src/transcription-service.py`
+   - `src/realtime-processing-service.py`

@@ -266,17 +266,6 @@ function normalizeAudioMimeType(value: string): string {
   return 'audio/webm';
 }
 
-export function buildLegacyServiceEnv(sttModel = runtimeConfig.sttModel): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    WHISPER_MODEL: sttModel,
-    TTS_BACKEND: runtimeConfig.ttsBackend,
-    STT_BACKEND: runtimeConfig.sttBackend,
-    KOKORO_VOICE: runtimeConfig.kokoroVoice,
-    HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
-  };
-}
-
 export function buildRealtimeServiceEnv(sttModel = runtimeConfig.sttModel): NodeJS.ProcessEnv {
   return {
     ...process.env,

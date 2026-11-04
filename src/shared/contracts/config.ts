@@ -1,5 +1,3 @@
-export const PROCESSING_MODES = ['legacy', 'realtime'] as const;
-export const DONATION_SIGNAL_MODES = ['both', 'implied', 'confident', 'off'] as const;
 export const FACE_RENDER_MODES = ['css', 'svg', 'glitch'] as const;
 export const GLITCH_RENDERERS = ['auto', 'webgpu', 'canvas2d'] as const;
 export const RENDER_QUALITIES = ['high', 'balanced', 'low'] as const;
@@ -45,8 +43,6 @@ export const KOKORO_VOICES = [
   'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
 ] as const;
 
-export type ProcessingMode = (typeof PROCESSING_MODES)[number];
-export type DonationSignalMode = (typeof DONATION_SIGNAL_MODES)[number];
 export type FaceRenderMode = (typeof FACE_RENDER_MODES)[number];
 export type GlitchRenderer = (typeof GLITCH_RENDERERS)[number];
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];
@@ -108,15 +104,12 @@ export interface SessionStats {
 }
 
 export interface RuntimeConfig {
-  processingMode: ProcessingMode;
   sleepTimeout: number;
   model: string;
   prompt: string;
   sttModel: string;
   llmModel: string;
   llmMaxOutputTokens: number;
-  donationSignalMode: DonationSignalMode;
-  minFaceBoxAreaRatio: number;
   faceRenderMode: FaceRenderMode;
   renderQuality: RenderQuality;
   ttsBackend: TtsBackend;

@@ -9,30 +9,23 @@ import type {
   ExpressionProfile,
   ExpressionProfileMap,
   GlitchRenderer,
-  ProcessingMode,
   RuntimeConfig,
   SessionStats,
 } from '../../shared/contracts/config.js';
 import {
   DEFAULT_EXPRESSION_PROFILES,
-  DONATION_SIGNAL_MODES,
   DUAL_HEAD_MODES,
   DUAL_HEAD_TURN_POLICIES,
   FACE_RENDER_MODES,
   GLITCH_RENDERERS,
   KOKORO_VOICES,
-  PROCESSING_MODES,
   RENDER_QUALITIES,
   STT_BACKENDS,
   TTS_BACKENDS,
   VAD_MODELS,
 } from '../../shared/contracts/config.js';
 
-const DEFAULT_PROCESSING_MODE: ProcessingMode = pickOne(PROCESSING_MODES, process.env.PROCESSING_MODE, 'legacy');
-const DEFAULT_STT_MODEL = resolveProcessingEnv({
-  legacy: process.env.WHISPER_MODEL,
-  realtime: process.env.REALTIME_STT_MODEL,
-})?.trim() || 'small';
+const DEFAULT_STT_MODEL = process.env.REALTIME_STT_MODEL?.trim() || 'small';
 // Benchmarked Nov 2026: 3.5 Flash is current, stable, about 1.3 s to first audio
 // and reliably sets the emotion emoji. Switch live from System Vitals > Brain.
 const DONATION_HANDLE = (process.env.DONATION_VENMO?.trim() || 'TubsBot').replace(/^@/, '');
@@ -40,29 +33,17 @@ const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash'
 const DEFAULT_GLITCH_RENDERER: GlitchRenderer = pickOne(GLITCH_RENDERERS, process.env.GLITCH_RENDERER, 'auto');
 
 export const runtimeConfig: RuntimeConfig = {
-  processingMode: DEFAULT_PROCESSING_MODE,
   sleepTimeout: 10000,
   model: 'Tubs Bot v1',
   prompt: 'Default personality',
   sttModel: DEFAULT_STT_MODEL,
   llmModel: DEFAULT_LLM_MODEL,
   llmMaxOutputTokens: parseIntegerInRange(process.env.GEMINI_MAX_OUTPUT_TOKENS, 256, 32, 1024),
-  donationSignalMode: pickOne(DONATION_SIGNAL_MODES, process.env.DONATION_SIGNAL_MODE, 'both'),
-  minFaceBoxAreaRatio: parseFloatInRange(process.env.MIN_FACE_BOX_AREA_RATIO, 0.02, 0, 0.2),
   faceRenderMode: pickOne(FACE_RENDER_MODES, process.env.FACE_RENDER_MODE, 'glitch'),
   renderQuality: pickOne(RENDER_QUALITIES, process.env.RENDER_QUALITY, 'high'),
-  ttsBackend: pickOne(TTS_BACKENDS, resolveProcessingEnv({
-    legacy: process.env.TTS_BACKEND,
-    realtime: process.env.REALTIME_TTS_BACKEND,
-  }), 'kokoro'),
-  sttBackend: pickOne(STT_BACKENDS, resolveProcessingEnv({
-    legacy: process.env.STT_BACKEND,
-    realtime: process.env.REALTIME_STT_BACKEND,
-  }), 'mlx'),
-  kokoroVoice: pickOne(KOKORO_VOICES, resolveProcessingEnv({
-    legacy: process.env.KOKORO_VOICE,
-    realtime: process.env.REALTIME_KOKORO_VOICE,
-  }), 'hm_omega'),
+  ttsBackend: pickOne(TTS_BACKENDS, process.env.REALTIME_TTS_BACKEND, 'kokoro'),
+  sttBackend: pickOne(STT_BACKENDS, process.env.REALTIME_STT_BACKEND, 'mlx'),
+  kokoroVoice: pickOne(KOKORO_VOICES, process.env.REALTIME_KOKORO_VOICE, 'hm_omega'),
   dualHeadEnabled: parseBoolean(process.env.DUAL_HEAD_ENABLED, false),
   dualHeadMode: normalizeDualHeadModeInput(process.env.DUAL_HEAD_MODE, 'off'),
   secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'jf_tebukuro'),
@@ -164,7 +145,6 @@ export function toHealthResponse(clientCount: number): HealthResponse {
     status: 'ok',
     clients: clientCount,
     uptime: Math.floor((Date.now() - sessionStats.uptime) / 1000),
-    processingMode: runtimeConfig.processingMode,
     service: 'tubs-face',
     mode: 'typescript',
   };
@@ -178,22 +158,10 @@ export function toConfigResponse(): ConfigResponse {
   return { ...runtimeConfig };
 }
 
-function resolveProcessingEnv(values: { legacy: string | undefined; realtime: string | undefined }): string | undefined {
-  if (DEFAULT_PROCESSING_MODE === 'realtime') {
-    return values.realtime?.trim() || values.legacy?.trim();
-  }
-
-  return values.legacy?.trim() || values.realtime?.trim();
-}
 
 export type RuntimeConfigPatch = Partial<RuntimeConfig>;
 
 export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigResponse {
-  if (patch.processingMode !== undefined && patch.processingMode !== runtimeConfig.processingMode) {
-    // Switching modes means restarting the Python stack; say so instead of
-    // silently ignoring it.
-    throw badRequest('processingMode is set at startup (PROCESSING_MODE) and cannot be changed live');
-  }
   if (patch.sleepTimeout !== undefined) {
     runtimeConfig.sleepTimeout = parseIntegerInRange(patch.sleepTimeout, runtimeConfig.sleepTimeout, 5000, 600000);
   }
@@ -203,12 +171,6 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   if (patch.llmModel !== undefined) runtimeConfig.llmModel = requireNonEmptyString(patch.llmModel, 'llmModel');
   if (patch.llmMaxOutputTokens !== undefined) {
     runtimeConfig.llmMaxOutputTokens = parseIntegerInRange(patch.llmMaxOutputTokens, runtimeConfig.llmMaxOutputTokens, 32, 1024);
-  }
-  if (patch.donationSignalMode !== undefined) {
-    runtimeConfig.donationSignalMode = expectOne(DONATION_SIGNAL_MODES, patch.donationSignalMode, 'donationSignalMode');
-  }
-  if (patch.minFaceBoxAreaRatio !== undefined) {
-    runtimeConfig.minFaceBoxAreaRatio = parseFloatInRange(patch.minFaceBoxAreaRatio, runtimeConfig.minFaceBoxAreaRatio, 0, 0.2);
   }
   if (patch.faceRenderMode !== undefined) {
     runtimeConfig.faceRenderMode = expectOne(FACE_RENDER_MODES, patch.faceRenderMode, 'faceRenderMode');

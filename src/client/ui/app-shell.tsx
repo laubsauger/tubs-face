@@ -5,7 +5,7 @@ import { FacePanel } from './panels/FacePanel.js';
 import { StatsPanel } from './panels/StatsPanel.js';
 import { ChatPanel } from './panels/ChatPanel.js';
 import { PanelHeader } from './panels/PanelHeader.js';
-import { formatUptime, formatAwakeElapsed, formatTimestamp } from './utils/formatters.js';
+import { formatAwakeElapsed, formatTimestamp } from './utils/formatters.js';
 import { useCallback, useRef, useState, useEffect, memo, type JSX } from 'react';
 import type {
   DonationConfirmRequest,
@@ -175,7 +175,6 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
 
       {/* Hidden Legacy Panels (Preserved for React State/Logic bindings) */}
       <div className="hidden">
-        <HealthPanel store={store} />
         <ConfigPanel store={store} />
         <AssistantPanel store={store} />
         {/* Stream debug stays hidden: the server never sends stream_debug, so it would be empty. */}
@@ -521,27 +520,6 @@ function CompactAssistantStatus({ store }: { store: AppStore }): JSX.Element {
         </span>
       )}
     </div>
-  );
-}
-
-function HealthPanel({ store }: { store: AppStore }): JSX.Element {
-  const state = useAppSelector(store, (current) => ({
-    collapsed: Boolean(current.collapsedPanels.health),
-    health: current.health,
-  }));
-
-  return (
-    <article className={renderPanelCardClass(state.collapsed)}>
-      <PanelHeader store={store} panelKey="health" title="Health" meta={state.health?.status ?? 'unknown'} />
-      <div className={`panel-body panel-content ${state.collapsed ? 'is-hidden' : ''}`}>
-        <dl className="kv">
-          <div><dt>Status</dt><dd>{state.health?.status ?? 'unknown'}</dd></div>
-          <div><dt>Mode</dt><dd>{state.health?.processingMode ?? 'n/a'}</dd></div>
-          <div><dt>Clients</dt><dd>{state.health?.clients ?? 0}</dd></div>
-          <div><dt>Uptime</dt><dd>{formatUptime(state.health)}</dd></div>
-        </dl>
-      </div>
-    </article>
   );
 }
 

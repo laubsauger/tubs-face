@@ -122,7 +122,7 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (method === 'GET' && path === '/health') {
-    json(response, 200, { status: 'ok', clients: clients.size, uptime: 1, processingMode: 'realtime', service: 'tubs-face', mode: 'typescript' });
+    json(response, 200, { status: 'ok', clients: clients.size, uptime: 1, service: 'tubs-face', mode: 'typescript' });
     return;
   }
   if (method === 'GET' && path === '/config') {

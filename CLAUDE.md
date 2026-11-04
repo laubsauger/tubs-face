@@ -35,20 +35,21 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `assistant/sentence-splitter.ts` — Break responses into utterances
 - `assistant/prompt.ts` — System instruction builders
 - `assistant/vision.ts` — Camera/image analysis
-- `llm/provider.ts` — Router: Gemini or Realtime (via `LLM_PROVIDER` env)
+- `llm/provider.ts` — Router: Gemini, or Ollama/OpenAI via the Python service (`LLM_PROVIDER` env); both stream
 - `llm/gemini-client.ts` — Gemini API streaming with SSE
 - `llm/providers/gemini.ts` — Structured generation wrapper
 - `llm/providers/realtime.ts` — Gemini Realtime/Live API
-- `processing/mode-manager.ts` — Processing mode router (legacy/realtime)
+- `processing/speech-service.ts` — Starts and supervises the Python speech service
 - `tts/stream.ts` — Streaming audio chunks to WebSocket
 - `config/runtime.ts` — Runtime configuration, session stats
 - `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
 
-### Python Service (`src/transcription-service.py`)
-- Flask app on port 3001
-- STT via `faster-whisper` (Whisper model, CPU, int8)
-- TTS via macOS `say` + `afconvert` (macOS-only)
-- Endpoints: `/transcribe`, `/tts`, `/health`
+### Python Service (`src/realtime-processing-service.py`)
+- Flask app on port 3002, started and restarted by the server
+- STT: `lightning-whisper-mlx` (Apple Silicon) or `faster-whisper` (CPU, int8)
+- TTS: Kokoro (MLX on macOS, native elsewhere), streamed per sentence over `/tts/stream`; or system TTS (macOS `say`, pyttsx3 elsewhere)
+- LLM proxy for Ollama / OpenAI-compatible models: `/llm/generate`, `/llm/stream`
+- Endpoints: `/transcribe`, `/tts`, `/tts/stream`, `/llm/*`, `/health`
 
 ### Client (`src/client/`) — React + TypeScript + Zustand
 
@@ -94,6 +95,5 @@ Messages are JSON with a `type` field. Full types in `src/shared/contracts/ws.ts
 - **Runtime composition** — features are standalone runtimes, not class hierarchies
 - **Streaming-first** — audio chunks streamed incrementally (not full responses)
 - **Dual-head** — structured multi-beat responses with different actors/actions
-- **Mode switching** — processing modes (legacy/realtime) swappable at runtime
 - **Broadcast model** — server broadcasts all messages to all connected WS clients
 - Requires `GEMINI_API_KEY` env var

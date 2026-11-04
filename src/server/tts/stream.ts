@@ -1,5 +1,5 @@
 import { WebSocket } from 'ws';
-import { getTtsProxyTarget } from '../processing/mode-manager.js';
+import { getTtsProxyTarget } from '../processing/speech-service.js';
 
 export interface TtsStreamChunk {
   text: string;

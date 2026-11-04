@@ -7,7 +7,6 @@ export interface HealthResponse {
   status: 'ok';
   clients?: number;
   uptime?: number;
-  processingMode?: string;
   service?: string;
   mode?: string;
 }

@@ -32,16 +32,16 @@ On Windows, `npm install` gracefully defers to `scripts/setup-python.ps1` to est
 - You still need **C++ Build Tools** installed if you haven't (for some ML dependencies to compile).
 - If you face execution policy errors running the `.ps1` auto-setup script, you can run `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` in an admin PowerShell, or manually create the venv: `python -m venv venv` and `.\venv\Scripts\Activate.ps1`, then `pip install -r requirements.txt`.
 
-### Processing Modes
+### Speech and LLM stack
 
-- `PROCESSING_MODE` is selected at server startup and exposed by `/health` + `/config`.
-- **Legacy**: default production stack (Whisper STT + Gemini LLM + streaming TTS).
-- **Realtime**: dedicated realtime stack via `src/realtime-processing-service.py`.
-  - STT: `lightning-whisper-mlx` (`REALTIME_STT_BACKEND=mlx`)
-  - TTS: Kokoro (`REALTIME_TTS_BACKEND=kokoro`, voice from `KOKORO_VOICE` / `REALTIME_KOKORO_VOICE`)
-  - LLM: Ollama-compatible chat API (`REALTIME_LLM_PROVIDER=ollama`, `OLLAMA_HOST` or `REALTIME_LLM_BASE_URL`)
-  - Required: `REALTIME_LLM_MODEL` must be set to an installed model from `ollama list`
-  - Optional: `DUAL_HEAD_LLM_MODEL` for dedicated dual-head script generation
+Speech runs in `src/realtime-processing-service.py` (port 3002), started by the server:
+- STT: `lightning-whisper-mlx` (`REALTIME_STT_BACKEND=mlx`, Apple Silicon) or `faster-whisper` (`REALTIME_STT_BACKEND=faster-whisper`)
+- TTS: Kokoro (`REALTIME_TTS_BACKEND=kokoro`, voice from `REALTIME_KOKORO_VOICE`) or system TTS (`system`: macOS `say`, pyttsx3 elsewhere)
+
+Replies stream sentence by sentence from either LLM:
+- `LLM_PROVIDER=gemini` (default): Gemini from Node.
+- `LLM_PROVIDER=ollama`: a local or remote Ollama (`REALTIME_LLM_PROVIDER=ollama`, `OLLAMA_HOST`) or an OpenAI-compatible server (`REALTIME_LLM_PROVIDER=openai`), through the Python service. `REALTIME_LLM_MODEL` must name an installed model.
+- Optional: `DUAL_HEAD_LLM_MODEL` for dedicated dual-head script generation
 
 ### LLM Benchmarking
 
@@ -180,9 +180,10 @@ Node.js Server (TypeScript, port 3000)
 Shared Contracts (src/shared/contracts/)
   └── Type-safe WebSocket, HTTP, config, turn-script interfaces
 
-Python Service (src/transcription-service.py, port 3001)
-  ├── STT via faster-whisper / MLX
-  └── TTS proxy (Kokoro / macOS say)
+Python Service (src/realtime-processing-service.py, port 3002)
+  ├── STT via MLX / faster-whisper
+  ├── TTS: Kokoro streamed over WebSocket, or system TTS
+  └── LLM proxy for Ollama / OpenAI-compatible models (streamed)
 
 Persona (src/persona/)
   ├── system-prompt.txt             — personality/soul
@@ -253,7 +254,7 @@ The `/api/spectator-url?actor=main` endpoint includes the actor param in the ret
 | `/sleep` | POST | Put bot to sleep |
 | `/wake` | POST | Wake bot up |
 | `/config` | GET | Get current config |
-| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens`, `donationSignalMode`, `minFaceBoxAreaRatio`; `processingMode` is startup-only) |
+| `/config` | POST | Update runtime config (supports `sttModel`, `llmModel`, `llmMaxOutputTokens` and the other runtime fields) |
 | `/checkout/paypal/order` | POST | Create PayPal order (optional checkout flow) |
 | `/checkout/paypal/capture` | POST | Capture PayPal order; emits confident donation signal on completion |
 | `/donations/confirm` | POST | Manual donation signal injection (`implied`/`confident`) |

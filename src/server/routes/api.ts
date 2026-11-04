@@ -50,7 +50,7 @@ import { readJsonBody } from '../http/body.js';
 import { applyCors, sendError, sendJson, sendNoContent } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, sessionStats, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
 import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '../ws/server.js';
-import { getTtsProxyTarget, restartTranscriptionService, transcribeAudio } from '../processing/mode-manager.js';
+import { getTtsProxyTarget, restartSpeechService, transcribeAudio } from '../processing/speech-service.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
 import { addFace, deleteFace, readFaceLibrary, updateFace } from '../faces/library.js';
@@ -97,7 +97,7 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
       const wasMuted = runtimeConfig.muted;
       const payload = applyRuntimeConfigPatch(patch);
       if (shouldRestartStt && patch.sttModel) {
-        await restartTranscriptionService(patch.sttModel, 'config patch');
+        await restartSpeechService(patch.sttModel, 'config patch');
       }
       broadcastConfig();
       if (!wasMuted && runtimeConfig.muted) {

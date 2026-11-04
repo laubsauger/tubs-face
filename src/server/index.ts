@@ -1,6 +1,6 @@
 import './env/load.js';
 import http from 'node:http';
-import { startProcessingStack, stopProcessingStack } from './processing/mode-manager.js';
+import { startProcessingStack, stopProcessingStack } from './processing/speech-service.js';
 import { handleApiRequest } from './routes/api.js';
 import { sendError } from './http/response.js';
 import { serveStatic } from './http/static.js';
