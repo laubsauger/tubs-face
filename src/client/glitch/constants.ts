@@ -2,7 +2,6 @@ import type { ExpressionProfileMap } from '../../shared/contracts/config.js';
 import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface GlitchConfig {
-  renderer: 'auto' | 'webgpu' | 'canvas2d';
   svg: {
     viewBox: { w: number; h: number };
     shapes: Array<{ x: number; y: number; w: number; h: number; rx: number; ry: number }>;
@@ -39,7 +38,6 @@ export interface GlitchConfig {
 }
 
 export const DEFAULT_CONFIG: GlitchConfig = {
-  renderer: 'auto',
   svg: {
     viewBox: { w: 52.82, h: 27.45 },
     shapes: [

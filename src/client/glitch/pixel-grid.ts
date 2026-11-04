@@ -10,18 +10,13 @@ import {
   FEATURE_MOUTH_SCALE_X,
   FEATURE_MOUTH_SCALE_Y,
 } from './constants.js';
-import {
-  getColorLUT,
-  hexToHSL,
-  testShapeHit,
-} from './utils.js';
+import { hexToHSL, testShapeHit } from './utils.js';
 
 export interface PixelGridPoint {
   x: number;
   y: number;
   hueOff: number;
   brightOff: number;
-  lut: string[];
   overrideHSL: { h: number; s: number; l: number } | null;
 }
 
@@ -48,11 +43,7 @@ export function buildPixelGrid(
   faceHeight: number,
   effectivePixelSize: number,
   effectivePixelGap: number,
-  baseHSL: { h: number; s: number; l: number },
-  colorLUTs: Map<number, string[]>,
 ): PixelGridBuildResult {
-  colorLUTs.clear();
-
   const pixelGrid: PixelGridPoint[] = [];
   const shapeGroups: number[] = [];
   const shapeCenters: ShapeCenter[] = [];
@@ -111,9 +102,6 @@ export function buildPixelGrid(
       if (si >= 3 && profile.tearColorHex) shapeOverrideHSL = hexToHSL(profile.tearColorHex);
     }
 
-    const baseH = shapeOverrideHSL ? shapeOverrideHSL.h : baseHSL.h;
-    const baseS = shapeOverrideHSL ? shapeOverrideHSL.s : baseHSL.s;
-
     const cols = Math.max(1, Math.floor(sw / stride));
     const rows = Math.max(1, Math.floor(sh / stride));
     const gridOffX = tx + (sw - cols * stride + gap) / 2;
@@ -142,7 +130,6 @@ export function buildPixelGrid(
           y: finalY,
           hueOff: hOff,
           brightOff: bOff,
-          lut: getColorLUT(colorLUTs, baseH + hOff, baseS),
           overrideHSL: shapeOverrideHSL,
         });
         shapeGroups.push(si);
@@ -155,18 +142,6 @@ export function buildPixelGrid(
     shapeGroups,
     shapeCenters,
   };
-}
-
-export function recolorPixelGrid(
-  pixelGrid: PixelGridPoint[],
-  colorLUTs: Map<number, string[]>,
-  baseHSL: { h: number; s: number; l: number },
-): void {
-  colorLUTs.clear();
-  for (const point of pixelGrid) {
-    const base = point.overrideHSL || baseHSL;
-    point.lut = getColorLUT(colorLUTs, base.h + point.hueOff, base.s);
-  }
 }
 
 function getModifiedShapes(expression: ExpressionName, config: GlitchConfig): GlitchConfig['svg']['shapes'] {

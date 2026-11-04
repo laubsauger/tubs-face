@@ -4,7 +4,6 @@ export const GLITCH_CONFIG_KEYS = [
   'glitchFxEnabled',
   'glitchFxBaseColor',
   'glitchExpressionProfiles',
-  'glitchRenderer',
   'glitchPixelSize',
   'glitchPixelGap',
   'glitchScanlines',
@@ -70,7 +69,6 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
   default: {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#a855f7',
-    glitchRenderer: 'auto',
     glitchPixelSize: 21,
     glitchPixelGap: 7,
     glitchScanlines: true,
@@ -134,7 +132,6 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
   cyberpunk: {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#00ffcc',
-    glitchRenderer: 'auto',
     glitchPixelSize: 16,
     glitchPixelGap: 5,
     glitchScanlines: true,
@@ -198,7 +195,6 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
   minimal: {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#e0e0e0',
-    glitchRenderer: 'auto',
     glitchPixelSize: 26,
     glitchPixelGap: 10,
     glitchScanlines: false,
@@ -262,7 +258,6 @@ export const GLITCH_PRESETS: Record<string, Partial<ConfigResponse>> = {
   warm: {
     glitchFxEnabled: true,
     glitchFxBaseColor: '#ff8844',
-    glitchRenderer: 'auto',
     glitchPixelSize: 21,
     glitchPixelGap: 7,
     glitchScanlines: true,

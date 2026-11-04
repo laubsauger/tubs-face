@@ -15,14 +15,14 @@ describe('applyRuntimeConfigPatch', () => {
   });
 
   it('applies valid fields', () => {
-    applyRuntimeConfigPatch({ glitchRenderer: 'canvas2d', llmMaxOutputTokens: 512 });
-    expect(runtimeConfig.glitchRenderer).toBe('canvas2d');
+    applyRuntimeConfigPatch({ renderQuality: 'low', llmMaxOutputTokens: 512 });
+    expect(runtimeConfig.renderQuality).toBe('low');
     expect(runtimeConfig.llmMaxOutputTokens).toBe(512);
   });
 
   it('rejects an unknown enum value with a BadRequestError', () => {
-    expect(() => applyRuntimeConfigPatch({ glitchRenderer: 'hologram' as never })).toThrow(/glitchRenderer must be one of/);
-    expect(runtimeConfig.glitchRenderer).toBe(snapshot.glitchRenderer);
+    expect(() => applyRuntimeConfigPatch({ renderQuality: 'hologram' as never })).toThrow(/renderQuality must be one of/);
+    expect(runtimeConfig.renderQuality).toBe(snapshot.renderQuality);
   });
 
   it('keeps the old value when a number is out of range', () => {
@@ -33,7 +33,7 @@ describe('applyRuntimeConfigPatch', () => {
   // Known bug: fields are applied one by one, so a bad field later in the patch
   // throws after earlier fields already changed. Flip to `it` once patches are atomic.
   it.fails('leaves the config untouched when any field in the patch is invalid', () => {
-    expect(() => applyRuntimeConfigPatch({ llmMaxOutputTokens: 512, glitchRenderer: 'hologram' as never })).toThrow();
+    expect(() => applyRuntimeConfigPatch({ llmMaxOutputTokens: 512, renderQuality: 'hologram' as never })).toThrow();
     expect(runtimeConfig.llmMaxOutputTokens).toBe(snapshot.llmMaxOutputTokens);
   });
 

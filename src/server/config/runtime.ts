@@ -8,7 +8,6 @@ import type {
   ExpressionName,
   ExpressionProfile,
   ExpressionProfileMap,
-  GlitchRenderer,
   RuntimeConfig,
   SessionStats,
 } from '../../shared/contracts/config.js';
@@ -16,7 +15,6 @@ import {
   DEFAULT_EXPRESSION_PROFILES,
   DUAL_HEAD_MODES,
   DUAL_HEAD_TURN_POLICIES,
-  GLITCH_RENDERERS,
   KOKORO_VOICES,
   RENDER_QUALITIES,
   STT_BACKENDS,
@@ -28,7 +26,6 @@ const DEFAULT_STT_MODEL = process.env.REALTIME_STT_MODEL?.trim() || 'small';
 // Benchmarked Nov 2026: 3.5 Flash is current, stable, about 1.3 s to first audio
 // and reliably sets the emotion emoji. Switch live from System Vitals > Brain.
 const DEFAULT_LLM_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash';
-const DEFAULT_GLITCH_RENDERER: GlitchRenderer = pickOne(GLITCH_RENDERERS, process.env.GLITCH_RENDERER, 'auto');
 
 export const runtimeConfig: RuntimeConfig = {
   sleepTimeout: 10000,
@@ -54,7 +51,6 @@ export const runtimeConfig: RuntimeConfig = {
   glitchFxEnabled: true,
   glitchFxBaseColor: normalizeHexColor(process.env.GLITCH_FX_BASE_COLOR, '#a855f7'),
   glitchExpressionProfiles: structuredClone(DEFAULT_EXPRESSION_PROFILES),
-  glitchRenderer: DEFAULT_GLITCH_RENDERER,
   glitchPixelSize: parseFloatInRange(process.env.GLITCH_PIXEL_SIZE, 21, 2, 60),
   glitchPixelGap: parseFloatInRange(process.env.GLITCH_PIXEL_GAP, 7, 0, 30),
   glitchScanlines: parseBoolean(process.env.GLITCH_SCANLINES, true),
@@ -209,9 +205,6 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
       patch.glitchExpressionProfiles,
       runtimeConfig.glitchExpressionProfiles,
     );
-  }
-  if (patch.glitchRenderer !== undefined) {
-    runtimeConfig.glitchRenderer = expectOne(GLITCH_RENDERERS, patch.glitchRenderer, 'glitchRenderer');
   }
   if (patch.glitchPixelSize !== undefined) {
     runtimeConfig.glitchPixelSize = parseFloatInRange(patch.glitchPixelSize, runtimeConfig.glitchPixelSize, 2, 60);

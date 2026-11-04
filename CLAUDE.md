@@ -64,7 +64,7 @@ Two build entries: `index.html` (main) and `app-mini.html` (mini display mode).
 - `audio/ambient-runtime.ts` — Background sounds
 - `face/runtime.ts` — Face shell, camera input, face detection
 - `face/behavior-runtime.ts` — Expression & animation synced with speech
-- `glitch/runtime.ts` — Glitch effect rendering (canvas/WebGPU)
+- `glitch/runtime.ts` — Pixel face with glitch effects (WebGPU only)
 - `fx/runtime.ts` — Visual effects (filters, overlays)
 - `behavior/emotion-runtime.ts` — Emotional state
 - `behavior/proactive-runtime.ts` — Proactive/greeting responses

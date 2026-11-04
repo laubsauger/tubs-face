@@ -1,11 +1,9 @@
 import type { AppStore } from '../state/app-state.js';
 import { DEFAULT_CONFIG, GAZE_LERP, SPEAK_CYCLE_MS, SPEAK_MAX_SCALE, SPEAK_MIN_SCALE, setExpressionProfiles, type GlitchConfig } from './constants.js';
-import { rebuildScanlinePattern, initCanvas2DRenderer, recreateCanvasElement, sizeCanvasLayout } from './canvas2d.js';
-import { computeFrameState, renderFrameCanvas2D, renderFrameWebGpu } from './frame.js';
-import { buildPixelGrid, featureFitScale, recolorPixelGrid, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
-import { ensureRendererBackendReady, initializeRendererBackend } from './renderer-backend.js';
+import { computeFrameState, renderFrameWebGpu } from './frame.js';
+import { buildPixelGrid, featureFitScale, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, updateGpuInstanceBuffer, type WebGpuState } from './webgpu.js';
-import { hexToHSL, mergeConfig, normalizeRenderer } from './utils.js';
+import { hexToHSL, mergeConfig } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';
 import { NEUTRAL_TINT, moodTint } from './mood-tint.js';
 
@@ -16,30 +14,19 @@ export interface GlitchRuntime {
 }
 
 interface RendererState {
-  kind: 'webgpu' | 'canvas2d';
   ready: boolean;
   initPromise: Promise<boolean> | null;
-  backendError: string;
-  webGpuRetryDisabled: boolean;
 }
 
 export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): GlitchRuntime {
   let faceEl: HTMLElement | null = null;
   let canvas: HTMLCanvasElement | null = null;
-  let ctx: CanvasRenderingContext2D | null = null;
-  let tempCanvas: HTMLCanvasElement | null = null;
-  let tempCtx: CanvasRenderingContext2D | null = null;
-  let scanlinePattern: CanvasPattern | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let resizeTimer: number | null = null;
   let animFrameId: number | null = null;
   let startTime = performance.now();
   let baseHSL = hexToHSL(DEFAULT_CONFIG.color.base);
-  // Colours currently baked into the Canvas2D pixel grid (WebGPU tints per frame).
-  let bakedHSL = baseHSL;
   let cachedDpr = 1;
-  let cachedGlowFilter = 'blur(14px)';
-  let cachedScanBeamRGBA = 'rgba(166,0,255,0.26)';
   let containerCssW = 0;
   let containerCssH = 0;
   let effectivePixelSize = DEFAULT_CONFIG.pixel.size;
@@ -54,18 +41,10 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let currentGazeX = 0;
   let currentGazeY = 0;
   let rendererConfig: GlitchConfig = structuredClone(DEFAULT_CONFIG);
-  let lastRendererPreference = normalizeRenderer(DEFAULT_CONFIG.renderer);
   let lastProfileSignature = '';
   let lastRendererSignature = '';
-  const rendererState: RendererState = {
-    kind: 'canvas2d',
-    ready: false,
-    initPromise: null,
-    backendError: '',
-    webGpuRetryDisabled: false,
-  };
+  const rendererState: RendererState = { ready: false, initPromise: null };
   const gpu: WebGpuState = createWebGpuState();
-  const colorLUTs = new Map<number, string[]>();
 
   return {
     init(): void {
@@ -78,13 +57,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
         teardownResize();
         faceEl = nextFace;
         canvas = null;
-        ctx = null;
-        tempCanvas = null;
-        tempCtx = null;
-        scanlinePattern = null;
         rendererState.ready = false;
         rendererState.initPromise = null;
-        rendererState.webGpuRetryDisabled = false;
         setupCanvas();
         setupResize();
       }
@@ -122,7 +96,6 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       }
     }
     rendererConfig = mergeConfig(DEFAULT_CONFIG);
-    rendererConfig.renderer = config?.glitchRenderer ?? DEFAULT_CONFIG.renderer;
     rendererConfig.color.base = mode === 'mini'
       ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
       : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
@@ -204,16 +177,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       rendererConfig.scanBeam.enabled = false;
       rendererConfig.brightnessPulse.enabled = false;
     }
-    const nextRendererPreference = normalizeRenderer(rendererConfig.renderer);
-    if (nextRendererPreference !== lastRendererPreference) {
-      lastRendererPreference = nextRendererPreference;
-      resetRendererBackend();
-    }
     baseHSL = hexToHSL(rendererConfig.color.base);
-    const scan = hexToHSL(rendererConfig.scanBeam.color);
-    cachedScanBeamRGBA = `rgba(${scan.h},${scan.s},${scan.l},0.26)`;
-    recolorPixelGrid(pixelGrid, colorLUTs, baseHSL);
-    bakedHSL = baseHSL;
 
     const rendererSignature = JSON.stringify(rendererConfig);
     if (rendererSignature !== lastRendererSignature) {
@@ -226,19 +190,14 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   }
 
   /**
-   * Pixel size, gap, shapes, scanlines and glow are baked into the pixel grid and
-   * the Canvas2D caches when the canvas is sized. Rebuild them so FX editor
-   * changes show up live instead of on the next resize or expression change.
+   * Pixel size, gap and shapes are baked into the pixel grid. Rebuild it so FX
+   * editor changes show up live instead of on the next resize or expression change.
    */
   function applyRendererConfigChange(): void {
     if (!rendererState.ready) {
       return;
     }
     updateEffectivePixelMetrics();
-    if (ctx) {
-      scanlinePattern = rebuildScanlinePattern(ctx, rendererConfig, cachedDpr);
-    }
-    cachedGlowFilter = `blur(${Math.round(rendererConfig.glow.pixelGlow * cachedDpr)}px)`;
     lastBuiltExpression = '';
   }
 
@@ -288,25 +247,21 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   function sizeCanvas(): void {
     if (!faceEl || !canvas) return;
     updateEffectivePixelMetrics();
-    const next = sizeCanvasLayout({
-      containerEl: faceEl,
-      canvas,
-      config: rendererConfig,
-      rendererKind: rendererState.kind,
-      ctx,
-      tempCanvas,
-      tempCtx,
-      scanlinePattern,
-      configureWebGpuCanvas: () => configureWebGpuCanvas(gpu, canvas),
-    });
-    if (!next) return;
-    containerCssW = next.containerCssW;
-    containerCssH = next.containerCssH;
-    cachedDpr = next.cachedDpr;
-    cachedGlowFilter = next.cachedGlowFilter;
-    tempCanvas = next.tempCanvas;
-    tempCtx = next.tempCtx;
-    scanlinePattern = next.scanlinePattern;
+    const rect = faceEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    // The spectator page runs on weaker screens; cap its resolution.
+    const isSpectator = faceEl.closest('.spectator-shell') !== null;
+    const dpr = isSpectator ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
+    const pw = Math.round(rect.width * dpr);
+    const ph = Math.round(rect.height * dpr);
+    if (canvas.width !== pw || canvas.height !== ph) {
+      canvas.width = pw;
+      canvas.height = ph;
+    }
+    configureWebGpuCanvas(gpu, canvas);
+    containerCssW = rect.width;
+    containerCssH = rect.height;
+    cachedDpr = dpr;
   }
 
   function updateEffectivePixelMetrics(): void {
@@ -332,83 +287,33 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       rect.height,
       effectivePixelSize,
       effectivePixelGap,
-      baseHSL,
-      colorLUTs,
     );
     pixelGrid = next.pixelGrid;
     shapeGroups = next.shapeGroups;
     shapeCenters = next.shapeCenters;
     lastBuiltExpression = store.getState().currentExpression;
     lastSleepingState = store.getState().sleeping;
-    bakedHSL = baseHSL;
-    if (rendererState.kind === 'webgpu') {
-      updateGpuInstanceBuffer(gpu, pixelGrid, shapeGroups);
-    }
+    updateGpuInstanceBuffer(gpu, pixelGrid, shapeGroups);
   }
 
-  function initCanvasBackend(): boolean {
-    const next = initCanvas2DRenderer(canvas, rendererConfig, cachedDpr);
-    if (!next.ok) return false;
-    ctx = next.ctx;
-    tempCanvas = next.tempCanvas;
-    tempCtx = next.tempCtx;
-    scanlinePattern = next.scanlinePattern;
-    return true;
-  }
-
-  function resetGpu(): void {
-    resetWebGpuResources(gpu);
-  }
-
-  function swapCanvas(): void {
-    canvas = recreateCanvasElement(canvas);
-  }
-
-  function resetRendererBackend(): void {
-    stopRenderLoop();
-    rendererState.ready = false;
-    rendererState.initPromise = null;
-    rendererState.backendError = '';
-    rendererState.webGpuRetryDisabled = false;
-    rendererState.kind = 'canvas2d';
-    ctx = null;
-    tempCanvas = null;
-    tempCtx = null;
-    scanlinePattern = null;
-    resetGpu();
-    if (canvas) {
-      swapCanvas();
-    }
-    publishBackend();
-  }
-
-  async function ensureRendererReady(): Promise<boolean> {
-    return ensureRendererBackendReady({
-      state: rendererState,
-      initializeRendererBackend: async () => {
-        await initializeRendererBackend({
-          state: rendererState,
-          preferredRenderer: normalizeRenderer(rendererConfig.renderer),
-          initWebGpuRenderer: () => initWebGpuRenderer(gpu, canvas),
-          recreateCanvasElement: swapCanvas,
-          resetWebGpuResources: resetGpu,
-          initCanvas2DRenderer: initCanvasBackend,
-          sizeCanvas,
-          buildPixelGrid: buildGrid,
-          setBackendStatus: publishBackend,
-          setGlitchVisualActive: setCanvasVisible,
+  /** WebGPU only. If it can't start the face stays blank, so the event log says why. */
+  function ensureRendererReady(): Promise<boolean> {
+    if (rendererState.ready) return Promise.resolve(true);
+    if (!rendererState.initPromise) {
+      rendererState.initPromise = initWebGpuRenderer(gpu, canvas)
+        .catch(() => false)
+        .then((ok) => {
+          rendererState.ready = ok;
+          if (ok) {
+            sizeCanvas();
+            buildGrid();
+          } else {
+            store.appendLog('error', 'WebGPU did not start, so the face cannot render. Use a browser with WebGPU.');
+          }
+          return ok;
         });
-      },
-      setBackendStatus: publishBackend,
-    });
-  }
-
-  /** Shown in System Vitals, so a kiosk stuck on Canvas2D is visible at a glance. */
-  function publishBackend(): void {
-    const backend = rendererState.ready ? rendererState.kind : null;
-    if (store.getState().glitchBackend !== backend) {
-      store.setState((current) => ({ ...current, glitchBackend: backend }));
     }
+    return rendererState.initPromise;
   }
 
   function startRenderLoop(): void {
@@ -451,12 +356,6 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       s: Math.max(0, Math.min(100, baseHSL.s * tint.saturation)),
       l: Math.max(0, Math.min(100, baseHSL.l + tint.lightness)),
     };
-    if (rendererState.kind !== 'webgpu'
-      && (Math.abs(moodHSL.h - bakedHSL.h) >= 2 || Math.abs(moodHSL.s - bakedHSL.s) >= 2 || Math.abs(moodHSL.l - bakedHSL.l) >= 1)) {
-      // Canvas2D bakes colours; re-bake only when the change is visible.
-      recolorPixelGrid(pixelGrid, colorLUTs, moodHSL);
-      bakedHSL = moodHSL;
-    }
 
     const frameResult = computeFrameState(now, {
       state,
@@ -480,49 +379,28 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     lastBurstState = frameResult.lastBurstState;
     glitchBurstSeed = frameResult.glitchBurstSeed;
 
-    let drawn = false;
-    if (rendererState.kind === 'webgpu') {
-      drawn = renderFrameWebGpu(frameResult.frame, {
-        gpuDevice: gpu.gpuDevice,
-        gpuContext: gpu.gpuContext,
-        gpuPixelPipeline: gpu.gpuPixelPipeline,
-        gpuPostPipeline: gpu.gpuPostPipeline,
-        gpuPixelBindGroup: gpu.gpuPixelBindGroup,
-        gpuPostBindGroup: gpu.gpuPostBindGroup,
-        gpuSceneTextureView: gpu.gpuSceneTextureView,
-        gpuInstanceCount: gpu.gpuInstanceCount,
-        gpuUniformBuffer: gpu.gpuUniformBuffer,
-        gpuPostUniformBuffer: gpu.gpuPostUniformBuffer,
-        gpuUniformData: gpu.gpuUniformData,
-        gpuPostUniformData: gpu.gpuPostUniformData,
-        config: rendererConfig,
-        faceW: faceEl.getBoundingClientRect().width,
-        faceH: faceEl.getBoundingClientRect().height,
-        shapeCenters,
-        baseHSL: moodHSL,
-        glitchBurstSeed,
-        sleeping: state.sleeping,
-      });
-    } else {
-      drawn = renderFrameCanvas2D(frameResult.frame, {
-        canvas,
-        ctx,
-        tempCtx,
-        tempCanvas,
-        config: rendererConfig,
-        baseHSL: moodHSL,
-        pixelGrid,
-        shapeGroups,
-        shapeCenters,
-        cachedGlowFilter,
-        cachedScanBeamRGBA,
-        scanlinePattern,
-      });
-    }
-
-    // If WebGPU simply skipped rendering (for size recalculations, etc.),
-    // ensure we don't brutally crash and hide the DOM element
-    setCanvasVisible(rendererState.kind === 'webgpu' || drawn);
+    renderFrameWebGpu(frameResult.frame, {
+      gpuDevice: gpu.gpuDevice,
+      gpuContext: gpu.gpuContext,
+      gpuPixelPipeline: gpu.gpuPixelPipeline,
+      gpuPostPipeline: gpu.gpuPostPipeline,
+      gpuPixelBindGroup: gpu.gpuPixelBindGroup,
+      gpuPostBindGroup: gpu.gpuPostBindGroup,
+      gpuSceneTextureView: gpu.gpuSceneTextureView,
+      gpuInstanceCount: gpu.gpuInstanceCount,
+      gpuUniformBuffer: gpu.gpuUniformBuffer,
+      gpuPostUniformBuffer: gpu.gpuPostUniformBuffer,
+      gpuUniformData: gpu.gpuUniformData,
+      gpuPostUniformData: gpu.gpuPostUniformData,
+      config: rendererConfig,
+      faceW: faceEl.getBoundingClientRect().width,
+      faceH: faceEl.getBoundingClientRect().height,
+      shapeCenters,
+      baseHSL: moodHSL,
+      glitchBurstSeed,
+      sleeping: state.sleeping,
+    });
+    setCanvasVisible(true);
   }
 
   function getBlinkFactor(): number {

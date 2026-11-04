@@ -1,4 +1,3 @@
-export const GLITCH_RENDERERS = ['auto', 'webgpu', 'canvas2d'] as const;
 export const RENDER_QUALITIES = ['high', 'balanced', 'low'] as const;
 export const TTS_BACKENDS = ['kokoro', 'system'] as const;
 export const STT_BACKENDS = ['mlx', 'faster-whisper'] as const;
@@ -40,7 +39,6 @@ export const KOKORO_VOICES = [
   'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
 ] as const;
 
-export type GlitchRenderer = (typeof GLITCH_RENDERERS)[number];
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];
 export type TtsBackend = (typeof TTS_BACKENDS)[number];
 export type SttBackend = (typeof STT_BACKENDS)[number];
@@ -123,7 +121,6 @@ export interface RuntimeConfig {
   glitchFxEnabled: boolean;
   glitchFxBaseColor: `#${string}`;
   glitchExpressionProfiles: ExpressionProfileMap;
-  glitchRenderer: GlitchRenderer;
   glitchPixelSize: number;
   glitchPixelGap: number;
   glitchScanlines: boolean;

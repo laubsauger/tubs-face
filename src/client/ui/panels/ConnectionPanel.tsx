@@ -53,18 +53,11 @@ type Config = NonNullable<ReturnType<AppStore['getState']>['config']>;
 // Runtime settings that main kept in System Vitals. All of them are live server
 // config, so every client (main, mini, spectator) picks the change up.
 function RuntimeControls({ store, config }: { store: AppStore; config: Config }): JSX.Element {
-  const glitchBackend = useAppSelector(store, (state) => state.glitchBackend);
   const dualOn = config.dualHeadEnabled && config.dualHeadMode !== 'off';
   return (
     <>
       <ControlGroup title="Face">
         <SelectControl label="Quality" value={config.renderQuality} options={RENDER_QUALITIES} onChange={(renderQuality) => void patchConfig(store, { renderQuality })} />
-        <SelectControl
-          label={`Renderer${glitchBackend ? ` (${glitchBackend === 'webgpu' ? 'WebGPU' : 'Canvas2D'})` : ''}`}
-          value={config.glitchRenderer}
-          options={[{ value: 'auto', label: 'Auto' }, { value: 'webgpu', label: 'WebGPU' }, { value: 'canvas2d', label: 'Canvas2D' }]}
-          onChange={(glitchRenderer) => void patchConfig(store, { glitchRenderer })}
-        />
         <ToggleControl label="Glitch FX" checked={config.glitchFxEnabled} onChange={(glitchFxEnabled) => void patchConfig(store, { glitchFxEnabled })} />
         <ColorControl label="Glitch Color" value={config.glitchFxBaseColor} onChange={(glitchFxBaseColor) => patchConfigLive(store, { glitchFxBaseColor })} />
         <ButtonControl label="FX Editor (E)" text="Edit" onClick={() => toggleFxEditor(store)} />

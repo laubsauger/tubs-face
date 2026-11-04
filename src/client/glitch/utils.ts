@@ -1,9 +1,3 @@
-export function normalizeRenderer(value: unknown): 'webgpu' | 'canvas2d' | 'auto' {
-  const mode = String(value || '').trim().toLowerCase();
-  if (mode === 'webgpu' || mode === 'canvas2d' || mode === 'auto') return mode;
-  return 'auto';
-}
-
 export function mergeConfig<T extends object>(base: T, patch: Partial<T> = {}): T {
   const merged = structuredClone(base);
   for (const [key, value] of Object.entries(patch)) {
@@ -38,34 +32,6 @@ export function hexToHSL(hex: string): { h: number; s: number; l: number } {
     h *= 360;
   }
   return { h: Math.round(h), s: Math.round(s * 100), l: Math.round(l * 100) };
-}
-
-export function hslToRGB(h: number, s: number, l: number): { r: number; g: number; b: number } {
-  const normalizedS = s / 100;
-  const normalizedL = l / 100;
-  const a = normalizedS * Math.min(normalizedL, 1 - normalizedL);
-  const f = (n: number): number => {
-    const k = (n + h / 30) % 12;
-    return normalizedL - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-  };
-  return {
-    r: Math.round(f(0) * 255),
-    g: Math.round(f(8) * 255),
-    b: Math.round(f(4) * 255),
-  };
-}
-
-export function getColorLUT(cache: Map<number, string[]>, h: number, s: number): string[] {
-  const key = (Math.round(h) + 360) % 360;
-  let lut = cache.get(key);
-  if (lut) return lut;
-  lut = new Array(101);
-  for (let l = 0; l <= 100; l += 1) {
-    const { r, g, b } = hslToRGB(h, s, l);
-    lut[l] = `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
-  }
-  cache.set(key, lut);
-  return lut;
 }
 
 function isInsideRoundedRect(px: number, py: number, rx: number, ry: number, rw: number, rh: number, rrx: number, rry: number): boolean {

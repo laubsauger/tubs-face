@@ -6,8 +6,6 @@ import type { GpuHandle } from './webgpu.js';
 export interface FrameState {
   t: number;
   dpr: number;
-  pw: number;
-  ph: number;
   W: number;
   H: number;
   sz: number;
@@ -111,7 +109,7 @@ export function computeFrameState(
 
   return {
     frame: {
-      t, dpr, pw, ph, W, H, sz, faceOX, faceOY,
+      t, dpr, W, H, sz, faceOX, faceOY,
       eyeGazeX, eyeGazeY, mouthGazeX, mouthGazeY,
       blinkF, mouthScale, pulseMod, scanY, sbHalfW,
       chrOffX, chrOffY, inBurst, flickerMod,
@@ -245,146 +243,4 @@ export function renderFrameWebGpu(frame: FrameState, args: {
     console.warn('[GlitchFX] WebGPU frame render failed:', error);
     return false;
   }
-}
-
-export function renderFrameCanvas2D(frame: FrameState, args: {
-  canvas: HTMLCanvasElement;
-  ctx: CanvasRenderingContext2D | null;
-  tempCtx: CanvasRenderingContext2D | null;
-  tempCanvas: HTMLCanvasElement | null;
-  config: GlitchConfig;
-  baseHSL: { h: number; s: number; l: number };
-  pixelGrid: Array<{ x: number; y: number; brightOff: number; lut: string[] }>;
-  shapeGroups: number[];
-  shapeCenters: Array<{ cy: number }>;
-  cachedGlowFilter: string;
-  cachedScanBeamRGBA: string;
-  scanlinePattern: CanvasPattern | null;
-}): boolean {
-  const { canvas, ctx, tempCtx, tempCanvas, config, baseHSL, pixelGrid, shapeGroups, shapeCenters, cachedGlowFilter, cachedScanBeamRGBA, scanlinePattern } = args;
-  if (!ctx || !tempCtx || !tempCanvas) return false;
-  const { t, dpr, pw, ph, W, H, sz, faceOX, faceOY, eyeGazeX, eyeGazeY, mouthGazeX, mouthGazeY, blinkF, mouthScale, pulseMod, scanY, sbHalfW, chrOffX, chrOffY, inBurst, flickerMod } = frame;
-  const sb = config.scanBeam;
-  const chr = config.chromatic;
-  const gs = config.glitchSlice;
-  const fl = config.glitch;
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, W, H);
-
-  const baseLight = baseHSL.l;
-  for (const [i, point] of pixelGrid.entries()) {
-    const group = shapeGroups[i] ?? 0;
-    let drawX = point.x + faceOX;
-    let drawY = point.y + faceOY;
-    let drawSzY = sz;
-
-    if (group <= 1) {
-      drawX += eyeGazeX;
-      drawY += eyeGazeY;
-      if (blinkF > 0 && shapeCenters[group]) {
-        const centerY = (shapeCenters[group]?.cy ?? 0) + faceOY + eyeGazeY;
-        drawY = centerY + (drawY - centerY) * (1 - blinkF);
-        drawSzY = Math.max(2, sz * (1 - blinkF * 0.85));
-      }
-    }
-
-    if (group === 2) {
-      drawX += mouthGazeX;
-      drawY += mouthGazeY;
-      if (mouthScale !== 1 && shapeCenters[2]) {
-        const centerY = shapeCenters[2].cy + faceOY + mouthGazeY;
-        drawY = centerY + (drawY - centerY) * mouthScale;
-      }
-    }
-
-    if (group >= 3) {
-      drawX += eyeGazeX;
-      drawY += eyeGazeY;
-      drawY += Math.sin(t * 1.5 + point.y * 0.05) * sz * 0.3;
-    }
-
-    let light = (baseLight + point.brightOff) * pulseMod;
-    if (sb.enabled) {
-      const dist = Math.abs(drawY + sz * 0.5 - scanY);
-      if (dist < sbHalfW) {
-        light += (1 - dist / sbHalfW) * sb.brightness * 30;
-      }
-    }
-
-    const li = light < 0 ? 0 : light > 100 ? 100 : (light + 0.5) | 0;
-    if (group >= 3) {
-      ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 2 + (group - 3) * Math.PI);
-    }
-        ctx.fillStyle = point.lut[li] ?? point.lut[0] ?? '#ffffff';
-    ctx.fillRect(drawX, drawY, sz, drawSzY);
-    if (group >= 3) {
-      ctx.globalAlpha = 1;
-    }
-  }
-
-  tempCtx.setTransform(1, 0, 0, 1, 0, 0);
-  tempCtx.clearRect(0, 0, pw, ph);
-  tempCtx.drawImage(canvas, 0, 0);
-
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, pw, ph);
-  ctx.filter = cachedGlowFilter;
-  ctx.globalAlpha = GLOW_ALPHA * config.glow.bloomIntensity * flickerMod;
-  ctx.drawImage(tempCanvas, 0, 0);
-
-  ctx.filter = 'none';
-  ctx.globalAlpha = flickerMod;
-  ctx.drawImage(tempCanvas, 0, 0);
-
-  if (chr.enabled && chr.intensity > 0) {
-    ctx.filter = 'hue-rotate(40deg)';
-    ctx.globalCompositeOperation = 'lighter';
-    ctx.globalAlpha = chr.intensity * 0.35 * flickerMod;
-    ctx.drawImage(tempCanvas, Math.round(chrOffX * dpr), Math.round(chrOffY * dpr));
-    ctx.filter = 'none';
-    ctx.globalCompositeOperation = 'source-over';
-  }
-
-  if (inBurst) {
-    tempCtx.clearRect(0, 0, pw, ph);
-    tempCtx.drawImage(canvas, 0, 0);
-    ctx.clearRect(0, 0, pw, ph);
-    const sliceH = Math.ceil(ph / gs.sliceCount);
-    for (let j = 0; j < gs.sliceCount; j += 1) {
-      if (Math.random() < gs.gapChance) continue;
-      const sy = j * sliceH;
-      const off = ((Math.random() - 0.5) * 2 * gs.maxOffset * gs.intensity * dpr) | 0;
-      ctx.drawImage(tempCanvas, 0, sy, pw, sliceH, off, sy, pw, sliceH);
-    }
-  }
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  if (sb.enabled) {
-    const beamHalf = sb.lineWidth * sz;
-    const grad = ctx.createLinearGradient(0, scanY - beamHalf, 0, scanY + beamHalf);
-    grad.addColorStop(0, 'transparent');
-    grad.addColorStop(0.5, cachedScanBeamRGBA);
-    grad.addColorStop(1, 'transparent');
-    ctx.fillStyle = grad;
-    ctx.globalAlpha = sb.glowStrength / 100;
-    ctx.fillRect(0, scanY - beamHalf, W, beamHalf * 2);
-  }
-
-  if (fl.scanlines && scanlinePattern) {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = fl.scanlineIntensity;
-    ctx.fillStyle = scanlinePattern;
-    const sp = Math.max(1, Math.round(fl.scanlineSpacing * dpr));
-    const scrollOff = fl.scanlineMove ? Math.round(t * fl.scanlineSpeed * dpr) % sp : 0;
-    ctx.save();
-    ctx.translate(0, scrollOff);
-    ctx.fillRect(0, -scrollOff, pw, ph + sp);
-    ctx.restore();
-  }
-
-  ctx.globalAlpha = 1;
-  ctx.filter = 'none';
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return true;
 }

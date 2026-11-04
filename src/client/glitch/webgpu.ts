@@ -319,7 +319,7 @@ export async function initWebGpuRenderer(gpu: WebGpuState, canvas: HTMLCanvasEle
 
     return true;
   } catch (error) {
-    console.warn('[GlitchFX] WebGPU init failed, falling back to Canvas2D:', error);
+    console.warn('[GlitchFX] WebGPU init failed:', error);
     resetWebGpuResources(gpu);
     return false;
   }
