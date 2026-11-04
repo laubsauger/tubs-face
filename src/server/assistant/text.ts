@@ -1,3 +1,5 @@
+import { stripFieldNoteTags } from './field-notes.js';
+
 const OUTPUT_CHAR_LIMIT = 180;
 export const MAX_OUTPUT_SENTENCES = 2;
 const INPUT_COST_PER_MTOKENS = Number.parseFloat(process.env.GEMINI_INPUT_COST_PER_MTOKENS || '0');
@@ -8,7 +10,7 @@ export function normalizeInput(text: string): string {
 }
 
 export function stripFormatting(text: string): string {
-  return String(text)
+  return stripFieldNoteTags(String(text))
     .replace(/\*{1,3}(.+?)\*{1,3}/g, '$1')
     .replace(/_{1,3}(.+?)_{1,3}/g, '$1')
     .replace(/~~(.+?)~~/g, '$1')

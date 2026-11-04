@@ -50,6 +50,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   let lastAppearanceSignature = '';
   let uploadPending = false;
   const visitorTracker = createVisitorTracker();
+  let currentVisitorId: string | null = null;
   let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
@@ -118,6 +119,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           frame: captureCanvas.toDataURL('image/jpeg', 0.6),
           faces: recognizedNames,
           count: faces.length,
+          ...(currentVisitorId ? { visitorId: currentVisitorId } : {}),
           ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
@@ -431,15 +433,21 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
    */
   function handleVisitorEvents(events: VisitorEvent[], count: number): { returning: boolean; awayMs?: number } | null {
     let greeting: { returning: boolean; awayMs?: number } | null = null;
+    // Someone seen earlier tonight (awayMs set) is welcomed back, not greeted as new.
+    const greetFor = (awayMs: number | undefined) => (awayMs !== undefined && awayMs >= RETURN_GREETING_MIN_AWAY_MS
+      ? { returning: true, awayMs }
+      : { returning: false });
     for (const event of events) {
       switch (event.type) {
         case 'arrived':
-          greeting = { returning: false };
+          currentVisitorId = event.visitorId;
+          greeting = greetFor(event.awayMs);
           break;
         case 'new_visitor':
+          currentVisitorId = event.visitorId;
           // Before the greeting, so the server has forgotten the last visitor.
-          sender?.({ type: 'presence', present: true, newVisitor: true, faces: event.names, count });
-          greeting = { returning: false };
+          sender?.({ type: 'presence', present: true, newVisitor: true, visitorId: event.visitorId, faces: event.names, count });
+          greeting = greetFor(event.awayMs);
           break;
         case 'returned':
           if (event.awayMs >= RETURN_GREETING_MIN_AWAY_MS) greeting = { returning: true, awayMs: event.awayMs };
@@ -452,7 +460,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
           });
           break;
         case 'gone':
-          sender?.({ type: 'presence', present: false, count: 0 });
+          sender?.({ type: 'presence', present: false, visitorId: event.visitorId, count: 0 });
           break;
       }
     }

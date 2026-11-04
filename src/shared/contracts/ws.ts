@@ -78,6 +78,8 @@ export interface WsPresenceClientMessage {
   present: boolean;
   /** A different person than the last visitor just came into view. */
   newVisitor?: boolean;
+  /** The face tracker's id for this visitor, stable for the night. */
+  visitorId?: string;
   faces?: string[];
   count?: number;
 }
@@ -101,6 +103,7 @@ export interface WsAppearanceFrameClientMessage {
   /** The same visitor is back after stepping away for awayMs. */
   returning?: boolean;
   awayMs?: number;
+  visitorId?: string;
 }
 
 export interface WsTtsRequestClientMessage {
@@ -230,6 +233,18 @@ export interface WsStatsServerMessage {
   session?: SessionStats;
 }
 
+/** Tubs's field notes on the visitor in front of him, for the operator. */
+export interface WsFieldNotesServerMessage {
+  type: 'field_notes';
+  visitorId: string | null;
+  /** Seen earlier tonight. */
+  returning: boolean;
+  names: string[];
+  notes: string[];
+  /** Recent quotes from tonight's visitors, newest first. */
+  quotes: string[];
+}
+
 export interface WsConversationModeServerMessage {
   type: 'conversation_mode';
   active: boolean;
@@ -290,6 +305,7 @@ export type WsServerMessage =
   | WsDonationSignalServerMessage
   | WsStatsServerMessage
   | WsConversationModeServerMessage
+  | WsFieldNotesServerMessage
   | WsSleepServerMessage
   | WsWakeServerMessage
   | WsErrorServerMessage

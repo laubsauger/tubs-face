@@ -26,7 +26,9 @@ export function MindPanel({ store }: { store: AppStore }): JSX.Element {
     pos: Math.round(current.moodPos * 50) / 50,
     neg: Math.round(current.moodNeg * 50) / 50,
     arousal: Math.round(current.moodArousal * 50) / 50,
+    fieldNotes: current.fieldNotes,
   }));
+  const notes = state.fieldNotes;
   const moodWord = state.sleeping
     ? 'asleep'
     : MOOD_WORDS[moodExpression({ pos: state.pos, neg: state.neg, arousal: state.arousal }) ?? ''] ?? 'neutral';
@@ -50,6 +52,20 @@ export function MindPanel({ store }: { store: AppStore }): JSX.Element {
           <dt className="text-slate-500">Awake</dt>
           <dd className="text-slate-300 font-bold">{state.sleeping ? 'asleep' : formatAwakeElapsed(state.awakeElapsedSec)}</dd>
         </dl>
+        <section className="flex flex-col gap-1 font-mono text-xs" aria-label="Field notes">
+          <div className="text-slate-500 uppercase tracking-wider text-[10px]">
+            Field notes{notes.names.length > 0 ? ` · ${notes.names.join(', ')}` : ''}{notes.returning ? ' · back again' : ''}
+          </div>
+          {notes.notes.length === 0
+            ? <p className="text-slate-500">Nothing on this visitor yet.</p>
+            : <ul id="mind-notes" className="flex flex-col gap-0.5 text-slate-300">{notes.notes.map((note) => <li key={note}>· {note}</li>)}</ul>}
+          {notes.quotes.length > 0 && (
+            <>
+              <div className="text-slate-500 uppercase tracking-wider text-[10px] mt-1">Overheard tonight</div>
+              <ul id="mind-quotes" className="flex flex-col gap-0.5 text-slate-400 italic">{notes.quotes.slice(0, 4).map((quote) => <li key={quote}>"{quote}"</li>)}</ul>
+            </>
+          )}
+        </section>
       </div>
     </article>
   );

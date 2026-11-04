@@ -19,13 +19,41 @@ function run(tracker: ReturnType<typeof createVisitorTracker>, from: number, to:
   return events;
 }
 
+const idOf = (events: VisitorEvent[]) => (events[0] as { visitorId?: string } | undefined)?.visitorId;
+
 describe('visitor tracker', () => {
+  // Field notes are kept by visitor id; someone back after the conversation
+  // was forgotten should get their own notes back, not a fresh id.
+  it('recognises a visitor who comes back hours later under the same id', () => {
+    const tracker = createVisitorTracker(() => 0.99);
+    const annaId = idOf(run(tracker, 0, 0, [face(ANNA)]));
+    run(tracker, 500, 1000, [face(ANNA)]);
+    expect(types(run(tracker, 1500, 1500 + FORGET_AFTER_MS, []))).toEqual(['gone']);
+
+    const strangerId = idOf(run(tracker, 2 * 3600_000, 2 * 3600_000, [face(STRANGER)]));
+    expect(strangerId).not.toBe(annaId);
+    run(tracker, 2 * 3600_000 + 500, 2 * 3600_000 + 2000, [face(STRANGER)]);
+
+    // Anna walks back up while the stranger is gone from view.
+    run(tracker, 2 * 3600_000 + 2500, 2 * 3600_000 + 4000, []);
+    const back = run(tracker, 2 * 3600_000 + 4500, 2 * 3600_000 + 4500, [face(ANNA_TURNED)]);
+    expect(back).toMatchObject([{ type: 'new_visitor', visitorId: annaId }]);
+    expect((back[0] as { awayMs?: number }).awayMs).toBeGreaterThan(3600_000);
+  });
+
+  it('gives different visitors different ids, unique to this page load', () => {
+    const one = createVisitorTracker(() => 0.1);
+    const two = createVisitorTracker(() => 0.7);
+    const a = idOf(run(one, 0, 0, [face(ANNA)]));
+    expect(a).not.toBe(idOf(run(two, 0, 0, [face(ANNA)])));
+  });
+
   it('keeps a visitor who stepped out of view, and only forgets after minutes', () => {
     const tracker = createVisitorTracker(() => 0.99);
     expect(types(run(tracker, 0, 1000, [face(ANNA)]))).toEqual(['arrived']);
     expect(types(run(tracker, 1500, 90_000, []))).toEqual([]);
     const back = run(tracker, 90_500, 90_500, [face(ANNA_TURNED)]);
-    expect(back).toEqual([{ type: 'returned', names: [], awayMs: 89_000 }]);
+    expect(back).toMatchObject([{ type: 'returned', names: [], awayMs: 89_000 }]);
 
     expect(types(run(tracker, 91_000, 91_000 + FORGET_AFTER_MS, []))).toEqual(['gone']);
   });

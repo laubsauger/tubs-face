@@ -267,6 +267,18 @@ describe('assistant turn', () => {
       expect(ws.ofType('audio_chunk').map((chunk) => chunk.emotion?.expression)).toEqual(['angry', 'angry']);
     });
 
+    // The splitter must never see half a note, or TTS reads "NOTE works in marketing".
+    it('keeps a note tag out of speech even when it arrives in pieces, and remembers it', async () => {
+      const { fieldNotesSnapshot, resetFieldNotes } = await import('./field-notes.js');
+      resetFieldNotes();
+      fakes.provider = streamingProvider(['😏 Bold. [', '[NOTE: works in marketing, ', 'loves buzzwords. Owns a lanyard]]']);
+      await runAssistantTurn('I work in marketing', collect().broadcast);
+
+      expect(fakes.ttsSent.join(' ')).not.toMatch(/NOTE|lanyard|buzzwords/);
+      expect(fakes.ttsSent).toEqual(['Bold.']);
+      expect(fieldNotesSnapshot().notes).toEqual(['works in marketing', 'loves buzzwords. Owns a lanyard']);
+    });
+
     it('speaks at most two sentences but still reads the emotion emoji at the end', async () => {
       fakes.provider = streamingProvider(['One thing. ', 'Two things. ', 'Three things. 😏']);
       const ws = collect();

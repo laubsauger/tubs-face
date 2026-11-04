@@ -19,6 +19,7 @@ import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
+import { fieldNotesSnapshot, onFieldNotesChange, setCurrentVisitor } from '../assistant/field-notes.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 
@@ -29,6 +30,7 @@ const WS_PATH = '/ws';
 
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
+  onFieldNotesChange(() => broadcast({ type: 'field_notes', ...fieldNotesSnapshot() }));
 
   server.on('upgrade', (request, socket, head) => {
     if (!isWebSocketRequest(request)) {
@@ -59,6 +61,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       type: 'system',
       text: isSpectator ? 'Connected as spectator' : 'Connected to Tubs Bridge Server',
     } satisfies WsSystemServerMessage);
+    send(socket, { type: 'field_notes', ...fieldNotesSnapshot() });
 
     socket.on('message', (raw: RawData) => {
       try {
@@ -141,6 +144,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
           : [];
+        if (message.visitorId) setCurrentVisitor(message.visitorId, names);
         scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
       }
       return;
@@ -149,7 +153,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'presence':
       if (!message.present) onVisitorLeft();
-      else if (message.newVisitor) onNewVisitor();
+      else if (message.newVisitor) onNewVisitor(message.visitorId, message.faces ?? []);
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.

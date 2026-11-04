@@ -100,6 +100,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
       return;
     case 'ping':
       return;
+    case 'field_notes':
+      store.setState((current) => ({
+        ...current,
+        fieldNotes: { visitorId: message.visitorId, returning: message.returning, names: message.names, notes: message.notes, quotes: message.quotes },
+      }));
+      return;
     case 'conversation_mode':
       store.setState((current) => ({
         ...current,

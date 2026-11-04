@@ -17,6 +17,7 @@ import { logRawModelOutput } from './llm-log.js';
 import { type AssistantReply, type AssistantTurnResult, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
 import { emitIfActive, isAssistantTurnActive, onTurnSuperseded } from './turn-state.js';
+import { createTagFilter, recordFieldNotes } from './field-notes.js';
 
 /**
  * Streaming assistant turn: LLM tokens stream in via SSE, get split into sentences,
@@ -204,6 +205,8 @@ export async function runStreamingAssistantTurn(args: {
   }
 
   let qrMarkerSeen = false;
+  // Holds back half-arrived [[NOTE...]] tags so the splitter never speaks one.
+  const tagFilter = createTagFilter();
   const splitter = createSentenceSplitter((sentence) => {
     let text = sentence;
     if (/\[\[\s*SHOW[\s_-]*QR\s*\]\]/i.test(sentence)) qrMarkerSeen = true;
@@ -266,12 +269,17 @@ export async function runStreamingAssistantTurn(args: {
           turnTimer?.mark('First LLM token');
         }
         console.log(`\x1b[90m[LLM delta]\x1b[0m ${JSON.stringify(delta)}`);
-        pushToSplitter(delta);
+        const speakable = tagFilter.push(delta);
+        if (speakable) pushToSplitter(speakable);
       },
       abortSignal: abortController.signal,
     });
     endLlmStreamSpan?.();
     logRawModelOutput('stream', llmResult.text);
+    const tail = tagFilter.flush();
+    if (tail) pushToSplitter(tail);
+    // Notes are about the visitor, so they count even if the turn was cut off.
+    recordFieldNotes(llmResult.text);
     const stillActive = isAssistantTurnActive(turnId, epoch);
     if (stillActive) {
       splitter.flush();

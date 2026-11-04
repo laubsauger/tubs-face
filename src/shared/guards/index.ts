@@ -32,6 +32,7 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'donation_signal',
   'stats',
   'conversation_mode',
+  'field_notes',
   'sleep',
   'wake',
   'error',
@@ -89,13 +90,13 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
       return isActor(m.actor) && (m.state === 'start' || m.state === 'end')
         && optNullableString(m.turnId, MAX_ID_CHARS) && optNumber(m.ts) && optNumber(m.durationMs);
     case 'presence':
-      return typeof m.present === 'boolean' && optBoolean(m.newVisitor) && optNames(m.faces) && optNumber(m.count);
+      return typeof m.present === 'boolean' && optBoolean(m.newVisitor) && optString(m.visitorId, MAX_ID_CHARS) && optNames(m.faces) && optNumber(m.count);
     case 'proactive':
       return optString(m.context, MAX_TEXT_CHARS) && optNames(m.faces);
     case 'camera_frame':
       return frame(m.frame);
     case 'appearance_frame':
-      return frame(m.frame) && optNames(m.faces) && optNumber(m.count) && optBoolean(m.returning) && optNumber(m.awayMs);
+      return frame(m.frame) && optNames(m.faces) && optNumber(m.count) && optBoolean(m.returning) && optNumber(m.awayMs) && optString(m.visitorId, MAX_ID_CHARS);
     case 'tts_request':
       return text(m.text, MAX_TEXT_CHARS) && optString(m.voice, MAX_ID_CHARS)
         && optString(m.turnId, MAX_ID_CHARS) && optString(m.requestId, MAX_ID_CHARS);

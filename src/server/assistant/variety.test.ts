@@ -68,6 +68,11 @@ describe('buildTurnDirection', () => {
     expect(buildTurnDirection('single', fixed(0.5, 0.5, 0.99), [])).not.toContain('on your mind');
   });
 
+  it('passes on gossip from an earlier visitor, anonymously, in single-head turns', () => {
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).toContain('another visitor said: "AI art is real art"');
+    expect(buildTurnDirection('dual', fixed(0.5, 0.99, 0.99), [], [], false, 'AI art is real art')).not.toContain('another visitor');
+  });
+
   it('classifies reply length by words', () => {
     expect(lengthOf('Nice hat.')).toBe('short');
     expect(lengthOf('That jacket screams I want to look outdoorsy but I fear grass.')).toBe('one');

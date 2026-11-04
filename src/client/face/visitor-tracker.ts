@@ -23,15 +23,23 @@ const CALL_BACK_MIN_DELAY_MS = 6000;
 const CALL_BACK_MAX_DELAY_MS = 15_000;
 const MAX_SAMPLES = 8;
 const SAMPLE_EVERY_MS = 2000;
+/** Past visitors remembered for the night, so someone back hours later is recognised. */
+const ARCHIVE_SIZE = 60;
 
+/**
+ * Every visitor gets an id that stays theirs for the night (field notes are
+ * kept by it). `awayMs` on arrived/new_visitor: a past visitor came back.
+ */
 export type VisitorEvent =
-  | { type: 'arrived'; names: string[] }
-  | { type: 'new_visitor'; names: string[] }
-  | { type: 'returned'; names: string[]; awayMs: number }
+  | { type: 'arrived'; visitorId: string; names: string[]; awayMs?: number }
+  | { type: 'new_visitor'; visitorId: string; names: string[]; awayMs?: number }
+  | { type: 'returned'; visitorId: string; names: string[]; awayMs: number }
   | { type: 'call_back'; name: string }
-  | { type: 'gone' };
+  | { type: 'gone'; visitorId: string };
 
 interface Visitor {
+  id: string;
+  lastSeenAt: number;
   samples: number[][];
   names: Set<string>;
   lastSampleAt: number;
@@ -48,6 +56,11 @@ export interface VisitorTracker {
 
 export function createVisitorTracker(random: () => number = Math.random): VisitorTracker {
   let visitor: Visitor | null = null;
+  const archive: Visitor[] = [];
+  // Unique per page load: after a reload the archive is gone, and old ids
+  // must not pick up someone else's notes on the server.
+  const session = Math.floor(random() * 36 ** 4).toString(36).padStart(4, '0');
+  let nextId = 1;
 
   function namesOf(faces: DetectedFace[]): string[] {
     return [...new Set(faces.map((face) => (face.match?.name ?? face.name ?? '').trim()).filter(Boolean))];
@@ -57,8 +70,24 @@ export function createVisitorTracker(random: () => number = Math.random): Visito
     return faces.map((face) => face.embedding).filter((embedding): embedding is number[] => Array.isArray(embedding) && embedding.length > 0);
   }
 
-  function startVisitor(faces: DetectedFace[], now: number): Visitor {
-    return { samples: embeddingsOf(faces).slice(0, MAX_SAMPLES), names: new Set(namesOf(faces)), lastSampleAt: now, absentSince: 0, mismatchSince: 0, callBackAt: 0, calledBack: false };
+  /** A past visitor if this face is one, otherwise someone new. */
+  function startVisitor(faces: DetectedFace[], now: number): { next: Visitor; awayMs?: number } {
+    const index = archive.findIndex((past) => isSameVisitor(past, faces) === true);
+    if (index !== -1) {
+      const [past] = archive.splice(index, 1);
+      const awayMs = now - past!.lastSeenAt;
+      Object.assign(past!, { lastSeenAt: now, absentSince: 0, mismatchSince: 0, callBackAt: 0, calledBack: false });
+      remember(past!, faces, now);
+      return { next: past!, awayMs };
+    }
+    return {
+      next: { id: `${session}-${nextId++}`, lastSeenAt: now, samples: embeddingsOf(faces).slice(0, MAX_SAMPLES), names: new Set(namesOf(faces)), lastSampleAt: now, absentSince: 0, mismatchSince: 0, callBackAt: 0, calledBack: false },
+    };
+  }
+
+  function archiveVisitor(past: Visitor): void {
+    archive.unshift(past);
+    if (archive.length > ARCHIVE_SIZE) archive.pop();
   }
 
   /** null when there is nothing to compare (no embeddings on one side). */
@@ -82,8 +111,9 @@ export function createVisitorTracker(random: () => number = Math.random): Visito
     update(faces, now, inConversation) {
       if (faces.length > 0) {
         if (!visitor) {
-          visitor = startVisitor(faces, now);
-          return [{ type: 'arrived', names: [...visitor.names] }];
+          const { next, awayMs } = startVisitor(faces, now);
+          visitor = next;
+          return [{ type: 'arrived', visitorId: next.id, names: [...next.names], ...(awayMs !== undefined ? { awayMs } : {}) }];
         }
         const same = isSameVisitor(visitor, faces);
         const wasAway = visitor.absentSince > 0;
@@ -92,18 +122,21 @@ export function createVisitorTracker(random: () => number = Math.random): Visito
           // Back from an absence as someone else, or a stranger has stood
           // there a few seconds with the old visitor nowhere in view.
           if (wasAway || now - visitor.mismatchSince >= NEW_FACE_CONFIRM_MS) {
-            visitor = startVisitor(faces, now);
-            return [{ type: 'new_visitor', names: [...visitor.names] }];
+            archiveVisitor(visitor);
+            const { next, awayMs } = startVisitor(faces, now);
+            visitor = next;
+            return [{ type: 'new_visitor', visitorId: next.id, names: [...next.names], ...(awayMs !== undefined ? { awayMs } : {}) }];
           }
           return [];
         }
         visitor.mismatchSince = 0;
+        visitor.lastSeenAt = now;
         remember(visitor, faces, now);
         if (wasAway) {
           const awayMs = now - visitor.absentSince;
           visitor.absentSince = 0;
           visitor.callBackAt = 0;
-          return [{ type: 'returned', names: [...visitor.names], awayMs }];
+          return [{ type: 'returned', visitorId: visitor.id, names: [...visitor.names], awayMs }];
         }
         return [];
       }
@@ -119,8 +152,10 @@ export function createVisitorTracker(random: () => number = Math.random): Visito
           : 0;
       }
       if (now - visitor.absentSince >= FORGET_AFTER_MS) {
+        const gone = visitor;
+        archiveVisitor(gone);
         visitor = null;
-        return [{ type: 'gone' }];
+        return [{ type: 'gone', visitorId: gone.id }];
       }
       if (visitor.callBackAt && now >= visitor.callBackAt) {
         visitor.callBackAt = 0;

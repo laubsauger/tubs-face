@@ -40,3 +40,11 @@ test('Event Log shows errors the operator would otherwise never see', async ({ p
   await expect(page.locator('#event-log-list')).toContainText('TTS stream failed: test');
   await expect(page.getByRole('button', { name: /Event Log/ })).toContainText('1 error');
 });
+
+test('Mind shows the field notes on the visitor in front of Tubs', async ({ page, request }) => {
+  await page.getByRole('button', { name: /Mind/ }).click();
+  await send(request, { type: 'field_notes', visitorId: 'v1', returning: true, names: ['Anna'], notes: ['works in marketing'], quotes: ['AI art is real art'] });
+  await expect(page.locator('#mind-notes')).toContainText('works in marketing');
+  await expect(page.locator('#mind-quotes')).toContainText('AI art is real art');
+  await expect(page.getByLabel('Field notes')).toContainText('Anna · back again');
+});

@@ -122,6 +122,17 @@ describe('turns', () => {
     expect(service.runProactiveTurn).not.toHaveBeenCalled();
   });
 
+  it('gives a returning visitor their field notes back, and a new one none', async () => {
+    const notes = await import('./field-notes.js');
+    notes.resetFieldNotes();
+    onNewVisitor('anna-1');
+    notes.recordFieldNotes('[[NOTE: works in marketing]]');
+    onNewVisitor('stranger-2');
+    expect(notes.memoryContext()).toBe('');
+    onNewVisitor('anna-1');
+    expect(notes.memoryContext()).toContain('works in marketing');
+  });
+
   // Visitors come and go all evening. The next one must not hear about the
   // last one's jacket, but a visitor who is still talking off-camera must not
   // lose the thread.

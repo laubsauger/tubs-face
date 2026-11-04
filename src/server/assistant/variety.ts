@@ -1,4 +1,9 @@
 import { recentModelReplies, wasLastReplyCutOff } from './context.js';
+import { pickGossip } from './field-notes.js';
+
+// Now and then Tubs brings up what an earlier visitor said, so separate
+// visitors feel like one audience he is keeping track of.
+const GOSSIP_CHANCE = 0.1;
 
 const HEADER = '[Stage direction for this reply, not said by the visitor]';
 
@@ -72,6 +77,7 @@ export function buildTurnDirection(
   recent: string[] = recentModelReplies(6),
   emojis: readonly string[] = recentEmojis,
   cutOff: boolean = wasLastReplyCutOff(),
+  gossip: string | null = Math.random() < GOSSIP_CHANCE ? pickGossip() : null,
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -116,6 +122,10 @@ export function buildTurnDirection(
   const lastEmojis = emojis.slice(-3);
   if (lastEmojis.length === 3 && lastEmojis.every((emoji) => emoji === lastEmojis[0])) {
     lines.push(`Your face has shown ${lastEmojis[0]} three replies in a row. Feel something else this time and pick a different emoji.`);
+  }
+
+  if (mode !== 'dual' && gossip) {
+    lines.push(`Earlier tonight another visitor said: "${gossip}". Bring it up if it fits, without saying who.`);
   }
 
   // Tubs has things on his mind; now and then they win over the visitor's topic.

@@ -1,5 +1,6 @@
 // Single-head replies generated in one call (no streaming).
 
+import { recordFieldNotes } from './field-notes.js';
 import { runtimeConfig } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
@@ -87,6 +88,7 @@ export async function generateAssistantReply(userText: string, turnTimer?: TurnT
     });
     endLlmSpan?.();
     logRawModelOutput('reply', result.text);
+    recordFieldNotes(result.text);
     let cleaned = stripFormatting(result.text);
     const repaired = await maybeRepairPersonaDrift({
       draftText: cleaned,
@@ -157,6 +159,7 @@ export async function generateProactiveReply(context: string): Promise<Assistant
       timeoutMs: 12_000,
     });
     logRawModelOutput('proactive', result.text);
+    recordFieldNotes(result.text);
 
     let cleaned = stripFormatting(result.text);
     const repaired = await maybeRepairPersonaDrift({
