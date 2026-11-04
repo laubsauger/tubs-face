@@ -81,8 +81,11 @@ export function buildTurnDirection(
     return openers.length > 0 ? `${HEADER}\n- Do not start with: ${openers.map((value) => `"${value}"`).join(', ')}.` : '';
   }
 
+  let length: LengthKey | null = null;
   if (mode === 'single') {
-    lines.push(LENGTHS[pickLength(recent, random)]);
+    length = pickLength(recent, random);
+    // The dice set the shape; an explicit ask from the visitor still wins.
+    lines.push(`${LENGTHS[length]} If they explicitly asked for something long or short, give them that instead.`);
   } else {
     const roll = random();
     lines.push(roll < 0.35
@@ -94,7 +97,8 @@ export function buildTurnDirection(
   const questions = lastThree.filter((text) => text.trim().endsWith('?')).length;
   if (questions >= 2) {
     lines.push('Do not end with a question.');
-  } else if (recent.length >= 3 && recent.slice(-4).every((text) => !text.trim().endsWith('?')) && random() < 0.35) {
+  } else if (length !== 'short' && recent.length >= 3 && recent.slice(-4).every((text) => !text.trim().endsWith('?')) && random() < 0.35) {
+    // Not on a six-word jab: the question doubled its length every time.
     lines.push('End with one specific, unexpected question.');
   }
 

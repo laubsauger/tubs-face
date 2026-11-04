@@ -151,10 +151,17 @@ function emitIfActive(
   return true;
 }
 
+/** This turn's variety direction, also shown in the turn timing log so odd replies can be explained. */
+function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): string {
+  const direction = buildTurnDirection(mode);
+  turnTimer?.setMeta('Direction', direction.split('\n').slice(1).map((line) => line.replace(/^- /, '')).join(' | '));
+  return direction;
+}
+
 export async function generateAssistantReply(userText: string, turnTimer?: TurnTimer): Promise<AssistantReply> {
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized, buildTurnDirection('single'));
+  const context = buildContents(normalized, directionFor('single', turnTimer));
   if (!normalized) {
     const text = 'I did not catch that. Try again.';
     return {
@@ -757,7 +764,7 @@ async function runStreamingAssistantTurn(args: {
   const { userText, turnId, epoch, broadcast, turnTimer, provider, authState } = args;
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const context = buildContents(normalized, buildTurnDirection('single'));
+  const context = buildContents(normalized, directionFor('single', turnTimer));
 
   if (!normalized) {
     console.warn('\x1b[33m\x1b[1m[Streaming]\x1b[0m empty input — falling through to sequential');
@@ -1514,7 +1521,7 @@ async function runProactiveTurnBody(
 async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
-  const context = buildContents(normalized, buildTurnDirection('dual'));
+  const context = buildContents(normalized, directionFor('dual', turnTimer));
   const provider = resolveLlmProvider();
   const authState = provider.getAuthState();
 

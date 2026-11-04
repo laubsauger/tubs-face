@@ -28,6 +28,12 @@ describe('buildTurnDirection', () => {
     expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), recent)).toContain('Do not end with a question.');
   });
 
+  it('never pairs a six-word jab with an invited question', () => {
+    const noQuestions = ['Fine.', 'That jacket screams I want to look outdoorsy but I fear grass.', 'Wow, okay then.'];
+    expect(buildTurnDirection('single', fixed(0.05, 0, 0.99), noQuestions)).not.toContain('unexpected question');
+    expect(buildTurnDirection('single', fixed(0.5, 0, 0.99), noQuestions)).toContain('unexpected question');
+  });
+
   it('bans the openers Tubs used recently', () => {
     const recent = ['So you think robots dream?', 'So you are the reason.'];
     expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), recent)).toContain('Do not start with: "so you"');
