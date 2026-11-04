@@ -234,7 +234,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       return;
     }
 
-    const timeline = buildLocalTurnTimeline(beats, actor, { includeRemoteWait: isDualHead });
+    const timeline = buildLocalTurnTimeline(beats, actor, {
+      includeRemoteWait: isDualHead,
+      voiceAllActors: mode === 'main' && !isDualHead,
+    });
     // When mini has no WS sender, local speak beats must stay visual-only if
     // audio is expected to arrive from the server.
     const suppressTts = mode === 'mini' && serverStreaming;

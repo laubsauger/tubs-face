@@ -181,7 +181,7 @@ server.on('upgrade', (request, socket, head) => {
         return;
       }
       if (!message || message.type === 'ping' || message.type === 'face_motion' || message.type === 'face_blink') return;
-      wsReceived.push(message);
+      wsReceived.push({ ...message, receivedAt: Date.now() });
       if (message.type === 'tts_request' && message.text) {
         // Answer like the TTS stream: one chunk per request, then speak_end.
         const { text, turnId } = message;

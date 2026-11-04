@@ -34,10 +34,13 @@ export function estimateBeatDurationMs(beat: TurnBeat): number {
 export function buildLocalTurnTimeline(
   beats: TurnBeat[],
   localActor: 'main' | 'small',
-  options: { includeRemoteWait?: boolean } = {},
+  options: { includeRemoteWait?: boolean; voiceAllActors?: boolean } = {},
 ): LocalTurnTimelineItem[] {
   const actorKey = localActor === 'small' ? 'small' : 'main';
   const includeRemoteWait = options.includeRemoteWait !== false;
+  // Single-head mode: no other screen will voice the other head, so this one
+  // plays every beat (the small head in its own voice).
+  const voiceAll = options.voiceAllActors === true;
   const source = Array.isArray(beats) ? beats : [];
   const timeline: LocalTurnTimelineItem[] = [];
 
@@ -51,7 +54,7 @@ export function buildLocalTurnTimeline(
       ? Math.max(120, Math.min(8000, explicitDelay))
       : estimateBeatDurationMs(beat);
 
-    if (actor !== actorKey) {
+    if (actor !== actorKey && !voiceAll) {
       if (beat.action === 'speak' && includeRemoteWait) {
         timeline.push({
           action: 'wait_remote',
@@ -79,6 +82,7 @@ export function buildLocalTurnTimeline(
     if (beat.action === 'react') {
       timeline.push({
         action: 'react',
+        ...(voiceAll ? { actor } : {}),
         text: beat.text ?? '',
         emotion: beat.emotion ?? null,
         delayMs,
@@ -88,6 +92,7 @@ export function buildLocalTurnTimeline(
 
     timeline.push({
       action: 'speak',
+      ...(voiceAll ? { actor } : {}),
       text: beat.text ?? '',
       emotion: beat.emotion ?? null,
     });
