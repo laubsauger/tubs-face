@@ -37,6 +37,8 @@ export const KOKORO_VOICES = [
   'pf_dora', 'pm_alex', 'pm_santa',
   'zf_xiaobei', 'zf_xiaoni', 'zf_xiaoxiao', 'zf_xiaoyi',
   'zm_yunjian', 'zm_yunxi', 'zm_yunxia', 'zm_yunyang',
+  // Not Kokoro: a cloned voice served by the separate Ming service (MING_TTS_URL).
+  'ming:friend',
 ] as const;
 
 export type RenderQuality = (typeof RENDER_QUALITIES)[number];

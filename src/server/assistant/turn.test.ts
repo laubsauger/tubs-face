@@ -253,6 +253,23 @@ describe('assistant turn', () => {
       expect(result.superseded).toBe(false);
     });
 
+    // A cloned Ming voice renders sentence by sentence with the intonation
+    // reset at every boundary; the user heard the rhythm break. It gets the
+    // whole reply in one piece instead.
+    it('sends a Ming voice the whole reply in one piece', async () => {
+      const previousVoice = runtimeConfig.kokoroVoice;
+      runtimeConfig.kokoroVoice = 'ming:friend';
+      try {
+        fakes.provider = streamingProvider(['Nice hat. ', 'Did it come', ' with instructions? 😏']);
+        const ws = collect();
+        await runAssistantTurn('do you like my hat', ws.broadcast);
+        expect(fakes.ttsSent).toEqual(['Nice hat. Did it come with instructions?']);
+        expect(ws.ofType('speak_end')[0]?.fullText).toBe('Nice hat. Did it come with instructions?');
+      } finally {
+        runtimeConfig.kokoroVoice = previousVoice;
+      }
+    });
+
     // The emoji comes first so the face can show the feeling from the first
     // word; at the end it only arrived once the reply was over.
     it('puts the leading emotion on every audio chunk and keeps it out of speech', async () => {

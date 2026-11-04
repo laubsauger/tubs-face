@@ -666,6 +666,25 @@ def transcribe():
             os.remove(tmp_path)
 
 
+# Cloned voices ("ming:...") are rendered by a separate Ming service. It needs
+# a newer mlx than this process (speech-to-text), so it runs in its own venv.
+MING_TTS_URL = os.environ.get("MING_TTS_URL", "http://127.0.0.1:3003").rstrip("/")
+
+
+def _ming_wav(text):
+    req = urllib.request.Request(
+        f"{MING_TTS_URL}/tts",
+        data=json.dumps({"text": text}).encode("utf-8"),
+        headers={"content-type": "application/json"},
+    )
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        wav_bytes = resp.read()
+        render_ms = resp.headers.get("X-Render-Ms", "?")
+    print(f"[Realtime TTS] Ming {len(text)} chars in {int((time.time() - t0) * 1000)}ms (render {render_ms}ms)")
+    return wav_bytes
+
+
 @app.route("/tts", methods=["POST"])
 def tts():
     data = request.json or {}
@@ -673,6 +692,12 @@ def tts():
     voice = str(data.get("voice") or KOKORO_VOICE).strip().lower()
     if not text:
         return jsonify({"error": "No text provided"}), 400
+
+    if voice.startswith("ming:"):
+        try:
+            return Response(_ming_wav(text), mimetype="audio/wav")
+        except Exception as err:
+            return jsonify({"error": f"Ming service: {err}"}), 502
 
     if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         return _tts_kokoro(text, voice)
@@ -771,6 +796,12 @@ def tts_stream(ws):
             text = str(data.get("text") or "").strip()
             voice = str(data.get("voice") or voice).strip().lower()
             if not text:
+                continue
+
+            if voice.startswith("ming:"):
+                wav_bytes = _ming_wav(text)
+                ws.send(json.dumps({"text": text, "audio": base64.b64encode(wav_bytes).decode("ascii"), "chunk": True}))
+                ws.send(json.dumps({"text": text, "done": True}))
                 continue
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:

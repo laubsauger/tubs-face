@@ -12,6 +12,7 @@ import { clampOutput, createSentenceCap, estimateCostUsd, estimateTokens, saniti
 import { buildContents, pushHistory, getVisualContext, markLastReplyCutOff } from './context.js';
 import { createSentenceSplitter } from './sentence-splitter.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
+import { isMingVoice } from '../tts/voices.js';
 import { logRawModelOutput } from './llm-log.js';
 import { type AssistantReply, type AssistantTurnResult, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
@@ -137,6 +138,10 @@ export async function runStreamingAssistantTurn(args: {
   }
 
   const kokoroVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+  // Ming voices get the whole reply in one call: rendered sentence by sentence,
+  // the intonation resets at every boundary and the rhythm breaks.
+  const wholeReply = isMingVoice(kokoroVoice);
+  const heldSentences: string[] = [];
   let historyRecorded = false;
   const removeSupersedeHandler = onTurnSuperseded(epoch, () => {
     abortController.abort();
@@ -232,6 +237,10 @@ export async function runStreamingAssistantTurn(args: {
       turnTimer?.mark('First sentence to TTS');
     }
     sentencesQueued++;
+    if (wholeReply) {
+      heldSentences.push(text);
+      return;
+    }
     if (ttsWsReady && ttsWs && ttsWs.ready) {
       pendingTtsSentences++;
       currentTtsSentence = text;
@@ -281,6 +290,17 @@ export async function runStreamingAssistantTurn(args: {
     const stillActive = isAssistantTurnActive(turnId, epoch);
     if (stillActive) {
       splitter.flush();
+    }
+    if (stillActive && heldSentences.length > 0) {
+      const reply = heldSentences.join(' ');
+      turnTimer?.mark('Whole reply to TTS');
+      if (ttsWsReady && ttsWs && ttsWs.ready) {
+        pendingTtsSentences++;
+        currentTtsSentence = reply;
+        ttsWs.send(reply, kokoroVoice);
+      } else {
+        broadcast({ type: 'speak_chunk', text: reply, chunkIndex: chunkIndex++, turnId });
+      }
     }
 
     // If the splitter produced nothing speakable, send the full text once.

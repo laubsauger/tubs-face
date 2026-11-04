@@ -1,4 +1,5 @@
 import { openTtsStream } from '../tts/stream.js';
+import { isMingVoice } from '../tts/voices.js';
 
 /**
  * A short sound ("Oh.", "Right.") played the moment a voice turn starts.
@@ -75,7 +76,8 @@ export function prepareFillers(voice: string, now = Date.now()): void {
       if (!(await session.opened)) return;
       for (const line of FILLER_LINES) {
         pending += 1;
-        session.send(line, voice);
+        // The markup is for Kokoro's phonemizer; Ming would read it out.
+        session.send(isMingVoice(voice) ? line.replace(PHONEME_MARKUP, '$1') : line, voice);
       }
       await Promise.race([done, new Promise((resolve) => setTimeout(resolve, RENDER_TIMEOUT_MS))]);
       if (rendered.length > 0) clips.set(voice, rendered);
