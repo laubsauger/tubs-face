@@ -477,26 +477,39 @@ a {
 }
 
 .floating-transcript {
+  --transcript-bottom: var(--tile-gap);
+  --transcript-top: var(--tile-gap);
   position: absolute;
   left: var(--tile-gap);
-  bottom: var(--tile-gap);
+  bottom: var(--transcript-bottom);
   z-index: 26;
   display: flex;
   flex-direction: column;
   gap: 6px;
   width: clamp(220px, 30cqw, 420px);
+  /* Long replies show whole, but the overlay never takes over the stage. */
+  max-height: min(50cqh, calc(100cqh - var(--transcript-bottom) - var(--transcript-top)));
   pointer-events: none;
 }
 
 /* A mini tile in the same corner sits under the transcript. */
 .stage:has(.mini-tile-bottom-left:not(.is-concealed)) .floating-transcript {
-  bottom: calc(var(--tile-h) + 2 * var(--tile-gap));
+  --transcript-bottom: calc(var(--tile-h) + 2 * var(--tile-gap));
 }
 
+/* One in the corner above it caps how tall the transcript gets. */
+.stage:has(.mini-tile-top-left:not(.is-concealed)) .floating-transcript {
+  --transcript-top: calc(var(--tile-h) + 2 * var(--tile-gap));
+}
+
+/* Newest card at the bottom, always whole; older ones slide off the top. */
 .floating-transcript-lines {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  justify-content: flex-end;
+  min-height: 0;
+  overflow: hidden;
   gap: 4px;
   padding: 0;
   border: 0;
@@ -520,9 +533,14 @@ a {
   pointer-events: none;
 }
 
+.floating-transcript-lines.is-clipped {
+  mask-image: linear-gradient(to bottom, transparent, #000 40px);
+}
+
 .transcript-line {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
   gap: 1px;
   max-width: 100%;
   padding: 5px 10px 6px;
@@ -569,11 +587,9 @@ a {
   text-transform: none;
 }
 
-.transcript-text {
-  display: -webkit-box;
-  overflow: hidden;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+/* The part of a reply not typed out yet keeps its place, unseen. */
+.transcript-untyped {
+  visibility: hidden;
 }
 
 /* Rendered invisible rather than removed, so a typed key can focus it at once. */

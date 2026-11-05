@@ -7,6 +7,7 @@ import { createSubtitleController, type SubtitleController } from '../ui/subtitl
 import { createQueueRun, type QueueRun } from './queue-run.js';
 import { STREAMING_GAP_GRACE_MS, createStreamingSession, type ScheduledChunk, type StreamingSession } from './streaming-session.js';
 import { speechOutput } from './speech-level.js';
+import { noteVoiceQuiet, noteVoiceRetimed, noteVoiceStarted } from './voice-clock.js';
 
 interface SpeakQueueItem {
   type: 'speak' | 'wait' | 'react' | 'wait_remote';
@@ -676,7 +677,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         if (latestItem && continues) {
           latestItem.duration += chunk.duration;
           latestItem.open = chunk.more;
-          if (runningItem === latestItem) subtitles.retime(subtitleSeconds(latestItem), latestItem.open);
+          if (runningItem === latestItem) {
+            subtitles.retime(subtitleSeconds(latestItem), latestItem.open);
+            noteVoiceRetimed(subtitleSeconds(latestItem), latestItem.open);
+          }
           return;
         }
         latestItem = { text: chunk.text, duration: chunk.duration, open: chunk.more };
@@ -687,7 +691,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         if (!item) return; // a later chunk of an item whose subtitle is already running
         itemStartingAt.delete(chunk.index);
         runningItem = item;
-        if (chunk.text) updateStreamingSubtitle(chunk.text, subtitleSeconds(item), item.open);
+        if (chunk.text) {
+          updateStreamingSubtitle(chunk.text, subtitleSeconds(item), item.open);
+          noteVoiceStarted(chunk.text, subtitleSeconds(item), item.open);
+        }
       },
       onError: (message) => store.appendLog('error', `Stream ${message}`),
       log: (message) => console.log(`[Stream] ${message}`),
@@ -822,6 +829,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
     if (wasLocalBeat) updatePlaybackState(false, 'Idle');
     subtitles.finish();
+    noteVoiceQuiet();
     emitHeadSpeechState('end', turnId, endActor ?? undefined);
     scheduleSubtitleClear();
     const settledExpression = lastEmotion?.expression ?? null;
@@ -1180,6 +1188,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
       }
       speechSynthesis.cancel();
       subtitles.stop();
+      noteVoiceQuiet();
       store.setState((current) => ({
         ...current,
         currentSpeechText: '',

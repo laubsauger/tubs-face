@@ -162,3 +162,119 @@ test('the dashboard plays no speech and opens no mic or camera', async ({ page, 
   await page.keyboard.type('hi');
   await expect(page.locator('#chat-panel-input')).toHaveValue('hi');
 });
+
+// Tubs does longer bits now (up to ~6 sentences). The floating transcript used
+// to stop a reply after three lines with an ellipsis; visitors must be able to
+// read all of it, typed out as Tubs says it rather than dropped in at once.
+const LONG_REPLY = [
+  'Right, the long version.',
+  'Studio two-oh-four was a broom closet before it was an art space, and frankly the broom had better taste.',
+  'Dimi says I am a sculpture, but I think I am more of a mood with a power cord.',
+  'Alan Watts said you are the universe experiencing itself, which is a lot of pressure for a tub.',
+  'It is a psychological trick, really: you look at me, I look at you, and nobody admits who blinked first.',
+  'Anyway. Your hat is doing most of the talking tonight.',
+];
+
+const newestCard = (page: Page) => page.locator('#floating-transcript .transcript-line').last();
+
+test('a long reply types out in the transcript with the voice, then shows in full', async ({ page, request }) => {
+  await openFace(page, request);
+  // With the dock's chat tab open the overlay stays out of the way.
+  await page.keyboard.press('Backquote');
+  // What the newest card shows, every frame.
+  await page.evaluate(() => {
+    const samples: Array<[number, string]> = [];
+    (window as unknown as { __typed: typeof samples }).__typed = samples;
+    const tick = () => {
+      const text = document.querySelector<HTMLElement>('#floating-transcript .transcript-line:last-child .transcript-text');
+      if (text) samples.push([performance.now(), text.innerText.trim()]);
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+
+  const [first, ...rest] = LONG_REPLY;
+  const full = LONG_REPLY.join(' ');
+  await send(request,
+    { type: 'turn_start', turnId: 't-long' },
+    // A slowly said first sentence: text running ahead of the voice would show the second one meanwhile.
+    chunk('t-long', 0, first!, 2500),
+    ...rest.map((text, index) => chunk('t-long', index + 1, text, 700)),
+    { type: 'speak_end', turnId: 't-long', fullText: full },
+  );
+  await expect(newestCard(page)).toBeVisible();
+  // Something else in the chat changes mid-reply; the card must not start over.
+  await page.waitForTimeout(800);
+  await send(request, { type: 'system', text: 'Unrelated notice' });
+
+  const text = newestCard(page).locator('.transcript-text');
+  await expect(text).toHaveText(full, { useInnerText: true, timeout: 15_000 });
+
+  const samples = await page.evaluate(() => (window as unknown as { __typed: Array<[number, string]> }).__typed);
+  const [appearedAt] = samples[0]!;
+  // While the first sentence is still being said: some of it, nothing of the next.
+  const firstSentence = samples.filter(([at]) => at < appearedAt + 2000).map(([, shown]) => shown.length);
+  expect(Math.max(...firstSentence)).toBeGreaterThan(0);
+  expect(Math.max(...firstSentence)).toBeLessThanOrEqual(first!.length);
+  // Typed out: part of it first, only ever more of it, never anything but the reply.
+  expect(samples.some(([, shown]) => shown.length > 0 && shown.length < full.length)).toBe(true);
+  for (let index = 1; index < samples.length; index += 1) {
+    expect(samples[index]![1].length).toBeGreaterThanOrEqual(samples[index - 1]![1].length);
+  }
+  expect(samples.every(([, shown]) => full.startsWith(shown))).toBe(true);
+
+  // Nothing clamped or cut off: the whole card sits inside the overlay.
+  const fit = await newestCard(page).evaluate((card) => {
+    const body = card.querySelector<HTMLElement>('.transcript-text')!;
+    const box = card.parentElement!.getBoundingClientRect();
+    const rect = card.getBoundingClientRect();
+    return { hidden: body.scrollHeight - body.clientHeight, top: rect.top - box.top, bottom: box.bottom - rect.bottom };
+  });
+  expect(fit.hidden).toBeLessThanOrEqual(1);
+  expect(fit.top).toBeGreaterThanOrEqual(0);
+  expect(fit.bottom).toBeGreaterThanOrEqual(0);
+});
+
+test('with reduced motion a reply shows whole at once', async ({ page, request }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openFace(page, request);
+  await page.keyboard.press('Backquote');
+  const first = LONG_REPLY[0]!;
+  await send(request,
+    { type: 'turn_start', turnId: 't-still' },
+    chunk('t-still', 0, first, 3000),
+    { type: 'speak_end', turnId: 't-still', fullText: first },
+  );
+  // Long before the 3 s sentence is said.
+  await expect(newestCard(page).locator('.transcript-text')).toHaveText(first, { useInnerText: true, timeout: 1000 });
+});
+
+test('long replies pile up without taking over the stage: older ones slide off the top, the newest stays whole', async ({ page, request }) => {
+  await page.setViewportSize({ width: 900, height: 600 });
+  await openFace(page, request);
+  await page.keyboard.press('Backquote');
+
+  const lines = page.locator('#floating-transcript .transcript-line');
+  for (const turn of ['One', 'Two', 'Three']) {
+    const full = [`Take ${turn}.`, ...LONG_REPLY.slice(1)].join(' ');
+    await send(request,
+      { type: 'turn_start', turnId: `t-${turn}` },
+      // The whole reply in one piece, the way Ming sends it.
+      chunk(`t-${turn}`, 0, full, 500),
+      { type: 'speak_end', turnId: `t-${turn}`, fullText: full },
+    );
+    await expect(lines.last().locator('.transcript-text')).toHaveText(full, { useInnerText: true, timeout: 10_000 });
+  }
+  await expect(lines).toHaveCount(3);
+
+  const layout = await page.locator('#floating-transcript').evaluate((box) => {
+    const stage = box.closest('.stage')!.getBoundingClientRect();
+    const rect = box.getBoundingClientRect();
+    const newest = box.lastElementChild!.getBoundingClientRect();
+    return { stageHeight: stage.height, height: rect.height, clipped: box.classList.contains('is-clipped'), newestTop: newest.top - rect.top, newestBottom: rect.bottom - newest.bottom };
+  });
+  expect(layout.height).toBeLessThanOrEqual(layout.stageHeight * 0.5 + 1);
+  expect(layout.clipped).toBe(true);
+  expect(layout.newestTop).toBeGreaterThanOrEqual(0);
+  expect(layout.newestBottom).toBeGreaterThanOrEqual(0);
+});
