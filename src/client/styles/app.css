@@ -2100,6 +2100,43 @@ a {
   width: min(calc(100% - 24px), 680px);
 }
 
+/* Mini Tubs, in its window and in the tile (not the spectator page, which
+   shares this shell): the subtitle gets a band of its own under the face, so
+   it never covers Mini's mouth while Mini talks. The renderer fits the face into
+   the box above it, so in a short tile the face comes out a bit smaller. */
+.mini-shell:not(.spectator-shell) {
+  --mini-subtitle-size: clamp(12px, min(3.6vw, 6vh), 36px);
+  /* Two lines at line-height 1.25, the 0.25em padding top and bottom, a 6px gap below. */
+  --mini-subtitle-band: calc(var(--mini-subtitle-size) * 3 + 6px);
+}
+
+.mini-shell:not(.spectator-shell) .visual-stage {
+  bottom: var(--mini-subtitle-band);
+}
+
+/* Main Tubs' subtitle look, sized to the mini screen. */
+.mini-shell:not(.spectator-shell) .visual-subtitle {
+  top: calc(100% - var(--mini-subtitle-band));
+  bottom: auto;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  min-height: 0;
+  padding: 0.25em 0.7em;
+  border: none;
+  border-radius: 0.4em;
+  background: rgba(10, 10, 15, 0.7);
+  font-family: var(--font-sans);
+  font-size: var(--mini-subtitle-size);
+  font-weight: 600;
+  line-height: 1.25;
+  backdrop-filter: blur(8px);
+}
+
+/* What the mic heard sits in the same band; it steps aside while Small talks. */
+.mini-shell:not(.spectator-shell):has(.visual-subtitle.is-visible) .visual-live-transcript {
+  opacity: 0;
+}
+
 .mini-reaction {
   position: absolute;
   right: 22px;
