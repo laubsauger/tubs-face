@@ -35,6 +35,13 @@ const WHISPER_HALLUCINATIONS = new Set([
   'oh.',
   'ah.',
   'i\'m sorry.',
+  // Frequent phantoms in the Bag of Hallucinations study (Baranski et al. 2025),
+  // from subtitle credits in Whisper's training data.
+  'subtitles by the amara.org community',
+  'thank you so much for watching!',
+  'thank you so much for watching.',
+  'please subscribe.',
+  'see you next time.',
 ]);
 
 // Whisper's own test for a looping transcript: text that compresses far better

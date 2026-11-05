@@ -49,6 +49,39 @@ LLM_BASE_URL = get_ollama_base_url()
 OPENAI_BASE_URL = os.environ.get("REALTIME_OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 MIN_STT_AUDIO_BYTES = int(os.environ.get("REALTIME_MIN_STT_AUDIO_BYTES", "2048"))
+# Whisper writes fluent text for silence and noise ("you", "I'm sorry." x29).
+# Its own guard skips a window only when no_speech_prob > 0.6 AND the text is
+# low-confidence, so confident phantoms get through. Measured on this model
+# (small): silence, noise and hum score 0.81-0.91, real speech 0.04-0.11.
+# Anything at or above Whisper's 0.6 is treated as no speech, whatever the text.
+NO_SPEECH_THRESHOLD = float(os.environ.get("REALTIME_NO_SPEECH_THRESHOLD", "0.6"))
+_last_decode_results = []  # filled by the patched decode below; read under _gpu_lock
+
+
+def _speech_text(text, no_speech_probs):
+    """The transcript, or "" when every decoded window says there was no speech."""
+    probs = [p for p in no_speech_probs if p == p]  # drop NaN
+    if probs and min(probs) >= NO_SPEECH_THRESHOLD:
+        return ""
+    return text
+
+
+def _capture_decode_results(stt):
+    """lightning-whisper-mlx computes no_speech_prob per window but only returns the
+    text; record the decode results so /transcribe can use them."""
+    from lightning_whisper_mlx import whisper as lw
+    if getattr(lw.Whisper.decode, "_tubs_capture", False):
+        return
+    original = lw.Whisper.decode
+
+    def decode(self, *args, **kwargs):
+        results = original(self, *args, **kwargs)
+        # Temperature fallback decodes again; the last call holds the final results.
+        _last_decode_results[:] = results if isinstance(results, list) else [results]
+        return results
+
+    decode._tubs_capture = True
+    lw.Whisper.decode = decode
 
 stt_model = None
 tts_model = None
@@ -111,6 +144,7 @@ def ensure_stt_model():
         from lightning_whisper_mlx import LightningWhisperMLX
         print(f"[Realtime STT] Loading lightning-whisper-mlx: {STT_MODEL}")
         stt_model = LightningWhisperMLX(model=STT_MODEL, batch_size=12)
+        _capture_decode_results(stt_model)
     else:
         from faster_whisper import WhisperModel
         print(f"[Realtime STT] Loading faster-whisper: {STT_MODEL} on cpu (int8)")
@@ -638,10 +672,16 @@ def transcribe():
                             "probability": 0.0,
                         })
                 with _gpu_lock:
+                    _last_decode_results.clear()
                     result = model.transcribe(wav_path, language="en")
-                text = str(result.get("text", "")).strip()
+                    no_speech = [float(getattr(r, "no_speech_prob", float("nan"))) for r in _last_decode_results]
+                heard = str(result.get("text", "")).strip()
+                text = _speech_text(heard, no_speech)
                 elapsed = int((time.time() - t0) * 1000)
-                print(f"[Realtime STT] mlx transcribed in {elapsed}ms: {text[:80]}")
+                if heard and not text:
+                    print(f"[Realtime STT] no speech (no_speech_prob {min(no_speech):.2f}), dropped in {elapsed}ms: {heard[:80]}")
+                else:
+                    print(f"[Realtime STT] mlx transcribed in {elapsed}ms: {text[:80]}")
                 return jsonify({
                     "text": text,
                     "language": "en",
@@ -652,7 +692,8 @@ def transcribe():
                     os.remove(wav_path)
         else:
             segments, info = model.transcribe(tmp_path, beam_size=1, language="en")
-            text = " ".join([segment.text for segment in segments]).strip()
+            # Same rule per segment: faster-whisper returns no_speech_prob with each one.
+            text = " ".join([s.text for s in segments if _speech_text(s.text, [s.no_speech_prob])]).strip()
             elapsed = int((time.time() - t0) * 1000)
             print(f"[Realtime STT] faster-whisper transcribed in {elapsed}ms: {text[:80]}")
             return jsonify({
