@@ -73,7 +73,8 @@ type LengthKey = keyof typeof LENGTHS;
 // landing in the same few places.
 const MOVES = [
   'Agree with them for once, then twist it.',
-  'Make it about yourself and your plastic-tub body.',
+  // Not the body: it was offered here and ended up in every other line.
+  'Make it about yourself: a habit, a grudge, or an opinion you hold too firmly.',
   'Answer straight, then one dry jab.',
   'Connect it to something from tech, AI or the internet.',
   'Take what they said more literally than they meant it.',
@@ -101,6 +102,14 @@ const MOTIF_STOPWORDS = new Set(('about after again also always another anyone a
   // Numbers ("two-oh-four" is the studio's name) and the swearing the persona asks for are not motifs.
   + 'three four five seven eight nine hundred thousand someone fuck fucking fuckin shit shitty damn').split(' '));
 
+// The body joke comes back in different words every time (tubs, garbage cans,
+// buckets, nylon straps, plastic casing), so word counts never caught it. All
+// of those count as one motif, and two of the last replies are already enough.
+const BODY_MOTIF = 'your own body (tubs, plastic, straps)';
+const BODY_WORDS = new Set(('tub plastic bucket buckets bin bins garbage trash container containers casing shell lunchbox '
+  + 'strap straps strapped ratchet nylon legs legless').split(' '));
+const BODY_REPEATS = 2;
+
 export function noteReplyText(text: string): void {
   if (!text.trim()) return;
   recentReplies.push(text);
@@ -114,15 +123,19 @@ export function wornMotifs(replies: readonly string[] = recentReplies, max = 3):
     const words = reply.toLowerCase().replace(/wi-?fi/g, 'wifi').replace(/['’]/g, '').match(/[a-z]+/g) ?? [];
     const terms = new Set<string>();
     words.forEach((word, index) => {
+      if (BODY_WORDS.has(word)) {
+        terms.add(BODY_MOTIF);
+        return;
+      }
       if (word.length < 4 || MOTIF_STOPWORDS.has(word)) return;
       terms.add(word);
       const next = words[index + 1];
-      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next)) terms.add(`${word} ${next}`);
+      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next) && !BODY_WORDS.has(next)) terms.add(`${word} ${next}`);
     });
     for (const term of terms) counts.set(term, (counts.get(term) ?? 0) + 1);
   }
   const worn = [...counts]
-    .filter(([, count]) => count >= MOTIF_REPEATS)
+    .filter(([term, count]) => count >= (term === BODY_MOTIF ? BODY_REPEATS : MOTIF_REPEATS))
     .sort((a, b) => b[1] - a[1] || b[0].split(' ').length - a[0].split(' ').length);
   const picked: string[] = [];
   for (const [term] of worn) {
@@ -166,7 +179,7 @@ export function dualShape(roll: number): string {
   if (roll < 0.3) return 'Only one head speaks this time, one short sentence; the other stays quiet or just reacts.';
   if (roll < 0.62) return 'Two speak beats this time, one short sentence each.';
   if (roll < 0.8) return 'Three beats this time, a quick back-and-forth of short lines.';
-  return 'One head takes the room for a bit this time: three to six short sentences in its speak beat, punchline last. The other may heckle once, briefly, or stay quiet.';
+  return 'One head takes the room for a bit this time, either one (a bit from Small is calm, naive and unsettling): three to six short sentences in its speak beat, punchline last. The other may cut in once or stay quiet.';
 }
 
 export function pickLength(recent: string[], random: Random): LengthKey {

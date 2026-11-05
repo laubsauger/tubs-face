@@ -14,6 +14,20 @@ describe('unwrapJsonSpeechText', () => {
 });
 
 describe('sanitizeForTts', () => {
+  // Heard live: Mini's "WHO SAID THAT? WITNESS PROTECTION NOW!" came out
+  // garbled, since the voice chokes on words in capitals.
+  it('turns shouted capitals into words the voice can say, keeping acronyms', () => {
+    expect(sanitizeForTts('😏 WHO SAID THAT? WITNESS PROTECTION NOW!')).toBe('Who said that? Witness protection now!');
+    expect(sanitizeForTts("Fine, I'M NOT YELLING. The AI on TV is.")).toBe("Fine, I'm not yelling. The AI on TV is.");
+  });
+
+  // Ming reads digits badly ("204" came out as "24").
+  it('says numbers as words, years the way people say them', () => {
+    expect(sanitizeForTts('ELECTROMAGNETIC PULSE 2024!')).toBe('Electromagnetic pulse twenty twenty-four!');
+    expect(sanitizeForTts('Since 1905, 87 people and 2005 bugs.')).toBe('Since nineteen oh-five, eighty-seven people and two thousand five bugs.');
+    expect(sanitizeForTts('At 10:30 with 87.4 percent of 1,000 fans.')).toBe('At 10:30 with 87.4 percent of 1,000 fans.');
+  });
+
   // History and stage directions use bracketed notes; if the model echoes one
   // it must not be read aloud.
   it('drops bracketed notes instead of speaking them', () => {
@@ -52,7 +66,8 @@ describe('clampOutput with a bit budget', () => {
 describe('Studio 204', () => {
   it('is spoken as two-oh-four', () => {
     expect(sanitizeForTts('Welcome to Studio 204.')).toBe('Welcome to Studio two-oh-four.');
-    expect(sanitizeForTts('Room 2048 stays a number.')).toBe('Room 2048 stays a number.');
+    // Only the studio's number; 2048 is its own number, said as one.
+    expect(sanitizeForTts('Room 2048 is elsewhere.')).toBe('Room twenty forty-eight is elsewhere.');
   });
 });
 

@@ -2,7 +2,9 @@ import type { TurnContextMeta } from '../../shared/contracts/turn-script.js';
 import type { LlmContent } from '../llm/types.js';
 import { normalizeInput } from './text.js';
 
-const HISTORY_CONTEXT_SIZE = 6;
+// Six exchanges. With three, a visitor's "no, I meant what Mini said" two
+// turns later already pointed at something the model could no longer see.
+const HISTORY_CONTEXT_SIZE = 12;
 const HISTORY_STORE_LIMIT = 24;
 const HISTORY_TTL_MS = Number.parseInt(process.env.ASSISTANT_HISTORY_TTL_MS || '240000', 10);
 
@@ -100,10 +102,21 @@ export function forgetConversation(): void {
 /** Tubs's most recent replies (newest last), within the history window. */
 export function recentModelReplies(limit: number): string[] {
   pruneConversationHistory();
-  return conversationHistory.filter((entry) => entry.role === 'model').slice(-limit).map((entry) => entry.text);
+  // Two-head turns are stored with who said each line; the rules that look at
+  // openers and lengths need the words, not the labels.
+  return conversationHistory.filter((entry) => entry.role === 'model').slice(-limit).map((entry) => entry.text.replace(HISTORY_SPEAKER_LABEL, '$1').trim());
 }
 
 export const CUT_OFF_MARK = '[cut off by the visitor]';
+const HISTORY_SPEAKER_LABEL = /(^|\s)(?:Main|Small): /g;
+
+/** A two-head turn as it goes into the history: each line marked with who said it. */
+export function beatsForHistory(beats: ReadonlyArray<{ actor?: string; action?: string; text?: string | undefined }>): string {
+  return beats
+    .filter((beat) => beat.action === 'speak' && beat.text?.trim())
+    .map((beat) => `${beat.actor === 'small' ? 'Small' : 'Main'}: ${beat.text!.trim()}`)
+    .join(' ');
+}
 
 /**
  * The visitor talked over Tubs's last reply. Marked so the model knows they

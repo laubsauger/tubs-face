@@ -174,6 +174,13 @@ describe('worn motifs', () => {
     expect(wornMotifs(lines)).not.toContain('four');
     expect(wornMotifs(lines).some((term) => term.includes('fucking'))).toBe(false);
   });
+  // The tub joke never repeats a word: garbage cans, buckets, nylon straps,
+  // plastic casing. Counted as one motif, and twice is already too often.
+  it('catches the body joke in any words after two replies', () => {
+    const body = (term: string) => term.startsWith('your own body');
+    expect(wornMotifs(['Look at me, two garbage cans strapped together.', 'Nice shoes.', 'My plastic casing is jealous.']).some(body)).toBe(true);
+    expect(wornMotifs(['Ask the bucket.', 'Nice shoes.', 'Great idea, genius.']).some(body)).toBe(false);
+  });
   it('leaves a motif used twice alone, and ignores filler words', () => {
     expect(wornMotifs([...wifi(2), 'You really think that is going to work?', 'I really think so.', 'Really.'])).toEqual([]);
   });

@@ -10,7 +10,7 @@ import { buildDualHeadSystemInstruction } from './prompt.js';
 import { buildTurnDirection } from './variety.js';
 import { defaultDualHeadSpeakEmotion } from './emotion.js';
 import { estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
-import { buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
+import { beatsForHistory, buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
 import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
 import { logDualHeadInvalidScript, logRawModelOutput } from './llm-log.js';
 import { type DualHeadReply, assistantUnavailable } from './reply-types.js';
@@ -186,7 +186,8 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     pushHistory('user', normalized);
-    pushHistory('model', fullText);
+    // Labeled, so a visitor reacting to Mini's line is understood as such.
+    pushHistory('model', beatsForHistory(beats));
     console.log(`[LLM:dual] turn_script beats=${beats.length}${summarizeDualHeadBeatsForLog(beats, { userInput: normalized })}`);
 
     return {
@@ -282,7 +283,8 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       return null;
     }
 
-    pushHistory('model', fullText);
+    // Labeled, so a visitor reacting to Mini's line is understood as such.
+    pushHistory('model', beatsForHistory(beats));
     const primaryEmotion = beats.find((beat) => beat.actor === 'main' && beat.emotion)?.emotion ?? null;
     const tokensIn = (Number(result.usage.promptTokenCount || 0) + repairUsageIn) || estimateTokens(context);
     const tokensOut = (Number(result.usage.candidatesTokenCount || 0) + repairUsageOut) || estimateTokens(fullText);

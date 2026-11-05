@@ -15,6 +15,7 @@ import { broadcast } from '../ws/server.js';
 import { getTtsProxyTarget, transcribeAudio } from '../processing/speech-service.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
+import { isWhisperHallucination } from '../whisper-hallucination.js';
 import { badRequest } from './route-helpers.js';
 
 export async function handleTurnRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
@@ -337,53 +338,4 @@ function normalizeManualTurnBeats(beats: TurnBeat[] | undefined): TurnBeat[] {
 
     return normalized;
   });
-}
-
-/**
- * Detect common Whisper hallucinations — short phantom phrases the model
- * produces when fed silence or background noise.
- */
-const WHISPER_HALLUCINATIONS = new Set([
-  'thank you.',
-  'thank you',
-  'thanks.',
-  'thanks',
-  'thanks for watching.',
-  'thanks for watching',
-  'thank you for watching.',
-  'thank you for watching',
-  'bye.',
-  'bye',
-  'goodbye.',
-  'goodbye',
-  'you',
-  'the end.',
-  'the end',
-  'subscribe.',
-  'subscribe',
-  'like and subscribe.',
-  '.',
-  '...',
-  'you.',
-  'hmm.',
-  'hmm',
-  'hm.',
-  'huh.',
-  'uh.',
-  'um.',
-  'oh.',
-  'ah.',
-  'i\'m sorry.',
-]);
-
-function isWhisperHallucination(text: string): boolean {
-  const lower = text.toLowerCase().trim();
-  if (WHISPER_HALLUCINATIONS.has(lower)) {
-    return true;
-  }
-  // Pure punctuation / whitespace
-  if (/^[\s.,!?…\-–—]+$/.test(lower)) {
-    return true;
-  }
-  return false;
 }

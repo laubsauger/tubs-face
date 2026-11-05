@@ -44,20 +44,61 @@ export function stripSpeakerLabels(text: string): string {
     .trim();
 }
 
+// Ming garbles words in capitals ("WITNESS PROTECTION NOW!" came out as noise)
+// and reads digits badly ("204" as "24"). Common acronyms stay as they are.
+const KEEP_CAPS = new Set(['AI', 'TV', 'OK', 'DJ', 'PC', 'VR', 'AR', 'UFO', 'USB', 'CEO', 'NFT', 'GPU', 'CPU', 'LED', 'ATM', 'DNA', 'FBI', 'CIA', 'NASA', 'BBQ', 'USA', 'UK', 'EU']);
+const ONES = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
+const TENS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
+function under100(n: number): string {
+  return n < 20 ? ONES[n]! : `${TENS[Math.floor(n / 10)]}${n % 10 ? `-${ONES[n % 10]}` : ''}`;
+}
+
+function numberWords(n: number): string {
+  if (n < 100) return under100(n);
+  if (n < 1000) return `${ONES[Math.floor(n / 100)]} hundred${n % 100 ? ` ${under100(n % 100)}` : ''}`;
+  return `${ONES[Math.floor(n / 1000)]} thousand${n % 1000 ? ` ${numberWords(n % 1000)}` : ''}`;
+}
+
+/** 2024 as "twenty twenty-four", 1905 as "nineteen oh-five", 2005 as "two thousand five". */
+function yearWords(n: number): string {
+  if (n >= 2000 && n < 2010) return numberWords(n);
+  const low = n % 100;
+  return `${under100(Math.floor(n / 100))} ${low === 0 ? 'hundred' : low < 10 ? `oh-${ONES[low]}` : under100(low)}`;
+}
+
+function speakableNumbers(text: string): string {
+  // Whole numbers only: not times (10:30), decimals (87.4), 1,000 or 007.
+  return text.replace(/(?<![\d.,:])\b(?:[1-9]\d{0,3}|0)\b(?![.,:]\d)/g, (digits) => {
+    const n = Number(digits);
+    return digits.length === 4 && n >= 1100 && n < 2100 ? yearWords(n) : numberWords(n);
+  });
+}
+
+function withoutShouting(text: string): string {
+  return text.replace(/\b[A-Z][A-Z']*[A-Z]\b/g, (word: string, offset: number) => {
+    if (KEEP_CAPS.has(word)) return word;
+    const lower = word.toLowerCase().replace(/^i(?=$|')/, 'I');
+    return /(^|[.!?])\s*$/.test(text.slice(0, offset)) ? lower[0]!.toUpperCase() + lower.slice(1) : lower;
+  });
+}
+
 /**
  * Sanitize text for TTS: remove anything that isn't speakable prose.
  * Strips JSON wrappers, [[markers]], emojis, braces, quotes used as
- * structural JSON delimiters, and other non-speech characters.
+ * structural JSON delimiters, and other non-speech characters. Words in
+ * capitals and digits are turned into something the voice can say.
  */
 export function sanitizeForTts(text: string): string {
-  return stripSpeakerLabels(String(text)
+  const cleaned = String(text)
     .replace(/\[\[.*?\]\]/g, '')            // [[SHOW_QR]] etc.
     .replace(/\[[^\]]*\]/g, '')             // echoed notes like [cut off by the visitor]
     .replace(/\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*/gu, ' ')
     .replace(/[{}[\]"]/g, '')               // braces, brackets, double quotes
     .replace(/\b204\b/g, 'two-oh-four')    // the studio, said the way it's said there
     .replace(/\s+/g, ' ')
-    .trim());
+    .trim();
+  return stripSpeakerLabels(speakableNumbers(withoutShouting(cleaned)));
 }
 
 /**
