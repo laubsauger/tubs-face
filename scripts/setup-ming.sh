@@ -39,7 +39,7 @@ echo "[setup-ming] Fetching mlx-community/Ming-3.0-tts-0.5B-bf16 into the Huggin
 "$VENV_DIR/bin/python" -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Ming-3.0-tts-0.5B-bf16')" >/dev/null
 
 missing=0
-for ref in ref_rec_clean ref_B_clean ref_B_alt_clean; do
+for ref in ref_rec_full ref_B_full_dn ref_B_alt_full_dn; do
     for f in "$ref.wav" "$ref.txt" "spk_emb_$ref.npy"; do
         [ -f "$VOICE_DIR/$f" ] || { echo "[setup-ming] missing voice file: $VOICE_DIR/$f"; missing=1; }
     done
