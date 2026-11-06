@@ -187,6 +187,37 @@ def load():
         return cache[key]
 
     model._encode_prompt_latent = cached_encode
+
+    # Compiled per latent: the flow solve (10 steps, both CFG branches; ~75% of the GPU time) and the
+    # aggregator. Same ops, so the audio is bit-identical; ~12% less time per latent (voice lab run 18).
+    # The noise is drawn outside the compiled graph exactly as FlowLoss.sample draws it, so seeded renders
+    # see the same random numbers. Relies on mlx-audio internals (pinned in requirements-ming.txt).
+    compiled_flow = {}
+
+    def flow_sample(self, z, latent_history, cfg=1.0, patch_size=1, sigma=0.25, temperature=0.0, steps=10):
+        assert self.cfm.ming3_sampling
+        noise = mx.random.normal((z.shape[0], patch_size, self.z_channels), dtype=z.dtype)
+        sde_noise = mx.random.normal((steps, *noise.shape), dtype=z.dtype)
+        key = (id(self), cfg, patch_size, sigma, temperature, steps)
+        if key not in compiled_flow:
+            cfm = self.cfm
+
+            def solve(z_, hist_, noise_, sde_):
+                out, _ = cfm.sample(noise=noise_, c=z_, latent_history=hist_, cfg_scale=cfg, patch_size=patch_size,
+                                    sigma=sigma, temperature=temperature, steps=steps, sde_noise=sde_)
+                return out
+            compiled_flow[key] = mx.compile(solve)
+        return compiled_flow[key](z, latent_history, noise, sde_noise), None
+
+    bm.FlowLoss.sample = flow_sample
+    aggregator = model.linear_proj_audio
+    compiled_aggregator = mx.compile(lambda x: aggregator(x))
+
+    class Aggregator:  # only the per-latent shape is compiled; the reference latent (147 frames) goes the plain way
+        def __call__(self, x):
+            return compiled_aggregator(x) if x.shape == (1, 1, 64) else aggregator(x)
+
+    model.linear_proj_audio = Aggregator()
     M.update(model=model, frag=lambda t: _split_fragments(_add_period(t), MING3_MAX_FRAGMENT_LENGTH))
     for name, ref in VOICES.items():
         v = V[name] = dict(wav=os.path.join(VOICE_DIR, f"{ref}.wav"),
