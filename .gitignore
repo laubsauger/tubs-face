@@ -29,6 +29,7 @@ release
 !.env.example
 thumbnails/
 venv
+venv-ming
 mlx_models
 .openwebui-data
 
@@ -38,6 +39,9 @@ __pycache__/
 
 # Local face library (embeddings and names of real people)
 data/face-library.json
+
+# Ming voice references: recordings of a real person (see src/ming-tts-service.py)
+data/ming-voices/
 
 # Ad-hoc TTS test output
 /*.wav

@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
     "setup-python": "node scripts/setup-python.js",
+    "setup-ming": "bash scripts/setup-ming.sh",
     "bench:llm": "tsx src/scripts/benchmark-llm.ts",
     "test:e2e": "playwright test"
   },

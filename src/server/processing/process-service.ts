@@ -11,6 +11,8 @@ const DEFAULT_REALTIME_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PO
 export interface PythonServiceDefinition {
   scriptName: string;
   port: number;
+  /** Virtualenv folder in the project, default `venv`. */
+  venvDir?: string;
   envFactory: () => NodeJS.ProcessEnv;
   logPrefix: string;
 }
@@ -25,9 +27,10 @@ export interface PythonServiceController {
 
 export function createPythonServiceController(definition: PythonServiceDefinition): PythonServiceController {
   const isWindows = process.platform === 'win32';
+  const venvDir = definition.venvDir ?? 'venv';
   const pythonPath = isWindows
-    ? path.join(process.cwd(), 'venv', 'Scripts', 'python.exe')
-    : path.join(process.cwd(), 'venv', 'bin', 'python');
+    ? path.join(process.cwd(), venvDir, 'Scripts', 'python.exe')
+    : path.join(process.cwd(), venvDir, 'bin', 'python');
   const scriptPath = path.join(process.cwd(), 'src', definition.scriptName);
   let processRef: ChildProcessWithoutNullStreams | null = null;
   // STT and TTS live in this process. If it dies (OOM, a crash in MLX) the

@@ -14,6 +14,7 @@ npm run bench:llm     # Benchmark LLM performance
 
 # Python deps (if not using the committed venv/)
 pip install -r requirements.txt
+npm run setup-ming    # venv-ming for the cloned voices (Apple Silicon); the server starts Ming once it exists
 ```
 
 ## Architecture
@@ -39,7 +40,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `llm/gemini-client.ts` — Gemini API streaming with SSE
 - `llm/providers/gemini.ts` — Structured generation wrapper
 - `llm/providers/realtime.ts` — Gemini Realtime/Live API
-- `processing/speech-service.ts` — Starts and supervises the Python speech service
+- `processing/speech-service.ts` — Starts and supervises the Python speech service and the Ming TTS service
 - `tts/stream.ts` — Streaming audio chunks to WebSocket
 - `config/runtime.ts` — Runtime configuration, session stats
 - `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
@@ -47,11 +48,11 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 
 ### Python Service (`src/realtime-processing-service.py`)
 - Flask app on port 3002, started and restarted by the server
-- STT: `lightning-whisper-mlx` (Apple Silicon) or `faster-whisper` (CPU, int8)
+- STT: `lightning-whisper-mlx` (Apple Silicon) or `faster-whisper` (CPU, int8). Clips in which Silero VAD (bundled with faster-whisper) finds under `REALTIME_VAD_MIN_SPEECH_MS` (250) of speech skip Whisper; transcripts Whisper scores as no speech are dropped too
 - TTS: Kokoro (MLX on macOS, native elsewhere), streamed per sentence over `/tts/stream`; or system TTS (macOS `say`, pyttsx3 elsewhere)
 - LLM proxy for Ollama / OpenAI-compatible models: `/llm/generate`, `/llm/stream`
 - Endpoints: `/transcribe`, `/tts`, `/tts/stream`, `/llm/*`, `/health`
-- Voices starting with `ming:` (`ming:friend` is main Tubs' cloned voice, `ming:friend-b` Mini's) are forwarded to a separate Ming TTS service at `MING_TTS_URL` (default `127.0.0.1:3003`), with the part after `ming:` as the voice name. When Ming is down, each falls back to its head's Kokoro voice. Start Tubs with `REALTIME_KOKORO_VOICE=ming:friend SECONDARY_VOICE=ming:friend-b DUAL_HEAD_ENABLED=true DUAL_HEAD_MODE=llm_directed`; runtime config does not survive a restart. It needs a newer mlx than STT, so it runs from its own venv outside the repo: see `~/Movies/tubs-voice-lab/README.md`. Ming gets whole replies, not sentences, and streams each back in chunks from its `/tts/stream` as it renders (falls back to its `/tts` if that route is missing). The chunks of one reply carry the same text, all but the last flagged `more`; the client plays them back to back under one subtitle, in a 24 kHz AudioContext so the mid-word cuts join sample for sample.
+- Voices starting with `ming:` (`ming:friend` is main Tubs' cloned voice, `ming:friend-b` Mini's) are forwarded to a separate Ming TTS service at `MING_TTS_URL` (default `127.0.0.1:3003`), with the part after `ming:` as the voice name. When Ming is down, each falls back to its head's Kokoro voice. Start Tubs with `REALTIME_KOKORO_VOICE=ming:friend SECONDARY_VOICE=ming:friend-b DUAL_HEAD_ENABLED=true DUAL_HEAD_MODE=llm_directed`; runtime config does not survive a restart. Ming is `src/ming-tts-service.py`. It needs a newer mlx than STT, so it runs from its own venv, `venv-ming` (`npm run setup-ming`, pinned in `requirements-ming.txt`). The server starts and supervises it when that venv exists, unless something already listens on `MING_PORT` (3003). Its voice references are recordings of a real person and stay out of git, in `data/ming-voices/` (`MING_VOICE_DIR`); the listening tests behind its settings are in `~/Movies/tubs-voice-lab/`. Ming gets whole replies, not sentences, and streams each back in chunks from its `/tts/stream` as it renders (falls back to its `/tts` if that route is missing). The chunks of one reply carry the same text, all but the last flagged `more`; the client plays them back to back under one subtitle, in a 24 kHz AudioContext so the mid-word cuts join sample for sample.
 
 ### Client (`src/client/`) — React + TypeScript + Zustand
 
