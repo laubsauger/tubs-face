@@ -27,8 +27,9 @@ function prefersReducedMotion(): boolean {
 
 /** The typed part shows; the rest keeps its place, so the card doesn't grow line by line. */
 function writeTyped(node: HTMLElement | null, text: string, shown: number): void {
-  const typed = node?.children[0];
-  const untyped = node?.children[1];
+  // By class: a filler's lead-in may sit in front of them.
+  const typed = node?.querySelector('.transcript-typed');
+  const untyped = node?.querySelector('.transcript-untyped');
   if (!typed || !untyped) return;
   typed.textContent = text.slice(0, shown);
   untyped.textContent = text.slice(shown);
@@ -166,7 +167,8 @@ export function FloatingTranscript({ store }: { store: AppStore }): JSX.Element 
                 {line.filler ? <span className="transcript-filler-tag">filler</span> : null}
               </span>
               <span className="transcript-text" ref={line.id === typingId ? typedRef : undefined}>
-                <span>{line.text.slice(0, typedLength)}</span>
+                {line.lead ? <span className="transcript-lead">{line.lead} </span> : null}
+                <span className="transcript-typed">{line.text.slice(0, typedLength)}</span>
                 <span className="transcript-untyped" aria-hidden="true">{line.text.slice(typedLength)}</span>
               </span>
             </span>

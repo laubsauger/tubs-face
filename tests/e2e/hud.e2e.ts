@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { MOCK, chunk, instrumentAudio, openFace, received, resetMock, send, speechAudio } from './helpers.js';
+import { MOCK, chunk, instrumentAudio, openFace, received, resetMock, send, speechAudio, tone } from './helpers.js';
 
 // The operator HUD: a status bar, the face, and a dock beside it. The face must
 // stay visible and keep working (camera, speech) however the dock is set up.
@@ -233,6 +233,34 @@ test('a long reply types out in the transcript with the voice, then shows in ful
   expect(fit.hidden).toBeLessThanOrEqual(1);
   expect(fit.top).toBeGreaterThanOrEqual(0);
   expect(fit.bottom).toBeGreaterThanOrEqual(0);
+});
+
+// A filler is heard, so it belongs in the transcript (for anyone who can't
+// hear it too), inside the bubble of the head that said it, set apart from
+// the reply it leads into. Not as a bubble of its own.
+test("a filler shows in its head's bubble, before the reply, in the overlay and in the chat log", async ({ page, request }) => {
+  await openFace(page, request);
+  await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
+  await page.keyboard.press('Backquote');
+  const reply = 'That hat is a cry for help.';
+  await send(request,
+    { type: 'turn_start', turnId: 't-fill' },
+    { type: 'audio_chunk', audio: tone(400), text: 'Mhm.', turnId: 't-fill', actor: 'main', filler: true },
+    { type: 'speak_end', turnId: 't-fill', actor: 'main', text: 'Mhm.' },
+    { type: 'turn_script', turnId: 't-fill', beats: [{ actor: 'main', action: 'speak', text: reply }], ts: Date.now() },
+    { type: 'audio_chunk', audio: tone(900), text: reply, turnId: 't-fill', chunkIndex: 0, actor: 'main', beatIndex: 0 },
+    { type: 'speak_end', turnId: 't-fill', actor: 'main', text: reply, fullText: reply },
+  );
+
+  const lines = page.locator('#floating-transcript .transcript-line');
+  await expect(lines.last().locator('.transcript-text')).toHaveText(`Mhm. ${reply}`, { useInnerText: true, timeout: 10_000 });
+  await expect(lines.last().locator('.transcript-lead')).toHaveText('Mhm.');
+  await expect(lines).toHaveCount(1);
+
+  await page.keyboard.press('Backquote');
+  const entry = page.locator('#chat-log-list .chat-entry').last();
+  await expect(entry.locator('.chat-entry-lead')).toHaveText('Mhm.');
+  await expect(entry.locator('.chat-entry-card')).toHaveText(`Mhm. ${reply}`);
 });
 
 test('with reduced motion a reply shows whole at once', async ({ page, request }) => {

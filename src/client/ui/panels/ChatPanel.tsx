@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
 import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { withFillerLeads } from '../../chat/filler-lead.js';
 import { sendChatComposer } from '../../chat/send.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
@@ -15,7 +16,7 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
   const listRef = useRef<HTMLUListElement | null>(null);
   const [sending, setSending] = useState(false);
 
-  const entries = state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type));
+  const entries = withFillerLeads(state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type)));
 
   useEffect(() => {
     const list = listRef.current;
@@ -82,6 +83,7 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
                   <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
+                    {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
                     {body}
                   </div>
                 </li>

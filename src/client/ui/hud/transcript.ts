@@ -3,6 +3,7 @@
 
 import type { SpokenItem, VoiceClock } from '../../audio/voice-clock.js';
 import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { withFillerLeads } from '../../chat/filler-lead.js';
 import type { ChatEntry } from '../../state/app-state.js';
 
 export const TRANSCRIPT_LINES = 4;
@@ -15,14 +16,17 @@ export interface TranscriptLine {
   text: string;
   /** A pre-rendered "Um, okay." line, not model output. */
   filler: boolean;
+  /** The filler this head said just before this reply, shown whole in front of it. */
+  lead: string;
   draft: boolean;
 }
 
 /** The newest conversation lines. System notices are operator noise, not conversation. */
 export function selectTranscriptLines(entries: readonly ChatEntry[], limit = TRANSCRIPT_LINES): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
-  for (let index = entries.length - 1; index >= 0 && lines.length < limit; index -= 1) {
-    const entry = entries[index];
+  const shown = withFillerLeads(entries.filter((entry) => entry.type !== 'sys'));
+  for (let index = shown.length - 1; index >= 0 && lines.length < limit; index -= 1) {
+    const entry = shown[index];
     if (!entry || entry.type === 'sys' || !entry.text.trim()) continue;
     const actor = entry.type === 'in' ? 'user' : entry.actor === 'small' ? 'small' : 'main';
     const { emoji, body } = actor === 'user' ? { emoji: '', body: entry.text } : splitLeadingEmoji(entry.text);
@@ -32,6 +36,7 @@ export function selectTranscriptLines(entries: readonly ChatEntry[], limit = TRA
       emoji,
       text: body,
       filler: Boolean(entry.filler),
+      lead: entry.lead ?? '',
       draft: Boolean(entry.draft),
     });
   }

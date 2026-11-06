@@ -580,6 +580,14 @@ a {
   letter-spacing: 0;
 }
 
+/* A filler said before the reply, in the reply's own bubble: heard, but not model output. */
+.transcript-lead,
+.chat-entry-lead {
+  color: #94a3b8;
+  font-style: italic;
+  opacity: 0.8;
+}
+
 .transcript-filler-tag {
   color: #64748b;
   font-weight: 500;

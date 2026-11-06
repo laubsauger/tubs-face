@@ -24,21 +24,43 @@ const entry = (fields: Partial<ChatEntry> & Pick<ChatEntry, 'type' | 'text'>): C
 // The floating transcript lets the operator follow the conversation over the
 // face without opening the chat log.
 describe('selectTranscriptLines', () => {
+  // A filler and the reply after it come from the same head: one bubble, the
+  // filler as its lead-in, so the transcript shows everything that was heard
+  // without a separate line for a "Hmm.".
+  it('puts a filler in front of the same head\'s next reply, and leaves it alone otherwise', () => {
+    const lines = selectTranscriptLines([
+      entry({ type: 'in', actor: 'user', text: 'Nice hat?' }),
+      entry({ type: 'out', actor: 'main', text: 'Hmm.', filler: true }),
+      entry({ type: 'out', actor: 'main', text: '😏 It looks like it lost a bet.' }),
+      entry({ type: 'in', actor: 'user', text: 'Rude.' }),
+      entry({ type: 'out', actor: 'main', text: 'Mhm.', filler: true }),
+      entry({ type: 'out', actor: 'small', text: 'He is always rude.' }),
+    ], 10);
+    expect(lines.map((l) => [l.actor, l.lead, l.text, l.filler])).toEqual([
+      ['user', '', 'Nice hat?', false],
+      ['main', 'Hmm.', 'It looks like it lost a bet.', false],
+      ['user', '', 'Rude.', false],
+      ['main', '', 'Mhm.', true],
+      ['small', '', 'He is always rude.', false],
+    ]);
+  });
+
   it('shows only the newest few lines, oldest first', () => {
     const entries = ['one', 'two', 'three', 'four', 'five', 'six'].map((text) => entry({ type: 'in', actor: 'user', text }));
     expect(selectTranscriptLines(entries, 4).map((line) => line.text)).toEqual(['three', 'four', 'five', 'six']);
   });
 
-  it('keeps fillers but marks them, so a filler is never mistaken for a reply', () => {
+  // Shown in the reply's bubble, the filler still stays apart from the reply's
+  // text, so it is never mistaken for something the model said.
+  it('keeps a filler apart from the reply it leads into', () => {
     const lines = selectTranscriptLines([
       entry({ type: 'in', actor: 'user', text: 'What is this?' }),
       entry({ type: 'out', actor: 'main', text: 'Um, okay.', filler: true }),
       entry({ type: 'out', actor: 'main', text: 'An art piece, obviously.' }),
     ]);
-    expect(lines.map((line) => [line.text, line.filler])).toEqual([
-      ['What is this?', false],
-      ['Um, okay.', true],
-      ['An art piece, obviously.', false],
+    expect(lines.map((line) => [line.lead, line.text])).toEqual([
+      ['', 'What is this?'],
+      ['Um, okay.', 'An art piece, obviously.'],
     ]);
   });
 
@@ -88,6 +110,7 @@ const line = (fields: Partial<TranscriptLine> & Pick<TranscriptLine, 'id' | 'act
   emoji: '',
   text: 'Some reply.',
   filler: false,
+  lead: '',
   draft: false,
   ...fields,
 });
