@@ -206,8 +206,15 @@ def load():
         f"active GPU memory {mx.get_active_memory() / 1e9:.2f} GB")
 
 
+# Each render starts from the same random state. Unseeded, the same line came out as a different take
+# after every restart (voice lab run 17: 0 of 20 lines matched, some 0.4 s longer), so a clip approved by ear
+# was not what played later. Seeded, all 20 matched across restarts, at no cost in speed.
+RENDER_SEED = 0
+
+
 def render(text, voice=DEFAULT_VOICE):
     model, v = M["model"], V[voice]
+    mx.random.seed(RENDER_SEED)
     fexp = max(exp_s(f) for f in M["frag"](text))
     cap_s = SAFETY * exp_s(text)
     kw = dict(lang_code="en", stream=True, ref_audio=v["wav"], ref_text=v["text"], spk_emb=v["spk"],
@@ -250,7 +257,10 @@ def render(text, voice=DEFAULT_VOICE):
 # the audio so far (the first chunk); the end fix, tail trim and fade only touch the last HOLD_S, which is
 # held back until the stop head fires. Resampling to 24 kHz runs per chunk with RS_CTX of real context on
 # both sides and chunk edges on the 147:80 sample grid, so it equals resampling the whole clip.
-FIRST_S = 0.40          # first chunk: this much audio from the trimmed start, as early as possible
+# First chunk: this much audio from the trimmed start, as early as possible. 0.25 s instead of 0.40 s cut the
+# first chunk from 283 to 204 ms (455 to 306 ms with a second Ming rendering nonstop), with the same audio
+# (93 dB SNR, rounding) and no playback gaps in 20 lines either way (voice lab run 17).
+FIRST_S = 0.25
 NEXT_S = (0.5, 1.0, 1.5)  # later chunks grow to 1.5 s ...
 LOW_WATER_S = 0.30      # ... but whatever is ready goes out when the listener has less than this queued
 HOLD_S = 0.50           # held back near the end: the end fix, tail trim and fade land in the last chunk
@@ -420,6 +430,7 @@ def render_stream(text, send, voice=DEFAULT_VOICE):
     when the latents are decoded (incrementally, see FragmentDecoder) and that the lead trim is
     decided from the first chunk's audio instead of the whole clip."""
     model, v = M["model"], V[voice]
+    mx.random.seed(RENDER_SEED)
     sr = model.sample_rate
     frags = M["frag"](text)
     steps = math.ceil(SAFETY * max(exp_s(f) for f in frags) * LATENT_HZ)
@@ -452,7 +463,7 @@ def render_stream(text, send, voice=DEFAULT_VOICE):
             dec.lat.append(latent)
             if is_last or len(dec.lat) - decoded < em.decode_every():
                 continue
-            if em.chunks == 0 and fi == 0 and len(dec.lat) < 6:  # < 0.4 s decoded: no first chunk possible yet
+            if em.chunks == 0 and fi == 0 and len(dec.lat) < 6:  # < 0.3 s decoded: no first chunk possible yet
                 continue
             decoded = len(dec.lat)
             kept = add(dec.decode())
