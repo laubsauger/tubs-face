@@ -1,7 +1,7 @@
 // Runs an assistant turn: picks the streamed, one-call or two-head path,
 // announces the turn and reports the result. Called from turns.ts.
 
-import type { WsAudioChunkServerMessage, WsServerMessage, WsSpeakServerMessage, WsStatsServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
+import type { WsAudioChunkServerMessage, WsServerMessage, WsSpeakEndServerMessage, WsSpeakServerMessage, WsStatsServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
@@ -52,12 +52,18 @@ async function runAssistantTurnBody(
     turnId,
   } satisfies WsTurnStartServerMessage);
 
-  // Plays at once, ahead of the reply's audio in the same turn. Two-head
-  // turns route audio per head, so they go without.
-  const filler = allowFiller && !shouldUseDualHeadDirectedMode() ? pickFiller(runtimeConfig.kokoroVoice ?? 'af_heart') : null;
+  // Plays at once, ahead of the reply's audio in the same turn. With two
+  // heads the main head says it (it is main's voice), and its speak_end lets
+  // main's face stop talking when it ends: Mini may have the first line.
+  const filler = allowFiller ? pickFiller(runtimeConfig.kokoroVoice ?? 'af_heart') : null;
   if (filler) {
     turnTimer?.mark(`Filler "${filler.text}"`);
-    broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId, filler: true } satisfies WsAudioChunkServerMessage);
+    if (shouldUseDualHeadDirectedMode()) {
+      broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId, actor: 'main', filler: true } satisfies WsAudioChunkServerMessage);
+      broadcast({ type: 'speak_end', turnId, actor: 'main', text: filler.text } satisfies WsSpeakEndServerMessage);
+    } else {
+      broadcast({ type: 'audio_chunk', audio: filler.audio, text: filler.text, turnId, filler: true } satisfies WsAudioChunkServerMessage);
+    }
   }
 
   if (shouldUseDualHeadDirectedMode()) {

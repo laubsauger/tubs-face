@@ -1,14 +1,16 @@
 import { openTtsStream } from '../tts/stream.js';
-import { isMingVoice } from '../tts/voices.js';
+import { isMingVoice, mingVoiceReady } from '../tts/voices.js';
 import { joinWavChunks } from '../tts/wav.js';
 
 /**
- * A short sound ("Oh.", "Right.") played the moment a voice turn starts.
- * The spoken reply needs ~1.3 s after the clip arrives, on top of the time it
- * took to notice the visitor stopped talking. People expect a reaction within
- * a few hundred milliseconds; a filler makes the wait read as thinking rather
- * than lag (Shiwa et al. 2008). Played on some turns only, never twice in a
- * row, so it does not become a tic.
+ * A short sound ("Hmm.", "Right.") played the moment a voice turn starts.
+ * After the visitor stops, about 1 s of quiet ends their turn; then the reply
+ * needs another ~2 s after the clip arrives (Nov 2026, two heads with Ming:
+ * Whisper 0.3 s, Gemini 1.5-2.7 s, Ming's first chunk 0.3 s), up from ~1.3 s
+ * with one head on Kokoro. People expect a reaction within a few hundred
+ * milliseconds; a filler makes the wait read as thinking rather than lag
+ * (Shiwa et al. 2008). Played on some turns only, never twice in a row, so it
+ * does not become a tic.
  */
 
 // Kokoro (hm_omega) can't do a lone hum or hesitation sound: "Hm", "Mm",
@@ -18,7 +20,7 @@ import { joinWavChunks } from '../tts/wav.js';
 // or "Ahm" (it drops them silently), hence the [word](/phonemes/) markup.
 // No "Wow." or "Oh boy.": as a reaction to whatever was just said they sound
 // wrong far more often than right.
-export const FILLER_LINES = [
+export const KOKORO_FILLER_LINES = [
   'Oh.',
   'Okay.',
   'Right.',
@@ -29,10 +31,41 @@ export const FILLER_LINES = [
   '[Ähm](/ˈɛːm/), okay.',
   '[Ahm](/ˈɑːm/), right.',
 ] as const;
-export const FILLER_CHANCE = 0.4;
+
+// Ming says the lone sounds Kokoro can't (voice lab run 16, checked with
+// Whisper in both cloned voices). Left out: "Hm." (heard as "Damn."), "Uh."
+// and "Uhh." (a groan), "Ha." and "Ahh." (a scream from Mini), "Ähm."
+// (garbled), "Hmm?" (sounds like Tubs didn't hear), "Hmm, let me think."
+// (the hum gets swallowed). Ming is deterministic: one text, one sound.
+export const MING_FILLER_LINES = [
+  'Hmm.',
+  'Mm.',
+  'Mhm.',
+  'Um.',
+  'Umm.',
+  'Ah.',
+  'Oh.',
+  'Okay.',
+  'Right.',
+  'Well.',
+  'So.',
+  'Um, okay.',
+  'Uh, well.',
+  'Oh, right.',
+  'Ah, okay.',
+] as const;
+
+export function fillerLinesFor(voice: string): readonly string[] {
+  return isMingVoice(voice) ? MING_FILLER_LINES : KOKORO_FILLER_LINES;
+}
+
+// With the longer wait, more turns get one: about 37% of voice turns, as no
+// turn right after a filler gets one (it was 0.4, about 29%).
+export const FILLER_CHANCE = 0.6;
 const PHONEME_MARKUP = /\[([^\]]+)\]\(\/[^)]*\/\)/g;
 const RENDER_RETRY_MS = 60_000;
-const RENDER_TIMEOUT_MS = 15_000;
+// Ming renders one line in about 0.6 s, slower while the GPU is busy.
+const RENDER_TIMEOUT_MS = 60_000;
 
 type Random = () => number;
 
@@ -42,18 +75,44 @@ export interface Filler {
 }
 
 const clips = new Map<string, Filler[]>();
-const rendering = new Set<string>();
+const rendering = new Map<string, Promise<boolean>>();
 const lastRenderAttempt = new Map<string, number>();
 let lastWasFiller = false;
 let lastText = '';
 
-/** Renders all filler lines for a voice once. Failures leave the voice without fillers. */
-export function prepareFillers(voice: string, now = Date.now()): void {
-  if (clips.has(voice) || rendering.has(voice)) return;
-  if (now - (lastRenderAttempt.get(voice) ?? -Infinity) < RENDER_RETRY_MS) return;
+/**
+ * Renders all filler lines for a voice once. Resolves true when the voice has
+ * fillers; failures leave it without and are retried at most once a minute.
+ */
+export function prepareFillers(voice: string, now = Date.now()): Promise<boolean> {
+  if (clips.has(voice)) return Promise.resolve(true);
+  const running = rendering.get(voice);
+  if (running) return running;
+  if (now - (lastRenderAttempt.get(voice) ?? -Infinity) < RENDER_RETRY_MS) return Promise.resolve(false);
   lastRenderAttempt.set(voice, now);
-  rendering.add(voice);
+  const job = renderFillers(voice).finally(() => rendering.delete(voice));
+  rendering.set(voice, job);
+  return job;
+}
 
+/**
+ * Renders the fillers as soon as the voice can be spoken, so the first turns
+ * already have them and no turn shares the GPU with their render.
+ */
+export async function prepareFillersAtStartup(voice: string, options: { intervalMs?: number; attempts?: number } = {}): Promise<boolean> {
+  const { intervalMs = 3_000, attempts = 60 } = options;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastRenderAttempt.delete(voice); // the once-a-minute limit is for turns, not for startup
+    if (await prepareFillers(voice)) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  console.warn(`[fillers] no fillers for ${voice}: its TTS never came up`);
+  return false;
+}
+
+async function renderFillers(voice: string): Promise<boolean> {
+  if (isMingVoice(voice) && !(await mingVoiceReady(voice))) return false;
+  const startedAt = Date.now();
   const rendered: Filler[] = [];
   // Ming streams a line in several chunks; a filler plays as one clip, so they
   // are joined when the line is done. A line that never finishes is dropped.
@@ -86,28 +145,27 @@ export function prepareFillers(voice: string, now = Date.now()): void {
     onClose: () => finish(),
   });
 
-  void (async () => {
-    try {
-      if (!(await session.opened)) return;
-      for (const line of FILLER_LINES) {
-        pending += 1;
-        // The markup is for Kokoro's phonemizer; Ming would read it out.
-        session.send(isMingVoice(voice) ? line.replace(PHONEME_MARKUP, '$1') : line, voice);
-      }
-      await Promise.race([done, new Promise((resolve) => setTimeout(resolve, RENDER_TIMEOUT_MS))]);
-      if (rendered.length > 0) clips.set(voice, rendered);
-    } finally {
-      session.close();
-      rendering.delete(voice);
+  try {
+    if (!(await session.opened)) return false;
+    for (const line of fillerLinesFor(voice)) {
+      pending += 1;
+      session.send(line, voice);
     }
-  })();
+    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, RENDER_TIMEOUT_MS))]);
+    if (rendered.length === 0) return false;
+    clips.set(voice, rendered);
+    console.log(`[fillers] ${rendered.length} clips ready for ${voice} in ${Date.now() - startedAt}ms`);
+    return true;
+  } finally {
+    session.close();
+  }
 }
 
 /** The filler for this voice turn, or null when this turn goes without one. */
 export function pickFiller(voice: string, random: Random = Math.random): Filler | null {
   const available = clips.get(voice);
   if (!available) {
-    prepareFillers(voice);
+    void prepareFillers(voice);
     return null;
   }
   if (lastWasFiller || random() >= FILLER_CHANCE) {

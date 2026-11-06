@@ -454,5 +454,27 @@ describe('assistant turn', () => {
       expect(script?.beats.map((beat) => `${beat.actor}:${beat.action}`)).toEqual(['main:speak', 'small:react', 'small:speak']);
       expect(result.reply.text).toBe('You again? Bring snacks next time.');
     });
+
+    // Two-head turns wait ~2 s for the reply, so they need the filler most.
+    // It is main's voice, so main's head says it; its speak_end lets main's
+    // face stop talking when it ends, as Mini may have the first line.
+    it('starts a voice turn with the filler on main\'s head, ended before the beats', async () => {
+      const { prepareFillers } = await import('./fillers.js');
+      expect(await prepareFillers(runtimeConfig.kokoroVoice)).toBe(true);
+      runtimeConfig.ttsStreamingEnabled = true;
+      fakes.provider = queuedProvider([JSON.stringify({
+        beats: [{ actor: 'small', action: 'speak', text: 'Mini goes first.' }],
+      })]);
+      vi.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0); // this turn gets a filler
+      const ws = collect();
+
+      const result = await runAssistantTurn('nice hat', ws.broadcast, undefined, { filler: true });
+
+      const [filler, fillerEnd] = ws.messages.slice(1, 3);
+      expect(filler).toMatchObject({ type: 'audio_chunk', actor: 'main', filler: true, turnId: result.turnId });
+      expect(fillerEnd).toMatchObject({ type: 'speak_end', actor: 'main', turnId: result.turnId });
+      const beatAudio = ws.ofType('audio_chunk').filter((message) => !message.filler);
+      expect(beatAudio.map((message) => message.actor)).toEqual(['small']);
+    });
   });
 });

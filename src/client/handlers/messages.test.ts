@@ -60,4 +60,24 @@ describe('chat log with a filler', () => {
       ['Nice hat. Did it come with instructions?', false, false],
     ]);
   });
+
+  // With two heads the transcript is built from the beats; the filler has no
+  // beat, so without its own entry it would play but never show up.
+  it('keeps the filler with two heads too, before the beats', () => {
+    const store = createAppStore();
+    store.setState((current) => ({ ...current, config: { ...current.config, dualHeadEnabled: true, dualHeadMode: 'llm_directed' } as typeof current.config }));
+    const send = (message: WsServerMessage) => applyServerMessage(store, message, 'main');
+
+    send({ type: 'turn_start', turnId: 't3' });
+    send({ type: 'audio_chunk', audio: '', text: 'Hmm.', turnId: 't3', actor: 'main', filler: true });
+    send({ type: 'speak_end', turnId: 't3', actor: 'main', text: 'Hmm.' });
+    send({ type: 'turn_script', turnId: 't3', beats: [{ actor: 'small', action: 'speak', text: 'Nice hat.' }], ts: 1 });
+    send({ type: 'audio_chunk', audio: '', text: 'Nice hat.', turnId: 't3', actor: 'small', beatIndex: 0 });
+
+    const replies = store.getState().chatEntries.filter((entry) => entry.type === 'out');
+    expect(replies.map((entry) => [entry.actor, entry.text, Boolean(entry.filler)])).toEqual([
+      ['main', 'Hmm.', true],
+      ['small', 'Nice hat.', false],
+    ]);
+  });
 });

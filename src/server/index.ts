@@ -1,6 +1,8 @@
 import './env/load.js';
 import http from 'node:http';
 import { startProcessingStack, stopProcessingStack } from './processing/speech-service.js';
+import { prepareFillersAtStartup } from './assistant/fillers.js';
+import { runtimeConfig } from './config/runtime.js';
 import { handleApiRequest } from './routes/api.js';
 import { sendError } from './http/response.js';
 import { serveStatic } from './http/static.js';
@@ -35,6 +37,7 @@ const server = http.createServer(async (request, response) => {
 
 initWebSocketServer(server);
 void startProcessingStack();
+void prepareFillersAtStartup(runtimeConfig.kokoroVoice ?? 'af_heart');
 
 server.listen(port, () => {
   console.log(`[tubs-face] TS server listening on http://localhost:${port}`);

@@ -18,6 +18,15 @@ vi.mock('../tts/stream.js', () => ({
   }),
 }));
 
+// Ming's /health: ready once its model is loaded. Until then the speech
+// service would speak a ming: voice with Kokoro.
+const ming = vi.hoisted(() => ({ ready: [true] as boolean[], checks: 0 }));
+vi.stubGlobal('fetch', async () => {
+  ming.checks += 1;
+  const ready = ming.ready.length > 1 ? ming.ready.shift()! : ming.ready[0]!;
+  return { json: async () => ({ ready, voices: { friend: 'ref_rec_full.wav' } }) };
+});
+
 async function loadFresh() {
   vi.resetModules();
   return import('./fillers.js');
@@ -58,39 +67,39 @@ describe('fillers', () => {
     tts.opens = 0;
     tts.sent = [];
     tts.chunks = null;
+    ming.ready = [true];
+    ming.checks = 0;
   });
 
   // A filler plays as one clip. When Ming streams "Um, okay." in two chunks,
   // keeping them as two fillers would play half the sound on some turns.
   it('keeps a line that arrives in several chunks as one whole clip', async () => {
     tts.chunks = () => [wav([1, 2]), wav([3]), wav([4, 5])];
-    const { pickFiller, prepareFillers, FILLER_LINES } = await loadFresh();
-    prepareFillers('ming:friend');
-    await flush();
+    const { pickFiller, prepareFillers, MING_FILLER_LINES } = await loadFresh();
+    expect(await prepareFillers('ming:friend')).toBe(true);
     const seen = new Map<string, string>();
-    for (let k = 0; k < 60 && seen.size < FILLER_LINES.length; k += 1) {
+    for (let k = 0; k < 60 && seen.size < MING_FILLER_LINES.length; k += 1) {
       const rolls = [0, k / 60];
       const filler = pickFiller('ming:friend', () => rolls.shift() ?? 0);
       if (filler) seen.set(filler.text, filler.audio);
       pickFiller('ming:friend', () => 0);
     }
-    expect(seen.size).toBe(FILLER_LINES.length);
+    expect(seen.size).toBe(MING_FILLER_LINES.length);
     for (const audio of seen.values()) expect(samples(audio)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('renders the clips on first use instead of stalling that turn', async () => {
-    const { pickFiller, FILLER_LINES } = await loadFresh();
+    const { pickFiller, KOKORO_FILLER_LINES } = await loadFresh();
     expect(pickFiller('af_heart', () => 0)).toBeNull();
     await flush();
-    expect(tts.sent).toEqual([...FILLER_LINES]);
+    expect(tts.sent).toEqual([...KOKORO_FILLER_LINES]);
     expect(pickFiller('af_heart', () => 0)?.audio).toBe('wav:Oh.');
   });
 
   // A filler on every turn becomes a tic people notice within a minute.
   it('never plays twice in a row and skips most turns', async () => {
     const { pickFiller, prepareFillers, FILLER_CHANCE } = await loadFresh();
-    prepareFillers('af_heart');
-    await flush();
+    await prepareFillers('af_heart');
     expect(pickFiller('af_heart', () => 0)).not.toBeNull();
     expect(pickFiller('af_heart', () => 0)).toBeNull();
     expect(pickFiller('af_heart', () => FILLER_CHANCE + 0.01)).toBeNull();
@@ -99,8 +108,7 @@ describe('fillers', () => {
 
   it('does not repeat the same sound back to back', async () => {
     const { pickFiller, prepareFillers } = await loadFresh();
-    prepareFillers('af_heart');
-    await flush();
+    await prepareFillers('af_heart');
     const first = pickFiller('af_heart', () => 0)?.text;
     pickFiller('af_heart', () => 0.99); // skipped turn
     expect(pickFiller('af_heart', () => 0)?.text).not.toBe(first);
@@ -109,9 +117,8 @@ describe('fillers', () => {
   // The filler's text is shown as the subtitle. Kokoro needs phoneme markup
   // for "Ähm", but visitors must read the word, never "[Ähm](/ˈɛːm/)".
   it('subtitles show the plain words, not the phoneme markup sent to Kokoro', async () => {
-    const { pickFiller, prepareFillers, FILLER_LINES } = await loadFresh();
-    prepareFillers('af_heart');
-    await flush();
+    const { pickFiller, prepareFillers, KOKORO_FILLER_LINES } = await loadFresh();
+    await prepareFillers('af_heart');
     expect(tts.sent.some((line) => line.includes('/'))).toBe(true);
     const shown = new Set<string>();
     for (let k = 0; k < 50; k += 1) {
@@ -120,7 +127,7 @@ describe('fillers', () => {
       if (filler) shown.add(filler.text);
       pickFiller('af_heart', () => 0); // the turn after a filler goes without
     }
-    expect(shown.size).toBe(FILLER_LINES.length);
+    expect(shown.size).toBe(KOKORO_FILLER_LINES.length);
     expect([...shown]).toContain('Ähm, okay.');
     for (const text of shown) expect(text).not.toMatch(/[[\]()/]/);
   });
@@ -132,5 +139,27 @@ describe('fillers', () => {
     await flush();
     expect(pickFiller('af_heart', () => 0)).toBeNull();
     expect(tts.opens).toBe(1);
+  });
+
+  // While Ming loads, the speech service speaks a ming: voice with Kokoro.
+  // Fillers rendered then would keep Kokoro's voice for the whole night.
+  it('does not render a Ming voice\'s fillers until Ming itself is ready', async () => {
+    ming.ready = [false];
+    const { prepareFillers } = await loadFresh();
+    expect(await prepareFillers('ming:friend')).toBe(false);
+    expect(tts.opens).toBe(0);
+  });
+
+  // Rendered on the first turn, the fillers would share the GPU with that
+  // turn's reply, and the first turns would go without.
+  it('renders them at startup as soon as Ming is ready, with the sounds Ming can say', async () => {
+    ming.ready = [false, false, true];
+    const { pickFiller, prepareFillersAtStartup, MING_FILLER_LINES } = await loadFresh();
+    expect(await prepareFillersAtStartup('ming:friend', { intervalMs: 0 })).toBe(true);
+    expect(ming.checks).toBe(3);
+    expect(tts.opens).toBe(1);
+    expect(tts.sent).toEqual([...MING_FILLER_LINES]);
+    expect(tts.sent).toContain('Hmm.');
+    expect(pickFiller('ming:friend', () => 0)).not.toBeNull();
   });
 });
