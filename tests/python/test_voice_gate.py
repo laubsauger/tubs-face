@@ -75,6 +75,37 @@ class VoiceGate(unittest.TestCase):
         finally:
             svc.ensure_stt_model = original
 
+    # Each decode of the clip costs ~40-50 ms before Whisper can start, and the
+    # reply waits for Whisper. The clip is decoded once; Whisper gets the samples.
+    @unittest.skipUnless(shutil.which("say"), "needs macOS say to speak a phrase")
+    def test_the_clip_is_decoded_once_and_whisper_gets_the_samples(self):
+        class FakeWhisper:
+            got = None
+
+            def transcribe(self, audio, language=None):
+                FakeWhisper.got = audio
+                return {"text": "Hi there."}
+        decodes = []
+        real_decode = svc._decode_clip
+        patched = dict(_decode_clip=lambda path: decodes.append(path) or real_decode(path),
+                       ensure_stt_model=lambda: FakeWhisper(), STT_BACKEND="mlx")
+        saved = {k: getattr(svc, k) for k in patched}
+        for k, v in patched.items():
+            setattr(svc, k, v)
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                path = os.path.join(d, "phrase.wav")
+                subprocess.run(["say", "-o", path, "--data-format=LEI16@16000", "Hi there, how are you?"], check=True)
+                with open(path, "rb") as f:
+                    res = svc.app.test_client().post("/transcribe", data={"audio": (f, "clip.wav", "audio/wav")},
+                                                     content_type="multipart/form-data")
+            self.assertEqual(res.get_json()["text"], "Hi there.")
+            self.assertEqual(len(decodes), 1)
+            self.assertNotIsInstance(FakeWhisper.got, str)  # samples, not a file for Whisper to decode again
+        finally:
+            for k, v in saved.items():
+                setattr(svc, k, v)
+
 
 if __name__ == "__main__":
     unittest.main()

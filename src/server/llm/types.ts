@@ -55,4 +55,6 @@ export interface LlmProvider {
   getAuthState(): LlmAuthState;
   generateContent(args: LlmGenerateArgs): Promise<LlmGenerateResult>;
   streamContent?(args: LlmStreamArgs): Promise<LlmStreamResult>;
+  /** Gets the connection ready for a request that is about to come (a voice clip is being transcribed). */
+  warmUp?(): void;
 }

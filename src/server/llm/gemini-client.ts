@@ -38,6 +38,20 @@ export interface StreamGeminiResult extends LlmGenerateResult {
 
 type ThinkingLevel = 'MINIMAL' | 'LOW';
 
+/**
+ * Opens the HTTPS connection to the Gemini API ahead of the request. Node's
+ * fetch drops a connection after ~4 s idle, so every voice turn paid a fresh
+ * TCP + TLS setup (~170 ms vs ~80 ms on an open one). Called when a voice clip
+ * arrives, it runs while Whisper transcribes. The request carries no key; the
+ * 403 keeps the connection open (a HEAD on the bare host gets
+ * "Connection: close" and warms nothing).
+ */
+export function warmGeminiConnection(): void {
+  void fetch(`${DEFAULT_GEMINI_BASE_URL}/models`, { signal: AbortSignal.timeout(5_000) })
+    .then((response) => response.arrayBuffer())
+    .catch(() => {});
+}
+
 // Thinking adds latency before the first word, so ask for the least the model
 // allows. Older Flash models accept MINIMAL; 3.7 and later reject it and need
 // LOW. The first rejection is remembered per model.

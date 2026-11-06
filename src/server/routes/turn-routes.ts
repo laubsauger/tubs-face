@@ -13,6 +13,7 @@ import { sendError, sendJson } from '../http/response.js';
 import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { broadcast } from '../ws/server.js';
 import { getTtsProxyTarget, transcribeAudio } from '../processing/speech-service.js';
+import { resolveLlmProvider } from '../llm/provider.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
 import { isWhisperHallucination } from '../whisper-hallucination.js';
@@ -98,6 +99,8 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
 
       const wakeWord = url.searchParams.get('wakeWord') === 'true';
       const audioBuffer = await readRawBody(request);
+      // The reply's LLM request follows the transcript; its connection opens meanwhile.
+      if (!wakeWord) resolveLlmProvider().warmUp?.();
       const endSttSpan = turnTimer.span('STT');
       const transcription = await transcribeAudio(audioBuffer, request.headers['content-type']);
       endSttSpan();

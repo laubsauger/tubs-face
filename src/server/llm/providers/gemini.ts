@@ -1,4 +1,4 @@
-import { generateGeminiContent, streamGeminiContent } from '../gemini-client.js';
+import { generateGeminiContent, streamGeminiContent, warmGeminiConnection } from '../gemini-client.js';
 import type { LlmAuthState, LlmGenerateArgs, LlmGenerateResult, LlmProvider, LlmStreamArgs, LlmStreamResult } from '../types.js';
 
 function getAuthState(): LlmAuthState {
@@ -63,4 +63,5 @@ export const geminiProvider: LlmProvider = {
   getAuthState,
   generateContent,
   streamContent,
+  warmUp: warmGeminiConnection,
 };

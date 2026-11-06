@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { streamGeminiContent } from './gemini-client.js';
+import { streamGeminiContent, warmGeminiConnection } from './gemini-client.js';
 
 function sseResponse(chunks: string[]): Response {
   const encoder = new TextEncoder();
@@ -65,5 +65,34 @@ describe('streamGeminiContent', () => {
     expect((await streamGeminiContent(args)).text).toBe('Still works.');
     expect((await streamGeminiContent(args)).text).toBe('Still works.');
     expect(levels).toEqual(['MINIMAL', 'LOW', 'LOW']);
+  });
+});
+
+// The warm-up runs on every voice clip, before anyone knows if a reply follows.
+// It must never carry the API key, and it must be a request Google answers
+// without closing the connection, or it warms nothing.
+describe('warmGeminiConnection', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('opens the connection with a keyless GET on the API path, not a HEAD on the bare host', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 403 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    warmGeminiConnection();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit | undefined];
+    expect(url).toMatch(/^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models$/);
+    expect(url).not.toContain('key=');
+    expect(init?.method ?? 'GET').toBe('GET');
+  });
+
+  it('never throws when the network is down', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
+    expect(() => warmGeminiConnection()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });

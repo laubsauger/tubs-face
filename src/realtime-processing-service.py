@@ -64,6 +64,17 @@ _last_decode_results = []  # filled by the patched decode below; read under _gpu
 VAD_MIN_SPEECH_MS = int(os.environ.get("REALTIME_VAD_MIN_SPEECH_MS", "250"))
 
 
+def _decode_clip(path):
+    """The clip as 16 kHz mono float32, decoded once for the voice check and for Whisper. The same samples
+    Whisper's own loader got from the file (ffmpeg for MLX, PyAV for faster-whisper); decoding it three
+    times (voice check, ffmpeg to WAV, Whisper reading the WAV) cost about 75 ms per turn."""
+    if STT_BACKEND == "mlx":
+        from lightning_whisper_mlx.audio import load_audio
+        return load_audio(path)
+    from faster_whisper.audio import decode_audio
+    return decode_audio(path, sampling_rate=16000)
+
+
 def _speech_ms(audio):
     """Milliseconds of speech Silero VAD finds in 16 kHz mono float audio."""
     from faster_whisper.vad import VadOptions, get_speech_timestamps
@@ -658,10 +669,19 @@ def transcribe():
                 "probability": 0.0,
             })
 
+        try:
+            audio = _decode_clip(tmp_path)
+        except Exception as err:
+            print(f"[Realtime STT] could not decode the clip ({err}) - empty segment")
+            return jsonify({
+                "text": "",
+                "language": "en",
+                "probability": 0.0,
+            })
+
         if VAD_MIN_SPEECH_MS > 0:
             try:
-                from faster_whisper.audio import decode_audio
-                voice_ms = _speech_ms(decode_audio(tmp_path, sampling_rate=16000))
+                voice_ms = _speech_ms(np.asarray(audio, dtype=np.float32))
             except Exception as err:
                 voice_ms = None
                 print(f"[Realtime STT] voice check failed, sending to Whisper anyway: {err}")
@@ -676,52 +696,24 @@ def transcribe():
         model = ensure_stt_model()
 
         if STT_BACKEND == "mlx":
-            is_wav_input = tmp_path.lower().endswith(".wav")
-            wav_path = tmp_path if is_wav_input else tmp_path.rsplit(".", 1)[0] + ".stt.wav"
-            try:
-                if not is_wav_input:
-                    try:
-                        subprocess.run(
-                            ["ffmpeg", "-y", "-i", tmp_path, "-ar", "16000", "-ac", "1", wav_path],
-                            check=True,
-                            timeout=12,
-                            capture_output=True,
-                        )
-                    except subprocess.CalledProcessError as err:
-                        print(f"[Realtime STT] ffmpeg decode failed (code={err.returncode}) - empty segment")
-                        return jsonify({
-                            "text": "",
-                            "language": "en",
-                            "probability": 0.0,
-                        })
-                    except subprocess.TimeoutExpired:
-                        print("[Realtime STT] ffmpeg decode timeout - empty segment")
-                        return jsonify({
-                            "text": "",
-                            "language": "en",
-                            "probability": 0.0,
-                        })
-                with _gpu_lock:
-                    _last_decode_results.clear()
-                    result = model.transcribe(wav_path, language="en")
-                    no_speech = [float(getattr(r, "no_speech_prob", float("nan"))) for r in _last_decode_results]
-                heard = str(result.get("text", "")).strip()
-                text = _speech_text(heard, no_speech)
-                elapsed = int((time.time() - t0) * 1000)
-                if heard and not text:
-                    print(f"[Realtime STT] no speech (no_speech_prob {min(no_speech):.2f}), dropped in {elapsed}ms: {heard[:80]}")
-                else:
-                    print(f"[Realtime STT] mlx transcribed in {elapsed}ms: {text[:80]}")
-                return jsonify({
-                    "text": text,
-                    "language": "en",
-                    "probability": 1.0,
-                })
-            finally:
-                if not is_wav_input and os.path.exists(wav_path):
-                    os.remove(wav_path)
+            with _gpu_lock:
+                _last_decode_results.clear()
+                result = model.transcribe(audio, language="en")
+                no_speech = [float(getattr(r, "no_speech_prob", float("nan"))) for r in _last_decode_results]
+            heard = str(result.get("text", "")).strip()
+            text = _speech_text(heard, no_speech)
+            elapsed = int((time.time() - t0) * 1000)
+            if heard and not text:
+                print(f"[Realtime STT] no speech (no_speech_prob {min(no_speech):.2f}), dropped in {elapsed}ms: {heard[:80]}")
+            else:
+                print(f"[Realtime STT] mlx transcribed in {elapsed}ms: {text[:80]}")
+            return jsonify({
+                "text": text,
+                "language": "en",
+                "probability": 1.0,
+            })
         else:
-            segments, info = model.transcribe(tmp_path, beam_size=1, language="en")
+            segments, info = model.transcribe(audio, beam_size=1, language="en")
             # Same rule per segment: faster-whisper returns no_speech_prob with each one.
             text = " ".join([s.text for s in segments if _speech_text(s.text, [s.no_speech_prob])]).strip()
             elapsed = int((time.time() - t0) * 1000)
