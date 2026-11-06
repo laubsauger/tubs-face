@@ -280,6 +280,7 @@ export function buildRealtimeServiceEnv(sttModel = runtimeConfig.sttModel): Node
     STT_BACKEND: runtimeConfig.sttBackend,
     TTS_BACKEND: runtimeConfig.ttsBackend,
     KOKORO_VOICE: runtimeConfig.kokoroVoice,
+    SECONDARY_VOICE: runtimeConfig.secondaryVoice,
     HF_HUB_DISABLE_SYMLINKS_WARNING: '1',
   };
 }

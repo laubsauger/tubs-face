@@ -942,7 +942,6 @@ def tts_stream(ws):
     import traceback
     import base64
     import threading
-    model_holder = ensure_tts_model()
     voice = KOKORO_VOICE
     
     while True:
@@ -962,7 +961,7 @@ def tts_stream(ws):
                 voice = _ming_fallback(voice)
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
-                m = model_holder
+                m = ensure_tts_model()  # with Ming voices, Kokoro loads on its first fallback
                 segments = []
                 if _KOKORO_BACKEND == "mlx":
                     # macOS: mlx_audio — GPU lock required
@@ -1045,7 +1044,12 @@ if __name__ == "__main__":
         f"Starting realtime processing service on port {PORT} "
         f"(STT={STT_BACKEND}:{STT_MODEL}, TTS={TTS_BACKEND}, LLM={LLM_PROVIDER})"
     )
-    if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
+    # Kokoro is only Ming's fallback when both heads speak with Ming (ming:*):
+    # then it loads on the first fallback instead (a few seconds, once).
+    voices = (KOKORO_VOICE, os.environ.get("SECONDARY_VOICE") or KOKORO_VOICE)
+    if TTS_BACKEND in {"kokoro", "kokoro_streaming"} and all(v.startswith("ming:") for v in voices):
+        print("[Realtime TTS] Both voices are Ming; Kokoro loads only if Ming fails")
+    elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         print("[Realtime TTS] Preloading model before accepting requests")
         ensure_tts_model()
         warm_up_tts()
