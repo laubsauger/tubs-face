@@ -194,8 +194,8 @@ def warm_up_tts():
     the language pipeline and compiling kernels (about a second on the first
     request otherwise)."""
     started = time.time()
-    # A Ming voice isn't a Kokoro voice: warm up the Kokoro voice it falls back to.
-    voice = _ming_fallback(KOKORO_VOICE) if KOKORO_VOICE.startswith("ming:") else KOKORO_VOICE
+    # A Ming voice isn't a Kokoro voice: warm up the head that speaks with Kokoro.
+    voice = next(v for v in _configured_voices() if not v.startswith("ming:"))
     try:
         model = ensure_tts_model()
         if _KOKORO_BACKEND == "mlx":
@@ -741,16 +741,26 @@ def transcribe():
 # Cloned voices ("ming:...") are rendered by a separate Ming service. It needs
 # a newer mlx than this process (speech-to-text), so it runs in its own venv.
 MING_TTS_URL = os.environ.get("MING_TTS_URL", "http://127.0.0.1:3003").rstrip("/")
-# When the Ming service is down (not started after a reboot, crashed), Tubs
-# speaks with a Kokoro voice instead of going silent: each cloned voice falls
-# back to the Kokoro voice its head had before (Mini's is jf_tebukuro), so the
-# two heads never end up sounding the same.
-MING_FALLBACK_VOICE = os.environ.get("MING_FALLBACK_VOICE", "hm_omega")
-MING_FALLBACK_VOICES = {"ming:friend-b": "jf_tebukuro", "ming:friend-b-alt": "jf_tebukuro"}
+# When Ming is down or still loading, a ming: voice fails with an error, never
+# with another voice: a Kokoro voice standing in hid that Ming was broken.
 
 
-def _ming_fallback(voice):
-    return MING_FALLBACK_VOICES.get(voice, MING_FALLBACK_VOICE)
+def _configured_voices():
+    """Main's voice and Mini's (the server passes both)."""
+    return (KOKORO_VOICE, os.environ.get("SECONDARY_VOICE") or KOKORO_VOICE)
+
+
+def _ming_error(voice, err):
+    """What went wrong, in words the operator can act on (Ming's own reason when it gave one)."""
+    detail = str(err)
+    if isinstance(err, urllib.error.HTTPError):
+        try:
+            detail = json.loads(err.read() or b"{}").get("error") or detail
+        except Exception:
+            pass
+    elif isinstance(err, urllib.error.URLError):
+        detail = f"no Ming service at {MING_TTS_URL} ({err.reason})"
+    return f"Ming could not speak {voice}: {detail}"
 
 
 def _ming_body(text, voice):
@@ -806,12 +816,12 @@ def _ming_stream(text, voice="ming:friend"):
 def _send_ming_stream(ws, text, voice="ming:friend"):
     """Speaks text with Ming over the TTS socket: one {"text","audio","chunk"}
     message per chunk as Ming renders it ("more" on all but the last, so the
-    client keeps one subtitle across them), then done. Returns False if Ming
-    produced no audio at all, so the caller can speak with Kokoro instead. A
-    stream that dies midway can't be finished in another voice: the reply ends
-    there, and the done still goes out so the turn doesn't wait for it."""
+    client keeps one subtitle across them), then done. If Ming produces no
+    audio at all, an {"error"} goes out before the done, so the turn fails
+    loudly. A stream that dies midway ends the reply there; the done still goes
+    out so the turn doesn't wait for it."""
     stream = _ming_stream(text, voice)
-    sent = 0
+    sent, failure = 0, None
     try:
         while True:
             try:
@@ -823,14 +833,14 @@ def _send_ming_stream(ws, text, voice="ming:friend"):
                     print(f"[Realtime TTS] Ming stream failed after {sent} chunk(s) ({err}); reply ends there")
                     break
                 if not (isinstance(err, urllib.error.HTTPError) and err.code == 404):
-                    print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {_ming_fallback(voice)}")
-                    return False
+                    failure = err
+                    break
                 # A Ming service without /tts/stream (the older ming_service.py): the whole reply in one chunk.
                 try:
                     audio, last = base64.b64encode(_ming_wav(text, voice)).decode("ascii"), True
                 except Exception as old_err:
-                    print(f"[Realtime TTS] Ming unavailable ({old_err}); speaking with {_ming_fallback(voice)}")
-                    return False
+                    failure = old_err
+                    break
             message = {"text": text, "audio": audio, "chunk": True}
             if not last:
                 message["more"] = True
@@ -838,8 +848,11 @@ def _send_ming_stream(ws, text, voice="ming:friend"):
             sent += 1
     finally:
         stream.close()
+    if not sent:
+        message = _ming_error(voice, failure or "it sent no audio")
+        print(f"[Realtime TTS] ERROR: {message}")
+        ws.send(json.dumps({"error": message}))
     ws.send(json.dumps({"text": text, "done": True}))
-    return True
 
 
 @app.route("/tts", methods=["POST"])
@@ -854,8 +867,9 @@ def tts():
         try:
             return Response(_ming_wav(text, voice), mimetype="audio/wav")
         except Exception as err:
-            voice = _ming_fallback(voice)
-            print(f"[Realtime TTS] Ming unavailable ({err}); speaking with {voice}")
+            message = _ming_error(voice, err)
+            print(f"[Realtime TTS] ERROR: {message}")
+            return jsonify({"error": message}), 503
 
     if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         return _tts_kokoro(text, voice)
@@ -956,12 +970,11 @@ def tts_stream(ws):
                 continue
 
             if voice.startswith("ming:"):
-                if _send_ming_stream(ws, text, voice):
-                    continue
-                voice = _ming_fallback(voice)
+                _send_ming_stream(ws, text, voice)
+                continue
             
             if TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
-                m = ensure_tts_model()  # with Ming voices, Kokoro loads on its first fallback
+                m = ensure_tts_model()  # loaded on the first Kokoro voice (not at all with both heads on Ming)
                 segments = []
                 if _KOKORO_BACKEND == "mlx":
                     # macOS: mlx_audio — GPU lock required
@@ -1044,11 +1057,10 @@ if __name__ == "__main__":
         f"Starting realtime processing service on port {PORT} "
         f"(STT={STT_BACKEND}:{STT_MODEL}, TTS={TTS_BACKEND}, LLM={LLM_PROVIDER})"
     )
-    # Kokoro is only Ming's fallback when both heads speak with Ming (ming:*):
-    # then it loads on the first fallback instead (a few seconds, once).
-    voices = (KOKORO_VOICE, os.environ.get("SECONDARY_VOICE") or KOKORO_VOICE)
-    if TTS_BACKEND in {"kokoro", "kokoro_streaming"} and all(v.startswith("ming:") for v in voices):
-        print("[Realtime TTS] Both voices are Ming; Kokoro loads only if Ming fails")
+    # With both heads on Ming (ming:*) nothing speaks with Kokoro; it loads
+    # only if a Kokoro voice is picked later (a few seconds, once).
+    if TTS_BACKEND in {"kokoro", "kokoro_streaming"} and all(v.startswith("ming:") for v in _configured_voices()):
+        print("[Realtime TTS] Both voices are Ming; Kokoro not loaded")
     elif TTS_BACKEND in {"kokoro", "kokoro_streaming"}:
         print("[Realtime TTS] Preloading model before accepting requests")
         ensure_tts_model()

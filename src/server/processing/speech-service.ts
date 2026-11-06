@@ -23,7 +23,7 @@ const service = createPythonServiceController({
  * The cloned voices (ming:*) come from the Ming TTS service (ming-tts-service.py),
  * which the speech service calls on this port. It needs a newer mlx than
  * speech-to-text, so it runs from its own venv (npm run setup-ming). Without
- * that venv, those voices fall back to Kokoro.
+ * Ming those voices fail with an error; they never switch to another voice.
  */
 const MING_PORT = Number.parseInt(process.env.MING_PORT || '3003', 10) || 3003;
 const MING_VENV = 'venv-ming';
@@ -49,7 +49,7 @@ function portInUse(port: number): Promise<boolean> {
 
 async function startMingService(): Promise<void> {
   if (!fs.existsSync(path.join(process.cwd(), MING_VENV, 'bin', 'python'))) {
-    console.log(`[ming] no ${MING_VENV} (npm run setup-ming): cloned voices fall back to Kokoro`);
+    console.error(`[ming] ERROR: no ${MING_VENV}, so the Ming service can't start and the cloned voices (ming:*) can't speak. Run npm run setup-ming.`);
     return;
   }
   // Someone may already run one by hand (or the voice lab copy); use that.

@@ -18,8 +18,7 @@ vi.mock('../tts/stream.js', () => ({
   }),
 }));
 
-// Ming's /health: ready once its model is loaded. Until then the speech
-// service would speak a ming: voice with Kokoro.
+// Ming's /health: ready once its model is loaded. Until then a ming: voice fails.
 const ming = vi.hoisted(() => ({ ready: [true] as boolean[], checks: 0 }));
 vi.stubGlobal('fetch', async () => {
   ming.checks += 1;
@@ -141,8 +140,7 @@ describe('fillers', () => {
     expect(tts.opens).toBe(1);
   });
 
-  // While Ming loads, the speech service speaks a ming: voice with Kokoro.
-  // Fillers rendered then would keep Kokoro's voice for the whole night.
+  // While Ming loads, every line would fail; the render waits for Ming instead.
   it('does not render a Ming voice\'s fillers until Ming itself is ready', async () => {
     ming.ready = [false];
     const { prepareFillers } = await loadFresh();

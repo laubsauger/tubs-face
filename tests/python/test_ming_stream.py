@@ -97,7 +97,7 @@ class MingStreamForwarding(unittest.TestCase):
         FakeMing.script = script
         ws = FakeSocket()
 
-        self.assertTrue(svc._send_ming_stream(ws, TEXT))
+        svc._send_ming_stream(ws, TEXT)
 
         self.assertEqual(FakeMing.paths, ["/tts/stream"])
         chunks, done = ws.messages[:-1], ws.messages[-1]
@@ -106,8 +106,8 @@ class MingStreamForwarding(unittest.TestCase):
         self.assertEqual([m.get("more", False) for m in chunks], [True, True, False])
         self.assertEqual(done, {"text": TEXT, "done": True})
 
-    # Half a reply can't be finished in Kokoro's voice, but the turn must not
-    # hang waiting for audio that never comes: the done still goes out.
+    # Half a reply can't be finished, but the turn must not hang waiting for
+    # audio that never comes: the done still goes out.
     def test_a_stream_that_dies_midway_still_ends_the_reply(self):
         def cut_off(h):
             h.stream_head()
@@ -120,33 +120,40 @@ class MingStreamForwarding(unittest.TestCase):
             with self.subTest(script.__name__):
                 FakeMing.script = script
                 ws = FakeSocket()
-                self.assertTrue(svc._send_ming_stream(ws, TEXT))
+                svc._send_ming_stream(ws, TEXT)
                 self.assertEqual([m.get("chunk", False) for m in ws.messages], [True, False])
                 self.assertEqual(ws.messages[-1], {"text": TEXT, "done": True})
 
-    # Nothing rendered yet: the caller speaks the whole reply with Kokoro.
-    def test_no_audio_from_ming_means_kokoro_speaks_instead(self):
+    # Nothing rendered: the turn must fail with Ming's reason, not go silent
+    # and not slip into another voice (a Kokoro voice standing in hid that
+    # Ming was broken). The done still goes out, so the turn doesn't hang.
+    def test_no_audio_from_ming_is_an_error_with_the_reason(self):
         def error_first(h):
             h.stream_head()
             h.wfile.write(b'{"error": "RuntimeError: boom"}\n')
-        def http_500(h):
-            h.send_response(500)
-            h.send_header("Content-Length", "0")
+        def loading(h):
+            body = b'{"error": "model not ready"}'
+            h.send_response(503)
+            h.send_header("Content-Length", str(len(body)))
             h.end_headers()
-        for script in (error_first, http_500):
+            h.wfile.write(body)
+        for script, reason in ((error_first, "boom"), (loading, "model not ready")):
             with self.subTest(script.__name__):
                 FakeMing.script = script
                 ws = FakeSocket()
-                self.assertFalse(svc._send_ming_stream(ws, TEXT))
-                self.assertEqual(ws.messages, [])
+                svc._send_ming_stream(ws, TEXT)
+                self.assertEqual(len(ws.messages), 2)
+                self.assertIn(reason, ws.messages[0]["error"])
+                self.assertEqual(ws.messages[1], {"text": TEXT, "done": True})
         with self.subTest("ming down"):
             with socket.socket() as s:
                 s.bind(("127.0.0.1", 0))
                 free_port = s.getsockname()[1]
             svc.MING_TTS_URL = f"http://127.0.0.1:{free_port}"
             ws = FakeSocket()
-            self.assertFalse(svc._send_ming_stream(ws, TEXT))
-            self.assertEqual(ws.messages, [])
+            svc._send_ming_stream(ws, TEXT)
+            self.assertIn("no Ming service at", ws.messages[0]["error"])
+            self.assertEqual(ws.messages[1], {"text": TEXT, "done": True})
 
     # Main and Mini are two cloned voices in one Ming service; each line must
     # reach Ming with its own voice, or Mini speaks with main's.
@@ -157,21 +164,14 @@ class MingStreamForwarding(unittest.TestCase):
             h.wfile.write(b'{"done": true}\n')
         FakeMing.script = script
 
-        self.assertTrue(svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend-b"))
-        self.assertTrue(svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend"))
+        svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend-b")
+        svc._send_ming_stream(FakeSocket(), TEXT, "ming:friend")
 
         self.assertEqual([body["voice"] for body in FakeMing.bodies], ["friend-b", "friend"])
 
-    # With Ming down, Mini must keep a voice of its own instead of falling
-    # back to main's Kokoro voice: two heads with one voice read as one.
-    def test_each_head_falls_back_to_its_own_kokoro_voice(self):
-        self.assertEqual(svc._ming_fallback("ming:friend"), svc.MING_FALLBACK_VOICE)
-        self.assertEqual(svc._ming_fallback("ming:friend-b"), "jf_tebukuro")
-        self.assertNotEqual(svc._ming_fallback("ming:friend-b"), svc._ming_fallback("ming:friend"))
-
     # The streaming speech service may be deployed before the Ming service is
     # switched to ming_service_stream.py: the old one has no /tts/stream, and
-    # Tubs must keep its voice (whole reply in one chunk), not drop to Kokoro.
+    # Tubs must keep its voice (whole reply in one chunk), not fail.
     def test_older_ming_service_without_stream_route_still_speaks_ming(self):
         def old_service(h):
             if h.path == "/tts/stream":
@@ -188,7 +188,7 @@ class MingStreamForwarding(unittest.TestCase):
         FakeMing.script = old_service
         ws = FakeSocket()
 
-        self.assertTrue(svc._send_ming_stream(ws, TEXT))
+        svc._send_ming_stream(ws, TEXT)
 
         self.assertEqual(FakeMing.paths, ["/tts/stream", "/tts"])
         self.assertEqual(len(ws.messages), 2)

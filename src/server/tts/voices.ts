@@ -11,9 +11,8 @@ export function isMingVoice(voice: string): boolean {
 const MING_URL = (process.env.MING_TTS_URL || `http://127.0.0.1:${process.env.MING_PORT || '3003'}`).replace(/\/+$/, '');
 
 /**
- * Whether Ming has its model loaded and knows this voice. Until then the
- * speech service speaks a ming: voice with its Kokoro fallback, so anything
- * rendered to keep (the fillers) would keep the wrong voice.
+ * Whether Ming has its model loaded and knows this voice. Until then a ming:
+ * voice fails, so there is no point rendering anything to keep (the fillers).
  */
 export async function mingVoiceReady(voice: string): Promise<boolean> {
   try {
