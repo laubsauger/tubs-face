@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runtimeConfig } from '../config/runtime.js';
-import { parseDualHeadScript, rescueBeatsFromRawText } from './dual-head.js';
+import { firstSpeakBeatSoFar, parseDualHeadScript, rescueBeatsFromRawText } from './dual-head.js';
 
 // Dual-head turns depend on turning loose model output into a playable beat
 // script. If parsing fails the whole turn is lost (or costs a repair call), and if
@@ -120,5 +120,33 @@ describe('rescueBeatsFromRawText', () => {
       ['main', 'You look lost.'],
       ['small', 'Or hungry.'],
     ]);
+  });
+});
+
+// The first line's TTS starts while the model still writes the rest. Starting
+// on half a sentence would speak half a sentence, so only a finished beat counts.
+describe('firstSpeakBeatSoFar', () => {
+  const script = JSON.stringify({
+    beats: [
+      { actor: 'small', action: 'react', emoji: '😏' },
+      { actor: 'main', action: 'speak', text: 'He said "}" and left. {Rude}.' },
+      { actor: 'small', action: 'speak', text: 'Bring snacks.' },
+    ],
+  });
+
+  it('is null until the first speak beat is complete, then gives that beat', () => {
+    const end = script.indexOf('Rude}.') + 'Rude}."'.length;
+    for (let cut = 0; cut <= end; cut += 1) {
+      expect(firstSpeakBeatSoFar(script.slice(0, cut))).toBeNull();
+    }
+    const beat = firstSpeakBeatSoFar(script.slice(0, end + 1));
+    expect(beat).toMatchObject({ actor: 'main', action: 'speak' });
+    expect(beat?.text).toContain('He said');
+  });
+
+  it('gives the same first speak beat as the finished script', () => {
+    const parsed = parseDualHeadScript(script);
+    const first = parsed?.beats.find((beat) => beat.action === 'speak');
+    expect(firstSpeakBeatSoFar(script)?.text).toBe(first?.text);
   });
 });

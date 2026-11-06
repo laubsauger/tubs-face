@@ -1,7 +1,7 @@
 // Two-head replies: one LLM call returns a beat script for Main and Small.
 
 import { recordFieldNotes } from './field-notes.js';
-import type { TurnEmotion } from '../../shared/contracts/turn-script.js';
+import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { SpeechEmotionPayload } from '../../shared/contracts/ws.js';
 import { runtimeConfig } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
@@ -11,7 +11,7 @@ import { buildTurnDirection } from './variety.js';
 import { defaultDualHeadSpeakEmotion } from './emotion.js';
 import { estimateCostUsd, estimateTokens, normalizeInput, stripSpeakerLabels } from './text.js';
 import { beatsForHistory, buildContents, buildProactiveContents, pushHistory, getVisualContext } from './context.js';
-import { DUAL_HEAD_RESPONSE_SCHEMA, hasRequiredDualHeadCoverage, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
+import { DUAL_HEAD_RESPONSE_SCHEMA, firstSpeakBeatSoFar, hasRequiredDualHeadCoverage, type ParsedDualHeadScript, parseDualHeadScript, rescueBeatsFromRawText, summarizeDualHeadBeatsForLog } from './dual-head.js';
 import { logDualHeadInvalidScript, logRawModelOutput } from './llm-log.js';
 import { type DualHeadReply, assistantUnavailable } from './reply-types.js';
 import { directionFor } from './single-head.js';
@@ -82,7 +82,16 @@ async function maybeRepairDualHeadScript(args: {
   };
 }
 
-export async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer): Promise<DualHeadReply> {
+export interface DualHeadReplyOptions {
+  /**
+   * Called once, while the model is still writing, with the script's first
+   * speak beat as soon as that beat is complete. The reply is streamed only
+   * when this is given.
+   */
+  onFirstSpeakBeat?: (beat: TurnBeat) => void;
+}
+
+export async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer, options: DualHeadReplyOptions = {}): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
   const context = buildContents(normalized, directionFor('dual', turnTimer).text);
@@ -124,7 +133,7 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
     let repairUsageIn = 0;
     let repairUsageOut = 0;
     const endLlmSpan = turnTimer?.span('LLM API Call');
-    const result = await provider.generateContent({
+    const request = {
       auth: authState.auth,
       model: dualHeadModel,
       systemInstruction: buildDualHeadSystemInstruction(getVisualContext()),
@@ -134,7 +143,30 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
       timeoutMs: 18_000,
       responseMimeType: 'application/json',
       responseSchema: DUAL_HEAD_RESPONSE_SCHEMA,
-    });
+    };
+    const onFirstSpeakBeat = options.onFirstSpeakBeat;
+    let result;
+    if (onFirstSpeakBeat && provider.streamContent) {
+      let partial = '';
+      let firstBeatSeen = false;
+      const streamed = await provider.streamContent({
+        ...request,
+        onChunk(delta) {
+          partial += delta;
+          if (firstBeatSeen) return;
+          const beat = firstSpeakBeatSoFar(partial);
+          if (!beat) return;
+          firstBeatSeen = true;
+          turnTimer?.mark('First line written');
+          onFirstSpeakBeat(beat);
+        },
+      });
+      // Not streamed, the same timeout throws; a half script must not pass as a reply.
+      if (streamed.aborted) throw new Error('LLM request timed out (two-head reply)');
+      result = streamed;
+    } else {
+      result = await provider.generateContent(request);
+    }
     endLlmSpan?.();
     logRawModelOutput('dual', result.text);
     recordFieldNotes(result.text);

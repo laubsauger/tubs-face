@@ -20,6 +20,8 @@ const fakes = vi.hoisted(() => ({
   // When true, TTS accepts text but never answers (a slow or stuck generator).
   ttsHang: false,
   ttsClosed: 0,
+  // Sends and closes in order, to see what was stopped before what started.
+  ttsLog: [] as string[],
   // How TTS answers one text; by default one chunk, then done.
   ttsChunks: null as ((text: string) => TtsStreamChunk[]) | null,
 }));
@@ -35,6 +37,7 @@ vi.mock('../tts/stream.js', () => ({
       opened: Promise.resolve(true),
       send(text: string) {
         fakes.ttsSent.push(text);
+        fakes.ttsLog.push(`send ${text}`);
         if (fakes.ttsHang) return;
         const chunks = fakes.ttsChunks?.(text);
         if (chunks) {
@@ -52,6 +55,7 @@ vi.mock('../tts/stream.js', () => ({
         if (!open) return;
         open = false;
         fakes.ttsClosed += 1;
+        fakes.ttsLog.push('close');
         setTimeout(() => options.onClose?.(), 0);
       },
       get ready() {
@@ -65,7 +69,7 @@ vi.mock('../tts/stream.js', () => ({
 }));
 
 const { runtimeConfig } = await import('../config/runtime.js');
-const { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn } = await import('./service.js');
+const { hasActiveAssistantTurn, interruptAssistantTurns, playManualTurnScript, runAssistantTurn } = await import('./service.js');
 const { buildContents } = await import('./context.js');
 
 function deferred<T = void>() {
@@ -169,6 +173,7 @@ describe('assistant turn', () => {
     fakes.ttsSent.length = 0;
     fakes.ttsHang = false;
     fakes.ttsClosed = 0;
+    fakes.ttsLog.length = 0;
     fakes.ttsChunks = null;
     runtimeConfig.dualHeadEnabled = false;
     runtimeConfig.ttsStreamingEnabled = false;
@@ -471,6 +476,71 @@ describe('assistant turn', () => {
       expect(script?.turnId).toBe(result.turnId);
       expect(script?.beats.map((beat) => `${beat.actor}:${beat.action}`)).toEqual(['main:speak', 'small:react', 'small:speak']);
       expect(result.reply.text).toBe('You again? Bring snacks next time.');
+    });
+
+    // While the server streams TTS, clients don't render a turn_script's audio
+    // themselves, so an operator's written script played silent.
+    it('plays a written (manual) script with each head\'s audio from the server', async () => {
+      runtimeConfig.ttsStreamingEnabled = true;
+      const ws = collect();
+
+      const { turnId, done } = playManualTurnScript([
+        { actor: 'small', action: 'speak', text: 'I moved your chair.' },
+        { actor: 'main', action: 'speak', text: 'It was always there.' },
+      ], ws.broadcast);
+      await done;
+
+      expect(ws.types().slice(0, 2)).toEqual(['turn_start', 'turn_script']);
+      expect(fakes.ttsSent).toEqual(['I moved your chair.', 'It was always there.']);
+      const audio = ws.ofType('audio_chunk');
+      expect(audio.map((message) => [message.actor, message.turnId])).toEqual([['small', turnId], ['main', turnId]]);
+      expect(hasActiveAssistantTurn()).toBe(false);
+    });
+
+    // Ming's first chunk (~0.2 s) used to wait for the whole script; now it
+    // renders while the model writes the rest. Clients must still get the
+    // turn_script before any of its audio, and the line is rendered once.
+    it('renders the first line while the model still writes the script, and plays it after the script', async () => {
+      runtimeConfig.ttsStreamingEnabled = true;
+      const script = JSON.stringify({ beats: [
+        { actor: 'main', action: 'speak', text: 'You again?' },
+        { actor: 'small', action: 'speak', text: 'Bring snacks.' },
+      ] });
+      const cut = script.indexOf('},') + 1;
+      const rest = deferred();
+      fakes.provider = streamingProvider([script.slice(0, cut), rest.promise, script.slice(cut)]);
+      const ws = collect();
+
+      const turn = runAssistantTurn('hello again friends', ws.broadcast);
+      await waitFor(() => fakes.ttsSent.includes('You again?'));
+      await new Promise((resolve) => setTimeout(resolve, 20)); // its audio is back by now
+      expect(ws.ofType('turn_script')).toHaveLength(0);
+      expect(ws.ofType('audio_chunk')).toHaveLength(0);
+      rest.resolve();
+      await turn;
+
+      expect(fakes.ttsSent).toEqual(['You again?', 'Bring snacks.']);
+      const types = ws.types();
+      expect(types.indexOf('turn_script')).toBeLessThan(types.indexOf('audio_chunk'));
+      expect(ws.ofType('audio_chunk').map((message) => message.actor)).toEqual(['main', 'small']);
+    });
+
+    // Ming renders one line at a time: a stale early render would hold up the
+    // line that really comes first.
+    it('stops the early render when the finished script starts with another line', async () => {
+      runtimeConfig.ttsStreamingEnabled = true;
+      runtimeConfig.dualHeadTurnPolicy = 'main_first';
+      fakes.provider = streamingProvider([JSON.stringify({ beats: [
+        { actor: 'small', action: 'speak', text: 'Me first.' },
+        { actor: 'main', action: 'speak', text: 'No, me.' },
+      ] })]);
+      const ws = collect();
+
+      await runAssistantTurn('who goes first', ws.broadcast);
+
+      expect(fakes.ttsSent).toEqual(['Me first.', 'No, me.', 'Me first.']);
+      expect(fakes.ttsLog.slice(0, 3)).toEqual(['send Me first.', 'close', 'send No, me.']);
+      expect(ws.ofType('audio_chunk').map((message) => message.actor)).toEqual(['main', 'small']);
     });
 
     // Two-head turns wait ~2 s for the reply, so they need the filler most.

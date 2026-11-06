@@ -3,9 +3,9 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ErrorResponse, IncomingRequest, IncomingResponse, ManualTurnScriptRequest, ManualTurnScriptResponse, SpeakRequest, SpeakResponse, WakeWordResult, VoiceResponse, TtsRequest } from '../../shared/contracts/http.js';
-import type { WsExpressionServerMessage, WsSpeakServerMessage, WsTurnScriptServerMessage, WsTurnStartServerMessage } from '../../shared/contracts/ws.js';
+import type { WsExpressionServerMessage, WsSpeakServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
-import { createTurnId } from '../assistant/service.js';
+import { playManualTurnScript } from '../assistant/service.js';
 import { isInConversation, startUserTurn } from '../assistant/turns.js';
 import { sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from '../assistant/text.js';
 import { readJsonBody } from '../http/body.js';
@@ -207,17 +207,7 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
     try {
       const payload = await readJsonBody<ManualTurnScriptRequest>(request);
       const beats = normalizeManualTurnBeats(payload.beats);
-      const turnId = createTurnId();
-      broadcast({
-        type: 'turn_start',
-        turnId,
-      } satisfies WsTurnStartServerMessage);
-      broadcast({
-        type: 'turn_script',
-        turnId,
-        beats,
-        ts: Date.now(),
-      } satisfies WsTurnScriptServerMessage);
+      const { turnId } = playManualTurnScript(beats, broadcast);
       sessionStats.messagesOut += 1;
       sessionStats.lastActivity = Date.now();
       sendJson(response, 200, {

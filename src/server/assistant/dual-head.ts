@@ -162,6 +162,47 @@ export function parseDualHeadScript(rawText: string): ParsedDualHeadScript | nul
   };
 }
 
+/**
+ * The first speak beat of a script still being streamed, once that beat's
+ * JSON object is complete (and every beat before it): its TTS can start
+ * while the model writes the rest. Null until then. The finished script is
+ * parsed as usual; a caller compares its first speak beat with this one.
+ */
+export function firstSpeakBeatSoFar(partial: string): NormalizedBeat | null {
+  const key = partial.indexOf('"beats"');
+  const open = key < 0 ? -1 : partial.indexOf('[', key);
+  if (open < 0) return null;
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  for (let i = open + 1; i < partial.length; i += 1) {
+    const ch = partial[i];
+    if (inString) {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') {
+      if (depth === 0) start = i;
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth !== 0) continue;
+      let beat: NormalizedBeat | null = null;
+      try {
+        beat = normalizeScriptBeat(JSON.parse(partial.slice(start, i + 1)));
+      } catch {
+        return null;
+      }
+      if (beat?.action === 'speak') return beat;
+    } else if (ch === ']' && depth === 0) {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function rescueBeatsFromRawText(rawText: string): ParsedDualHeadScript | null {
   const text = String(rawText ?? '');
   const decodeJsonString = (value: string): string => String(value)

@@ -6,13 +6,68 @@ import type { WsAudioChunkServerMessage, WsServerMessage, WsSpeakEndServerMessag
 import { runtimeConfig } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { sanitizeForTts, stripFormatting } from './text.js';
-import { openTtsStream } from '../tts/stream.js';
+import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
 import { assistantUnavailable } from './reply-types.js';
 import { isAssistantTurnActive } from './turn-state.js';
 
 const ESTIMATED_SPEECH_WORD_MS = 440;
 
 const ESTIMATED_MIN_SPEECH_MS = 800;
+
+type TtsHandlers = Parameters<typeof openTtsStream>[0];
+
+function voiceFor(actor: 'main' | 'small'): string {
+  const mainVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
+  return actor === 'small' ? runtimeConfig.secondaryVoice ?? mainVoice : mainVoice;
+}
+
+function ttsTextOf(beat: TurnBeat): string {
+  return sanitizeForTts(stripFormatting(beat.text?.trim() ?? ''));
+}
+
+/**
+ * A speak beat whose TTS started while the model was still writing the rest
+ * of the script. Its audio waits here until the beat plays, so clients still
+ * get the turn_script first. Ming's first chunk takes ~0.2 s and the rest of
+ * the script ~0.15 s (up to ~0.45 s on three beats): the two now overlap.
+ */
+export interface EarlyBeat {
+  readonly actor: 'main' | 'small';
+  readonly text: string;
+  readonly session: TtsStreamSession;
+  /** Hands over what arrived so far, then everything as it comes. */
+  attach(handlers: TtsHandlers): void;
+  close(): void;
+}
+
+export function startEarlyBeat(beat: TurnBeat): EarlyBeat | null {
+  const actor = beat.actor === 'small' ? 'small' as const : 'main' as const;
+  const text = ttsTextOf(beat);
+  if (beat.action !== 'speak' || !text) return null;
+  const voice = voiceFor(actor);
+  const waiting: Array<(handlers: TtsHandlers) => void> = [];
+  let target: TtsHandlers | null = null;
+  const relay = (call: (handlers: TtsHandlers) => void) => (target ? call(target) : waiting.push(call));
+  const session = openTtsStream({
+    onChunk: (chunk) => relay((handlers) => handlers.onChunk(chunk)),
+    onSentenceDone: () => relay((handlers) => handlers.onSentenceDone()),
+    onError: (error) => relay((handlers) => handlers.onError?.(error)),
+    onClose: () => relay((handlers) => handlers.onClose?.()),
+  });
+  void session.opened.then((ok) => {
+    if (ok && session.ready) session.send(text, voice);
+  });
+  return {
+    actor,
+    text,
+    session,
+    attach(handlers) {
+      target = handlers;
+      for (const call of waiting.splice(0)) call(handlers);
+    },
+    close: () => session.close(),
+  };
+}
 
 /**
  * Stream TTS audio for dual-head speak beats server-side, broadcasting
@@ -25,10 +80,10 @@ export async function streamDualHeadBeatAudio(
   epoch: number,
   broadcast: (message: WsServerMessage) => void,
   turnTimer?: TurnTimer,
+  early: EarlyBeat | null = null,
 ): Promise<void> {
-  const mainVoice = runtimeConfig.kokoroVoice ?? 'af_heart';
-  const smallVoice = runtimeConfig.secondaryVoice ?? mainVoice;
   const startedAt = Date.now();
+  let firstSpeakBeat = true;
   let chunkIndex = 0;
   let firstChunkSent = false;
 
@@ -53,10 +108,22 @@ export async function streamDualHeadBeatAudio(
     }
 
     const actor = beat.actor === 'small' ? 'small' as const : 'main' as const;
-    const voice = actor === 'small' ? smallVoice : mainVoice;
-    const text = sanitizeForTts(stripFormatting(beat.text?.trim() ?? ''));
+    const voice = voiceFor(actor);
+    const text = ttsTextOf(beat);
     if (!text) {
       continue;
+    }
+    // The early render is used only if the finished script starts with the
+    // same line; otherwise it is stopped at once (Ming renders one at a time).
+    let earlyForBeat: EarlyBeat | null = null;
+    if (firstSpeakBeat) {
+      firstSpeakBeat = false;
+      if (early && early.actor === actor && early.text === text) {
+        earlyForBeat = early;
+        turnTimer?.mark('First line rendered early');
+      } else {
+        early?.close();
+      }
     }
 
     const beatChunks = await streamDualHeadSpeakBeat({
@@ -67,6 +134,7 @@ export async function streamDualHeadBeatAudio(
       beatIndex: index,
       text,
       voice,
+      early: earlyForBeat,
       nextChunkIndex: chunkIndex,
       onFirstChunk: () => {
         if (!firstChunkSent) {
@@ -96,6 +164,7 @@ async function streamDualHeadSpeakBeat(args: {
   beatIndex: number;
   text: string;
   voice: string;
+  early?: EarlyBeat | null;
   nextChunkIndex: number;
   onFirstChunk?: () => void;
 }): Promise<number> {
@@ -107,6 +176,7 @@ async function streamDualHeadSpeakBeat(args: {
     beatIndex,
     text,
     voice,
+    early,
     nextChunkIndex,
     onFirstChunk,
   } = args;
@@ -135,7 +205,7 @@ async function streamDualHeadSpeakBeat(args: {
       reject(error);
     };
 
-    const ttsSession = openTtsStream({
+    const handlers: TtsHandlers = {
       onChunk(chunk) {
         if (!isAssistantTurnActive(turnId, epoch)) {
           ttsSession.close();
@@ -201,19 +271,24 @@ async function streamDualHeadSpeakBeat(args: {
           finishResolve();
         });
       },
-    });
-
-    void ttsSession.opened.then((ok) => {
-      if (ok && ttsSession.ready) {
-        ttsSession.send(text, voice);
-        return;
-      }
-      if (!isAssistantTurnActive(turnId, epoch) || chunkCount > 0) {
-        finishResolve();
-        return;
-      }
-      finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for beat ${beatIndex} (${turnId})`));
-    });
+    };
+    // An early beat's text is already rendering; its events so far replay now.
+    const ttsSession = early ? early.session : openTtsStream(handlers);
+    if (early) {
+      early.attach(handlers);
+    } else {
+      void ttsSession.opened.then((ok) => {
+        if (ok && ttsSession.ready) {
+          ttsSession.send(text, voice);
+          return;
+        }
+        if (!isAssistantTurnActive(turnId, epoch) || chunkCount > 0) {
+          finishResolve();
+          return;
+        }
+        finishReject(streamError ?? assistantUnavailable(`[streaming] Dual-head TTS closed before becoming ready for beat ${beatIndex} (${turnId})`));
+      });
+    }
 
     setTimeout(() => {
       if (!ttsSession.closed) {

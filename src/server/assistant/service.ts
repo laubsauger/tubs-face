@@ -6,9 +6,10 @@ import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { pickFiller } from './fillers.js';
+import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { normalizeInput } from './text.js';
 import { shouldUseDualHeadDirectedMode } from './dual-head.js';
-import { streamDualHeadBeatAudio } from './dual-head-playback.js';
+import { type EarlyBeat, startEarlyBeat, streamDualHeadBeatAudio } from './dual-head-playback.js';
 import { generateDualHeadProactiveReply, generateDualHeadReply } from './dual-head-reply.js';
 import { logAssistantUserInput } from './llm-log.js';
 import { type AssistantTurnResult, isDualHeadReply } from './reply-types.js';
@@ -67,107 +68,117 @@ async function runAssistantTurnBody(
   }
 
   if (shouldUseDualHeadDirectedMode()) {
-    const dualHead = await generateDualHeadReply(userText, turnTimer);
+    // The first line's TTS starts while the model writes the rest of the script.
+    const early: { beat: EarlyBeat | null } = { beat: null };
+    try {
+      const dualHead = await generateDualHeadReply(userText, turnTimer, runtimeConfig.ttsStreamingEnabled ? {
+        onFirstSpeakBeat: (beat) => {
+          if (isAssistantTurnActive(turnId, epoch)) early.beat = startEarlyBeat(beat);
+        },
+      } : {});
 
-    if (turnTimer) {
-      if (dualHead.contextMeta?.imageAttached) {
-        turnTimer.setMeta('Image', 'attached');
-      }
-      for (const beat of dualHead.beats) {
-        if (beat.action === 'speak' && beat.text?.trim()) {
-          const actor = beat.actor === 'small' ? 'Mini' : 'Tubs';
-          const emoji = beat.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
-          turnTimer.setMeta(actor, `${emoji}${beat.text.trim()}`);
+      if (turnTimer) {
+        if (dualHead.contextMeta?.imageAttached) {
+          turnTimer.setMeta('Image', 'attached');
+        }
+        for (const beat of dualHead.beats) {
+          if (beat.action === 'speak' && beat.text?.trim()) {
+            const actor = beat.actor === 'small' ? 'Mini' : 'Tubs';
+            const emoji = beat.emotion?.emoji ? `${beat.emotion.emoji} ` : '';
+            turnTimer.setMeta(actor, `${emoji}${beat.text.trim()}`);
+          }
         }
       }
-    }
 
-    if (!isAssistantTurnActive(turnId, epoch)) {
-      markLastReplyUnheard();
-      return {
+      if (!isAssistantTurnActive(turnId, epoch)) {
+        markLastReplyUnheard();
+        return {
+          turnId,
+          reply: {
+            text: dualHead.fullText,
+            model: dualHead.model,
+            latencyMs: dualHead.latencyMs,
+            source: dualHead.source,
+            emotion: dualHead.emotion,
+            contextMeta: dualHead.contextMeta,
+            tokens: dualHead.tokens,
+            costUsd: dualHead.costUsd,
+          },
+          superseded: true,
+        };
+      }
+
+      emitIfActive(turnId, epoch, broadcast, {
+        type: 'turn_context',
         turnId,
-        reply: {
-          text: dualHead.fullText,
-          model: dualHead.model,
-          latencyMs: dualHead.latencyMs,
-          source: dualHead.source,
-          emotion: dualHead.emotion,
-          contextMeta: dualHead.contextMeta,
-          tokens: dualHead.tokens,
-          costUsd: dualHead.costUsd,
-        },
-        superseded: true,
-      };
-    }
+        meta: dualHead.contextMeta,
+      });
 
-    emitIfActive(turnId, epoch, broadcast, {
-      type: 'turn_context',
-      turnId,
-      meta: dualHead.contextMeta,
-    });
-
-    if (!emitIfActive(turnId, epoch, broadcast, {
-      type: 'turn_script',
-      turnId,
-      beats: dualHead.beats,
-      ts: Date.now(),
-    })) {
-      return {
+      if (!emitIfActive(turnId, epoch, broadcast, {
+        type: 'turn_script',
         turnId,
-        reply: {
-          text: dualHead.fullText,
-          model: dualHead.model,
-          latencyMs: dualHead.latencyMs,
-          source: dualHead.source,
-          emotion: dualHead.emotion,
-          contextMeta: dualHead.contextMeta,
-          tokens: dualHead.tokens,
-          costUsd: dualHead.costUsd,
-        },
-        superseded: true,
-      };
-    }
+        beats: dualHead.beats,
+        ts: Date.now(),
+      })) {
+        return {
+          turnId,
+          reply: {
+            text: dualHead.fullText,
+            model: dualHead.model,
+            latencyMs: dualHead.latencyMs,
+            source: dualHead.source,
+            emotion: dualHead.emotion,
+            contextMeta: dualHead.contextMeta,
+            tokens: dualHead.tokens,
+            costUsd: dualHead.costUsd,
+          },
+          superseded: true,
+        };
+      }
 
-    // Stream TTS for speak beats server-side so clients get audio_chunk
-    // messages immediately instead of per-beat tts_request round-trips.
-    if (runtimeConfig.ttsStreamingEnabled) {
-      await streamDualHeadBeatAudio(dualHead.beats, turnId, epoch, broadcast, turnTimer);
-    }
+      // Stream TTS for speak beats server-side so clients get audio_chunk
+      // messages immediately instead of per-beat tts_request round-trips.
+      if (runtimeConfig.ttsStreamingEnabled) {
+        await streamDualHeadBeatAudio(dualHead.beats, turnId, epoch, broadcast, turnTimer, early.beat);
+      }
 
-    sessionStats.messagesOut += 1;
-    sessionStats.lastActivity = Date.now();
-    sessionStats.tokensIn += dualHead.tokens.in;
-    sessionStats.tokensOut += dualHead.tokens.out;
-    sessionStats.costUsd += dualHead.costUsd;
-    sessionStats.model = dualHead.model;
+      sessionStats.messagesOut += 1;
+      sessionStats.lastActivity = Date.now();
+      sessionStats.tokensIn += dualHead.tokens.in;
+      sessionStats.tokensOut += dualHead.tokens.out;
+      sessionStats.costUsd += dualHead.costUsd;
+      sessionStats.model = dualHead.model;
 
-    emitIfActive(turnId, epoch, broadcast, {
-      type: 'stats',
-      tokens: dualHead.tokens,
-      totals: {
-        in: sessionStats.tokensIn,
-        out: sessionStats.tokensOut,
-        cost: sessionStats.costUsd,
-      },
-      latency: dualHead.latencyMs,
-      model: dualHead.model,
-      cost: dualHead.costUsd,
-    } satisfies WsStatsServerMessage);
-
-    return {
-      turnId,
-      reply: {
-        text: dualHead.fullText,
-        model: dualHead.model,
-        latencyMs: dualHead.latencyMs,
-        source: dualHead.source,
-        emotion: dualHead.emotion,
-        contextMeta: dualHead.contextMeta,
+      emitIfActive(turnId, epoch, broadcast, {
+        type: 'stats',
         tokens: dualHead.tokens,
-        costUsd: dualHead.costUsd,
-      },
-      beats: dualHead.beats,
-    };
+        totals: {
+          in: sessionStats.tokensIn,
+          out: sessionStats.tokensOut,
+          cost: sessionStats.costUsd,
+        },
+        latency: dualHead.latencyMs,
+        model: dualHead.model,
+        cost: dualHead.costUsd,
+      } satisfies WsStatsServerMessage);
+
+      return {
+        turnId,
+        reply: {
+          text: dualHead.fullText,
+          model: dualHead.model,
+          latencyMs: dualHead.latencyMs,
+          source: dualHead.source,
+          emotion: dualHead.emotion,
+          contextMeta: dualHead.contextMeta,
+          tokens: dualHead.tokens,
+          costUsd: dualHead.costUsd,
+        },
+        beats: dualHead.beats,
+      };
+    } finally {
+      early.beat?.close();
+    }
   }
 
   // Try streaming path: LLM stream → sentence split → TTS WS → audio chunks
@@ -391,4 +402,24 @@ async function runProactiveTurnBody(
     },
     ...(isDualHeadReply(reply) ? { beats: reply.beats } : {}),
   };
+}
+
+/**
+ * Plays a written two-head script (the operator's manual beats) like a reply:
+ * turn_start, turn_script, then each beat's audio from the server. Clients
+ * don't render a turn_script's audio themselves while the server streams TTS,
+ * so without this a manual script played silent. A new turn cuts it off.
+ */
+export function playManualTurnScript(beats: TurnBeat[], broadcast: (message: WsServerMessage) => void): { turnId: string; done: Promise<void> } {
+  const turnId = createTurnId();
+  const epoch = activateAssistantTurn(turnId);
+  broadcast({ type: 'turn_start', turnId } satisfies WsTurnStartServerMessage);
+  broadcast({ type: 'turn_script', turnId, beats, ts: Date.now() });
+  const done = (runtimeConfig.ttsStreamingEnabled ? streamDualHeadBeatAudio(beats, turnId, epoch, broadcast) : Promise.resolve())
+    .catch((error: unknown) => {
+      console.error('[turn] manual script failed', error);
+      broadcast({ type: 'error', text: error instanceof Error ? error.message : 'Manual script failed' });
+    })
+    .finally(() => finishAssistantTurn(turnId, epoch));
+  return { turnId, done };
 }
