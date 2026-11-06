@@ -49,6 +49,8 @@ import mlx.core as mx  # noqa: E402
 import numpy as np  # noqa: E402
 from scipy.signal import resample_poly  # noqa: E402
 
+from ming_eq import VoiceEQ  # noqa: E402  (src/, next to this file)
+
 # The references are recordings of a real person, and this repo is public: they stay out of git.
 VOICE_DIR = os.environ.get("MING_VOICE_DIR") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ming-voices")
@@ -70,6 +72,8 @@ VOICES = {
     "friend-b-alt": "ref_B_alt_full_dn", # Mini, other take: the same recording from 12.86 s to the end
 }
 DEFAULT_VOICE = "friend"
+# Each voice's EQ curve in ming_eq.py (the user picked "round", voice lab run 16).
+VOICE_EQ = {"friend": "main", "friend-b": "mini", "friend-b-alt": "mini"}
 PROMPT = "Please generate speech based on the following description.\nTarget language: English.\n"
 OUT_SR = 24000
 LATENT_HZ = 12.5
@@ -268,7 +272,7 @@ def render(text, voice=DEFAULT_VOICE):
     if sr != OUT_SR:
         g = math.gcd(OUT_SR, sr)
         a = resample_poly(a, OUT_SR // g, sr // g).astype(np.float32)
-    return a, cut, softened
+    return VoiceEQ(VOICE_EQ[voice])(a), cut, softened
 
 
 # ---- streaming (POST /tts/stream)
@@ -355,8 +359,8 @@ def onset_start(a, sr):
 class Emitter:
     """Cuts the raw 44.1 kHz audio into finished 24 kHz chunks; see the notes above FIRST_S."""
 
-    def __init__(self, sr, send):
-        self.sr, self.send = sr, send
+    def __init__(self, sr, send, eq):
+        self.sr, self.send, self.eq = sr, send, eq
         self.up, self.down = OUT_SR // math.gcd(OUT_SR, sr), sr // math.gcd(OUT_SR, sr)
         assert self.down == RS_ALIGN, "chunk grid assumes 44.1 kHz -> 24 kHz"
         self.start = self.sent = None
@@ -385,7 +389,7 @@ class Emitter:
         w1 = e if last else e + RS_CTX
         out = resample_poly(self.fin(raw, w0, w1), self.up, self.down).astype(np.float32)
         o0 = (self.sent - w0) * self.up // self.down
-        out = out[o0:] if last else out[o0:o0 + (e - self.sent) * self.up // self.down]
+        out = self.eq(out[o0:] if last else out[o0:o0 + (e - self.sent) * self.up // self.down])
         if self.t_first is None:
             self.t_first = time.perf_counter()
         self.send(to_wav(out, OUT_SR), last)
@@ -422,7 +426,7 @@ class Emitter:
         sr = self.sr
         if self.start is None:  # nothing sent yet (short line): exactly what /tts would return
             a, softened = finish(raw if raw.size else np.zeros(1, np.float32), sr)
-            a = resample_poly(a, self.up, self.down).astype(np.float32)
+            a = self.eq(resample_poly(a, self.up, self.down).astype(np.float32))
             self.t_first = time.perf_counter()
             self.send(to_wav(a, OUT_SR), True)
             self.chunks, self.out_samples = 1, a.size
@@ -468,7 +472,7 @@ def render_stream(text, send, voice=DEFAULT_VOICE):
     cap = int(SAFETY * exp_s(text) * sr)
     safe = int((SAFE_FRAC * exp_s(text) - HOLD_S) * sr)
     hold = int(HOLD_S * sr)
-    em = Emitter(sr, send)
+    em = Emitter(sr, send, VoiceEQ(VOICE_EQ[voice]))
     raw = np.zeros(sr * 8, np.float32)
     committed = 0  # raw[:committed] = finished fragments, trailing silence trimmed
     cut = False
