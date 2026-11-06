@@ -44,7 +44,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `tts/stream.ts` — Streaming audio chunks to WebSocket
 - `config/runtime.ts` — Runtime configuration, session stats
 - `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
-- `recordings.ts` — Face-window video recordings, appended piece by piece, remuxed to plain MP4 by ffmpeg when present; saved to `~/Movies/tubs-recordings` (`TUBS_RECORDINGS_DIR`)
+- `recordings.ts` — Face-window video recordings, appended piece by piece; on stop ffmpeg re-encodes the video (Chrome's file freezes in QuickTime after the tab is resized) into a plain MP4 in `~/Movies/tubs-recordings` (`TUBS_RECORDINGS_DIR`), and Chrome's own file is kept in its `raw/`. `scripts/check-playback.swift` tells whether a video plays to the end in the Mac's decoder
 
 ### Python Service (`src/realtime-processing-service.py`)
 - Flask app on port 3002, started and restarted by the server

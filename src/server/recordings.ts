@@ -5,7 +5,7 @@
 
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { appendFile, mkdir, open, rename, stat, unlink } from 'node:fs/promises';
+import { appendFile, copyFile, mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -17,7 +17,11 @@ export type RecordingExt = 'mp4' | 'webm';
 
 // Only names this module made; anything else could point outside the folder.
 const NAME_PATTERN = /^tubs-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(-\d+)?\.(mp4|webm)$/;
-const REMUX_TIMEOUT_MS = 120_000;
+// Re-encoding runs at about thirteen times real time on the Mac's hardware encoder.
+const CONVERT_TIMEOUT_MS = 15 * 60_000;
+const VIDEO_ENCODER = process.platform === 'darwin'
+  ? ['-c:v', 'h264_videotoolbox', '-b:v', '8M']
+  : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20'];
 
 export function recordingsDir(): string {
   return process.env.TUBS_RECORDINGS_DIR || join(os.homedir(), 'Movies', 'tubs-recordings');
@@ -26,6 +30,11 @@ export function recordingsDir(): string {
 /** Where the pieces go while recording: playable up to the last piece if the take never finishes. */
 function partPath(dir: string, file: string): string {
   return join(dir, file.replace(/\.(mp4|webm)$/, '.part.$1'));
+}
+
+/** Chrome's MP4 as recorded, kept after the finished video is made from it. */
+function rawPath(dir: string, file: string): string {
+  return join(dir, 'raw', file);
 }
 
 function checkedName(file: unknown): string {
@@ -72,36 +81,51 @@ export async function appendChunk(dir: string, file: unknown, offset: number, da
 }
 
 /**
- * Closes a recording. Chrome records fragmented MP4, which some editors and
- * upload forms reject; ffmpeg rewrites it as a plain MP4 without re-encoding.
- * Without ffmpeg (or if it fails) the recording is kept as recorded.
+ * Closes a recording. Chrome restarts its video encoder when the tab changes
+ * size (a window resize, the "sharing this tab" bar) and records the new
+ * encoder's frames without the settings they need. ffmpeg plays past that;
+ * QuickTime and the Mac's decoder stop there (a take froze at 0:39 of 1:17).
+ * So ffmpeg re-encodes the video into one consistent stream and copies the
+ * sound, which also makes the plain MP4 some editors and upload forms need.
+ * Chrome's own file stays in raw/, so the take survives a failed conversion or
+ * an app saving over the finished video. If re-encoding fails, ffmpeg copies
+ * the streams as before; without ffmpeg the recording is kept as recorded.
  */
 export async function finishRecording(dir: string, file: unknown, ffmpeg = 'ffmpeg'): Promise<{ file: string; path: string; remuxed: boolean }> {
   const name = checkedName(file);
   const part = partPath(dir, name);
   const path = join(dir, name);
+  const raw = rawPath(dir, name);
   if (!existsSync(part)) {
     if (existsSync(path)) return { file: name, path, remuxed: false };
-    throw badRequest('Unknown recording');
+    // A finish that was cut off (server restart) left only the raw file: make the video from it.
+    if (!existsSync(raw)) throw badRequest('Unknown recording');
   }
-  if (name.endsWith('.mp4')) {
+  if (!name.endsWith('.mp4')) {
+    await rename(part, path);
+    return { file: name, path, remuxed: false };
+  }
+  if (existsSync(part)) {
+    await mkdir(join(dir, 'raw'), { recursive: true });
+    await rename(part, raw);
+  }
+  for (const codecs of [[...VIDEO_ENCODER, '-c:a', 'copy'], ['-c', 'copy']]) {
     try {
-      await run(ffmpeg, ['-v', 'error', '-y', '-i', part, '-c', 'copy', '-movflags', '+faststart', path], { timeout: REMUX_TIMEOUT_MS });
-      await unlink(part);
+      await run(ffmpeg, ['-v', 'error', '-y', '-i', raw, ...codecs, '-movflags', '+faststart', path], { timeout: CONVERT_TIMEOUT_MS });
       return { file: name, path, remuxed: true };
     } catch (error) {
-      console.warn(`[recordings] kept ${name} as recorded, remux failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`[recordings] ${name}: ffmpeg ${codecs.join(' ')} failed: ${error instanceof Error ? error.message : String(error)}`);
       await unlink(path).catch(() => {});
     }
   }
-  await rename(part, path);
+  await copyFile(raw, path);
   return { file: name, path, remuxed: false };
 }
 
 /** Shows the recording in Finder (macOS only). */
 export async function revealRecording(dir: string, file: unknown): Promise<void> {
   const name = checkedName(file);
-  const path = [join(dir, name), partPath(dir, name)].find((candidate) => existsSync(candidate));
+  const path = [join(dir, name), partPath(dir, name), rawPath(dir, name)].find((candidate) => existsSync(candidate));
   if (!path) throw badRequest('Unknown recording');
   if (process.platform !== 'darwin') throw new Error('Show in Finder works on macOS only');
   await run('open', ['-R', path]);

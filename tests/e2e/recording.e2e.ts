@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { expect, test } from '@playwright/test';
 import { MOCK, chunk, openFace, resetMock, send } from './helpers.js';
@@ -52,10 +52,11 @@ test('R records the face window and its sound into one plain MP4', async ({ page
 
   await expect(page.locator('#recording-show')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('#recording-toggle')).toHaveText('Rec');
-  // One finished file, no .part left behind.
-  const added = readdirSync(dir).filter((file) => !before.has(file));
+  // One finished file, no .part left behind, and Chrome's own file kept in raw/.
+  const added = readdirSync(dir).filter((file) => !before.has(file) && file !== 'raw');
   expect(added).toHaveLength(1);
   expect(added[0]).toMatch(/^tubs-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.mp4$/);
+  expect(existsSync(join(dir, 'raw', added[0]!))).toBe(true);
 
   const path = join(dir, added[0]!);
   const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'stream=codec_type,codec_name:format=duration', '-of', 'json', path]).toString()) as {
@@ -65,4 +66,17 @@ test('R records the face window and its sound into one plain MP4', async ({ page
   expect(probe.streams.map((stream) => `${stream.codec_type}:${stream.codec_name}`).sort()).toEqual(['audio:aac', 'video:h264']);
   expect(Number(probe.format.duration)).toBeGreaterThan(2);
   expect(topLevelBoxes(path)).not.toContain('moof');
+
+  // QuickTime's decoder, not ffmpeg's, is the one that froze on Chrome's file.
+  if (process.platform === 'darwin') {
+    let report: string;
+    try {
+      report = execFileSync('swift', [join(process.cwd(), 'scripts', 'check-playback.swift'), path]).toString();
+    } catch (error) {
+      report = String((error as { stdout?: Buffer }).stdout ?? error);
+    }
+    const playback = JSON.parse(report) as { decodedTo: number; duration: number; completed: boolean };
+    expect(playback.completed).toBe(true);
+    expect(playback.decodedTo).toBeGreaterThan(playback.duration - 0.5);
+  }
 });
