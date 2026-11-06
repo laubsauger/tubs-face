@@ -56,6 +56,19 @@ MIN_STT_AUDIO_BYTES = int(os.environ.get("REALTIME_MIN_STT_AUDIO_BYTES", "2048")
 # Anything at or above Whisper's 0.6 is treated as no speech, whatever the text.
 NO_SPEECH_THRESHOLD = float(os.environ.get("REALTIME_NO_SPEECH_THRESHOLD", "0.6"))
 _last_decode_results = []  # filled by the patched decode below; read under _gpu_lock
+# The browser's voice detector also lets through music, clatter and hum, and
+# Whisper writes text for those too. Silero VAD (bundled with faster-whisper)
+# measured 0 ms of speech in noise, hum, chords, clicks and instrumental rock,
+# and 380 ms or more in single words ("Hi.", "No.", "Boring."). Clips with less
+# speech than this skip Whisper. 0 turns the check off.
+VAD_MIN_SPEECH_MS = int(os.environ.get("REALTIME_VAD_MIN_SPEECH_MS", "250"))
+
+
+def _speech_ms(audio):
+    """Milliseconds of speech Silero VAD finds in 16 kHz mono float audio."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    spans = get_speech_timestamps(audio, VadOptions(min_speech_duration_ms=0, speech_pad_ms=0))
+    return sum(s["end"] - s["start"] for s in spans) / 16
 
 
 def _speech_text(text, no_speech_probs):
@@ -181,14 +194,16 @@ def warm_up_tts():
     the language pipeline and compiling kernels (about a second on the first
     request otherwise)."""
     started = time.time()
+    # A Ming voice isn't a Kokoro voice: warm up the Kokoro voice it falls back to.
+    voice = _ming_fallback(KOKORO_VOICE) if KOKORO_VOICE.startswith("ming:") else KOKORO_VOICE
     try:
         model = ensure_tts_model()
         if _KOKORO_BACKEND == "mlx":
             with _gpu_lock:
-                for _ in model.generate(text="Ready.", voice=KOKORO_VOICE, speed=1.0, lang_code="a"):
+                for _ in model.generate(text="Ready.", voice=voice, speed=1.0, lang_code="a"):
                     pass
         else:
-            for _ in model("Ready.", voice=KOKORO_VOICE, speed=1.0):
+            for _ in model("Ready.", voice=voice, speed=1.0):
                 pass
         print(f"[Realtime TTS] Warm-up done in {time.time() - started:.2f}s")
     except Exception as err:
@@ -643,6 +658,21 @@ def transcribe():
                 "probability": 0.0,
             })
 
+        if VAD_MIN_SPEECH_MS > 0:
+            try:
+                from faster_whisper.audio import decode_audio
+                voice_ms = _speech_ms(decode_audio(tmp_path, sampling_rate=16000))
+            except Exception as err:
+                voice_ms = None
+                print(f"[Realtime STT] voice check failed, sending to Whisper anyway: {err}")
+            if voice_ms is not None and voice_ms < VAD_MIN_SPEECH_MS:
+                print(f"[Realtime STT] no voice ({voice_ms:.0f} ms of speech), skipped Whisper")
+                return jsonify({
+                    "text": "",
+                    "language": "en",
+                    "probability": 0.0,
+                })
+
         model = ensure_stt_model()
 
         if STT_BACKEND == "mlx":
@@ -1024,4 +1054,6 @@ if __name__ == "__main__":
     # Load Whisper now too; otherwise the first voice turn after a restart
     # waits for the model to load.
     ensure_stt_model()
+    if VAD_MIN_SPEECH_MS > 0:
+        _speech_ms(np.zeros(16000, np.float32))  # loads Silero (about a second the first time)
     app.run(port=PORT)
