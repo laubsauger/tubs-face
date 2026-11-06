@@ -485,7 +485,9 @@ function maybeAppendTimedDualHeadChat(
     const existingEntryId = streamedTurnActorChatEntryIds.get(turnActorKey);
     if (existingEntryId) {
       const existingIndex = current.chatEntries.findIndex((entry) => entry.id === existingEntryId);
-      if (existingIndex >= 0) {
+      // Only a head's line right after its own line joins it: across the other
+      // head's line, a back-and-forth read as one block per head, out of order.
+      if (existingIndex >= 0 && existingIndex === current.chatEntries.length - 1) {
         const existingEntry = current.chatEntries[existingIndex];
         if (existingEntry?.type === 'out' && existingEntry.actor === actor) {
           const existingLines = existingEntry.text.split('\n').map((line) => line.trim()).filter(Boolean);

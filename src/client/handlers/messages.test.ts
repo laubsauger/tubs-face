@@ -80,4 +80,35 @@ describe('chat log with a filler', () => {
       ['small', 'Nice hat.', false],
     ]);
   });
+
+});
+
+describe('two-head chat log', () => {
+  // A two-head back-and-forth must read in the order it was spoken. Each
+  // head's lines used to be merged into one entry per turn, so A-B-A-B showed
+  // as one block per head: out of order, and tall enough to cover the face.
+  it('keeps a two-head back-and-forth in spoken order, one entry per turn of talk', () => {
+    const store = createAppStore();
+    store.setState((current) => ({ ...current, config: { ...current.config, dualHeadEnabled: true, dualHeadMode: 'llm_directed' } as typeof current.config }));
+    const send = (message: WsServerMessage) => applyServerMessage(store, message, 'main');
+    const beats = [
+      { actor: 'small' as const, action: 'speak' as const, text: 'I counted everyone.' },
+      { actor: 'main' as const, action: 'speak' as const, text: 'Stop making it weird.' },
+      { actor: 'small' as const, action: 'speak' as const, text: 'I am making a list.' },
+      { actor: 'main' as const, action: 'speak' as const, text: 'It needs a cleaner.' },
+      { actor: 'main' as const, action: 'speak' as const, text: 'A real one.' },
+    ];
+
+    send({ type: 'turn_start', turnId: 't4' });
+    send({ type: 'turn_script', turnId: 't4', beats, ts: 1 });
+    beats.forEach((beat, beatIndex) => send({ type: 'audio_chunk', audio: '', text: beat.text, turnId: 't4', actor: beat.actor, beatIndex }));
+
+    const replies = store.getState().chatEntries.filter((entry) => entry.type === 'out');
+    expect(replies.map((entry) => [entry.actor, entry.text])).toEqual([
+      ['small', 'I counted everyone.'],
+      ['main', 'Stop making it weird.'],
+      ['small', 'I am making a list.'],
+      ['main', 'It needs a cleaner.\nA real one.'],
+    ]);
+  });
 });

@@ -148,3 +148,28 @@ for (const [width, height] of [[560, 420], [800, 450]] as const) {
     await expectSubtitleClearOfMouth(page.locator('#visual-subtitle'), page.locator('#visual-face'), { x: 0, y: 0, width, height });
   });
 }
+
+// Mini's line stays up for a few seconds after Mini stops. Once main Tubs
+// talks, two subtitles at once read as noise: Mini's goes when main starts.
+test("Mini's subtitle goes when main Tubs starts talking", async ({ page, request }) => {
+  await resetMock(request);
+  await page.goto('/app-mini.html');
+  await waitForClients(page, request, 1);
+  await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
+  await page.locator('#visual-face').waitFor();
+  const subtitle = page.locator('#visual-subtitle');
+
+  const turnId = 't-mini-then-main';
+  await send(request,
+    { type: 'turn_start', turnId },
+    { type: 'turn_script', turnId, beats: [{ actor: 'small', action: 'speak', text: 'I made a list.' }, { actor: 'main', action: 'speak', text: 'Stop.' }], ts: Date.now() },
+    { type: 'audio_chunk', audio: tone(500), text: 'I made a list.', turnId, chunkIndex: 0, actor: 'small', beatIndex: 0 },
+    { type: 'speak_end', turnId, actor: 'small', text: 'I made a list.', fullText: 'I made a list.' },
+  );
+  await expect(subtitle).toHaveClass(/is-visible/, { timeout: 10_000 });
+  await page.waitForTimeout(900); // Mini's audio is over; its subtitle would stay up for 4 s more
+  await expect(subtitle).toHaveClass(/is-visible/);
+
+  await send(request, { type: 'head_speech_state', actor: 'main', state: 'start', turnId, ts: Date.now() });
+  await expect(subtitle).not.toHaveClass(/is-visible/, { timeout: 1500 });
+});

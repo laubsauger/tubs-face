@@ -1026,6 +1026,13 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }
 
     if (message.state === 'start') {
+      // This head's last line stays up for a few seconds after it ends; once
+      // the other head talks, two subtitles at once read as noise.
+      if (!store.getState().audioPlaying) {
+        clearSubtitleClearTimer();
+        subtitles.stop();
+        store.setState((current) => (current.currentSpeechText ? { ...current, currentSpeechText: '' } : current));
+      }
       window.dispatchEvent(new CustomEvent('tubs:any-head-speech-state', {
         detail: {
           actor: message.actor,

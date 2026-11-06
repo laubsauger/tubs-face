@@ -30,12 +30,58 @@ function topLevelBoxes(path: string): string[] {
   return boxes;
 }
 
+/**
+ * Share of the file's audio power at one frequency (decoded by ffmpeg to
+ * 16 kHz mono; Goertzel over 0.1 s blocks, so a tone a hertz off still counts).
+ */
+function toneShare(path: string, hz: number): number {
+  const raw = execFileSync('ffmpeg', ['-v', 'error', '-i', path, '-f', 'f32le', '-ac', '1', '-ar', '16000', '-'], { maxBuffer: 64 * 1024 * 1024 });
+  const x = new Float32Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 4));
+  const block = 1600;
+  const coeff = 2 * Math.cos((2 * Math.PI * hz) / 16000);
+  let tone = 0;
+  let total = 0;
+  for (let start = 0; start + block <= x.length; start += block) {
+    let s1 = 0;
+    let s2 = 0;
+    for (let i = start; i < start + block; i += 1) {
+      const s0 = x[i]! + coeff * s1 - s2;
+      s2 = s1;
+      s1 = s0;
+      total += x[i]! * x[i]!;
+    }
+    tone += (2 * (s1 * s1 + s2 * s2 - coeff * s1 * s2)) / block;
+  }
+  return total > 0 ? tone / total : 0;
+}
+
+const MIC_HZ = 440;
+
 test.afterEach(async ({ request }) => {
   await resetMock(request);
 });
 
 test('R records the face window and its sound into one plain MP4', async ({ page, request }) => {
   test.skip(!hasFfprobe, 'needs ffprobe and ffmpeg to check the saved file');
+  // The mic is a steady tone made in the page, no device opened. These test
+  // runs have no audio output (it disturbed the machine's audio), so the tab's
+  // own sound (Tubs' voice) is silence here; the mic tone is what proves the
+  // recorder saves sound at all, not just an audio track. Without this check a
+  // recorder that saved silence passed.
+  await page.addInitScript((hz) => {
+    const devices = navigator.mediaDevices;
+    const original = devices.getUserMedia.bind(devices);
+    devices.getUserMedia = async (constraints) => {
+      if (!constraints?.audio || constraints.video) return original(constraints);
+      const context = new AudioContext();
+      const oscillator = new OscillatorNode(context, { frequency: hz });
+      const out = context.createMediaStreamDestination();
+      oscillator.connect(new GainNode(context, { gain: 0.3 })).connect(out);
+      oscillator.start();
+      void context.resume();
+      return out.stream;
+    };
+  }, MIC_HZ);
   await openFace(page, request);
   const { dir } = await (await request.get(`${MOCK}/__test/recordings`)).json() as { dir: string };
   const before = new Set(readdirSync(dir));
@@ -66,6 +112,8 @@ test('R records the face window and its sound into one plain MP4', async ({ page
   expect(probe.streams.map((stream) => `${stream.codec_type}:${stream.codec_name}`).sort()).toEqual(['audio:aac', 'video:h264']);
   expect(Number(probe.format.duration)).toBeGreaterThan(2);
   expect(topLevelBoxes(path)).not.toContain('moof');
+  // The room is in it: most of the sound is the mic's tone.
+  expect(toneShare(path, MIC_HZ), 'share of the mic tone in the recorded audio').toBeGreaterThan(0.5);
 
   // QuickTime's decoder, not ffmpeg's, is the one that froze on Chrome's file.
   if (process.platform === 'darwin') {
