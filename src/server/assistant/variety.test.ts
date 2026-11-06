@@ -46,12 +46,21 @@ describe('buildTurnDirection', () => {
   });
 
   // Two heads trading one-liners every turn never got to a joke: on some
-  // turns one head gets the room for a whole bit.
-  it('gives one head room for a bit on some two-head turns', () => {
+  // turns one head gets the room for a whole bit. Not too many: on one in
+  // five turns the replies felt long and slow (the user, Nov 6, 2026).
+  it('gives one head room for a bit on some two-head turns, about one in eight', () => {
     const shapes = Array.from({ length: 100 }, (_, i) => dualShape(i / 100));
     const bits = shapes.filter((shape) => shape.includes('takes the room for a bit')).length;
-    expect(bits).toBeGreaterThanOrEqual(15);
-    expect(bits).toBeLessThanOrEqual(35);
+    expect(bits).toBeGreaterThanOrEqual(8);
+    expect(bits).toBeLessThanOrEqual(16);
+  });
+
+  // "One short sentence" alone came back as 25-30 words. Every two-head shape
+  // says how short its lines are.
+  it('caps the words of every line in every two-head shape', () => {
+    for (let i = 0; i < 100; i += 1) {
+      expect(dualShape(i / 100)).toMatch(/under (ten|twelve|fifteen) words/);
+    }
   });
 
   it('proactive lines keep their own length and only avoid recent openers', () => {

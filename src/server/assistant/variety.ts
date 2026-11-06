@@ -175,11 +175,13 @@ function opener(text: string): string {
  */
 export function dualShape(roll: number): string {
   // Outside a bit each beat is spelled out as one short line: told only the
-  // beat count, main wrote a five-sentence riff on most turns.
-  if (roll < 0.3) return 'Only one head speaks this time, one short sentence; the other stays quiet or just reacts.';
-  if (roll < 0.62) return 'Two speak beats this time, one short sentence each.';
-  if (roll < 0.8) return 'Three beats this time, a quick back-and-forth of short lines.';
-  return 'One head takes the room for a bit this time, either one (a bit from Small is calm, naive and unsettling): three to six short sentences in its speak beat, punchline last. The other may cut in once or stay quiet.';
+  // beat count, main wrote a five-sentence riff on most turns. And each line
+  // gets a word limit: "one short sentence" alone came back as 25-30 words
+  // (a 69-word one once), so a turn ran 16 s or more on one in ten turns.
+  if (roll < 0.3) return 'Only one head speaks this time: one sentence, under fifteen words. The other stays quiet or just reacts.';
+  if (roll < 0.62) return 'Two speak beats this time, one sentence each, each under twelve words.';
+  if (roll < 0.88) return 'Three beats this time, a quick back-and-forth, each line under ten words.';
+  return 'One head takes the room for a bit this time, either one (a bit from Small is calm, naive and unsettling): three to six short sentences in its speak beat, each under twelve words, punchline last. The other may cut in once with a few words, or stay quiet.';
 }
 
 export function pickLength(recent: string[], random: Random): LengthKey {
