@@ -22,7 +22,7 @@ Setup = run-4 winner "Base A + clean-12s + endfix soften+fade":
     are applied at runtime to this process only)
   - official settings: VAE posterior std = softplus(scale)+1e-4 (official sampler), reference latent
     encoded once (seed 1895), CAM++ speaker embedding of the reference, "Target language: English." prompt
-  - reference ref_rec_12s.wav + corrected transcript (ref_rec_12s.txt)
+  - reference ref_rec_clean.wav + corrected transcript (ref_rec_clean.txt), re-cut from ref_rec_12s in run 14
   - [..] tags stripped, whitespace collapsed, whole text in one generate() call (Ming itself still
     splits text over ~24 words into fragments, as the official code does)
   - runaway safety cap at 4x expected duration (logged), then end fix (soften separated final release,
@@ -57,10 +57,12 @@ REPO = "mlx-community/Ming-3.0-tts-0.5B-bf16"
 # Voices: name -> reference. Each has <ref>.wav, <ref>.txt (corrected transcript) and
 # spk_emb_<ref>.npy in VOICE_DIR (CAM++, Chatterbox encoder = Ming's campplus weights). Requests pick one
 # with "voice" (default "friend"); Tubs calls them ming:<name>.
+# Cut in real pauses with short fades (run 14): a reference that starts or ends inside a word teaches
+# Ming clipped words ("bad idea-"). The old cuts (ref_rec_12s, ref_B_12s, ref_B_10s) are kept for rollback.
 VOICES = {
-    "friend": "ref_rec_12s",      # main Tubs: the friend's first character (clean studio recording)
-    "friend-b": "ref_B_12s",      # Mini: the friend's second character, first 12.4 s of friend-B_short.wav
-    "friend-b-alt": "ref_B_10s",  # Mini, other take: the last 10.8 s of the same recording
+    "friend": "ref_rec_clean",         # main Tubs: the friend's first character (clean studio recording), 0-11.72 s
+    "friend-b": "ref_B_clean",         # Mini: the friend's second character, friend-B_short.wav 2.30-12.56 s
+    "friend-b-alt": "ref_B_alt_clean", # Mini, other take: the same recording from 12.86 s to the end
 }
 DEFAULT_VOICE = "friend"
 PROMPT = "Please generate speech based on the following description.\nTarget language: English.\n"
