@@ -33,3 +33,17 @@ export function joinWavChunks(chunks: readonly string[]): string {
   dataHeader.writeUInt32LE(pcm.length, 4);
   return Buffer.concat([header, fmt, dataHeader, pcm]).toString('base64');
 }
+
+/** Seconds of audio in a base64 PCM WAV (its data chunk over the fmt chunk's byte rate). */
+export function wavDurationS(base64: string): number {
+  const wav = Buffer.from(base64, 'base64');
+  let byteRate = 0;
+  for (let at = 12; at + 8 <= wav.length;) {
+    const id = wav.toString('ascii', at, at + 4);
+    const size = wav.readUInt32LE(at + 4);
+    if (id === 'fmt ') byteRate = wav.readUInt32LE(at + 16);
+    if (id === 'data' && byteRate > 0) return Math.min(size, wav.length - at - 8) / byteRate;
+    at += 8 + size + (size % 2);
+  }
+  throw new Error('not a PCM WAV with fmt and data chunks');
+}

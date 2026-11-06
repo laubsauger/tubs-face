@@ -9,7 +9,7 @@ vi.mock('../tts/stream.js', () => ({
     send(text: string) {
       tts.sent.push(text);
       queueMicrotask(() => {
-        const parts = tts.chunks?.(text) ?? [`wav:${text}`];
+        const parts = tts.chunks?.(text) ?? [shortWav()];
         parts.forEach((audio, i) => options.onChunk({ text, audio, ...(i < parts.length - 1 ? { more: true } : {}) }));
         options.onSentenceDone();
       });
@@ -25,6 +25,11 @@ vi.stubGlobal('fetch', async () => {
   const ready = ming.ready.length > 1 ? ming.ready.shift()! : ming.ready[0]!;
   return { json: async () => ({ ready, voices: { friend: 'ref_rec_full.wav' } }) };
 });
+
+/** A 10 ms 24 kHz WAV: what a normal filler clip looks like to the duration check. */
+function shortWav(samples = 240): string {
+  return wav(Array.from({ length: samples }, () => 0));
+}
 
 async function loadFresh() {
   vi.resetModules();
@@ -92,7 +97,7 @@ describe('fillers', () => {
     expect(pickFiller('af_heart', () => 0)).toBeNull();
     await flush();
     expect(tts.sent).toEqual([...KOKORO_FILLER_LINES]);
-    expect(pickFiller('af_heart', () => 0)?.audio).toBe('wav:Oh.');
+    expect(pickFiller('af_heart', () => 0)?.text).toBe('Oh.');
   });
 
   // A filler on every turn becomes a tic people notice within a minute.
@@ -159,5 +164,23 @@ describe('fillers', () => {
     expect(tts.sent).toEqual([...MING_FILLER_LINES]);
     expect(tts.sent).toContain('Hmm.');
     expect(pickFiller('ming:friend', () => 0)).not.toBeNull();
+  });
+
+  // The reply starts ~2 s after the filler. A take as long as that wait would
+  // still be playing when the reply is ready, so it is left out.
+  it('leaves out a filler whose take is too long to fit the wait', async () => {
+    tts.chunks = (text) => [text === 'Um, okay.' ? shortWav(Math.round(2.3 * 24_000)) : shortWav()];
+    const { pickFiller, prepareFillers, MING_FILLER_LINES, MAX_FILLER_S } = await loadFresh();
+    expect(MAX_FILLER_S).toBeLessThan(2.3);
+    await prepareFillers('ming:friend');
+    const shown = new Set<string>();
+    for (let k = 0; k < 80; k += 1) {
+      const rolls = [0, k / 80];
+      const filler = pickFiller('ming:friend', () => rolls.shift() ?? 0);
+      if (filler) shown.add(filler.text);
+      pickFiller('ming:friend', () => 0);
+    }
+    expect(shown.size).toBe(MING_FILLER_LINES.length - 1);
+    expect(shown.has('Um, okay.')).toBe(false);
   });
 });

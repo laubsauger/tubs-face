@@ -1,6 +1,6 @@
 import { openTtsStream } from '../tts/stream.js';
 import { isMingVoice, mingVoiceReady } from '../tts/voices.js';
-import { joinWavChunks } from '../tts/wav.js';
+import { joinWavChunks, wavDurationS } from '../tts/wav.js';
 
 /**
  * A short sound ("Hmm.", "Right.") played the moment a voice turn starts.
@@ -35,8 +35,8 @@ export const KOKORO_FILLER_LINES = [
 // Ming says the lone sounds Kokoro can't (voice lab run 16, checked with
 // Whisper in both cloned voices). Left out: "Hm." (heard as "Damn."), "Uh."
 // and "Uhh." (a groan), "Ha." and "Ahh." (a scream from Mini), "Ähm."
-// (garbled), "Hmm?" (sounds like Tubs didn't hear), "Hmm, let me think."
-// (the hum gets swallowed). Ming is deterministic: one text, one sound.
+// (garbled), "Hmm?" (sounds like Tubs didn't hear). Ming renders with a fixed
+// seed: one text, one sound, the same after a restart.
 export const MING_FILLER_LINES = [
   'Hmm.',
   'Mm.',
@@ -66,6 +66,9 @@ const PHONEME_MARKUP = /\[([^\]]+)\]\(\/[^)]*\/\)/g;
 const RENDER_RETRY_MS = 60_000;
 // Ming renders one line in about 0.6 s, slower while the GPU is busy.
 const RENDER_TIMEOUT_MS = 60_000;
+// The reply starts ~2 s after the filler; a longer one ("Ummm... okay.", 2.3 s)
+// would still be going, or push the reply back.
+export const MAX_FILLER_S = 1.5;
 
 type Random = () => number;
 
@@ -132,8 +135,14 @@ async function renderFillers(voice: string): Promise<boolean> {
     onSentenceDone() {
       if (lineAudio.length > 0) {
         try {
-          // The text becomes the subtitle, so it shows the word, not the phonemes.
-          rendered.push({ text: lineText.replace(PHONEME_MARKUP, '$1'), audio: joinWavChunks(lineAudio) });
+          const audio = joinWavChunks(lineAudio);
+          const seconds = wavDurationS(audio);
+          if (seconds > MAX_FILLER_S) {
+            console.log(`[fillers] left out "${lineText}": ${seconds.toFixed(2)} s is too long for a filler`);
+          } else {
+            // The text becomes the subtitle, so it shows the word, not the phonemes.
+            rendered.push({ text: lineText.replace(PHONEME_MARKUP, '$1'), audio });
+          }
         } catch (error) {
           console.warn(`[fillers] dropped "${lineText}": ${error instanceof Error ? error.message : String(error)}`);
         }

@@ -86,6 +86,24 @@ async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void
   }
 }
 
+/** A 1-sample 24 kHz WAV, base64: fillers check their clip's length. */
+const TINY_WAV = (() => {
+  const out = Buffer.alloc(46);
+  out.write('RIFF', 0);
+  out.writeUInt32LE(38, 4);
+  out.write('WAVEfmt ', 8);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(24_000, 24);
+  out.writeUInt32LE(48_000, 28);
+  out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36);
+  out.writeUInt32LE(2, 40);
+  return out.toString('base64');
+})();
+
 function llmResult(text: string): LlmGenerateResult {
   return { text, usage: { promptTokenCount: 10, candidatesTokenCount: 5 }, model: 'fake-model' };
 }
@@ -460,7 +478,9 @@ describe('assistant turn', () => {
     // face stop talking when it ends, as Mini may have the first line.
     it('starts a voice turn with the filler on main\'s head, ended before the beats', async () => {
       const { prepareFillers } = await import('./fillers.js');
+      fakes.ttsChunks = (text) => [{ text, audio: TINY_WAV }];
       expect(await prepareFillers(runtimeConfig.kokoroVoice)).toBe(true);
+      fakes.ttsChunks = null;
       runtimeConfig.ttsStreamingEnabled = true;
       fakes.provider = queuedProvider([JSON.stringify({
         beats: [{ actor: 'small', action: 'speak', text: 'Mini goes first.' }],
