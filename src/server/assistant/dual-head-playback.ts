@@ -7,12 +7,21 @@ import { runtimeConfig } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { sanitizeForTts, stripFormatting } from './text.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
+import { wavDurationS } from '../tts/wav.js';
 import { assistantUnavailable } from './reply-types.js';
 import { isAssistantTurnActive } from './turn-state.js';
 
 const ESTIMATED_SPEECH_WORD_MS = 440;
 
 const ESTIMATED_MIN_SPEECH_MS = 800;
+
+/**
+ * The pause after a line: a breath when the script sets none (back to back
+ * sounds unnatural; people leave ~0.2-0.5 s), and never a long silence when it
+ * does (it allowed 8 s).
+ */
+const HANDOVER_MS = 300;
+const HANDOVER_MAX_MS = 1_200;
 
 type TtsHandlers = Parameters<typeof openTtsStream>[0];
 
@@ -86,9 +95,15 @@ export async function streamDualHeadBeatAudio(
   let firstSpeakBeat = true;
   let chunkIndex = 0;
   let firstChunkSent = false;
+  // The next speak beat, rendering while this one still plays. Started only
+  // after Ming is done with the line before it (Ming renders one at a time),
+  // and released when that line stops playing: the next head answers on cue,
+  // not a render later.
+  const prefetch: { next: { index: number; beat: EarlyBeat } | null } = { next: null };
 
   console.log(`\x1b[36m[DualHead TTS]\x1b[0m scheduling ${beats.length} beat(s)`);
 
+  try {
   for (const [index, beat] of beats.entries()) {
     if (!isAssistantTurnActive(turnId, epoch)) {
       break;
@@ -124,6 +139,9 @@ export async function streamDualHeadBeatAudio(
       } else {
         early?.close();
       }
+    } else if (prefetch.next?.index === index) {
+      earlyForBeat = prefetch.next.beat;
+      prefetch.next = null;
     }
 
     const beatChunks = await streamDualHeadSpeakBeat({
@@ -136,6 +154,12 @@ export async function streamDualHeadBeatAudio(
       voice,
       early: earlyForBeat,
       nextChunkIndex: chunkIndex,
+      onRendered: () => {
+        const nextIndex = nextSpeakBeatIndex(beats, index);
+        if (nextIndex < 0 || !isAssistantTurnActive(turnId, epoch)) return;
+        const started = startEarlyBeat(beats[nextIndex]!);
+        if (started) prefetch.next = { index: nextIndex, beat: started };
+      },
       onFirstChunk: () => {
         if (!firstChunkSent) {
           firstChunkSent = true;
@@ -150,9 +174,26 @@ export async function streamDualHeadBeatAudio(
       break;
     }
 
-    if (beat.delayMs != null) {
-      await waitForBeatDelay(clampBeatDelay(beat.delayMs, 320));
-    }
+    await waitForBeatDelay(beat.delayMs != null ? Math.min(HANDOVER_MAX_MS, clampBeatDelay(beat.delayMs, HANDOVER_MS)) : HANDOVER_MS);
+  }
+  } finally {
+    prefetch.next?.beat.close();
+  }
+}
+
+function nextSpeakBeatIndex(beats: TurnBeat[], after: number): number {
+  for (let index = after + 1; index < beats.length; index += 1) {
+    if (beats[index]!.action === 'speak' && ttsTextOf(beats[index]!)) return index;
+  }
+  return -1;
+}
+
+/** Seconds of audio in a TTS chunk, or null if it isn't a WAV this can read. */
+function chunkSeconds(audio: string): number | null {
+  try {
+    return wavDurationS(audio);
+  } catch {
+    return null;
   }
 }
 
@@ -166,6 +207,8 @@ async function streamDualHeadSpeakBeat(args: {
   voice: string;
   early?: EarlyBeat | null;
   nextChunkIndex: number;
+  /** Ming is done with this line (its audio may still be playing). */
+  onRendered?: () => void;
   onFirstChunk?: () => void;
 }): Promise<number> {
   const {
@@ -178,6 +221,7 @@ async function streamDualHeadSpeakBeat(args: {
     voice,
     early,
     nextChunkIndex,
+    onRendered,
     onFirstChunk,
   } = args;
   const startedAt = Date.now();
@@ -189,6 +233,9 @@ async function streamDualHeadSpeakBeat(args: {
     let sentenceDone = false;
     let firstChunkLogged = false;
     let firstChunkAt = 0;
+    // When the client runs out of this line's audio: it plays each chunk on
+    // arrival or right after the one before. Null once a chunk can't be timed.
+    let playbackEndsAt: number | null = 0;
 
     const finishResolve = () => {
       if (settled) {
@@ -216,6 +263,8 @@ async function streamDualHeadSpeakBeat(args: {
           firstChunkAt = Date.now();
           onFirstChunk?.();
         }
+        const seconds = chunkSeconds(chunk.audio);
+        playbackEndsAt = playbackEndsAt == null || seconds == null ? null : Math.max(playbackEndsAt, Date.now()) + seconds * 1000;
         broadcast({
           type: 'audio_chunk',
           audio: chunk.audio,
@@ -257,11 +306,14 @@ async function streamDualHeadSpeakBeat(args: {
           finishReject(streamError);
           return;
         }
+        onRendered?.();
+        // From the audio itself: the old estimate (440 ms a word) ran ~1.5x
+        // slower than Ming talks, so the next head waited seconds for nothing.
         const streamedPlaybackMs = firstChunkAt > 0 ? Math.max(0, Date.now() - firstChunkAt) : 0;
         const remainingPlaybackMs = Math.max(
           0,
           // A bit runs well past 8 s; a shorter wait let the other head talk over it.
-          Math.min(20_000, estimateSpeechDurationMs(text) - streamedPlaybackMs),
+          Math.min(20_000, playbackEndsAt ? playbackEndsAt - Date.now() : estimateSpeechDurationMs(text) - streamedPlaybackMs),
         );
         if (remainingPlaybackMs <= 0 || !isAssistantTurnActive(turnId, epoch)) {
           finishResolve();

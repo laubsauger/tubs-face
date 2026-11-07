@@ -263,6 +263,35 @@ test("a filler shows in its head's bubble, before the reply, in the overlay and 
   await expect(entry.locator('.chat-entry-card')).toHaveText(`Mhm. ${reply}`);
 });
 
+// Tubs, Mini, Tubs: three bubbles in that order. Tubs' second line joining
+// his first, above Mini's, read as if he had said both before Mini spoke.
+test('a two-head back-and-forth shows one bubble per line, in spoken order', async ({ page, request }) => {
+  await openFace(page, request);
+  await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
+  await page.keyboard.press('Backquote');
+  const beats = [
+    { actor: 'main' as const, action: 'speak' as const, text: 'You came back.' },
+    { actor: 'small' as const, action: 'speak' as const, text: 'I told you they would.' },
+    { actor: 'main' as const, action: 'speak' as const, text: 'Nobody asked you.' },
+  ];
+  await send(request,
+    { type: 'turn_start', turnId: 't-abc' },
+    { type: 'turn_script', turnId: 't-abc', beats, ts: Date.now() },
+    ...beats.flatMap((beat, beatIndex) => [
+      { type: 'audio_chunk' as const, audio: tone(300), text: beat.text, turnId: 't-abc', chunkIndex: beatIndex, actor: beat.actor, beatIndex },
+      { type: 'speak_end' as const, turnId: 't-abc', actor: beat.actor, text: beat.text, fullText: beat.text },
+    ]),
+  );
+
+  const lines = page.locator('#floating-transcript .transcript-line');
+  await expect(lines).toHaveCount(3, { timeout: 10_000 });
+  await expect(lines.locator('.transcript-speaker')).toHaveText(['Tubs', 'Mini', 'Tubs']);
+  await expect(lines.locator('.transcript-text')).toHaveText(beats.map((beat) => beat.text), { useInnerText: true, timeout: 10_000 });
+
+  await page.keyboard.press('Backquote');
+  await expect(page.locator('#chat-log-list .chat-entry:not(.chat-tone-system) .chat-entry-card')).toHaveText(beats.map((beat) => beat.text));
+});
+
 test('with reduced motion a reply shows whole at once', async ({ page, request }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openFace(page, request);

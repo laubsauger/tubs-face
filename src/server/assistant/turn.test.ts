@@ -22,6 +22,8 @@ const fakes = vi.hoisted(() => ({
   ttsClosed: 0,
   // Sends and closes in order, to see what was stopped before what started.
   ttsLog: [] as string[],
+  // When each text went to TTS (Date.now()).
+  ttsSentAt: new Map<string, number>(),
   // How TTS answers one text; by default one chunk, then done.
   ttsChunks: null as ((text: string) => TtsStreamChunk[]) | null,
 }));
@@ -38,6 +40,7 @@ vi.mock('../tts/stream.js', () => ({
       send(text: string) {
         fakes.ttsSent.push(text);
         fakes.ttsLog.push(`send ${text}`);
+        fakes.ttsSentAt.set(text, Date.now());
         if (fakes.ttsHang) return;
         const chunks = fakes.ttsChunks?.(text);
         if (chunks) {
@@ -88,6 +91,25 @@ async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
+}
+
+/** A silent 24 kHz mono WAV of this many seconds, base64, as the TTS service sends it. */
+function wavOf(seconds: number): string {
+  const samples = Math.round(seconds * 24_000);
+  const out = Buffer.alloc(44 + samples * 2);
+  out.write('RIFF', 0);
+  out.writeUInt32LE(36 + samples * 2, 4);
+  out.write('WAVEfmt ', 8);
+  out.writeUInt32LE(16, 16);
+  out.writeUInt16LE(1, 20);
+  out.writeUInt16LE(1, 22);
+  out.writeUInt32LE(24_000, 24);
+  out.writeUInt32LE(48_000, 28);
+  out.writeUInt16LE(2, 32);
+  out.writeUInt16LE(16, 34);
+  out.write('data', 36);
+  out.writeUInt32LE(samples * 2, 40);
+  return out.toString('base64');
 }
 
 /** A 1-sample 24 kHz WAV, base64: fillers check their clip's length. */
@@ -174,6 +196,7 @@ describe('assistant turn', () => {
     fakes.ttsHang = false;
     fakes.ttsClosed = 0;
     fakes.ttsLog.length = 0;
+    fakes.ttsSentAt.clear();
     fakes.ttsChunks = null;
     runtimeConfig.dualHeadEnabled = false;
     runtimeConfig.ttsStreamingEnabled = false;
@@ -495,6 +518,34 @@ describe('assistant turn', () => {
       const audio = ws.ofType('audio_chunk');
       expect(audio.map((message) => [message.actor, message.turnId])).toEqual([['small', turnId], ['main', turnId]]);
       expect(hasActiveAssistantTurn()).toBe(false);
+    });
+
+    // Mini answered seconds late: the next line was rendered only after the
+    // last one was guessed to be over (440 ms a word, ~1.5x slower than Ming
+    // talks). Now it renders while the line before it plays, and goes out
+    // when that line's audio runs out, plus a breath.
+    it('has the next head answer on cue: rendered during the line before, sent after its audio and a breath', async () => {
+      runtimeConfig.ttsStreamingEnabled = true;
+      const first = 'Ten words that take Ming about a second to say out.';
+      const second = 'And I answer right on cue.';
+      // Two chunks of 0.5 s for each line, as Ming streams them.
+      fakes.ttsChunks = (text) => [{ text, audio: wavOf(0.5), more: true }, { text, audio: wavOf(0.5) }];
+      fakes.provider = queuedProvider([JSON.stringify({ beats: [
+        { actor: 'main', action: 'speak', text: first },
+        { actor: 'small', action: 'speak', text: second },
+      ] })]);
+      const sentAt: Array<{ message: WsServerMessage; at: number }> = [];
+
+      await runAssistantTurn('go on then', (message) => sentAt.push({ message, at: Date.now() }));
+
+      const audio = sentAt.filter(({ message }) => message.type === 'audio_chunk');
+      const mainStart = audio.find(({ message }) => message.type === 'audio_chunk' && message.actor === 'main')!.at;
+      const miniStart = audio.find(({ message }) => message.type === 'audio_chunk' && message.actor === 'small')!.at;
+      // Rendering while main still talks (main's audio runs 1 s from its first chunk).
+      expect(fakes.ttsSentAt.get(second)! - mainStart).toBeLessThan(500);
+      // Out after main's second of audio and the breath: not over it, not seconds later.
+      expect(miniStart - mainStart).toBeGreaterThanOrEqual(1_250);
+      expect(miniStart - mainStart).toBeLessThan(1_700);
     });
 
     // Ming's first chunk (~0.2 s) used to wait for the whole script; now it
