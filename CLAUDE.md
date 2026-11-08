@@ -59,7 +59,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 
 **Entry:** `main.ts` → `bootstrap-react.tsx` (initializes runtimes, React root)
 
-Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). `/?view=dashboard` is the operator HUD for a separate screen (no face, no audio, mic or camera); `app-mini.html?embed=1` is the mini tile inside the face window.
+Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). Pages are cross-origin isolated (COOP/COEP `credentialless`, in `vite.config.ts` and `src/server/http/static.ts`) so the face worker (`src/workers/face-worker.ts`, SCRFD det_10g + ArcFace R50 on onnxruntime-web) runs on up to 8 WASM threads; the benchmark behind it is in `~/Movies/tubs-face-lab/`. `/?view=dashboard` is the operator HUD for a separate screen (no face, no audio, mic or camera); `app-mini.html?embed=1` is the mini tile inside the face window.
 
 **Runtime-based architecture** — each subsystem is a standalone runtime with `init()`, `bind()`, `dispose()`:
 
