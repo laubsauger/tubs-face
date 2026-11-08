@@ -22,6 +22,7 @@ import { markLastReplyCutOff } from '../assistant/context.js';
 import { fieldNotesSnapshot, onEnrollRequest, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
+import { isRendering, onRenderingChange } from '../tts/rendering.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
@@ -31,6 +32,7 @@ const WS_PATH = '/ws';
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   onFieldNotesChange(() => broadcast({ type: 'field_notes', ...fieldNotesSnapshot() }));
+  onRenderingChange((rendering) => broadcast({ type: 'tts_rendering', rendering }));
   onEnrollRequest((personId, name) => {
     if (!runtimeConfig.autoEnrollEnabled) return;
     console.log(`[faces] auto onboarding: enrolling ${name}`);
@@ -67,6 +69,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       text: isSpectator ? 'Connected as spectator' : 'Connected to Tubs Bridge Server',
     } satisfies WsSystemServerMessage);
     send(socket, { type: 'field_notes', ...fieldNotesSnapshot() });
+    if (isRendering()) send(socket, { type: 'tts_rendering', rendering: true });
 
     socket.on('message', (raw: RawData) => {
       try {

@@ -40,6 +40,7 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'face_motion',
   'face_blink',
   'head_speech_state',
+  'tts_rendering',
 ]);
 
 

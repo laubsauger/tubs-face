@@ -112,6 +112,8 @@ export interface AppState {
   faceDraftName: string;
   /** Pause between face detections in ms; 0 follows the measured inference time. */
   faceDetectionDelayMs: number;
+  /** Since when a voice has been rendering on the server (null: none). Face checks wait meanwhile. */
+  ttsRenderingSince: number | null;
   /** Face onboarding wizard is open (F key or the Onboard button). */
   faceEnrollOpen: boolean;
   controlSpeakText: string;
@@ -345,6 +347,7 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
     faceDraftName: '',
     faceEnrollOpen: false,
     faceDetectionDelayMs: 0,
+    ttsRenderingSince: null,
     controlSpeakText: '',
     chatComposerText: '',
     uiHidden: false,

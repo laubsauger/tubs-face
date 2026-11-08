@@ -9,6 +9,7 @@ import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
 import { type EnrollmentCapture, captureEnrollmentSample, captureFaceThumbnail, saveEnrollment } from './enrollment.js';
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
+import { RENDER_PAUSE_POLL_MS, faceChecksPaused } from './render-pause.js';
 
 export interface FaceShellRuntime {
   init(): void;
@@ -307,6 +308,13 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     }
     if (videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
       scheduleLoop();
+      return;
+    }
+    if (faceChecksPaused(store.getState().ttsRenderingSince, Date.now())) {
+      clearLoop();
+      loopTimer = window.setTimeout(() => {
+        void runCameraDetection();
+      }, RENDER_PAUSE_POLL_MS);
       return;
     }
 

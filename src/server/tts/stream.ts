@@ -1,5 +1,6 @@
 import { WebSocket } from 'ws';
 import { getTtsProxyTarget } from '../processing/speech-service.js';
+import { beginRender } from './rendering.js';
 
 export interface TtsStreamChunk {
   text: string;
@@ -33,6 +34,12 @@ export function openTtsStream(options: {
   const url = `ws://${target.hostname}:${target.port}/tts/stream`;
   let ready = false;
   let closed = false;
+  // Texts sent and not done: while any are, a voice is rendering (see rendering.ts).
+  const renders: Array<() => void> = [];
+  const renderDone = (): void => renders.shift()?.();
+  const allRendersDone = (): void => {
+    while (renders.length > 0) renderDone();
+  };
   let settleOpened!: (ok: boolean) => void;
   const opened = new Promise<boolean>((resolve) => {
     settleOpened = resolve;
@@ -70,6 +77,7 @@ export function openTtsStream(options: {
       }
 
       if (msg.done) {
+        renderDone();
         options.onSentenceDone();
       }
     } catch {
@@ -84,6 +92,7 @@ export function openTtsStream(options: {
   });
 
   ws.on('close', () => {
+    allRendersDone();
     ready = false;
     closed = true;
     settleOpened(false);
@@ -94,6 +103,7 @@ export function openTtsStream(options: {
     opened,
     send(text: string, voice: string): void {
       if (ready && ws.readyState === WebSocket.OPEN) {
+        renders.push(beginRender());
         ws.send(JSON.stringify({ text, voice }));
       }
     },
@@ -102,6 +112,7 @@ export function openTtsStream(options: {
         ws.close();
       }
       closed = true;
+      allRendersDone();
       settleOpened(false);
     },
     get ready() {

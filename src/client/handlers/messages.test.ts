@@ -112,3 +112,17 @@ describe('two-head chat log', () => {
     ]);
   });
 });
+
+// The face window holds its checks while a voice renders on the server.
+describe('voice rendering state', () => {
+  it('remembers since when a voice renders, and forgets it when rendering stops', () => {
+    const store = createAppStore();
+    applyServerMessage(store, { type: 'tts_rendering', rendering: true }, 'main');
+    const since = store.getState().ttsRenderingSince;
+    expect(since).not.toBeNull();
+    applyServerMessage(store, { type: 'tts_rendering', rendering: true }, 'main');
+    expect(store.getState().ttsRenderingSince).toBe(since);
+    applyServerMessage(store, { type: 'tts_rendering', rendering: false }, 'main');
+    expect(store.getState().ttsRenderingSince).toBeNull();
+  });
+});

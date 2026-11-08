@@ -296,6 +296,12 @@ export interface WsHeadSpeechStateServerMessage {
   durationMs?: number;
 }
 
+/** A voice is rendering (Ming or Kokoro): the face window holds its checks meanwhile. */
+export interface WsTtsRenderingServerMessage {
+  type: 'tts_rendering';
+  rendering: boolean;
+}
+
 export type WsServerMessage =
   | WsPingServerMessage
   | WsConfigServerMessage
@@ -320,4 +326,5 @@ export type WsServerMessage =
   | WsErrorServerMessage
   | WsFaceMotionServerMessage
   | WsFaceBlinkServerMessage
-  | WsHeadSpeechStateServerMessage;
+  | WsHeadSpeechStateServerMessage
+  | WsTtsRenderingServerMessage;
