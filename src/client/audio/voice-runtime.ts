@@ -37,6 +37,28 @@ interface BrowserSpeechRecognitionCtor {
   new(): BrowserSpeechRecognition;
 }
 
+/**
+ * The live caption from a recognition session's results, from index `from` on.
+ * Chrome keeps every result of a session for as long as it runs, and each
+ * event lists them all again from the start; results before `from` were
+ * already handled or were Tubs' own voice from the speakers.
+ */
+export function liveTranscriptFrom(
+  results: ArrayLike<{ isFinal: boolean; length: number; [index: number]: { transcript: string } | undefined }>,
+  from: number,
+): { text: string; interim: boolean } {
+  let finalTranscript = '';
+  let interimTranscript = '';
+  for (let index = Math.max(0, from); index < results.length; index += 1) {
+    const result = results[index];
+    const transcript = result && result.length > 0 ? result[0]?.transcript ?? '' : '';
+    if (!transcript) continue;
+    if (result!.isFinal) finalTranscript += transcript;
+    else interimTranscript += transcript;
+  }
+  return { text: `${finalTranscript} ${interimTranscript}`.trim(), interim: interimTranscript.trim().length > 0 };
+}
+
 export interface VoiceRuntime {
   init(): Promise<void>;
   enableMic(): Promise<void>;
@@ -82,6 +104,10 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let speechRecognitionRunning = false;
   let speechRecognitionAvailable = false;
   let lastLiveTranscript = '';
+  // The current session's results: how many there are, and where the caption
+  // starts (everything before is handled speech or Tubs' own voice).
+  let resultsSeen = 0;
+  let resultsFrom = 0;
   let manualPressActive = false;
   let recordingMode: 'manual' | 'handsfree' | null = null;
   let recordingStartedAt = 0;
@@ -266,7 +292,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     const shouldDiscard = discardPendingRecording;
     discardPendingRecording = false;
     if (shouldDiscard) {
-      lastLiveTranscript = '';
+      forgetLiveTranscript();
       store.setState((current) => ({
         ...current,
         recording: false,
@@ -310,7 +336,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     const tubsAudible = state.audioPlaying;
     if (isTalkingOverTubs(state)) {
       stopLiveRecognition();
-      lastLiveTranscript = '';
+      forgetLiveTranscript();
       store.setState((current) => ({
         ...current,
         liveTranscriptText: '',
@@ -439,7 +465,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       } else {
         store.appendLog('info', 'Voice upload completed with empty transcript');
       }
-      lastLiveTranscript = '';
+      forgetLiveTranscript();
       if (!json.ignored) {
         scheduleThinkingReset();
       }
@@ -468,27 +494,13 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     speechRecognition.interimResults = true;
     speechRecognition.lang = 'en-US';
     speechRecognition.onresult = (event) => {
+      resultsSeen = event.results.length;
       if (isSpeechCaptureBlocked()) {
+        // Tubs' own voice: skipped now and in every later event of this session.
+        resultsFrom = resultsSeen;
         return;
       }
-      let finalTranscript = '';
-      let interimTranscript = '';
-      for (let index = 0; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        if (!result || result.length === 0) {
-          continue;
-        }
-        const transcript = result[0]?.transcript ?? result.item(0)?.transcript ?? '';
-        if (!transcript) {
-          continue;
-        }
-        if (result.isFinal) {
-          finalTranscript += transcript;
-        } else {
-          interimTranscript += transcript;
-        }
-      }
-      const normalized = `${finalTranscript} ${interimTranscript}`.trim();
+      const { text: normalized, interim } = liveTranscriptFrom(event.results, resultsFrom);
       if (!normalized) {
         return;
       }
@@ -496,7 +508,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       store.setState((current) => ({
         ...upsertChatDraft(current, 'in', normalized),
         liveTranscriptText: normalized,
-        liveTranscriptDraft: interimTranscript.trim().length > 0 || current.recording,
+        liveTranscriptDraft: interim || current.recording,
         voiceLastTranscript: normalized,
       }));
     };
@@ -519,22 +531,33 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
 
     try {
       speechRecognition.start();
-      speechRecognitionRunning = true;
+      resultsSeen = 0;
+      resultsFrom = 0;
     } catch {
-      // Browsers can throw if start() is called while already active.
+      // It throws when the session before hasn't ended yet: that one is still
+      // running. Marked stopped, it was never stopped again, and its caption
+      // grew all night, Tubs' lines included.
     }
+    speechRecognitionRunning = true;
   }
 
   function stopLiveRecognition(): void {
-    if (!speechRecognition || !speechRecognitionRunning) {
+    if (!speechRecognition) {
       return;
     }
     speechRecognitionRunning = false;
     try {
-      speechRecognition.stop();
+      // Whatever it still had pending is dropped (the server transcribes the clip itself).
+      speechRecognition.abort();
     } catch {
       // ignore
     }
+  }
+
+  /** The caption starts over: nothing heard so far shows again. */
+  function forgetLiveTranscript(): void {
+    lastLiveTranscript = '';
+    resultsFrom = resultsSeen;
   }
 
   /**
@@ -836,7 +859,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
           liveTranscriptText: '',
           liveTranscriptDraft: false,
         }));
-        lastLiveTranscript = '';
+        forgetLiveTranscript();
         stopLiveRecognition();
         if (!manualPressActive && store.getState().recording && recordingMode === 'handsfree') {
           stopRecording('handsfree', { discard: true });
