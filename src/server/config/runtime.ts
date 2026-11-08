@@ -46,6 +46,7 @@ export const runtimeConfig: RuntimeConfig = {
   secondaryAudioGain: parseFloatInRange(process.env.SECONDARY_AUDIO_GAIN, 1.0, 0, 1.2),
   dualHeadTurnPolicy: pickOne(DUAL_HEAD_TURN_POLICIES, process.env.DUAL_HEAD_TURN_POLICY, 'llm_order'),
   muted: parseBoolean(process.env.MUTED, false),
+  interruptible: parseBoolean(process.env.INTERRUPTIBLE, false),
   autoEnrollEnabled: parseBoolean(process.env.AUTO_ENROLL, true),
   ambientAudioEnabled: parseBoolean(process.env.AMBIENT_AUDIO_ENABLED, true),
   glitchFxEnabled: true,
@@ -194,6 +195,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
     runtimeConfig.dualHeadTurnPolicy = expectOne(DUAL_HEAD_TURN_POLICIES, patch.dualHeadTurnPolicy, 'dualHeadTurnPolicy');
   }
   if (patch.muted !== undefined) runtimeConfig.muted = Boolean(patch.muted);
+  if (patch.interruptible !== undefined) runtimeConfig.interruptible = Boolean(patch.interruptible);
   if (patch.autoEnrollEnabled !== undefined) runtimeConfig.autoEnrollEnabled = Boolean(patch.autoEnrollEnabled);
   if (patch.ambientAudioEnabled !== undefined) runtimeConfig.ambientAudioEnabled = Boolean(patch.ambientAudioEnabled);
   if (patch.glitchFxEnabled !== undefined) runtimeConfig.glitchFxEnabled = Boolean(patch.glitchFxEnabled);

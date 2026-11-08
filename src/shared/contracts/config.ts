@@ -120,6 +120,11 @@ export interface RuntimeConfig {
   secondaryAudioGain: number;
   dualHeadTurnPolicy: DualHeadTurnPolicy;
   muted: boolean;
+  /**
+   * Talking over Tubs or Mini cuts them off, hands-free too. Off, the mic
+   * ignores speech while either head talks (with speakers it hears them).
+   */
+  interruptible: boolean;
   /** Quietly take face snapshots of unnamed people and enroll them when they tell Tubs their name. */
   autoEnrollEnabled: boolean;
   ambientAudioEnabled: boolean;

@@ -65,7 +65,7 @@ Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). 
 
 - `audio/speech-runtime.ts` — Server audio playback (streaming queue), subtitle timing
 - `audio/screen-recorder.ts` — Record button / R key: this tab's video and audio plus the mic, mixed, uploaded to the server each second
-- `audio/voice-runtime.ts` — Mic input + VAD (push-to-talk + hands-free)
+- `audio/voice-runtime.ts` — Mic input + VAD (push-to-talk + hands-free). With the Interruptible toggle (config `interruptible`, Voice panel; off by default), talking over Tubs or Mini cuts them off hands-free; off, the mic ignores speech while a head talks
 - `audio/ambient-runtime.ts` — Background sounds
 - `face/runtime.ts` — Face shell, camera input, face detection
 - `face/behavior-runtime.ts` — Expression & animation synced with speech

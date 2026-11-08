@@ -326,7 +326,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     if (isCapturing() || (!clipBuffer && !mediaRecorder) || !store.getState().micReady) {
       return;
     }
-    if (mode === 'handsfree' && (store.getState().audioPlaying || store.getState().sleeping || isSpeechCaptureBlocked())) {
+    if (mode === 'handsfree' && (store.getState().sleeping || (!interruptible() && (store.getState().audioPlaying || isSpeechCaptureBlocked())))) {
       return;
     }
 
@@ -334,25 +334,8 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     // Only audible playback matters for the pre-roll: it would hold Tubs's own
     // voice. (currentSpeechText can linger after playback has ended.)
     const tubsAudible = state.audioPlaying;
-    if (isTalkingOverTubs(state)) {
-      stopLiveRecognition();
-      forgetLiveTranscript();
-      store.setState((current) => ({
-        ...current,
-        liveTranscriptText: '',
-        liveTranscriptDraft: false,
-      }));
-      window.dispatchEvent(new CustomEvent('tubs:stop-speech', {
-        detail: {
-          turnId: state.currentTurnId ?? null,
-          source: 'voice_barge_in',
-        },
-      }));
-      window.dispatchEvent(new CustomEvent('tubs:request-interrupt', {
-        detail: {
-          turnId: state.currentTurnId ?? null,
-        },
-      }));
+    if (isTalkingOverTubs(state) || (interruptible() && anyHeadTalking())) {
+      interruptHeads(state.currentTurnId ?? null);
       if (state.audioPlaying) {
         speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, Date.now() + BARGE_IN_SETTLE_MS);
         await new Promise<void>((resolve) => {
@@ -360,7 +343,6 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         });
       }
     }
-
     if (audioContext?.state === 'suspended') {
       await audioContext.resume().catch(() => { });
     }
@@ -495,7 +477,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     speechRecognition.lang = 'en-US';
     speechRecognition.onresult = (event) => {
       resultsSeen = event.results.length;
-      if (isSpeechCaptureBlocked()) {
+      if (captureBlocked()) {
         // Tubs' own voice: skipped now and in every later event of this session.
         resultsFrom = resultsSeen;
         return;
@@ -617,8 +599,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       && state.micReady
       && state.voiceHandsFreeEnabled
       && !state.sleeping
-      && !state.audioPlaying
-      && !isSpeechCaptureBlocked()
+      && (interruptible() || (!state.audioPlaying && !isSpeechCaptureBlocked()))
       && !manualPressActive
       && state.listenState !== 'Uploading...'
       && state.listenState !== 'Thinking...',
@@ -731,10 +712,10 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     if (state.sleeping) {
       detectSpeechWhileAsleep(state, rms, samples);
     }
-    if (!state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || state.audioPlaying || manualPressActive || isSpeechCaptureBlocked()) {
+    if (!state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || (!interruptible() && state.audioPlaying) || manualPressActive || captureBlocked()) {
       // Also when hands-free was switched off mid-clip: nothing else would end it,
       // and the open recording blocked push-to-talk.
-      if (state.recording && recordingMode === 'handsfree' && (isSpeechCaptureBlocked() || !state.voiceHandsFreeEnabled)) {
+      if (state.recording && recordingMode === 'handsfree' && (captureBlocked() || !state.voiceHandsFreeEnabled)) {
         stopRecording('handsfree', { discard: true });
       }
       speechDetectedAt = 0;
@@ -854,15 +835,21 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       if (detail?.state === 'start') {
         speakingActors.set(actor, ts + HEAD_SPEECH_STALE_MS);
         speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + SPEECH_CAPTURE_COOLDOWN_MS);
-        store.setState((current) => ({
-          ...current,
-          liveTranscriptText: '',
-          liveTranscriptDraft: false,
-        }));
-        forgetLiveTranscript();
-        stopLiveRecognition();
-        if (!manualPressActive && store.getState().recording && recordingMode === 'handsfree') {
-          stopRecording('handsfree', { discard: true });
+        const visitorTalking = !manualPressActive && store.getState().recording && recordingMode === 'handsfree';
+        if (interruptible() && visitorTalking) {
+          // The visitor has the floor: the head that just started is cut off, the clip goes on.
+          interruptHeads(store.getState().currentTurnId ?? null);
+        } else {
+          store.setState((current) => ({
+            ...current,
+            liveTranscriptText: '',
+            liveTranscriptDraft: false,
+          }));
+          forgetLiveTranscript();
+          stopLiveRecognition();
+          if (visitorTalking) {
+            stopRecording('handsfree', { discard: true });
+          }
         }
       } else {
         speakingActors.delete(actor);
@@ -879,6 +866,35 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
     window.removeEventListener('tubs:any-head-speech-state', anyHeadSpeechHandler as EventListener);
     anyHeadSpeechHandler = null;
+  }
+
+  /** The operator's toggle: speech while a head talks cuts it off instead of being ignored. */
+  function interruptible(): boolean {
+    return store.getState().config?.interruptible === true;
+  }
+
+  /** Speech is ignored while a head talks and just after, unless the heads are interruptible. */
+  function captureBlocked(): boolean {
+    return !interruptible() && isSpeechCaptureBlocked();
+  }
+
+  /** Tubs plays here, or either head is talking in another window (Mini's tile or screen). */
+  function anyHeadTalking(): boolean {
+    isSpeechCaptureBlocked(); // drops heads whose speech state went stale
+    return store.getState().audioPlaying || speakingActors.size > 0;
+  }
+
+  /** The visitor takes the floor: whoever is talking stops, here and on the server. */
+  function interruptHeads(turnId: string | null): void {
+    stopLiveRecognition();
+    forgetLiveTranscript();
+    store.setState((current) => ({
+      ...current,
+      liveTranscriptText: '',
+      liveTranscriptDraft: false,
+    }));
+    window.dispatchEvent(new CustomEvent('tubs:stop-speech', { detail: { turnId, source: 'voice_barge_in' } }));
+    window.dispatchEvent(new CustomEvent('tubs:request-interrupt', { detail: { turnId } }));
   }
 
   function isSpeechCaptureBlocked(): boolean {
