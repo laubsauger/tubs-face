@@ -2840,3 +2840,161 @@ a {
     animation: none;
   }
 }
+
+/* Studio face page (studio-face.html): one head, square, on pure black. The
+   canvas has a fixed pixel size (?size=) whatever the window, so this box only
+   sets how big it shows on screen. The status line has its own row under the
+   face, so the face's black square never covers it; it is page text, not part
+   of the canvas, so it never reaches the stream. */
+html.is-studio,
+html.is-studio body {
+  background: #000;
+}
+
+.studio-shell {
+  --studio-status-height: 26px;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--studio-status-height);
+  justify-items: center;
+  align-items: center;
+  background: #000;
+  overflow: hidden;
+}
+
+.studio-visual-face {
+  width: min(100vw, calc(100vh - var(--studio-status-height)));
+  height: min(100vw, calc(100vh - var(--studio-status-height)));
+  aspect-ratio: 1;
+  margin: 0;
+  border-radius: 0;
+  background: #000;
+}
+
+/* The published picture (face plus the sleeping Zs), over the WebGPU canvas it copies. */
+.studio-stream-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.studio-status {
+  position: relative;
+  z-index: 3;
+  justify-self: stretch;
+  align-self: stretch;
+  padding: 6px 10px;
+  font: 11px/14px var(--font-mono);
+  color: rgba(229, 238, 252, 0.7);
+  background: #000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.studio-status[data-publishing="true"] {
+  color: rgba(134, 239, 172, 0.85);
+}
+
+/* Memory view (ui/panels/MemoryPanel.tsx): one card per person with photos.
+   In the dock one column; as its own page (/?view=memory) a grid. */
+.memory-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.memory-view-page .memory-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+}
+
+.memory-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(2, 6, 23, 0.5);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.memory-card.is-in-view {
+  border-color: rgba(103, 232, 249, 0.45);
+}
+
+.memory-photos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-photo {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: rgba(30, 41, 59, 0.8);
+}
+
+.memory-photo-empty {
+  display: grid;
+  place-items: center;
+  color: #64748b;
+  font-size: 1.2rem;
+}
+
+.memory-photo-more {
+  color: #94a3b8;
+}
+
+.memory-name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e5eefc;
+}
+
+.memory-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+  font-size: 10px;
+}
+
+.memory-badge-live {
+  border-color: rgba(103, 232, 249, 0.5);
+  color: #67e8f9;
+}
+
+.memory-attitude {
+  color: #fde68a;
+}
+
+.memory-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: #fecaca;
+}
+
+.memory-page {
+  height: 100%;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.memory-page .memory-view {
+  max-width: 1400px;
+  margin: 0 auto;
+}

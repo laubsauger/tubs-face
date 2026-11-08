@@ -15,6 +15,16 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ type: 'appearance_frame', frame: 'data:image/jpeg;base64,AAAA', returning: true, awayMs: 45000 })).toBe(true);
   });
 
+  // A window lights text[0..spoken]: a count past the text would light nothing sensible.
+  it('takes a studio caption only with a spoken count inside its text', () => {
+    const caption = { type: 'studio_caption', actor: 'small', turnId: '', text: 'Four.', spoken: 5, done: true, ts: 1 };
+    expect(isWsClientMessage(caption)).toBe(true);
+    expect(isWsClientMessage({ ...caption, spoken: 6 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, spoken: 1.5 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, spoken: -1 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, done: 'yes' })).toBe(false);
+  });
+
   it('rejects payloads that would break a handler', () => {
     expect(isWsClientMessage({ type: 'incoming' })).toBe(false);
     expect(isWsClientMessage({ type: 'incoming', text: '   ' })).toBe(false);

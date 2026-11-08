@@ -9,6 +9,9 @@ import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
 import { type EnrollmentCapture, captureEnrollmentSample, captureFaceThumbnail, saveEnrollment } from './enrollment.js';
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
+import { createStillPictures, snapshotPicture, visionFrame, type StillPictures } from './pictures.js';
+import { whepPicture } from '../transport/whip.js';
+import { formatVisionSource, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 
 export interface FaceShellRuntime {
   init(): void;
@@ -32,17 +35,34 @@ export interface FaceShellRuntime {
   deleteFace(id: string): Promise<void>;
   dispose(): void;
   attachSender(sender: ((message: WsClientMessage) => void) | null): void;
+  /**
+   * Where pictures come from (docs/vision.md): the page's camera (by label),
+   * a snapshot URL (fetched through the server's /studio/snapshot), a site
+   * node stream (opened only per picture), or none. Studio mode sets it.
+   */
+  setPictureSource(source: VisionSourceSpec, site: string): Promise<void>;
 }
 
-export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
+export interface FaceShellOptions {
+  /** No operator dock (a studio face page): the camera plays in a video element of its own. */
+  headless?: boolean;
+}
+
+export function createFaceShellRuntime(store: AppStore, options: FaceShellOptions = {}): FaceShellRuntime {
   const FACE_STICKY_MS = 1400;
-  const VISION_REFRESH_MS = 30_000;
   let lastVisionFrameAt = 0;
+  // A snapshot URL or a site node stream: pictures taken one at a time.
+  let still: StillPictures | null = null;
   const MAX_EMPTY_FRAMES = 2;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
   let stream: MediaStream | null = null;
   let videoEl: HTMLVideoElement | null = null;
+  if (options.headless) {
+    videoEl = document.createElement('video');
+    videoEl.muted = true;
+    videoEl.playsInline = true;
+  }
   let overlayEl: HTMLCanvasElement | null = null;
   let loopTimer: number | null = null;
   let lastInferenceMs = 500;
@@ -56,6 +76,10 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   const peopleTracker = createPeopleTracker();
   const snapshots = new Map<string, Snapshot[]>();
   let lastPeopleSignature = '';
+  let lastPeopleSentAt = 0;
+  // Who is in view is confirmed at least this often while anyone is (the
+  // server drops a recognised person it has not heard about for ~10 s).
+  const PEOPLE_REFRESH_MS = 5000;
   let enrollmentActive = false;
 
   const worker = createFaceWorkerClient({
@@ -80,7 +104,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       // A detection still in flight when the camera was turned off would
       // refill the faces, and with the loop stopped they stayed "present"
       // forever (no sleep, proactive lines to an empty room).
-      if (!stream && !uploadPending) {
+      if (!stream && !still && !uploadPending) {
         return;
       }
       const wasEmpty = stableFaces.length === 0;
@@ -115,20 +139,24 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
       const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
       const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && faces.length > 0 && (greeting || groupChanged));
 
+      const config = store.getState().config;
+      const maxPx = config?.visionMaxPx ?? 512;
+      // The server keeps the budget too; here no picture leaves for nothing.
+      const refreshAllowed = config?.visionProvider !== 'off' && (!store.getState().sleeping || config?.visionWhileAsleep === true);
       if (shouldSendAppearance && sender) {
         sender({
           type: 'appearance_frame',
-          frame: captureCanvas.toDataURL('image/jpeg', 0.6),
+          frame: visionFrame(captureCanvas, maxPx),
           // Names stick to a person once recognized, so a missed frame still greets by name.
           faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])],
           count: faces.length,
           ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
-      } else if (faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= VISION_REFRESH_MS) {
+      } else if (refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
         // The server forgets a camera description after 60 s. While someone is
         // still in view, refresh it (vision only, no new greeting).
-        sender({ type: 'camera_frame', frame: captureCanvas.toDataURL('image/jpeg', 0.6) });
+        sender({ type: 'camera_frame', frame: visionFrame(captureCanvas, maxPx) });
         lastVisionFrameAt = Date.now();
       }
 
@@ -151,6 +179,7 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
   });
 
   function bind(root: HTMLElement): void {
+    if (options.headless) return;
     videoEl = root.querySelector<HTMLVideoElement>('#face-camera-video');
     overlayEl = root.querySelector<HTMLCanvasElement>('#face-camera-overlay');
 
@@ -223,16 +252,51 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     attachSender(s): void {
       sender = s;
     },
+    async setPictureSource(source, site): Promise<void> {
+      stopCamera(store);
+      store.appendLog('info', `Camera source: ${formatVisionSource(source)}`);
+      if (source.kind === 'off') return;
+      if (source.kind === 'local') {
+        await startCamera(store, source.label);
+        return;
+      }
+      const grab = source.kind === 'snapshot'
+        // Same origin: the server fetches the camera's snapshot URL.
+        ? () => snapshotPicture('/studio/snapshot')
+        : () => whepPicture(`${site}/${source.path}/whep`);
+      startStill(grab);
+    },
   };
 
-  async function startCamera(appStore: AppStore): Promise<void> {
+  /** Pictures from a snapshot URL or a site stream, through the same detection as the camera's. */
+  function startStill(grab: () => Promise<ImageBitmap>): void {
+    store.setState((current) => ({ ...current, faceCameraActive: true, faceStatus: 'Pictures from a remote camera' }));
+    still = createStillPictures({
+      grab,
+      ready: () => worker.ready && !worker.busy && !enrollmentActive,
+      onPicture: async (picture) => {
+        if (!captureCtx) return;
+        const scale = Math.min(1, 960 / picture.width);
+        captureCanvas.width = Math.round(picture.width * scale);
+        captureCanvas.height = Math.round(picture.height * scale);
+        captureCtx.drawImage(picture, 0, 0, captureCanvas.width, captureCanvas.height);
+        picture.close();
+        store.setState((current) => ({ ...current, faceWorkerBusy: true, faceStatus: 'Detecting from a remote camera' }));
+        await worker.detectOnce(captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height));
+      },
+      onError: (message) => store.appendLog('error', `Camera picture: ${message}`),
+    });
+  }
+
+  async function startCamera(appStore: AppStore, label?: string): Promise<void> {
     if (stream) {
       return;
     }
 
     try {
+      const deviceId = label ? await cameraByLabel(label) : null;
       stream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480 },
+        video: { width: 640, height: 480, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) },
         audio: false,
       });
       appStore.setState((current) => ({
@@ -258,8 +322,29 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     }
   }
 
+  /** The camera with exactly this label (labels show once the page may use a camera). */
+  async function cameraByLabel(label: string): Promise<string> {
+    const cameras = async () => (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === 'videoinput');
+    let devices = await cameras();
+    if (devices.every((device) => !device.label)) {
+      const probe = await navigator.mediaDevices.getUserMedia({ video: true });
+      for (const track of probe.getTracks()) track.stop();
+      devices = await cameras();
+    }
+    const found = devices.find((device) => device.label === label);
+    if (!found) throw new Error(`No camera labelled "${label}" (there are: ${devices.map((device) => `"${device.label}"`).join(', ')})`);
+    return found.deviceId;
+  }
+
   function stopCamera(appStore: AppStore): void {
     clearLoop();
+    still?.stop();
+    still = null;
+    // No camera, nobody recognised: the server lets go of who was in view at once.
+    if (lastPeopleSignature) {
+      lastPeopleSignature = '';
+      sender?.({ type: 'people', people: [] });
+    }
     if (stream) {
       for (const track of stream.getTracks()) {
         track.stop();
@@ -427,11 +512,17 @@ export function createFaceShellRuntime(store: AppStore): FaceShellRuntime {
     const counts = people.map((person) => (person.names.length === 0 ? snapshots.get(person.id)?.length ?? 0 : 0));
     const signature = people.map((person, index) => `${person.id}:${person.position}:${person.names.join(',')}:${counts[index]}`).join('|');
     const someoneBack = people.some((person) => person.awayMs !== undefined);
-    if (!sender || (signature === lastPeopleSignature && !someoneBack)) return;
+    const due = people.length > 0 && now - lastPeopleSentAt >= PEOPLE_REFRESH_MS;
+    if (!sender || (signature === lastPeopleSignature && !someoneBack && !due)) return;
     lastPeopleSignature = signature;
+    lastPeopleSentAt = now;
     sender({
       type: 'people',
-      people: people.map(({ face: _face, joined: _joined, ...person }, index) => ({ ...person, ...(counts[index] ? { snapshots: counts[index] } : {}) })),
+      // With the first snapshot, so the memory view can show who an unnamed visitor was.
+      people: people.map(({ face: _face, joined: _joined, ...person }, index) => ({
+        ...person,
+        ...(counts[index] ? { snapshots: counts[index], thumbnail: snapshots.get(person.id)![0]!.thumbnail } : {}),
+      })),
     });
   }
 

@@ -12,8 +12,10 @@ import type {
   WsPingServerMessage,
   WsServerMessage,
   WsSpeakEndServerMessage,
+  WsStudioServerMessage,
   WsSystemServerMessage,
 } from '../../shared/contracts/ws.js';
+import type { StudioActor } from '../../shared/contracts/studio.js';
 import { isWsClientMessage } from '../../shared/guards/index.js';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
@@ -22,9 +24,16 @@ import { markLastReplyCutOff } from '../assistant/context.js';
 import { fieldNotesSnapshot, onEnrollRequest, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
+import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings } from '../studio/state.js';
+import { noteStudioContext } from '../studio/context.js';
+import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
+/** Studio face pages (/ws?studio=main|small) and the actor each one shows. */
+const studioPages = new Map<WebSocket, StudioActor>();
+/** The page whose camera last reported who is in view; its going away clears recognition. */
+let recognitionSocket: WebSocket | null = null;
 const WS_PATH = '/ws';
 
 
@@ -51,10 +60,16 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   wss.on('connection', (socket: WebSocket, request: IncomingMessage) => {
     const url = new URL(request.url ?? '/', 'http://localhost');
     const isSpectator = url.searchParams.get('role') === 'spectator';
+    const studioParam = url.searchParams.get('studio');
+    const studioActor: StudioActor | null = studioParam === 'main' || studioParam === 'small' ? studioParam : null;
 
     clients.add(socket);
     if (isSpectator) {
       spectators.add(socket);
+    }
+    if (studioActor) {
+      studioPages.set(socket, studioActor);
+      notePageConnection(studioActor, true);
     }
 
     send(socket, {
@@ -67,6 +82,12 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       text: isSpectator ? 'Connected as spectator' : 'Connected to Tubs Bridge Server',
     } satisfies WsSystemServerMessage);
     send(socket, { type: 'field_notes', ...fieldNotesSnapshot() });
+    // Face pages always learn the studio settings. Other pages only while studio
+    // mode is on (the operator face then leaves the mic to the studio listener);
+    // with it off they get nothing new.
+    if (studioActor || studioSettings.enabled) {
+      send(socket, studioConfigMessage());
+    }
 
     socket.on('message', (raw: RawData) => {
       try {
@@ -91,6 +112,14 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     socket.on('close', () => {
       clients.delete(socket);
       spectators.delete(socket);
+      if (socket === recognitionSocket) {
+        recognitionSocket = null;
+        forgetRecognised();
+      }
+      if (studioActor) {
+        studioPages.delete(socket);
+        if (![...studioPages.values()].includes(studioActor)) notePageConnection(studioActor, false);
+      }
     });
   });
 
@@ -120,6 +149,14 @@ export function broadcastConfig(): void {
   });
 }
 
+/** studio_look and studio_presence are for the face pages only. */
+function sendToStudioPages(message: WsStudioServerMessage): void {
+  const payload = JSON.stringify(message);
+  for (const page of studioPages.keys()) {
+    if (page.readyState === page.OPEN) page.send(payload);
+  }
+}
+
 export function getClientCount(): number {
   return clients.size;
 }
@@ -144,7 +181,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'appearance_frame':
     case 'camera_frame':
-      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame));
+      // A new visitor is looked at at once; a camera_frame is the periodic refresh (budgeted, docs/vision.md).
+      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'appearance_frame' ? 'appearance' : 'refresh'));
       if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
         const names = Array.isArray(message.faces)
           ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
@@ -157,6 +195,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'people':
       setPeople(message.people);
+      recognitionSocket = socket;
+      noteRecognised(message.people);
       return;
     case 'presence':
       if (!message.present) onVisitorLeft();
@@ -197,6 +237,62 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'tts_request':
       handleTtsStreamRequest(socket, message);
+      return;
+    // Studio mode (sentient-studio contract section 6). Off, they change nothing.
+    case 'studio_look':
+      if (!studioSettings.enabled) return;
+      sendToStudioPages({ type: 'studio_look', actor: message.actor, gaze: message.gaze });
+      return;
+    case 'studio_presence':
+      if (!studioSettings.enabled) return;
+      sendToStudioPages({
+        type: 'studio_presence',
+        actor: message.actor,
+        present: message.present,
+        ...(message.people !== undefined ? { people: message.people } : {}),
+      });
+      return;
+    case 'studio_state':
+      if (!studioSettings.enabled || !studioPages.has(socket)) return;
+      broadcast({ type: 'studio_state', actor: message.actor, speaking: message.speaking, expr: message.expr, mood: message.mood, ts: message.ts });
+      return;
+    case 'studio_stage':
+      // The director's "this head is in place" for the face pages; studio mode only.
+      if (!studioSettings.enabled || studioPages.has(socket) || spectators.has(socket)) return;
+      sendToStudioPages({ type: 'studio_stage', actor: message.actor, ready: message.ready });
+      return;
+    case 'studio_context':
+      // From the director only (not a face page, not a spectator), and only in studio mode.
+      if (!studioSettings.enabled || studioPages.has(socket) || spectators.has(socket)) return;
+      noteStudioContext({
+        reason: message.reason,
+        heads: message.heads,
+        people: message.people.map((person) => ({ ...person, with: person.with ?? null })),
+        reference: message.reference ?? null,
+        ...(message.venue ? { venue: message.venue } : {}),
+        ts: message.ts,
+      });
+      return;
+    case 'studio_caption':
+      // Only from the page that plays this head's voice: its clock is the stream's.
+      if (!studioSettings.enabled || studioPages.get(socket) !== message.actor) return;
+      broadcast({
+        type: 'studio_caption',
+        actor: message.actor,
+        turnId: message.turnId,
+        text: message.text,
+        spoken: message.spoken,
+        done: message.done,
+        ts: message.ts,
+      });
+      return;
+    case 'studio_status':
+      if (studioPages.get(socket) !== message.actor) return;
+      notePageStatus(message.actor, {
+        publishing: message.publishing,
+        ...(message.error ? { error: message.error } : {}),
+        ...(message.mic ? { mic: message.mic } : {}),
+      });
       return;
     default:
       return;

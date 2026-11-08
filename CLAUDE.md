@@ -36,7 +36,8 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `assistant/text.ts` — Output normalization, TTS sanitization
 - `assistant/sentence-splitter.ts` — Break responses into utterances
 - `assistant/prompt.ts` — System instruction builders
-- `assistant/vision.ts` — Camera/image analysis
+- `assistant/vision.ts` — What Tubs sees: camera pictures described for the reply prompt (`docs/vision.md`). Provider `off` (no picture leaves the server), `gemini`, or `openai` (any OpenAI-compatible `/chat/completions`, or `fleet:vision`, a box picked by the studio-manager hub at `FLEET_HUB`), all live via `POST /config`; hourly cap, no refreshes while asleep, last description kept on failure; counts in `/stats` `vision`. Parts in `vision/` (`budget.ts`, `fleet.ts`, `providers.ts`, `stats.ts`). Env: `VISION_PROVIDER`, `VISION_MODEL`, `VISION_BASE_URL`, `VISION_API_KEY`, `VISION_MAX_PX`, `VISION_TIMEOUT_MS`, `VISION_REFRESH_MS`, `VISION_MAX_PER_HOUR`, `VISION_WHILE_ASLEEP`
+- `assistant/relationships.ts` — How Tubs treats people he recognises (`config/relationships.json`, in git; folder `TUBS_CONFIG_DIR`; `GET/POST /relationships`; toggle `relationshipsEnabled`, on by default). The line rides with the current turn only (`context.ts`), never in history or field notes, and goes once the face page's `people` no longer name the person for `RELATIONSHIP_GRACE_MS` (10 s) or that page disconnects
 - `llm/provider.ts` — Router: Gemini, or Ollama/OpenAI via the Python service (`LLM_PROVIDER` env); both stream
 - `llm/gemini-client.ts` — Gemini API streaming with SSE
 - `llm/providers/gemini.ts` — Structured generation wrapper
@@ -46,6 +47,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 - `config/runtime.ts` — Runtime configuration, session stats
 - `routes/api.ts` — REST: `/health`, `/stats`, `/config`, `/speak`, `/faces`, `/api/*`
 - `recordings.ts` — Face-window video recordings, appended piece by piece; on stop ffmpeg re-encodes the video (Chrome's file freezes in QuickTime after the tab is resized) into a plain MP4 in `~/Movies/tubs-recordings` (`TUBS_RECORDINGS_DIR`), and Chrome's own file is kept in its `raw/`. `scripts/check-playback.swift` tells whether a video plays to the end in the Mac's decoder
+- `studio/` — Studio mode (sentient-studio `docs/contract.md` §5-6), off by default (`TUBS_STUDIO`). `GET/POST /studio {enabled, site, micSource, visionSource}` (`routes/studio-routes.ts`; `GET /studio/snapshot` proxies a `snapshot:` source for the page); `state.ts` holds the settings and what the face pages report; `launcher.ts` opens one system Chrome per head (own profile in the temp dir, closed on disable, on shutdown, and left over from a killed server via the profile's SingletonLock) unless `TUBS_STUDIO_LAUNCH=external`. Env: `TUBS_STUDIO_SITE` (site node, `http://127.0.0.1:8889`), `TUBS_MIC_SOURCE` (`local`, `local:<Chrome device label>`, `site:<path>`, `off`), `TUBS_VISION_SOURCE` (same, plus `snapshot:<url>`; default `off`), `TUBS_STUDIO_PREFIX` (`tubs-`), `TUBS_STUDIO_SIZE` (1024), `TUBS_STUDIO_PAGE_BASE`, `TUBS_STUDIO_CHROME`. `context.ts` turns the director's `studio_context` into a few lines of places for the prompt (dropped after 10 s, venue kept) and the call-out that opens a turn Tubs starts with someone not right at the window; the face pages hold a head's first line until the director's `studio_stage` says it is in place (at most `STAGE_WAIT_MAX_MS`, 2.5 s, `client/studio/stage.ts`)
 
 ### Python Service (`src/realtime-processing-service.py`)
 - Flask app on port 3002, started and restarted by the server
@@ -59,7 +61,7 @@ Monorepo with shared type-safe contracts. Build: Vite (client) + tsc (server). D
 
 **Entry:** `main.ts` → `bootstrap-react.tsx` (initializes runtimes, React root)
 
-Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). `/?view=dashboard` is the operator HUD for a separate screen (no face, no audio, mic or camera); `app-mini.html?embed=1` is the mini tile inside the face window.
+Two build entries: `index.html` (main) and `app-mini.html` (mini display mode). `/?view=dashboard` is the operator HUD for a separate screen (no face, no audio, mic or camera); `app-mini.html?embed=1` is the mini tile inside the face window. `studio-face.html?actor=main|small[&size=1024][&monitor=1]` is one head for the studio (`studio/runtime.ts`): face alone on black, canvas plus that head's voice published over WHIP to `<site>/tubs-<actor>/whip` (`studio/publisher.ts`, `transport/whip.ts`), gaze and presence from the director. The main one is also the listener (mic, sleep, proactive); while studio mode is on the operator face lets go of its mic.
 
 **Runtime-based architecture** — each subsystem is a standalone runtime with `init()`, `bind()`, `dispose()`:
 
@@ -93,9 +95,9 @@ Type-safe communication layer:
 
 Messages are JSON with a `type` field. Full types in `src/shared/contracts/ws.ts`.
 
-**Client → Server:** `ping`, `incoming`, `interrupt`, `face_motion`, `face_blink`, `head_speech_state`, `presence`, `camera_frame`, `appearance_frame`, `tts_request`
+**Client → Server:** `ping`, `incoming`, `interrupt`, `face_motion`, `face_blink`, `head_speech_state`, `presence`, `camera_frame`, `appearance_frame`, `tts_request`; studio mode: `studio_look`, `studio_presence`, `studio_context`, `studio_stage` (director, ignored while studio mode is off), `studio_state`, `studio_status`, `studio_caption` (face pages, `/ws?studio=<actor>`)
 
-**Server → Client:** `ping`, `config`, `system`, `expression`, `thinking`, `speak`, `speak_chunk`, `speak_end`, `audio_chunk`, `turn_start`, `turn_script`, `turn_context`, `interrupt`, `backchannel`, `incoming`, `donation_signal`, `stats`, `stream_debug`, `conversation_mode`, `sleep`, `wake`, `error`, `face_motion`, `face_blink`, `head_speech_state`
+**Server → Client:** `ping`, `config`, `system`, `expression`, `thinking`, `speak`, `speak_chunk`, `speak_end`, `audio_chunk`, `turn_start`, `turn_script`, `turn_context`, `interrupt`, `backchannel`, `incoming`, `donation_signal`, `stats`, `stream_debug`, `conversation_mode`, `sleep`, `wake`, `error`, `face_motion`, `face_blink`, `head_speech_state`; studio mode: `studio_config` (face pages, and other pages while studio mode is on), `studio_look`, `studio_presence`, `studio_stage` (face pages only), `studio_state`, `studio_caption` (everyone; the line a head says and how many of its characters have been heard, from its page's playback clock, `studio/caption.ts`)
 
 ## Key Patterns
 

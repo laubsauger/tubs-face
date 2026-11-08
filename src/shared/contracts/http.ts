@@ -10,7 +10,34 @@ export interface HealthResponse {
   mode?: string;
 }
 
-export interface StatsResponse extends SessionStats {}
+export interface StatsResponse extends SessionStats {
+  /** Vision on its own (docs/vision.md): it is one of the main running costs. */
+  vision?: VisionStats;
+}
+
+export interface VisionProviderStats {
+  calls: number;
+  failures: number;
+  avgLatencyMs: number | null;
+  lastLatencyMs: number | null;
+  tokensIn: number;
+  tokensOut: number;
+  /** Estimated: GEMINI_*_COST_PER_MTOKENS for gemini, VISION_*_COST_PER_MTOKENS for openai (local servers: 0). */
+  costUsd: number;
+}
+
+export interface VisionStats extends VisionProviderStats {
+  provider: string;
+  model: string;
+  /** The base URL the last openai call went to (fleet:vision resolves to one). */
+  baseUrl: string | null;
+  /** Pictures not sent, by reason. */
+  skipped: { off: number; asleep: number; cap: number };
+  usedThisHour: number;
+  maxPerHour: number;
+  lastDescriptionAt: number | null;
+  byProvider: Record<'gemini' | 'openai', VisionProviderStats>;
+}
 
 export interface ConfigResponse extends RuntimeConfig {}
 

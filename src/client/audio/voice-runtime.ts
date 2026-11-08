@@ -4,6 +4,9 @@ import { upsertChatDraft } from '../chat/state.js';
 import { createVadProvider, type VadModelId, type VadProvider } from './vad/index.js';
 import { createClipBuffer, encodeWav16k, type ClipBuffer } from './pcm-clip.js';
 import { createPcmTap } from './pcm-tap.js';
+import { ECHO_TAIL_MS, createEchoBargeIn } from './echo-gate.js';
+import { formatMicSource, type MicSourceSpec, type StudioMicStatus } from '../../shared/contracts/studio.js';
+import { reconnectDelayMs, whepAudio } from '../transport/whip.js';
 
 interface BrowserSpeechRecognitionAlternative {
   transcript: string;
@@ -64,7 +67,25 @@ export interface VoiceRuntime {
   enableMic(): Promise<void>;
   startManualRecording(): Promise<void>;
   stopManualRecording(): void;
+  /**
+   * Where the mic hears from, switched live: the old source is closed and the
+   * new one opened, no reload. `site` is the site node base URL (site: sources).
+   */
+  setMicSource(source: MicSourceSpec, site?: string): Promise<void>;
   dispose(): void;
+}
+
+export interface VoiceRuntimeOptions {
+  /** Open no mic until setMicSource says which (the studio listener waits for its settings). */
+  deferMic?: boolean;
+  /**
+   * This page's voice plays somewhere the browser's echo cancellation can't
+   * see (a studio stream, a site: mic): mute recognition while a head talks
+   * and only take a voice clearly over the echo as talking over it.
+   */
+  echoGuard?: boolean;
+  /** The mic's state, whenever it changes (studio: reported in GET /studio). */
+  onMicStatus?: (status: StudioMicStatus) => void;
 }
 
 /**
@@ -78,7 +99,7 @@ export function isTalkingOverTubs(state: { audioPlaying: boolean }): boolean {
   return state.audioPlaying;
 }
 
-export function createVoiceRuntime(store: AppStore): VoiceRuntime {
+export function createVoiceRuntime(store: AppStore, options: VoiceRuntimeOptions = {}): VoiceRuntime {
   const HANDSFREE_START_HOLD_MS = 45;
   // Plus the 300 ms voice hangover below: about 1 s of quiet ends the turn.
   const HANDSFREE_STOP_SILENCE_MS = 700;
@@ -126,11 +147,25 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   let clipBuffer: ClipBuffer | null = null;
   let stopPcmTap: (() => void) | null = null;
   let lastVadTickAt = 0;
+  let lastEchoTickAt = 0;
   let unlockHandlerBound = false;
   let discardPendingRecording = false;
   let anyHeadSpeechHandler: ((event: Event) => void) | null = null;
   let speechCaptureBlockedUntil = 0;
   const speakingActors = new Map<'main' | 'small', number>();
+  // Today's behaviour unless told otherwise: the default input device.
+  let micSource: MicSourceSpec = { kind: 'local' };
+  let micSite = '';
+  let micSourceSet = !options.deferMic;
+  // Bumped on every switch; an open that finishes for an older source is dropped.
+  let micGeneration = 0;
+  let micOpening: Promise<void> | null = null;
+  let closeMicSource: (() => void) | null = null;
+  let micReopenTimer: number | undefined;
+  let micReopenAttempt = 0;
+  let micError: string | undefined;
+  const echoGuard = options.echoGuard === true;
+  const echoBargeIn = createEchoBargeIn();
   const unlockHandler = () => {
     if (audioContext?.state === 'suspended') {
       void audioContext.resume().catch(() => { });
@@ -173,14 +208,32 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       manualPressActive = false;
       stopRecording('manual');
     },
+    async setMicSource(source, site): Promise<void> {
+      const same = micSourceSet && formatMicSource(source) === formatMicSource(micSource) && (source.kind !== 'site' || site === micSite);
+      micSourceSet = true;
+      if (same) {
+        return ensureMicrophone();
+      }
+      micSource = source;
+      micSite = site ?? '';
+      micReopenAttempt = 0;
+      micError = undefined;
+      store.appendLog('info', `Mic source: ${formatMicSource(source)}`);
+      releaseMicrophone();
+      await ensureMicrophone();
+    },
     dispose(): void {
       stopRecording(recordingMode ?? 'manual');
+      window.clearTimeout(micReopenTimer);
+      micGeneration += 1;
       if (levelRaf) {
         window.cancelAnimationFrame(levelRaf);
       }
       for (const track of micStream?.getTracks() ?? []) {
         track.stop();
       }
+      closeMicSource?.();
+      closeMicSource = null;
       micStream = null;
       if (audioContext && audioContext.state !== 'closed') {
         void audioContext.close().catch(() => { });
@@ -201,11 +254,31 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     },
   };
 
-  async function ensureMicrophone(): Promise<void> {
-    if (micStream) {
+  /** Opens the current source unless it is open (or opening) already. */
+  function ensureMicrophone(): Promise<void> {
+    if (micStream || !micSourceSet) {
+      return Promise.resolve();
+    }
+    micOpening ??= openMicrophone().finally(() => {
+      micOpening = null;
+    });
+    return micOpening;
+  }
+
+  async function openMicrophone(): Promise<void> {
+    const generation = micGeneration;
+    if (micSource.kind === 'off') {
+      store.setState((current) => ({
+        ...current,
+        micReady: false,
+        micDenied: false,
+        micLevel: 0,
+        listenState: 'Mic off',
+      }));
+      reportMic();
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (micSource.kind !== 'site' && !navigator.mediaDevices?.getUserMedia) {
       store.setState((current) => ({
         ...current,
         micDenied: true,
@@ -216,13 +289,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
 
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      const opened = await openMicStream(micSource);
+      if (generation !== micGeneration) {
+        // Switched (or disposed) while this one was opening.
+        opened.close();
+        return;
+      }
+      micStream = opened.stream;
+      closeMicSource = opened.close;
       audioContext = new AudioContext();
       await audioContext.resume().catch(() => { });
       const source = audioContext.createMediaStreamSource(micStream);
@@ -251,10 +325,16 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
           ? current.listenState
           : (current.voiceHandsFreeEnabled ? passiveListenState() : 'Mic ready'),
       }));
-      store.appendLog('info', 'Microphone ready');
+      store.appendLog('info', micSource.kind === 'local' && !micSource.label ? 'Microphone ready' : `Microphone ready (${formatMicSource(micSource)})`);
+      micError = undefined;
+      micReopenAttempt = 0;
+      reportMic();
       syncPassiveLiveRecognition();
       startMeterLoop();
     } catch (error) {
+      if (generation !== micGeneration) {
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Microphone access denied';
       store.setState((current) => ({
         ...current,
@@ -263,7 +343,129 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         listenState: 'Mic denied',
       }));
       store.appendLog('error', message);
+      micError = message;
+      reportMic();
+      // A site stream that isn't up yet (or a mic leg restarting) comes back; keep trying.
+      if (micSource.kind === 'site') {
+        scheduleMicReopen();
+      }
     }
+  }
+
+  /** The stream for a source; the plain default mic is opened exactly as before. */
+  async function openMicStream(source: MicSourceSpec): Promise<{ stream: MediaStream; close: () => void }> {
+    const stopTracks = (stream: MediaStream) => () => {
+      for (const track of stream.getTracks()) track.stop();
+    };
+    const processing = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (source.kind === 'site') {
+      if (!micSite) throw new Error('No site node URL for the site mic');
+      const url = `${micSite}/${source.path}/whep`;
+      const generation = micGeneration;
+      const audio = await whepAudio(url, (reason) => {
+        if (generation !== micGeneration) return;
+        store.appendLog('error', `Mic ${formatMicSource(source)}: ${reason}`);
+        micError = reason;
+        releaseMicrophone();
+        scheduleMicReopen();
+      });
+      return { stream: audio.stream, close: audio.close };
+    }
+    if (source.kind === 'local' && source.label) {
+      const deviceId = await findInputDevice(source.label);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { ...processing, deviceId: { exact: deviceId } } });
+      return { stream, close: stopTracks(stream) };
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    return { stream, close: stopTracks(stream) };
+  }
+
+  /**
+   * The input device with exactly this label, as the browser names it (Chrome
+   * adds to the system's name, e.g. "(Built-in)"). Labels show only once the
+   * page may use the mic. A miss lists the labels there are.
+   */
+  async function findInputDevice(label: string): Promise<string> {
+    const inputs = async () => (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === 'audioinput');
+    let devices = await inputs();
+    if (devices.every((device) => !device.label)) {
+      const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+      for (const track of probe.getTracks()) track.stop();
+      devices = await inputs();
+    }
+    const device = devices.find((candidate) => candidate.label === label);
+    if (!device) {
+      const labels = [...new Set(devices.map((candidate) => candidate.label).filter(Boolean))];
+      throw new Error(`No input device labelled "${label}"${labels.length ? ` (there are: ${labels.map((name) => `"${name}"`).join(', ')})` : ''}`);
+    }
+    return device.deviceId;
+  }
+
+  function scheduleMicReopen(): void {
+    window.clearTimeout(micReopenTimer);
+    const delay = reconnectDelayMs(micReopenAttempt);
+    micReopenAttempt += 1;
+    const generation = micGeneration;
+    micReopenTimer = window.setTimeout(() => {
+      if (generation === micGeneration) {
+        void ensureMicrophone();
+      }
+    }, delay);
+  }
+
+  /** Closes the current source and everything built on it; a switch opens the next one. */
+  function releaseMicrophone(): void {
+    micGeneration += 1;
+    window.clearTimeout(micReopenTimer);
+    if (isCapturing() && recordingMode) {
+      stopRecording(recordingMode, { discard: true });
+    }
+    if (mediaRecorder?.state === 'recording') {
+      discardPendingRecording = true;
+      try { mediaRecorder.stop(); } catch { /* ignore */ }
+    }
+    mediaRecorder = null;
+    if (levelRaf) {
+      window.cancelAnimationFrame(levelRaf);
+      levelRaf = 0;
+    }
+    analyser = null;
+    stopPcmTap?.();
+    stopPcmTap = null;
+    clipBuffer = null;
+    vadProvider?.dispose();
+    vadProvider = null;
+    closeMicSource?.();
+    closeMicSource = null;
+    micStream = null;
+    if (audioContext && audioContext.state !== 'closed') {
+      void audioContext.close().catch(() => { });
+    }
+    audioContext = null;
+    stopLiveRecognition();
+    echoBargeIn.reset();
+    store.setState((current) => ({
+      ...current,
+      micReady: false,
+      micDenied: false,
+      micLevel: 0,
+      recording: false,
+    }));
+    reportMic();
+  }
+
+  function reportMic(): void {
+    options.onMicStatus?.({
+      source: formatMicSource(micSource),
+      listening: Boolean(micStream) && store.getState().micReady,
+      ...(micError && !micStream ? { error: micError } : {}),
+    });
   }
 
   function createRecorder(stream: MediaStream): MediaRecorder {
@@ -327,6 +529,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       return;
     }
     if (mode === 'handsfree' && (store.getState().sleeping || (!interruptible() && (store.getState().audioPlaying || isSpeechCaptureBlocked())))) {
+      return;
+    }
+    if (mode === 'handsfree' && echoGuard && captureBlocked()) {
       return;
     }
 
@@ -507,7 +712,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
   }
 
   function startLiveRecognition(): void {
-    if (!speechRecognition || speechRecognitionRunning) {
+    if (!speechRecognition || speechRecognitionRunning || !liveCaptionHearsTheMic()) {
       return;
     }
 
@@ -592,10 +797,16 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     return store.getState().voiceWakeWordEnabled ? 'Always listening' : 'Always on';
   }
 
+  /** The browser's live caption always listens to the default device, so only then is it this mic. */
+  function liveCaptionHearsTheMic(): boolean {
+    return micSource.kind === 'local' && !micSource.label;
+  }
+
   function shouldKeepPassiveLiveRecognition(): boolean {
     const state = store.getState();
     return Boolean(
       speechRecognitionAvailable
+      && liveCaptionHearsTheMic()
       && state.micReady
       && state.voiceHandsFreeEnabled
       && !state.sleeping
@@ -720,6 +931,9 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       }
       speechDetectedAt = 0;
       silenceDetectedAt = 0;
+      if (echoGuard) {
+        watchForBargeInOverEcho(state, rms);
+      }
       return;
     }
 
@@ -785,6 +999,28 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     }
   }
 
+  /**
+   * Echo guard: what the mic hears while a head talks is mostly that head, so
+   * it is never recorded. With Interruptible on, a voice well over the echo
+   * for a while still cuts the heads off; the mic listens again once they are
+   * quiet (see echo-gate.ts).
+   */
+  function watchForBargeInOverEcho(state: ReturnType<AppStore['getState']>, rms: number): void {
+    const now = Date.now();
+    const dt = lastEchoTickAt ? now - lastEchoTickAt : 0;
+    lastEchoTickAt = now;
+    if (!interruptible() || !anyHeadTalking() || !state.voiceHandsFreeEnabled || !state.micReady || state.sleeping || manualPressActive) {
+      echoBargeIn.reset();
+      lastEchoTickAt = 0;
+      return;
+    }
+    if (echoBargeIn.feed(rms, dt)) {
+      echoBargeIn.reset();
+      store.appendLog('info', 'Someone talked over the heads (well above their echo)');
+      interruptHeads(state.currentTurnId ?? null);
+    }
+  }
+
   function rmsOf(samples: Float32Array): number {
     let sum = 0;
     for (const sample of samples) {
@@ -832,11 +1068,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
       }>).detail;
       const actor = detail?.actor === 'small' ? 'small' : 'main';
       const ts = detail?.ts ?? Date.now();
+      // With the echo guard the room plays the voice late and with reverb; wait longer.
+      const cooldownMs = echoGuard ? ECHO_TAIL_MS : SPEECH_CAPTURE_COOLDOWN_MS;
       if (detail?.state === 'start') {
         speakingActors.set(actor, ts + HEAD_SPEECH_STALE_MS);
-        speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + SPEECH_CAPTURE_COOLDOWN_MS);
+        speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + cooldownMs);
         const visitorTalking = !manualPressActive && store.getState().recording && recordingMode === 'handsfree';
-        if (interruptible() && visitorTalking) {
+        // Behind the echo guard the clip would fill with the head's voice: it is dropped instead.
+        if (interruptible() && visitorTalking && !echoGuard) {
           // The visitor has the floor: the head that just started is cut off, the clip goes on.
           interruptHeads(store.getState().currentTurnId ?? null);
         } else {
@@ -853,7 +1092,7 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
         }
       } else {
         speakingActors.delete(actor);
-        speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + SPEECH_CAPTURE_COOLDOWN_MS);
+        speechCaptureBlockedUntil = Math.max(speechCaptureBlockedUntil, ts + cooldownMs);
       }
       syncPassiveLiveRecognition();
     };
@@ -873,8 +1112,14 @@ export function createVoiceRuntime(store: AppStore): VoiceRuntime {
     return store.getState().config?.interruptible === true;
   }
 
-  /** Speech is ignored while a head talks and just after, unless the heads are interruptible. */
+  /**
+   * Speech is ignored while a head talks and just after, unless the heads are
+   * interruptible. Behind the echo guard always: the mic hears the head itself.
+   */
   function captureBlocked(): boolean {
+    if (echoGuard) {
+      return store.getState().audioPlaying || isSpeechCaptureBlocked();
+    }
     return !interruptible() && isSpeechCaptureBlocked();
   }
 

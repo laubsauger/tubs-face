@@ -23,6 +23,10 @@ interface Meter {
 
 const meters = new WeakMap<AudioContext, Meter>();
 let active: Meter | null = null;
+// Where speech goes after the meter. The speakers, except on a studio face
+// page, which streams its actor's voice to the site node instead.
+let sinkFor: (context: AudioContext) => AudioNode = (context) => context.destination;
+let redirected = false;
 let envelope = 0;
 let peak = PEAK_FLOOR;
 let lastReadAt = 0;
@@ -35,12 +39,26 @@ export function speechOutput(context: AudioContext): AudioNode {
     const analyser = context.createAnalyser();
     analyser.fftSize = 512;
     input.connect(analyser);
-    input.connect(context.destination);
+    input.connect(sinkFor(context));
     meter = { input, analyser, samples: new Float32Array(analyser.fftSize) };
     meters.set(context, meter);
   }
   active = meter;
   return meter.input;
+}
+
+/**
+ * Sends speech to `sink` instead of the speakers, from the next context on:
+ * set it before the first speech plays.
+ */
+export function redirectSpeech(sink: (context: AudioContext) => AudioNode): void {
+  sinkFor = sink;
+  redirected = true;
+}
+
+/** Speech goes somewhere other than the speakers (a studio face page). */
+export function isSpeechRedirected(): boolean {
+  return redirected;
 }
 
 /** Smoothed level 0..1, or null before any speech was played. */

@@ -13,6 +13,7 @@ import { sendJson } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
 import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '../ws/server.js';
 import { restartSpeechService } from '../processing/speech-service.js';
+import { visionService } from '../assistant/vision.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
@@ -24,7 +25,7 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
   }
 
   if (request.method === 'GET' && url.pathname === '/stats') {
-    const payload: StatsResponse = toStatsResponse();
+    const payload: StatsResponse = { ...toStatsResponse(), vision: visionService.stats() };
     sendJson(response, 200, payload);
     return true;
   }
@@ -37,7 +38,12 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
 
   if (request.method === 'POST' && url.pathname === '/config') {
     try {
-      const patch = await readJsonBody<Partial<ConfigResponse>>(request);
+      const { visionApiKey, ...patch } = await readJsonBody<Partial<ConfigResponse> & { visionApiKey?: unknown }>(request);
+      // Write-only: the key is never part of the config anyone can read.
+      if (visionApiKey !== undefined) {
+        if (typeof visionApiKey !== 'string') throw Object.assign(new Error('visionApiKey must be a string'), { name: 'BadRequestError' });
+        visionService.setApiKey(visionApiKey);
+      }
       const shouldRestartStt = patch.sttModel !== undefined && patch.sttModel !== toConfigResponse().sttModel;
       const wasMuted = runtimeConfig.muted;
       const payload = applyRuntimeConfigPatch(patch);
@@ -77,6 +83,7 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
   }
 
   if (request.method === 'POST' && url.pathname === '/wake') {
+    visionService.noteSleeping(false);
     broadcast({ type: 'wake' } satisfies WsWakeServerMessage);
     sendJson(response, 200, { ok: true });
     return true;
@@ -85,6 +92,7 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
   if (request.method === 'POST' && url.pathname === '/sleep') {
     // Whoever comes next after a nap is a new visitor: wake word again.
     endConversation();
+    visionService.noteSleeping(true);
     broadcast({ type: 'sleep' } satisfies WsSleepServerMessage);
     sendJson(response, 200, { ok: true });
     return true;

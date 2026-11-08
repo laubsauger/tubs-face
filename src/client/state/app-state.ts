@@ -28,7 +28,7 @@ export interface ChatEntry {
 }
 
 /** Operator dock tabs, in rail order. */
-export const DOCK_TABS = ['chat', 'voice', 'mind', 'people', 'controls', 'stats', 'log', 'settings', 'fx'] as const;
+export const DOCK_TABS = ['chat', 'voice', 'mind', 'people', 'memory', 'controls', 'stats', 'log', 'settings', 'fx'] as const;
 export type DockTab = (typeof DOCK_TABS)[number];
 
 export const MINI_TILE_PLACEMENTS = ['bottom-right', 'bottom-left', 'top-right', 'top-left', 'side'] as const;

@@ -14,7 +14,12 @@ export default defineConfig({
   publicDir: path.resolve(rootDir, 'public'),
   server: {
     proxy: {
-      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script)': {
+      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory)': {
+        target: `http://127.0.0.1:${apiPort}`,
+        changeOrigin: true,
+      },
+      // Studio mode control; not the face page, studio-face.html.
+      '^/studio(?:/snapshot)?(?:\\?.*)?$': {
         target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },
@@ -49,6 +54,7 @@ export default defineConfig({
         main: path.resolve(rootDir, 'index.html'),
         mini: path.resolve(rootDir, 'app-mini.html'),
         spectator: path.resolve(rootDir, 'spectator.html'),
+        studio: path.resolve(rootDir, 'studio-face.html'),
       },
     },
   },

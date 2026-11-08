@@ -7,6 +7,8 @@ export interface WsClientOptions {
   onMessage: (message: WsServerMessage) => void;
   onError?: (error: Event) => void;
   role?: 'controller' | 'spectator';
+  /** A studio face page, and the head it shows. */
+  studio?: 'main' | 'small';
 }
 
 export interface ManagedWsClient {
@@ -27,7 +29,7 @@ export function createManagedWsClient(options: WsClientOptions): ManagedWsClient
   function connect(): void {
     closedByClient = false;
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const roleParam = options.role === 'spectator' ? '?role=spectator' : '';
+    const roleParam = options.role === 'spectator' ? '?role=spectator' : options.studio ? `?studio=${options.studio}` : '';
     socket = new WebSocket(`${protocol}://${window.location.host}/ws${roleParam}`);
 
     socket.addEventListener('open', () => {

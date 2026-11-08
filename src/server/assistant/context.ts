@@ -1,6 +1,8 @@
 import type { TurnContextMeta } from '../../shared/contracts/turn-script.js';
 import type { LlmContent } from '../llm/types.js';
 import { normalizeInput } from './text.js';
+import { runtimeConfig } from '../config/runtime.js';
+import { relationshipLines } from './relationships.js';
 
 // Six exchanges. With three, a visitor's "no, I meant what Mini said" two
 // turns later already pointed at something the model could no longer see.
@@ -41,6 +43,16 @@ export interface BuiltContentsResult {
  * newest user message, never stored in history. In the system prompt the model
  * ignored it and copied the length of its own earlier replies instead.
  */
+/**
+ * Who Tubs knows among the people in view (relationships.ts) rides the same
+ * way: this turn only, so it can never outlast the visit. At the end of the
+ * system prompt the model kept roasting the boss like any visitor.
+ */
+function forThisTurn(direction: string): string {
+  const known = relationshipLines(runtimeConfig.relationshipsEnabled);
+  return known.length ? [direction, `[People you know, in view now. Treat them this way, over your usual attitude to visitors] ${known.join(' ')}`].filter(Boolean).join('\n') : direction;
+}
+
 export function buildContents(nextUserText: string, direction = ''): BuiltContentsResult {
   pruneConversationHistory();
   const recent = conversationHistory.slice(-HISTORY_CONTEXT_SIZE);
@@ -50,9 +62,10 @@ export function buildContents(nextUserText: string, direction = ''): BuiltConten
   }));
 
   const normalized = compactForHistory(nextUserText);
+  const extra = forThisTurn(direction);
   contents.push({
     role: 'user',
-    parts: direction ? [{ text: normalized }, { text: direction }] : [{ text: normalized }],
+    parts: extra ? [{ text: normalized }, { text: extra }] : [{ text: normalized }],
   });
 
   const historyChars = recent.reduce((sum, entry) => sum + entry.text.length, 0);
@@ -75,9 +88,10 @@ export function buildProactiveContents(context: string, direction = ''): BuiltCo
     parts: [{ text: entry.text }],
   }));
 
+  const extra = forThisTurn(direction);
   contents.push({
     role: 'user',
-    parts: direction ? [{ text: compactForHistory(context) }, { text: direction }] : [{ text: compactForHistory(context) }],
+    parts: extra ? [{ text: compactForHistory(context) }, { text: extra }] : [{ text: compactForHistory(context) }],
   });
 
   const historyChars = recent.reduce((sum, entry) => sum + entry.text.length, 0);

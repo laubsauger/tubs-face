@@ -10,6 +10,7 @@ export const DOCK_TAB_LABELS: Record<DockTab, string> = {
   voice: 'Voice',
   mind: 'Mind',
   people: 'People',
+  memory: 'Memory',
   controls: 'Controls',
   stats: 'Stats',
   log: 'Log',
