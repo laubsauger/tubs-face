@@ -149,6 +149,8 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
   let health: ServiceHealth | null = null;
   let error: string | null = mode.kind === 'off' ? null : 'not connected yet';
   let wanted: { url: string; label: string; fps: number } | null = null;
+  /** What the service was last told (JSON), while its stream is open; null when not connected. */
+  let told: string | null = null;
   let request: http.ClientRequest | null = null;
   let reconnectTimer: NodeJS.Timeout | null = null;
   let staleTimer: NodeJS.Timeout | null = null;
@@ -191,7 +193,7 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
     }
     // The service forgets its camera when it restarts: say it again on every connection.
     try {
-      await postJson(`${target}/source`, wanted ? { url: wanted.url, label: wanted.label, fps: wanted.fps } : { url: null });
+      await tell(target);
     } catch (cause) {
       goDown(reasonOf(cause));
       if (mode.kind === 'fleet' && base) fleet?.fail(base);
@@ -204,6 +206,7 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
     const ended = (reason: string) => {
       if (over) return;
       over = true;
+      told = null;
       if (request === req) request = null;
       if (!running) return; // stopped on purpose
       goDown(reason);
@@ -216,6 +219,8 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
         return;
       }
       response.setEncoding('utf8');
+      // A camera chosen while this connection was being made goes out now.
+      if (told !== JSON.stringify(wanted)) void tell(target).catch((cause: unknown) => log(`could not set the camera: ${reasonOf(cause)}`));
       response.on('data', (chunk: string) => {
         buffer += chunk;
         let newline = buffer.indexOf('\n');
@@ -245,6 +250,12 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
     });
     request = req;
     req.on('error', (cause) => ended(reasonOf(cause)));
+  }
+
+  async function tell(target: string): Promise<void> {
+    const body = JSON.stringify(wanted);
+    await postJson(`${target}/source`, wanted ? { url: wanted.url, label: wanted.label, fps: wanted.fps } : { url: null });
+    told = body;
   }
 
   function watchStale(): void {
@@ -288,12 +299,10 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
       await controller?.stop();
     },
     setSource(source) {
-      const same = JSON.stringify(source) === JSON.stringify(wanted);
       wanted = source;
-      if (same || !running || !base || health === null) return;
-      void postJson(`${base}/source`, source ? { url: source.url, label: source.label, fps: source.fps } : { url: null }).catch((cause: unknown) => {
-        log(`could not set the camera: ${reasonOf(cause)}`);
-      });
+      // Not connected: the next connection says it.
+      if (!running || !base || told === null || told === JSON.stringify(wanted)) return;
+      void tell(base).catch((cause: unknown) => log(`could not set the camera: ${reasonOf(cause)}`));
     },
     status() {
       return { mode: mode.kind, where: base ? whereOf(base, hostname) : null, health, error: health ? null : error };

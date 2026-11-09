@@ -1,7 +1,8 @@
 # Face service: face recognition on the server, headless
 
-Status: design (2026-11-09, branch `feat/face-service`). The observation shape
-below is the contract both producers follow; it is in
+Status: built (2026-11-09, branch `feat/face-service`), checked against the
+browser worker in headless Chrome and live on a test instance (below). The
+observation shape is the contract both producers follow; it is in
 `src/shared/contracts/studio.ts` (`FaceObservation`) and checked by
 `isFaceObservation` (`src/shared/guards/index.ts`).
 
@@ -166,6 +167,8 @@ interface FaceObservation {
 }
 ```
 
+- `faces` are the faces in view now, as the listener page counts them: a face
+  missed for up to two frames (and 1.4 s) stays (`stabilizeFaces`).
 - `decision`: `match` when the best candidate is at or over 0.65 and at least
   0.01 clear of the second (`annotateDetectedFaces`, `client/face/matching.ts`);
   `onboarding` when the face is not recognised and is being onboarded now (an
@@ -179,3 +182,75 @@ interface FaceObservation {
     `{type: 'face_observation', observation}` (studio listener page only; the
     server passes it on to watching dashboards and keeps the last one);
   - `GET /studio/faces` (local network): the last observation, or `null`.
+
+## Same embeddings as the browser
+
+The library's embeddings came from the browser worker, so the service copies
+the worker step by step (`src/face_pipeline.py`), not insightface's own Python
+code, which differs in three places the library depends on:
+
+| Browser worker (copied) | insightface | Cosine to the browser if the service did it insightface's way |
+|---|---|---|
+| anchor centres at `(col + 0.5) * stride` | `col * stride` | 0.53 to 0.94 (mean 0.73): landmarks move by half a stride, up to 16 px at stride 32 |
+| B, G, R planes into ArcFace | R, G, B | 0.73 to 0.93 (mean 0.84) |
+| B, G, R planes into SCRFD | R, G, B | 0.990 to 0.9998 (mean 0.997) |
+| picture centred on black in 640×640 | padded at the bottom right | not measured separately |
+
+All three together: 0.48 to 0.89 (mean 0.65), on the CPU backend. Resampling follows Chrome's canvas (bilinear,
+pixel centres at +0.5, no mipmaps, rounded to 8 bits, black outside), and the
+alignment uses the worker's own Umeyama with its closed-form 2×2 SVD.
+
+`tests/face-compat/run.ts` runs the real worker (through its client, in
+headless system Chrome 157, the models redirected to the service's cache) and
+the service on the same pixels: five public domain photographs, seven faces.
+
+| Service backend | Cosine to the browser, per face | Decisions that agree |
+|---|---|---|
+| CPU | 0.99998 to 0.99999 | 7/7 |
+| CoreML, ML program on the GPU (FP32), the default | 0.99998 to 0.99999 | 7/7 |
+| CoreML's default (neural network, Neural Engine, FP16), not used | 0.9954 to 0.9998 | 7/7 |
+
+Detection scores agree to 0.0001 and landmarks to 0.012 px.
+`tests/python/test_face_pipeline.py` holds the service to the browser's
+embeddings (`tests/fixtures/faces/browser-embeddings.json`, cosine > 0.999).
+
+The harness also showed a property of the worker itself: it reuses a tracked
+face's embedding for any face overlapping one of the last frame's (up to 8
+frames), so a different person stepping into the same spot within a few
+seconds keeps the previous person's embedding for a while. The service tracks
+the same way but recomputes a track's embedding every second.
+
+## Live check (2026-11-09)
+
+A test instance on free ports (`TUBS_STUDIO_LAUNCH=external`, its own face
+service on :3464, a stub vision server, a temporary library through
+`TUBS_FACE_LIBRARY`), reading a looping clip published to `cam-facetest` on the
+local site node:
+
+- onboarding through the service (`studio_face_call` begin, three captures,
+  save, end) wrote three samples and broadcast `faces_changed`;
+- `GET /studio/pulse` then named the enrolled face, `prob` 0.99, and left the
+  three other faces unnamed (0.01 to 0.05);
+- `recognition` part: `Mac:3464 · SCRFD+ArcFace · CoreML · 59 ms · 5 fps · 1 person`
+  (the machine under load from other work);
+- vision got an appearance picture when the faces came into view and refreshes
+  every 30 s while they stayed, from the service's frames.
+
+Through H.264 video at 960×540, another photo of the same man scored 0.62
+against samples taken from video of the first photo, under the 0.65
+threshold (0.69 between the two stills): onboarding a few poses in the room's
+own light matters as much as before.
+
+## Not done (yet)
+
+- A local camera (`local`, `local:<label>`) stays with the listener page and
+  its browser worker (see "Who recognises").
+- The listener page still constructs its face worker object at startup
+  (`createFaceShellRuntime`); with the service on it never initialises it, so
+  no model is fetched or loaded and no frame is sent to it.
+- With the service on another box, `TUBS_STUDIO_SITE` must be an address that
+  box can reach (`127.0.0.1` would be its own loopback).
+- `fleet:faces` asks the studio-manager hub for `kind=faces` providers; the hub
+  has to list the face service boxes under that kind.
+- The worker's anchor offset (above) misplaces the alignment; fixing it in
+  both pipelines would mean onboarding everyone again.
