@@ -15,6 +15,7 @@ import { runtimeConfig } from '../config/runtime.js';
 import { deleteFacesByName, readFaceLibrary } from '../faces/library.js';
 import { buildMemory, isLocalNetworkAddress } from '../memory/view.js';
 import { broadcast } from '../ws/server.js';
+import { fromThisOrigin } from './route-helpers.js';
 
 export function currentMemory(now = Date.now()): MemoryResponse {
   return buildMemory({
@@ -23,19 +24,6 @@ export function currentMemory(now = Date.now()): MemoryResponse {
     relationships: loadRelationships(),
     relationshipsEnabled: runtimeConfig.relationshipsEnabled,
   });
-}
-
-/** Same origin, or not a browser at all (curl on the venue network). */
-function fromThisOrigin(request: IncomingMessage): boolean {
-  const site = request.headers['sec-fetch-site'];
-  if (site) return site === 'same-origin' || site === 'none';
-  const origin = request.headers.origin;
-  if (!origin) return true;
-  try {
-    return new URL(origin).host === request.headers.host;
-  } catch {
-    return false;
-  }
 }
 
 function sendImage(response: ServerResponse, dataUrl: string | null | undefined): void {

@@ -116,7 +116,7 @@ test('from inside a cross-origin iframe the Studio panel shows the heads and run
   await expect.poll(() => posts.filter((post) => post.path === '/studio').at(-1)?.body).toEqual({ visionSource: 'snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg' });
 
   await panel.getByRole('combobox', { name: 'Provider' }).selectOption('openai');
-  await panel.getByLabel('Model').fill('qwen3-vl:4b-instruct');
+  await panel.getByLabel('Model', { exact: true }).fill('qwen3-vl:4b-instruct');
   await panel.getByLabel('Base URL').fill('http://127.0.0.1:11434/v1');
   await panel.getByRole('button', { name: 'Apply model' }).click();
   await expect.poll(async () => (await received(request)).http.filter((entry) => entry.path === '/config').map((entry) => entry.body)).toEqual([
@@ -165,6 +165,60 @@ test('sources: pick lists from GET /studio/sources, posted on choosing, refreshe
   // The other field has no obvious pick, so no button.
   await expect(vision.getByRole('button', { name: /^Use / })).toHaveCount(0);
 
+});
+
+// Vision without the jargon: Ollama on this Mac, a fleet box by name or
+// another host, a model from what that server has (the thinking variant that
+// answers nothing is flagged, with the -instruct one a click away), and a
+// Test with one picture before applying.
+test('vision: pick a server and a model from lists, get warned off a thinking model, test, apply', async ({ page, request }) => {
+  await fakeStudioServer(page);
+  const tests: unknown[] = [];
+  await page.route(/\/vision\/(servers|models|test)(\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/vision/servers') {
+      await route.fulfill({ json: { servers: [
+        { label: 'Ollama on this machine', baseUrl: 'http://127.0.0.1:11434/v1', healthy: null },
+        { label: 'Ollama via the fleet (the hub picks a box)', baseUrl: 'fleet:vision', healthy: null },
+        { label: 'vision · msi', baseUrl: 'http://192.168.1.40:11434/v1', healthy: true },
+      ] } });
+    } else if (url.pathname === '/vision/models') {
+      await route.fulfill({ json: { base: url.searchParams.get('base'), models: [
+        { id: 'qwen3-vl:4b', warning: 'thinks before it answers: often an empty answer; use an -instruct model' },
+        { id: 'qwen3-vl:4b-instruct' },
+      ], suggested: 'qwen3-vl:4b-instruct' } });
+    } else {
+      tests.push(route.request().postDataJSON());
+      await route.fulfill({ json: { ok: true, ms: 912, where: '192.168.1.40:11434', text: 'A person in a red coat.' } });
+    }
+  });
+  const frame = await embeddedDashboard(page);
+  const panel = frame.locator('#dock-panel-studio');
+  const provider = panel.getByRole('combobox', { name: 'Provider' });
+  await expect(provider.locator('option', { hasText: 'OpenAI-compatible (Ollama, LM Studio)' })).toHaveCount(1);
+  await provider.selectOption('openai');
+
+  await panel.getByRole('combobox', { name: 'Server' }).selectOption({ label: 'vision · msi' });
+  await expect(panel.getByLabel('Base URL')).toHaveValue('http://192.168.1.40:11434/v1');
+  await panel.getByRole('combobox', { name: 'Models on that server' }).selectOption('qwen3-vl:4b');
+  await expect(panel.getByRole('note')).toContainText('empty answer');
+  await panel.getByRole('button', { name: 'Use qwen3-vl:4b-instruct' }).click();
+  await expect(panel.getByLabel('Model', { exact: true })).toHaveValue('qwen3-vl:4b-instruct');
+  await expect(panel.getByRole('note')).toHaveCount(0);
+
+  await panel.getByRole('button', { name: 'Test' }).click();
+  await expect(panel.locator('#vision-test-result')).toHaveText('912 ms at 192.168.1.40:11434: A person in a red coat.');
+  expect(tests[0]).toMatchObject({ provider: 'openai', model: 'qwen3-vl:4b-instruct', baseUrl: 'http://192.168.1.40:11434/v1', frame: expect.stringMatching(/^data:image\/jpeg;base64,/) });
+
+  await panel.getByRole('button', { name: 'Apply model' }).click();
+  await expect.poll(async () => (await received(request)).http.filter((entry) => entry.path === '/config').map((entry) => entry.body).at(-1))
+    .toEqual({ visionModel: 'qwen3-vl:4b-instruct', visionBaseUrl: 'http://192.168.1.40:11434/v1' });
+
+  // Another machine, by host: Ollama's port unless one is given.
+  await panel.getByRole('combobox', { name: 'Server' }).selectOption({ label: 'Another machine on the network…' });
+  await panel.getByLabel('Host').fill('studio-box.local');
+  await panel.getByRole('button', { name: 'Use host' }).click();
+  await expect(panel.getByLabel('Base URL')).toHaveValue('http://studio-box.local:11434/v1');
 });
 
 test('presets: apply one and save the current character, from the panel', async ({ page }) => {

@@ -6,6 +6,7 @@
 
 import type { VisionStats } from '../../shared/contracts/http.js';
 import type { StudioVisionCheck } from '../../shared/contracts/studio.js';
+import type { VisionTestResult } from '../../shared/contracts/vision.js';
 import { updateVisualContext } from './context.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { estimateCostUsd } from './text.js';
@@ -45,15 +46,6 @@ export interface VisionService {
   /** VISION_API_KEY, set live through POST /config (never sent back). */
   setApiKey(key: string): void;
   stats(): VisionStats;
-}
-
-export interface VisionTestResult {
-  ok: boolean;
-  ms: number;
-  /** host:port that answered (fleet:vision resolved), or "Gemini API". */
-  where: string | null;
-  text: string | null;
-  error?: string;
 }
 
 export interface VisionServiceOptions {

@@ -1,6 +1,10 @@
-// What Tubs last made of a picture, for the Studio tab: GET /studio/vision.
-// It names the people in front of him: local network only, no CORS (like the
-// memory view's photos).
+// What Tubs sees, for the Studio tab:
+//   GET  /studio/vision            the last vision check, camera and vision on or off, relationships in effect
+//   GET  /vision/servers           servers to pick: Ollama here, the fleet, each fleet vision box by name
+//   GET  /vision/models?base=...   the models a server has (thinking variants flagged)
+//   POST /vision/test              one picture to a provider, model and server; latency and answer
+// Names of people and camera pictures, and requests to other machines: local
+// network only, no CORS; the test is a same-origin JSON POST from the dashboard.
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ErrorResponse } from '../../shared/contracts/http.js';
@@ -8,23 +12,105 @@ import type { StudioVisionResponse } from '../../shared/contracts/studio.js';
 import { relationshipsInEffect } from '../assistant/relationships.js';
 import { visionService } from '../assistant/vision.js';
 import { runtimeConfig } from '../config/runtime.js';
+import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { lastLiveStatus } from '../studio/live.js';
 import { studioSettings } from '../studio/state.js';
+import { visionModels, visionServers } from '../vision/servers.js';
+import { fromThisOrigin } from './route-helpers.js';
+
+const MAX_TEST_PICTURE_CHARS = 4 * 1024 * 1024;
+
+const PATHS = new Set(['/studio/vision', '/vision/servers', '/vision/models', '/vision/test']);
 
 export async function handleVisionRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
-  if (url.pathname !== '/studio/vision') return false;
+  if (!PATHS.has(url.pathname)) return false;
   if (!isLocalNetworkAddress(request.socket.remoteAddress)) {
-    sendJson(response, 403, { error: 'What Tubs sees is for the local network only' } satisfies ErrorResponse);
+    sendJson(response, 403, { error: 'Vision settings and what Tubs sees are for the local network only' } satisfies ErrorResponse);
+    return true;
+  }
+  if (url.pathname === '/vision/test') {
+    if (request.method !== 'POST') {
+      sendJson(response, 405, { error: 'POST only' } satisfies ErrorResponse);
+      return true;
+    }
+    if (!fromThisOrigin(request) || !String(request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+      sendJson(response, 403, { error: 'Tests come from the dashboard, as JSON' } satisfies ErrorResponse);
+      return true;
+    }
+    await sendTest(request, response);
     return true;
   }
   if (request.method !== 'GET') {
     sendJson(response, 405, { error: 'GET only' } satisfies ErrorResponse);
     return true;
   }
-  sendJson(response, 200, studioVision());
+  if (url.pathname === '/studio/vision') {
+    sendJson(response, 200, studioVision());
+  } else if (url.pathname === '/vision/servers') {
+    sendJson(response, 200, await visionServers(fleetHub()));
+  } else {
+    await sendModels(url.searchParams.get('base') ?? '', response);
+  }
   return true;
+}
+
+function fleetHub(): string {
+  return process.env.FLEET_HUB?.trim() || 'http://127.0.0.1:4310';
+}
+
+/** An http(s) base URL without a login in it, or null. */
+function httpBase(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return null;
+    return value.replace(/\/+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+async function sendModels(base: string, response: ServerResponse): Promise<void> {
+  if (base === 'fleet:vision') {
+    // The box the hub picks; a hub that does not answer is an answer too.
+    const resolved = await visionService.resolveFleet().catch(() => null);
+    if (!resolved) {
+      sendJson(response, 200, { base, models: [], error: 'fleet:vision: the hub lists no vision box, or does not answer' });
+      return;
+    }
+    sendJson(response, 200, { ...(await visionModels(resolved)), base });
+    return;
+  }
+  const clean = httpBase(base);
+  if (!clean) {
+    sendJson(response, 400, { error: 'base must be an http(s) URL (e.g. http://127.0.0.1:11434/v1) or fleet:vision' } satisfies ErrorResponse);
+    return;
+  }
+  sendJson(response, 200, await visionModels(clean));
+}
+
+async function sendTest(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  let body: Record<string, unknown>;
+  try {
+    body = await readJsonBody<Record<string, unknown>>(request);
+  } catch {
+    sendJson(response, 400, { error: 'Send JSON' } satisfies ErrorResponse);
+    return;
+  }
+  const provider = body.provider === 'gemini' || body.provider === 'openai' ? body.provider : null;
+  const frame = typeof body.frame === 'string' && body.frame.length <= MAX_TEST_PICTURE_CHARS ? body.frame : null;
+  const model = typeof body.model === 'string' ? body.model.trim() : '';
+  const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
+  if (!provider || !frame) {
+    sendJson(response, 400, { error: 'provider (gemini or openai) and frame (a JPEG or PNG data URL) are needed' } satisfies ErrorResponse);
+    return;
+  }
+  if (provider === 'openai' && baseUrl !== 'fleet:vision' && !httpBase(baseUrl)) {
+    sendJson(response, 400, { error: 'baseUrl must be an http(s) URL or fleet:vision' } satisfies ErrorResponse);
+    return;
+  }
+  sendJson(response, 200, await visionService.test({ provider, model, baseUrl, dataUrl: frame }));
 }
 
 export function studioVision(): StudioVisionResponse {

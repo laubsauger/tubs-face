@@ -22,7 +22,7 @@ export default defineConfig({
   server: {
     headers: isolationHeaders,
     proxy: {
-      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory|presets)': {
+      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory|presets|vision)': {
         target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },

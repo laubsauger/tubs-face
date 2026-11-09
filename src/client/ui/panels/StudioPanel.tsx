@@ -5,7 +5,8 @@
 // server, and nothing relies on browser dialogs.
 
 import { useCallback, useEffect, useState, type JSX } from 'react';
-import { VISION_PROVIDERS, type VisionProvider } from '../../../shared/contracts/config.js';
+import type { VisionProvider } from '../../../shared/contracts/config.js';
+import type { VisionModelsResponse, VisionServersResponse, VisionTestResult } from '../../../shared/contracts/vision.js';
 import type { PresetsResponse } from '../../../shared/contracts/presets.js';
 import type { StudioListenState, StudioPart, StudioPulse, StudioResponse, StudioSource, StudioSourcesResponse, StudioVisionResponse } from '../../../shared/contracts/studio.js';
 import { patchConfig } from '../../fx/runtime.js';
@@ -159,12 +160,14 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
           <SelectControl<VisionProvider>
             label="Provider"
             value={config.visionProvider}
-            options={VISION_PROVIDERS}
+            options={VISION_PROVIDER_OPTIONS}
             onChange={(visionProvider) => void patchConfig(store, { visionProvider })}
           />
-          {config.loaded && (
+          {config.loaded && config.visionProvider !== 'off' && (
             <VisionModelForm
               key={`${config.visionModel}|${config.visionBaseUrl}`}
+              store={store}
+              provider={config.visionProvider}
               model={config.visionModel}
               baseUrl={config.visionBaseUrl}
               onApply={(patch) => void patchConfig(store, patch)}
@@ -350,17 +353,160 @@ function SourcePicker({ label, current, sources, suggested, hint, onPick }: {
   );
 }
 
-function VisionModelForm({ model, baseUrl, onApply }: { model: string; baseUrl: string; onApply(patch: { visionModel: string; visionBaseUrl: string }): void }): JSX.Element {
+const VISION_PROVIDER_OPTIONS: Array<{ value: VisionProvider; label: string }> = [
+  { value: 'off', label: 'Off (no picture leaves this machine)' },
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'openai', label: 'OpenAI-compatible (Ollama, LM Studio)' },
+];
+
+const CUSTOM_SERVER = '__custom__';
+const OLLAMA_PORT = 11434;
+
+/** A host typed as "192.168.1.20" or "box.local:1234": the OpenAI-compatible base on it (Ollama's port by default). */
+export function baseForHost(host: string): string {
+  const clean = host.trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!clean) return '';
+  return `http://${/:\d+$/.test(clean) ? clean : `${clean}:${OLLAMA_PORT}`}/v1`;
+}
+
+/** A picture for the Test when no studio camera picture is here: a plain card with a figure on it. */
+function testCard(): string {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 240;
+  const g = canvas.getContext('2d');
+  if (!g) return '';
+  g.fillStyle = '#9cc3e6';
+  g.fillRect(0, 0, 320, 240);
+  g.fillStyle = '#c0392b';
+  g.fillRect(130, 120, 60, 90);
+  g.fillStyle = '#f1c27d';
+  g.beginPath();
+  g.arc(160, 95, 26, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#1f2937';
+  g.font = 'bold 18px system-ui, sans-serif';
+  g.fillText('TEST', 12, 28);
+  return canvas.toDataURL('image/jpeg', 0.8);
+}
+
+/**
+ * Which server and model look at the pictures, without knowing the jargon:
+ * pick Ollama here, the fleet or a fleet box by name, or type a host; pick a
+ * model from what that server has (thinking variants flagged); test it with
+ * one picture. The typed fields stay as the override.
+ */
+function VisionModelForm({ store, provider, model, baseUrl, onApply }: {
+  store: AppStore;
+  provider: VisionProvider;
+  model: string;
+  baseUrl: string;
+  onApply(patch: { visionModel: string; visionBaseUrl: string }): void;
+}): JSX.Element {
   const [visionModel, setModel] = useState(model);
   const [visionBaseUrl, setBaseUrl] = useState(baseUrl);
+  const [servers, setServers] = useState<VisionServersResponse | null>(null);
+  const [models, setModels] = useState<VisionModelsResponse | null>(null);
+  const [customHost, setCustomHost] = useState('');
+  const [custom, setCustom] = useState(false);
+  const [test, setTest] = useState<VisionTestResult | { running: true } | null>(null);
+  const openai = provider === 'openai';
   const changed = visionModel !== model || visionBaseUrl !== baseUrl;
+
+  useEffect(() => {
+    if (!openai) return;
+    void fetchJson<VisionServersResponse>('/vision/servers').then(setServers).catch(() => setServers(null));
+  }, [openai]);
+
+  useEffect(() => {
+    if (!openai || !visionBaseUrl.trim()) {
+      setModels(null);
+      return undefined;
+    }
+    // Typed by hand: ask once the typing stops.
+    const timer = window.setTimeout(() => {
+      void fetchJson<VisionModelsResponse>(`/vision/models?base=${encodeURIComponent(visionBaseUrl.trim())}`).then(setModels).catch(() => setModels(null));
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [openai, visionBaseUrl]);
+
+  const listed = servers?.servers.find((server) => server.baseUrl === visionBaseUrl.trim());
+  const serverChoice = custom || !listed ? CUSTOM_SERVER : listed.baseUrl;
+  const chosen = models?.models.find((entry) => entry.id === visionModel.trim());
+
+  async function runTest(): Promise<void> {
+    setTest({ running: true });
+    try {
+      const frame = store.getState().studioFrame?.src ?? testCard();
+      setTest(await postJson<Record<string, unknown>, VisionTestResult>('/vision/test', { provider, model: visionModel.trim(), baseUrl: visionBaseUrl.trim(), frame }));
+    } catch (failure) {
+      setTest({ ok: false, ms: 0, where: null, text: null, error: failure instanceof Error ? failure.message : String(failure) });
+    }
+  }
+
   return (
     <>
-      <TextRow label="Model" value={visionModel} onChange={setModel} hint="empty: the chat model (gemini) · e.g. qwen3-vl:4b-instruct" />
-      <TextRow label="Base URL" value={visionBaseUrl} onChange={setBaseUrl} options={['fleet:vision', 'http://127.0.0.1:11434/v1']} hint="openai only: …/v1 or fleet:vision" />
-      <div>
+      {openai && (
+        <label className="flex flex-col gap-1">
+          <span className="text-slate-400">Server</span>
+          <select
+            className="mini-select"
+            aria-label="Server"
+            value={serverChoice}
+            onChange={(event) => {
+              const next = event.currentTarget.value;
+              if (next === CUSTOM_SERVER) {
+                setCustom(true);
+                return;
+              }
+              setCustom(false);
+              setBaseUrl(next);
+            }}
+          >
+            {servers?.servers.map((server) => (
+              <option key={server.baseUrl} value={server.baseUrl}>{`${server.healthy === false ? '○ ' : ''}${server.label}`}</option>
+            ))}
+            <option value={CUSTOM_SERVER}>Another machine on the network…</option>
+          </select>
+          {servers?.problem && <span className="text-slate-500 text-[10px]">{servers.problem}</span>}
+        </label>
+      )}
+      {openai && serverChoice === CUSTOM_SERVER && (
+        <div className="studio-row">
+          <input className="face-name-input" aria-label="Host" placeholder="Host or IP, e.g. 192.168.1.20 (Ollama's port 11434)" value={customHost} onChange={(event) => setCustomHost(event.currentTarget.value)} spellCheck={false} />
+          <button type="button" className="button button-compact button-secondary" disabled={!baseForHost(customHost)} onClick={() => setBaseUrl(baseForHost(customHost))}>Use host</button>
+        </div>
+      )}
+      {openai && models && models.models.length > 0 && (
+        <label className="flex flex-col gap-1">
+          <span className="text-slate-400">Models on that server</span>
+          <select className="mini-select" aria-label="Models on that server" value={chosen ? chosen.id : ''} onChange={(event) => setModel(event.currentTarget.value)}>
+            {!chosen && <option value="">{visionModel.trim() ? `${visionModel.trim()} (not on this server)` : 'Choose a model'}</option>}
+            {models.models.map((entry) => <option key={entry.id} value={entry.id}>{`${entry.warning ? '⚠ ' : ''}${entry.id}`}</option>)}
+          </select>
+        </label>
+      )}
+      {openai && models?.error && <p className="text-amber-300">{models.error}</p>}
+      {chosen?.warning && (
+        <p className="text-amber-300" role="note">
+          {chosen.id} {chosen.warning}.
+          {models?.suggested && models.suggested !== chosen.id && (
+            <> <button type="button" className="button button-compact" onClick={() => setModel(models.suggested!)}>Use {models.suggested}</button></>
+          )}
+        </p>
+      )}
+      <TextRow label="Model" value={visionModel} onChange={setModel} hint={openai ? 'typed: any model the server has · e.g. qwen3-vl:4b-instruct' : 'empty: the chat model'} />
+      {openai && <TextRow label="Base URL" value={visionBaseUrl} onChange={(value) => { setCustom(false); setBaseUrl(value); }} options={['fleet:vision', 'http://127.0.0.1:11434/v1']} hint="typed: …/v1 or fleet:vision" />}
+      <div className="studio-row">
         <button type="button" className="button button-compact button-secondary" disabled={!changed} onClick={() => onApply({ visionModel: visionModel.trim(), visionBaseUrl: visionBaseUrl.trim() })}>Apply model</button>
+        <button type="button" className="button button-compact button-secondary" disabled={test !== null && 'running' in test} onClick={() => void runTest()}>Test</button>
       </div>
+      {test && 'running' in test && <p className="text-slate-400" role="status">Testing with one picture…</p>}
+      {test && !('running' in test) && (
+        <p className={test.ok ? 'text-emerald-300' : 'text-rose-300'} role="status" id="vision-test-result">
+          {test.ok ? `${test.ms} ms${test.where ? ` at ${test.where}` : ''}: ${test.text}` : `Failed${test.ms ? ` after ${test.ms} ms` : ''}: ${test.error ?? 'no answer'}`}
+        </p>
+      )}
     </>
   );
 }
@@ -448,7 +594,7 @@ function TextRow({ label, value, onChange, options, hint }: { label: string; val
   return (
     <label className="flex flex-col gap-1">
       <span className="text-slate-400">{label}</span>
-      <input className="face-name-input" value={value} list={listId} onChange={(event) => onChange(event.currentTarget.value)} spellCheck={false} />
+      <input className="face-name-input" aria-label={label} value={value} list={listId} onChange={(event) => onChange(event.currentTarget.value)} spellCheck={false} />
       {options && <datalist id={listId}>{options.map((option) => <option key={option} value={option} />)}</datalist>}
       {hint && <span className="text-slate-500 text-[10px]">{hint}</span>}
     </label>
