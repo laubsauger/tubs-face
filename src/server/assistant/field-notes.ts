@@ -23,7 +23,9 @@ export interface PersonInView {
   thumbnail?: string;
 }
 
-const TAG_RE = /\[\[\s*(NOTE|QUOTE|NAME)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]/gi;
+// One bracket counts too: the model now and then writes "[NOTE: testing
+// shit]", and that one was shown in the subtitles while the note was lost.
+const TAG_RE = /\[\[?\s*(NOTE|QUOTE|NAME)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]?/gi;
 /** Talked with this many turns before Tubs asks an unnamed person their name. */
 const ASK_NAME_AFTER_TURNS = 2;
 const MAX_NOTES_PER_PERSON = 10;
@@ -368,10 +370,16 @@ export function resetFieldNotes(): void {
   inView = [];
 }
 
+// Where a tag starts: "[[" (any marker), or a note tag with one bracket.
+const TAG_OPEN_RE = /\[\[|\[\s*(?:NOTE|QUOTE|NAME)\b/i;
+// The end of a delta that may still grow into one of those ("[", "[NO").
+const PARTIAL_OPEN_RE = /\[(?:\[|\s*(?:N(?:O(?:TE?)?|A(?:ME?)?)?|Q(?:U(?:O(?:TE?)?)?)?))?$/i;
+
 /**
  * Streams arrive token by token; a tag can be cut in half by the sentence
  * splitter and then spoken ("NOTE works in marketing"). This holds text back
- * from an opening [[ until its ]] arrives and drops the whole tag.
+ * from an opening [[ (or [NOTE, [QUOTE, [NAME) until its close arrives and
+ * drops the whole tag.
  */
 export function createTagFilter(): { push(delta: string): string; flush(): string } {
   let held = '';
@@ -380,27 +388,27 @@ export function createTagFilter(): { push(delta: string): string; flush(): strin
       held += delta;
       let out = '';
       while (held) {
-        const open = held.indexOf('[[');
+        const open = held.search(TAG_OPEN_RE);
         if (open === -1) {
-          // A single trailing "[" may be the start of a tag.
-          const keep = held.endsWith('[') ? 1 : 0;
+          const keep = PARTIAL_OPEN_RE.exec(held)?.[0].length ?? 0;
           out += held.slice(0, held.length - keep);
           held = held.slice(held.length - keep);
           break;
         }
         out += held.slice(0, open);
-        const close = held.indexOf(']]', open);
+        const closer = held.startsWith('[[', open) ? ']]' : ']';
+        const close = held.indexOf(closer, open);
         if (close === -1) {
           held = held.slice(open);
           break;
         }
-        held = held.slice(close + 2);
+        held = held.slice(close + closer.length);
       }
       return out;
     },
     flush() {
       // An unclosed tag at the very end is dropped rather than spoken.
-      const rest = held.startsWith('[[') ? '' : held;
+      const rest = held.search(TAG_OPEN_RE) === 0 ? '' : held;
       held = '';
       return rest;
     },

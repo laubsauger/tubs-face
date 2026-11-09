@@ -104,6 +104,19 @@ describe('stream tag filter', () => {
     expect(out).toBe('Nice hat.  Next. Done.');
   });
 
+  // "[NOTE: testing shit]" with one bracket was shown and its note lost.
+  it('takes a tag with one bracket as a note too, and never lets it reach speech', () => {
+    expect(extractFieldNotes('Fair. [NOTE: testing the mic] [QUOTE right: test some shit]')).toEqual([
+      { kind: 'note', position: null, text: 'testing the mic' },
+      { kind: 'quote', position: 'right', text: 'test some shit' },
+    ]);
+    const filter = createTagFilter();
+    const out = ['Fair enough. [', 'NO', 'TE: testing ', 'the mic] Go on.', ' [No problem] here.'].map((delta) => filter.push(delta)).join('') + filter.flush();
+    expect(out).toBe('Fair enough.  Go on. [No problem] here.');
+    const unclosed = createTagFilter();
+    expect(unclosed.push('Sure. [NOTE: never closed') + unclosed.flush()).toBe('Sure. ');
+  });
+
   it('drops any complete marker, and an unclosed tag at the end', () => {
     const filter = createTagFilter();
     expect(filter.push('Fine. [[SHOW_QR]] ')).toBe('Fine.  ');

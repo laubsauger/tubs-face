@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BIT_MAX_SENTENCES, clampOutput, createSentenceCap, sanitizeForTts, unwrapJsonSpeechText } from './text.js';
+import { BIT_MAX_SENTENCES, clampOutput, createSentenceCap, sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from './text.js';
 
 describe('unwrapJsonSpeechText', () => {
   it('extracts main text from a JSON envelope', () => {
@@ -71,3 +71,17 @@ describe('Studio 204', () => {
   });
 });
 
+
+// The model now and then writes a note tag with one bracket. "[NOTE: testing
+// shit]" was shown in the subtitles; it must never be spoken or shown.
+describe('stripFormatting', () => {
+  it('drops note, quote and name tags with one bracket as well as two', () => {
+    expect(stripFormatting('Testing shit is breaking things on purpose. [NOTE: testing shit]')).toBe('Testing shit is breaking things on purpose.');
+    expect(stripFormatting('Fine. [QUOTE: "AI art is real art"] Next.')).toBe('Fine. Next.');
+    expect(stripFormatting('Hi. [Name left: Anna]]')).toBe('Hi.');
+    expect(stripFormatting('Hi. [[NOTE: jazz]] there.')).toBe('Hi. there.');
+  });
+  it('leaves other brackets alone', () => {
+    expect(stripFormatting('The [redacted] plan.')).toBe('The [redacted] plan.');
+  });
+});

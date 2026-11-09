@@ -15,6 +15,8 @@ export function stripFormatting(text: string): string {
   return String(text)
     // Hidden [[NOTE: ...]] / [[QUOTE: ...]] tags, and any stray [[MARKER]].
     .replace(/\[\[[^\]]*\]\]/g, ' ')
+    // The same tags with one bracket ("[NOTE: testing shit]") reached the subtitles.
+    .replace(/\[\s*(?:NOTE|QUOTE|NAME)\b[^\]]*\]\]?/gi, ' ')
     .replace(/\*{1,3}(.+?)\*{1,3}/g, '$1')
     .replace(/_{1,3}(.+?)_{1,3}/g, '$1')
     .replace(/~~(.+?)~~/g, '$1')
