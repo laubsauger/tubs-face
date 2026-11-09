@@ -21,13 +21,28 @@ const DEFAULT_GREETINGS: GreetingsConfig = {
 };
 const WAKE_NAME_SUFFIXES = new Set(['tubs', 'tub', 'tubbs', 'tops', 'top']);
 
+// A character preset (presets/presets.ts) can bring its own persona and
+// lines; null means the built-in files above.
+let systemPromptOverride: string | null = null;
+let greetingsOverride: GreetingsConfig | null = null;
+
+/** The applied preset's persona template and lines, or null for the built-in ones. */
+export function setPersonaOverride(override: { systemPrompt: string | null; greetings: GreetingsConfig | null }): void {
+  systemPromptOverride = override.systemPrompt?.trim() || null;
+  greetingsOverride = override.greetings;
+}
+
+export function personaOverride(): { systemPrompt: string | null; greetings: GreetingsConfig | null } {
+  return { systemPrompt: systemPromptOverride, greetings: greetingsOverride };
+}
+
 /** Raw persona template. Placeholders are filled in assistant/prompt.ts. */
 export function loadSystemPrompt(): string {
-  return readTextFile(systemPromptPath, DEFAULT_SYSTEM_PROMPT);
+  return systemPromptOverride ?? readTextFile(systemPromptPath, DEFAULT_SYSTEM_PROMPT);
 }
 
 export function loadGreetingConfig(): GreetingsConfig {
-  const config = readJsonFile(greetingsPath, DEFAULT_GREETINGS);
+  const config = greetingsOverride ?? readJsonFile(greetingsPath, DEFAULT_GREETINGS);
   const triggers = normalizeStringList(config.triggers);
   const responses = trimStringList(config.responses);
 

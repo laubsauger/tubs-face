@@ -7,7 +7,7 @@
 // already plays main's voice and hears small's speech state from the server,
 // which is all the echo guard needs, and the studio needs no third page.
 
-import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
+import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import type { WsClientMessage, WsStudioConfigServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
 import { redirectSpeech } from '../audio/speech-level.js';
 import { readVoiceClock } from '../audio/voice-clock.js';
@@ -19,6 +19,7 @@ import type { GlitchRuntime } from '../glitch/runtime.js';
 import type { AppStore } from '../state/app-state.js';
 import { createBlackFrameMonitor } from './black-frame.js';
 import { createStageGate } from './stage.js';
+import { createCadenceMeter } from './cadence.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
 import { createStudioPresence } from './presence.js';
 import { createFacePublisher, type PublisherStatus } from './publisher.js';
@@ -26,6 +27,8 @@ import { DEFAULT_GLYPH, drawSleepZs, layoutSleepZs, measureGlyph, type GlyphMetr
 import { STUDIO_STATE_HEARTBEAT_MS, studioStateChanged, studioStateOf, type StudioStateSnapshot } from './state-report.js';
 
 const CAPTURE_FPS = 30;
+/** How often a face page says how steadily it renders and publishes (GET /studio actors[].cadence). */
+export const CADENCE_REPORT_MS = 5000;
 
 export interface StudioRuntime {
   init(send: (message: WsClientMessage) => void): void;
@@ -72,6 +75,8 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   let lastState: StudioStateSnapshot | null = null;
   let heartbeat = 0;
   let captionTimer = 0;
+  let cadenceTimer = 0;
+  const cadence = createCadenceMeter();
   let unsubscribeState: (() => void) | null = null;
   // A window closed by hand ends its stream, rather than leaving the site node
   // a frozen face until the connection times out.
@@ -99,7 +104,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     badge.dataset.publishing = String(publisherStatus.publishing);
   }
 
-  function reportStatus(): void {
+  function reportStatus(withCadence?: StudioCadence): void {
     setBadge();
     const publishing = publisherStatus.publishing && !frameBlack;
     const error = frameBlack ? 'published frame is black: the face is not getting into the stream' : publisherStatus.error;
@@ -109,6 +114,21 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       publishing,
       ...(error && !publishing ? { error: error.slice(0, 300) } : {}),
       ...(micStatus ? { mic: { ...micStatus, ...(micStatus.error ? { error: micStatus.error.slice(0, 300) } : {}) } } : {}),
+      ...(withCadence ? { cadence: withCadence } : {}),
+    });
+  }
+
+  /** Render cadence of the face plus what WebRTC made of it, every CADENCE_REPORT_MS. */
+  async function reportCadence(): Promise<void> {
+    const render = cadence.take(performance.now());
+    const published = await publisher.stats().catch(() => null);
+    reportStatus({
+      renderFps: render.fps,
+      renderMaxGapMs: render.maxGapMs,
+      renderStalls: render.stalls,
+      ...(published ?? {}),
+      visible: document.visibilityState === 'visible',
+      focused: document.hasFocus(),
     });
   }
 
@@ -185,6 +205,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     // canvas can be read (a later copy is black in a windowed Chrome).
     options.glitch.onFrame(() => {
       lastFaceFrameAt = performance.now();
+      cadence.frame(lastFaceFrameAt);
       draw(true);
     });
     // Every 2 s, a look at what is actually published: a tiny copy of the frame.
@@ -237,8 +258,10 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     }
     const video = canvas.captureStream(CAPTURE_FPS).getVideoTracks()[0];
     if (!video) return null;
-    // Fine pixel detail matters more than motion smoothness for the encoder.
-    video.contentHint = 'detail';
+    // No 'detail' hint: Chrome encodes screen-like content in software, 15-25 ms a
+    // frame here and more under load, which dropped frames; without it the
+    // hardware encoder takes ~4 ms and keeps 1024 px (frameWidth in the cadence report).
+    video.contentHint = '';
     stream = new MediaStream([video, voiceTrack]);
     return stream;
   }
@@ -308,11 +331,14 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         send?.({ type: 'presence', present: false, count: 0 });
       }
     }, STUDIO_STATE_HEARTBEAT_MS);
+    cadenceTimer = window.setInterval(() => void reportCadence(), CADENCE_REPORT_MS);
   }
 
   function stopStateReports(): void {
     window.clearInterval(heartbeat);
     heartbeat = 0;
+    window.clearInterval(cadenceTimer);
+    cadenceTimer = 0;
     window.clearInterval(captionTimer);
     captionTimer = 0;
     unsubscribeState?.();

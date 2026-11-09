@@ -89,6 +89,33 @@ describe('vision through an OpenAI-compatible server', () => {
   });
 });
 
+describe('the vision prompt', () => {
+  // Field notes and Tubs's remarks rely on Left:/Middle:/Right: to tell people
+  // apart; with one person a label made the model invent "Right: no other people".
+  it('asks for position labels only with several people, and keeps the rules', () => {
+    expect(VISION_PROMPT).toMatch(/only one person[^.]*no label/i);
+    expect(VISION_PROMPT).toMatch(/two or more people[^.]*Left:, Middle: or Right:/);
+    expect(VISION_PROMPT).toContain('Never mention people who are not there.');
+    expect(VISION_PROMPT).toContain('no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.');
+  });
+});
+
+describe('a model that answers with no text (a thinking model)', () => {
+  it('counts as a failure and keeps the last description', async () => {
+    const stub = stubOpenAi({ text: '' });
+    const base = await stub.start();
+    applyRuntimeConfigPatch({ visionProvider: 'openai', visionBaseUrl: base, visionModel: 'qwen3-vl:4b' });
+    updateVisualContext('Middle: a green scarf.');
+    const logs: string[] = [];
+    const vision = createVisionService({ log: (line) => logs.push(line) });
+    expect(await vision.look(FRAME, 'refresh')).toBeNull();
+    expect(getVisualContext()).toBe('Middle: a green scarf.');
+    expect(vision.stats()).toMatchObject({ calls: 1, failures: 1 });
+    expect(logs.join('\n')).toMatch(/no text.*-instruct/);
+    await stub.stop();
+  });
+});
+
 describe('vision off', () => {
   it('sends no picture anywhere, for a new visitor or a refresh', async () => {
     const stub = stubOpenAi();

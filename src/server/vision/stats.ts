@@ -24,6 +24,7 @@ export function createVisionStats() {
   const skipped: VisionStats['skipped'] = { off: 0, asleep: 0, cap: 0 };
   let lastDescriptionAt: number | null = null;
   let lastBase: string | null = null;
+  let lastLatencyMs: number | null = null;
 
   const view = (counter: Counter): VisionProviderStats => ({
     calls: counter.calls,
@@ -46,6 +47,7 @@ export function createVisionStats() {
       counter.latencyTotal += result.ms;
       counter.latencyCount += 1;
       counter.lastLatencyMs = Math.round(result.ms);
+      lastLatencyMs = counter.lastLatencyMs;
       counter.tokensIn += result.tokensIn ?? 0;
       counter.tokensOut += result.tokensOut ?? 0;
       counter.costUsd += result.costUsd ?? 0;
@@ -63,10 +65,9 @@ export function createVisionStats() {
         all.tokensOut += counter.tokensOut;
         all.costUsd += counter.costUsd;
       }
-      const lastLatencies = Object.values(counters).map((counter) => counter.lastLatencyMs).filter((ms): ms is number => ms !== null);
       return {
         ...view(all),
-        lastLatencyMs: lastLatencies.length ? lastLatencies[lastLatencies.length - 1]! : null,
+        lastLatencyMs,
         provider: current.provider,
         model: current.model,
         baseUrl: lastBase,

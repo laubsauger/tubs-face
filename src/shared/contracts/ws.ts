@@ -4,7 +4,7 @@ import type {
   SessionStats,
 } from './config.js';
 import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
-import type { StudioActor, StudioGaze, StudioMicStatus, StudioMood } from './studio.js';
+import type { StudioActor, StudioCadence, StudioGaze, StudioMicStatus, StudioMood } from './studio.js';
 
 export interface TokenUsage {
   in: number;
@@ -203,6 +203,7 @@ export interface WsStudioStatusClientMessage {
   publishing: boolean;
   error?: string;
   mic?: StudioMicStatus;
+  cadence?: StudioCadence;
 }
 
 export type WsClientMessage =

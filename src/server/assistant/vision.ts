@@ -17,7 +17,9 @@ export const VISION_SYSTEM = 'You are a visual context extraction tool.';
 // Factual inventory; Tubs adds the attitude. Same prompt for a new visitor
 // (appearance_frame) and the periodic refresh (camera_frame), so the first
 // impression includes clothing too. The same for every provider.
-export const VISION_PROMPT = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. With several people, go left to right as the image shows them and start each with Left:, Middle: or Right:. Factual, no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.';
+// Position labels only with several people: with one, qwen3-vl wrote "Left:"
+// and sometimes "Right: no other people".
+export const VISION_PROMPT = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. If only one person is visible, write about them directly, with no label (for example "A person in a red coat, ..."). If two or more people are visible, go left to right as the image shows them and start each person with Left:, Middle: or Right: (labels are for people only). Never mention people who are not there. Factual, no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.';
 const MAX_TOKENS = 100;
 
 const OPENAI_IN_PER_MTOKENS = Number.parseFloat(process.env.VISION_INPUT_COST_PER_MTOKENS || '0') || 0;
@@ -90,7 +92,11 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
           ? estimateCostUsd(answer.tokensIn, answer.tokensOut)
           : (answer.tokensIn / 1e6) * OPENAI_IN_PER_MTOKENS + (answer.tokensOut / 1e6) * OPENAI_OUT_PER_MTOKENS;
         counters.call(provider, { ok: Boolean(answer.text), ms, tokensIn: answer.tokensIn, tokensOut: answer.tokensOut, costUsd, base, at: now() });
-        if (!answer.text) return null;
+        if (!answer.text) {
+          // qwen3-vl:4b (the thinking variant) spends every token thinking and says nothing.
+          log(`${provider} ${ask.model} answered with no text (${kind})${provider === 'openai' ? '; a thinking model does that: use an -instruct one' : ''}; keeping the last description`);
+          return null;
+        }
         log(`${provider} ${ask.model} (${kind}, ${Math.round(ms)} ms): ${answer.text}`);
         updateVisualContext(answer.text, now());
         return answer.text;

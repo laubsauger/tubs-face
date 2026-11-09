@@ -99,6 +99,8 @@ export interface StudioResponse {
   mic?: StudioMicStatus;
   /** Pages for the operator: this server's dashboard and its memory view. */
   ui?: StudioUiLinks;
+  /** Character presets: their names and the active one (GET /presets). */
+  presets?: { names: string[]; active: string | null };
 }
 
 export interface StudioUiLinks {
@@ -112,6 +114,25 @@ export interface StudioActorStatus {
   stream: string;
   publishing: boolean;
   error?: string;
+  /** How steadily the face page renders and publishes (its last report). */
+  cadence?: StudioCadence;
+}
+
+/** A face page's frame cadence over its last report window (studio/cadence.ts, studio/publisher.ts). */
+export interface StudioCadence {
+  renderFps: number;
+  renderMaxGapMs: number;
+  /** Render gaps over 50 ms. */
+  renderStalls: number;
+  sourceFps?: number;
+  encodedFps?: number;
+  keyFrames?: number;
+  limitedBy?: string;
+  encoder?: string;
+  encodeMsPerFrame?: number;
+  frameWidth?: number;
+  visible: boolean;
+  focused: boolean;
 }
 
 export interface StudioMicStatus {

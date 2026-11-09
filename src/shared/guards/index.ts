@@ -140,7 +140,7 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case 'studio_state':
       return isActor(m.actor) && typeof m.speaking === 'boolean' && text(m.expr, MAX_ID_CHARS) && mood(m.mood) && isFiniteNumber(m.ts);
     case 'studio_status':
-      return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic);
+      return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic) && optCadence(m.cadence);
     case 'studio_context':
       return isStudioContext(m);
     case 'studio_stage':
@@ -156,6 +156,9 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
 }
 
 const shortText = (v: unknown): boolean => typeof v === 'string' && v.length <= 300;
+/** Numbers, booleans and short strings only: it is shown as is in GET /studio. */
+const optCadence = (v: unknown): boolean => v === undefined || (isRecord(v) && Object.keys(v).length <= 20
+  && Object.values(v).every((value) => isFiniteNumber(value) || typeof value === 'boolean' || (typeof value === 'string' && value.length <= 80)));
 const optShortText = (v: unknown): boolean => v === null || shortText(v);
 
 /** Loose on purpose (unknown fields are ignored, contract rule), strict on what is used. */

@@ -14,6 +14,7 @@ import { applyRuntimeConfigPatch, runtimeConfig, toConfigResponse, toHealthRespo
 import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '../ws/server.js';
 import { restartSpeechService } from '../processing/speech-service.js';
 import { visionService } from '../assistant/vision.js';
+import { personaOverride } from '../persona/index.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
@@ -67,6 +68,12 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
   }
 
   if (request.method === 'GET' && url.pathname === '/api/greetings') {
+    // An applied character preset may bring its own lines.
+    const override = personaOverride().greetings;
+    if (override) {
+      sendJson(response, 200, override);
+      return true;
+    }
     try {
       if (!existsSync(greetingsPath)) {
         sendJson(response, 404, { error: 'Greetings not found' } satisfies ErrorResponse);

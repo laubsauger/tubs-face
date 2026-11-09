@@ -2907,6 +2907,7 @@ html.is-studio body {
 .memory-cards {
   display: grid;
   grid-template-columns: 1fr;
+  align-items: start;
   gap: 10px;
 }
 
@@ -2938,8 +2939,8 @@ html.is-studio body {
 }
 
 .memory-photo {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
   border-radius: 8px;
   object-fit: cover;
   background: rgba(30, 41, 59, 0.8);
@@ -2997,4 +2998,31 @@ html.is-studio body {
 .memory-page .memory-view {
   max-width: 1400px;
   margin: 0 auto;
+}
+
+/* Studio panel (ui/panels/StudioPanel.tsx). */
+.studio-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.studio-row > .face-name-input,
+.studio-row > .mini-select {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+
+.studio-relationship {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.studio-relationship textarea {
+  resize: vertical;
 }

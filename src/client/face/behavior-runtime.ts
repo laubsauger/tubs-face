@@ -343,7 +343,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     if (!externalLook || thinkingGaze || store.getState().sleeping) {
       return false;
     }
-    trackTarget(externalLook.x, externalLook.y);
+    // Followed smoothly: the director moves the head, so its look moves too.
+    gaze.pursue(easeInput(externalLook.x), easeInput(externalLook.y), performance.now());
+    startAnimationLoop();
     return true;
   }
 

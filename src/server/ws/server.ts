@@ -292,6 +292,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         publishing: message.publishing,
         ...(message.error ? { error: message.error } : {}),
         ...(message.mic ? { mic: message.mic } : {}),
+        ...(message.cadence ? { cadence: message.cadence } : {}),
       });
       return;
     default:

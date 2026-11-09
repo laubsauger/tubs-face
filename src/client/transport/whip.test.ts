@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { h264Preferences, reconnectDelayMs } from './whip.js';
+import { PUBLISH_MIN_KBPS, PUBLISH_START_KBPS, h264Preferences, reconnectDelayMs, withStartBitrate } from './whip.js';
 
 // What Chrome offers for video (trimmed from a real getCapabilities list).
 const chromeVideoCodecs = [
@@ -41,5 +41,25 @@ describe('reconnect delay', () => {
     expect(reconnectDelayMs(3)).toBe(4000);
     expect(reconnectDelayMs(10)).toBe(10_000);
     expect(reconnectDelayMs(1000)).toBe(10_000);
+  });
+});
+
+// A new publish used to lose frames for its first seconds while Chrome ramped
+// the bitrate up from a few hundred kbit/s (gaps of 70 ms and more in the
+// stream); the answer tells it to start where a LAN can take it.
+describe('the start bitrate of a face stream', () => {
+  const answer = [
+    'v=0', 'm=video 9 UDP/TLS/RTP/SAVPF 102 96', 'a=rtpmap:102 H264/90000',
+    'a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f', 'a=rtpmap:96 VP8/90000', 'a=fmtp:96 x=1',
+    'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=rtpmap:111 opus/48000/2', 'a=fmtp:111 minptime=10;useinbandfec=1', '',
+  ].join('\r\n');
+
+  it('starts and stays high enough for 1024x1024 at 30 fps, on H.264 only', () => {
+    const shaped = withStartBitrate(answer);
+    expect(shaped).toContain(`profile-level-id=42e01f;x-google-start-bitrate=${PUBLISH_START_KBPS};x-google-min-bitrate=${PUBLISH_MIN_KBPS}\r\n`);
+    expect(shaped).toContain('a=fmtp:96 x=1\r\n');
+    expect(shaped).toContain('a=fmtp:111 minptime=10;useinbandfec=1\r\n');
+    expect(PUBLISH_START_KBPS).toBeGreaterThanOrEqual(2000);
+    expect(withStartBitrate(shaped)).toBe(shaped);
   });
 });

@@ -14,7 +14,7 @@ export default defineConfig({
   publicDir: path.resolve(rootDir, 'public'),
   server: {
     proxy: {
-      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory)': {
+      '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory|presets)': {
         target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },

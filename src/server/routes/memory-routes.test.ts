@@ -151,6 +151,7 @@ describe('admin actions in the memory view', () => {
     expect((await fetch(`${base}/memory/clear`)).status).toBe(404);
     expect((await fetch(`${base}/memory/forget?key=name:flo`)).status).toBe(404);
     expect((await fetch(`${base}/memory/library/remove?name=Flo`)).status).toBe(404);
+    expect((await fetch(`${base}/memory/clear`, { method: 'DELETE', headers: { 'content-type': 'application/json' } })).status).toBe(405);
     // Another site open in the operator's browser.
     expect((await post('/memory/clear', {}, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
     expect((await post('/memory/library/remove', { name: 'Flo' }, { origin: 'http://elsewhere.example' })).status).toBe(403);

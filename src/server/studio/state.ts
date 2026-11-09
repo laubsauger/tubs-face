@@ -7,6 +7,7 @@ import {
   parseMicSource,
   parseVisionSource,
   type StudioActor,
+  type StudioCadence,
   type StudioLaunchMode,
   type StudioMicStatus,
   type StudioPatch,
@@ -100,6 +101,7 @@ interface PageReport {
   publishing: boolean;
   error?: string;
   mic?: StudioMicStatus;
+  cadence?: StudioCadence;
   /** Set while the page's socket is open. */
   connected: boolean;
 }
@@ -117,12 +119,14 @@ export function notePageConnection(actor: StudioActor, connected: boolean): void
   if (report) pages.set(actor, { publishing: false, connected: false, ...(report.mic ? { mic: { ...report.mic, listening: false } } : {}) });
 }
 
-export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus }): void {
+export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus; cadence?: StudioCadence }): void {
+  const before = pages.get(actor);
   pages.set(actor, {
     connected: true,
     publishing: status.publishing,
     ...(status.error ? { error: status.error } : {}),
-    ...(status.mic ? { mic: status.mic } : (pages.get(actor)?.mic ? { mic: pages.get(actor)!.mic! } : {})),
+    ...(status.mic ? { mic: status.mic } : (before?.mic ? { mic: before.mic } : {})),
+    ...(status.cadence ? { cadence: status.cadence } : (before?.cadence ? { cadence: before.cadence } : {})),
   });
 }
 
@@ -149,7 +153,7 @@ export function toStudioResponse(settings: StudioSettings = studioSettings): Stu
     const error = !settings.enabled
       ? undefined
       : launcherErrors.get(id) ?? (report?.connected ? report.error : 'face page not connected');
-    return { id, stream: streamName(id, settings), publishing, ...(error && !publishing ? { error } : {}) };
+    return { id, stream: streamName(id, settings), publishing, ...(error && !publishing ? { error } : {}), ...(settings.enabled && report?.connected && report.cadence ? { cadence: report.cadence } : {}) };
   });
   // The main page is the listener (see client/studio/runtime.ts).
   const mic = pages.get('main')?.mic;

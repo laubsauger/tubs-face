@@ -29,6 +29,22 @@ export function h264Preferences<T extends CodecLike>(codecs: readonly T[]): T[] 
   return [...h264].sort((a, b) => score(b) - score(a));
 }
 
+/**
+ * Chrome starts a new video send at a few hundred kbit/s and ramps up; at
+ * 1024x1024 the encoder drops frames meanwhile (gaps of 70 ms and more for the
+ * first seconds of every publish). On the studio LAN it can start high.
+ */
+export const PUBLISH_START_KBPS = 4000;
+export const PUBLISH_MIN_KBPS = 2000;
+
+/** The answer with Chrome's start and minimum bitrate added to each H.264 fmtp line. */
+export function withStartBitrate(sdp: string, startKbps = PUBLISH_START_KBPS, minKbps = PUBLISH_MIN_KBPS): string {
+  const h264 = new Set<string>();
+  for (const match of sdp.matchAll(/^a=rtpmap:(\d+) H264\/90000/gim)) h264.add(match[1]!);
+  return sdp.replace(/^(a=fmtp:(\d+) [^\r\n]*)$/gm, (line: string, _all: string, payload: string) =>
+    h264.has(payload) && !line.includes('x-google-start-bitrate') ? `${line};x-google-start-bitrate=${startKbps};x-google-min-bitrate=${minKbps}` : line);
+}
+
 export interface WhipSession {
   pc: RTCPeerConnection;
   /** The session resource (Location); DELETE ends it. */
@@ -36,7 +52,7 @@ export interface WhipSession {
 }
 
 /** Offers `pc`'s transceivers to a WHIP/WHEP endpoint and applies the answer. */
-async function negotiate(pc: RTCPeerConnection, url: string): Promise<string | null> {
+async function negotiate(pc: RTCPeerConnection, url: string, shapeAnswer: (sdp: string) => string = (sdp) => sdp): Promise<string | null> {
   await pc.setLocalDescription(await pc.createOffer());
   await iceGathered(pc);
   const response = await fetch(url, {
@@ -49,7 +65,7 @@ async function negotiate(pc: RTCPeerConnection, url: string): Promise<string | n
     throw new Error(`${url} answered ${response.status}${detail ? `: ${detail}` : ''}`);
   }
   const answer = await response.text();
-  await pc.setRemoteDescription({ type: 'answer', sdp: answer });
+  await pc.setRemoteDescription({ type: 'answer', sdp: shapeAnswer(answer) });
   const location = response.headers.get('Location');
   return location ? new URL(location, url).toString() : null;
 }
@@ -98,7 +114,7 @@ export async function whipPublish(url: string, stream: MediaStream, options: { m
     for (const track of stream.getAudioTracks()) {
       pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
     }
-    const resource = await negotiate(pc, url);
+    const resource = await negotiate(pc, url, withStartBitrate);
     return { pc, resource };
   } catch (error) {
     pc.close();

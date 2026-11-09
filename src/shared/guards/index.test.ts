@@ -25,6 +25,14 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ ...caption, done: 'yes' })).toBe(false);
   });
 
+  // The memory view shows it as an <img>: only a small JPEG data URL, nothing else.
+  it('takes a visitor snapshot in the people report only as a small JPEG', () => {
+    const people = (thumbnail: unknown) => ({ type: 'people', people: [{ id: 'v1', names: [], position: 'center', snapshots: 1, thumbnail }] });
+    expect(isWsClientMessage(people('data:image/jpeg;base64,AAAA'))).toBe(true);
+    expect(isWsClientMessage(people('https://example.com/face.jpg'))).toBe(false);
+    expect(isWsClientMessage(people(`data:image/jpeg;base64,${'A'.repeat(70_000)}`))).toBe(false);
+  });
+
   it('rejects payloads that would break a handler', () => {
     expect(isWsClientMessage({ type: 'incoming' })).toBe(false);
     expect(isWsClientMessage({ type: 'incoming', text: '   ' })).toBe(false);

@@ -4,6 +4,7 @@ import type { DockTab } from '../../state/app-state.js';
 // Line icons for the dock rail, drawn on a 24 px grid with the text colour.
 const PATHS: Record<DockTab, string> = {
   chat: 'M4 5h16v11H9l-5 4z',
+  studio: 'M12 11a1 1 0 1 0 0 2a1 1 0 1 0 0-2M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13',
   voice: 'M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
   mind: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M8.5 14.5a4.5 4.5 0 0 0 7 0M9 9.5h.01M15 9.5h.01',
   people: 'M9 4.5a3.5 3.5 0 1 0 0 7a3.5 3.5 0 1 0 0-7M2.5 20a6.5 6.5 0 0 1 13 0M16.5 6.5a2.5 2.5 0 1 1 0 5M17.5 14.5a5 5 0 0 1 4 5.5',

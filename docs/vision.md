@@ -1,9 +1,9 @@
 # Vision: where Tubs' eyes come from and who looks at the pictures
 
 Status: built (2026-11-08, branch `feat/studio-mode`), tested against a stub
-OpenAI-compatible server and Gemini; the local model comparison is still to
-do. Applies to tubs-face in general; the studio mode only adds the
-`visionSource` choice (default `off`: a `snapshot:` source needs its URL).
+OpenAI-compatible server, Gemini and a local Ollama (2026-11-09, below).
+Applies to tubs-face in general; the studio mode only adds the `visionSource`
+choice (default `off`: a `snapshot:` source needs its URL).
 
 ## Why
 
@@ -86,16 +86,35 @@ off                    no pictures
 
 ## Local models to try first
 
-Candidates as of November 2026, to be measured on our own pictures (studio
-lighting, two to four people) before picking one. The rankings below come
-from blog comparisons, not from our tests:
+Candidates as of November 2026. Use the **`-instruct`** tags: the plain
+`qwen3-vl:4b` is the thinking variant, which spends all its tokens thinking
+(even with `think: false`) and returns empty content; tubs-face then logs
+"answered with no text … use an -instruct one" and keeps the last description.
 
 | Model (Ollama tag) | Size | Why |
 |---|---|---|
-| `qwen3-vl:4b` | ≈ 3.3 GB | strong on detail and text for its size; fits small cards |
-| `qwen3-vl:8b` | ≈ 6.2 GB | better quality if the box has room |
+| `qwen3-vl:4b-instruct` | ≈ 3.3 GB | strong on detail and text for its size; fits small cards. Measured below |
+| `qwen3-vl:8b-instruct` | ≈ 6.2 GB | better quality if the box has room; not measured yet |
 | `gemma4:e4b` | fits 8 GB | general image use, easy setup |
 | MiniCPM-V, Moondream 2 | smaller | only if the box is very constrained |
+
+Measured on this Mac (Ollama 0.30.8 at `127.0.0.1:11434`, through its
+OpenAI-compatible `/v1/chat/completions`, the studio's two face pages and Ming
+running), with a public test photo of one person with an umbrella (272 × 512):
+
+- `qwen3-vl:4b-instruct`, a new picture each time (what a camera sends):
+  2.6–2.8 s end to end inside tubs-face (frame received to description
+  stored; tubs-face itself adds a few ms), 3.1–3.6 s calling Ollama directly.
+- The same picture again: 0.75–0.95 s, because Ollama reuses the cached
+  prompt with the image. Do not take this as the camera case.
+- First call after loading: 14.6 s. About 45–60 output tokens.
+- Descriptions: olive puffer jacket, plaid shirt, scarf, glasses, red
+  umbrella, smiling, wet street with crosswalk. With the old prompt it labelled
+  a single person "Left:" (and sometimes "Right: no other people"); the
+  prompt now asks for labels only with two or more people (checked: one person
+  5 of 5 without a label, two people 5 of 5 with Left:/Right:, Gemini the same).
+  It still writes "a man"/"he" at times despite the no-gender rule.
+- For comparison, Gemini (`gemini-3.5-flash`) took 1.7–1.8 s per picture.
 
 ### Where it runs: any box, picked by load
 

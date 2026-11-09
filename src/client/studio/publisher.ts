@@ -11,7 +11,23 @@ export interface PublisherStatus {
 export interface FacePublisher {
   /** Publish to this WHIP URL (null: stop). Same URL again changes nothing. */
   publish(url: string | null): void;
+  /** What the video sender did since the last call; null while not publishing. */
+  stats(): Promise<PublishStats | null>;
   dispose(): void;
+}
+
+export interface PublishStats {
+  /** Frames the canvas track delivered to WebRTC, per second. */
+  sourceFps: number;
+  /** Frames the encoder produced, per second. */
+  encodedFps: number;
+  keyFrames: number;
+  /** What WebRTC says limits the stream: none, cpu, bandwidth or other. */
+  limitedBy: string;
+  encoder: string;
+  encodeMsPerFrame: number;
+  /** The width the encoder sends now (1024 unless WebRTC scaled it down). */
+  frameWidth: number;
 }
 
 // 1024x1024 at 30 fps: plenty for a pixel face on a LAN. maintain-resolution
@@ -19,51 +35,9 @@ export interface FacePublisher {
 const MAX_BITRATE = 8_000_000;
 const MAX_FRAMERATE = 30;
 const DISCONNECT_GRACE_MS = 4000;
-/** The contract wants a keyframe at least every second; a little early leaves room for the check interval. */
-export const MAX_KEYFRAME_GAP_MS = 800;
-const KEYFRAME_CHECK_MS = 100;
-
-/**
- * Keeps keyframes at most MAX_KEYFRAME_GAP_MS apart, so a receiver joining
- * mid-show shows the face within a second. Chrome's encoder only sends one
- * when asked (mediamtx asks every 2 s) and Chrome 157 has no generateKeyFrame,
- * so when none came in time the encoding is switched off and on: the encoder
- * restarts with a keyframe, at the cost of one held frame (~70 ms) per forced keyframe.
- */
-function keepKeyFrames(sender: RTCRtpSender): () => void {
-  let seen = -1;
-  let lastKeyAt = performance.now();
-  let forcing = false;
-  const timer = window.setInterval(() => {
-    if (forcing) return;
-    void sender.getStats().then(async (report) => {
-      let count = -1;
-      report.forEach((stats: { type?: string; keyFramesEncoded?: number }) => {
-        if (stats.type === 'outbound-rtp' && typeof stats.keyFramesEncoded === 'number') count = stats.keyFramesEncoded;
-      });
-      const now = performance.now();
-      if (count !== seen) {
-        seen = count;
-        lastKeyAt = now;
-        return;
-      }
-      if (now - lastKeyAt < MAX_KEYFRAME_GAP_MS) return;
-      forcing = true;
-      lastKeyAt = now;
-      try {
-        const off = sender.getParameters();
-        off.encodings.forEach((encoding) => { encoding.active = false; });
-        await sender.setParameters(off);
-        const on = sender.getParameters();
-        on.encodings.forEach((encoding) => { encoding.active = true; });
-        await sender.setParameters(on);
-      } finally {
-        forcing = false;
-      }
-    }).catch(() => {});
-  }, KEYFRAME_CHECK_MS);
-  return () => window.clearInterval(timer);
-}
+// Keyframes come when the site node asks (mediamtx: every 2 s, and on loss).
+// Forcing more by switching the encoding off and on held a frame each time:
+// a 60-150 ms stall in the stream about once a second, visible as a jump.
 
 export function createFacePublisher(options: {
   /** The face's video and voice; null until the canvas exists. */
@@ -78,7 +52,7 @@ export function createFacePublisher(options: {
   let retryTimer = 0;
   let dropTimer = 0;
   let disposed = false;
-  let stopKeyFrames: (() => void) | null = null;
+  let previous: { at: number; source: number; encoded: number; keys: number; encodeTime: number } | null = null;
 
   function status(next: PublisherStatus): void {
     options.onStatus(next);
@@ -87,8 +61,6 @@ export function createFacePublisher(options: {
   function teardown(): void {
     window.clearTimeout(retryTimer);
     window.clearTimeout(dropTimer);
-    stopKeyFrames?.();
-    stopKeyFrames = null;
     if (session) {
       session.pc.onconnectionstatechange = null;
       session.pc.close();
@@ -137,8 +109,7 @@ export function createFacePublisher(options: {
       }
       session = next;
       options.log(`publishing to ${url}`);
-      const videoSender = next.pc.getSenders().find((sender) => sender.track?.kind === 'video');
-      if (videoSender) stopKeyFrames = keepKeyFrames(videoSender);
+      previous = null;
       next.pc.onconnectionstatechange = () => {
         if (gen !== generation) return;
         const state = next.pc.connectionState;
@@ -166,6 +137,44 @@ export function createFacePublisher(options: {
       if (url === target) return;
       target = url;
       restart();
+    },
+    async stats() {
+      const videoSender = session?.pc.getSenders().find((sender) => sender.track?.kind === 'video');
+      if (!videoSender) return null;
+      const report = await videoSender.getStats();
+      let source = 0;
+      let encoded = 0;
+      let keys = 0;
+      let encodeTime = 0;
+      let limitedBy = 'none';
+      let encoder = '';
+      let frameWidth = 0;
+      report.forEach((entry: Record<string, unknown>) => {
+        if (entry.type === 'media-source' && typeof entry.frames === 'number') source = entry.frames;
+        if (entry.type === 'outbound-rtp') {
+          encoded = Number(entry.framesEncoded ?? 0);
+          keys = Number(entry.keyFramesEncoded ?? 0);
+          encodeTime = Number(entry.totalEncodeTime ?? 0);
+          limitedBy = String(entry.qualityLimitationReason ?? 'none');
+          encoder = String(entry.encoderImplementation ?? '');
+          frameWidth = Number(entry.frameWidth ?? 0);
+        }
+      });
+      const now = performance.now();
+      const last = previous;
+      previous = { at: now, source, encoded, keys, encodeTime };
+      if (!last) return null;
+      const seconds = (now - last.at) / 1000;
+      const frames = encoded - last.encoded;
+      return {
+        sourceFps: Math.round(((source - last.source) / seconds) * 10) / 10,
+        encodedFps: Math.round((frames / seconds) * 10) / 10,
+        keyFrames: keys - last.keys,
+        limitedBy,
+        encoder,
+        encodeMsPerFrame: frames > 0 ? Math.round(((encodeTime - last.encodeTime) / frames) * 10_000) / 10 : 0,
+        frameWidth,
+      };
     },
     dispose() {
       disposed = true;
