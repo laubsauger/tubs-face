@@ -17,7 +17,7 @@ export interface RunningBit {
   match: string[];
   /** Minutes after a use before it is offered again. */
   cooldownMin: number;
-  /** 0-1, default 1: once rolled for a turn, how likely it is really offered (0.5: half as often as the others). */
+  /** 0-1, default 1: once rolled for a turn, how likely it is really offered (0.5: half as often as the others). 0: never offered, only watched, so a repeat is caught. */
   chance?: number;
   /** Who may be offered it in a two-head turn; default both. A "small" bit is never offered to Tubs alone. */
   head?: BitHead;

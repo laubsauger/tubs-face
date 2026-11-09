@@ -212,7 +212,8 @@ function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, resul
     void logTubsReply(result.reply.text, result.beats);
     noteReplyEmoji(result.reply.emotion?.emoji);
     noteSmallEmoji(result.beats?.filter((beat) => beat.actor === 'small').at(-1)?.emotion?.emoji);
-    noteReplyLines(spokenLines(result));
+    // A proactive turn's input is our own prompt, not the visitor's words.
+    noteReplyLines(spokenLines(result), Date.now(), source === 'proactive' ? '' : input);
   }
   captureTurnTrace({ source, userText: input, result, startedAt, ...(turnTimer ? { turnTimer } : {}) });
 }

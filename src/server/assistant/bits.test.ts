@@ -62,19 +62,25 @@ afterEach(() => {
 });
 
 describe('running bits', () => {
-  // The bug the user saw, in Small's line. Both heads' lines count.
-  it('after Small says the remotes vanished again, they are not offered for their cooldown and the direction says to stay off them', () => {
+  // The bug the user saw, in Small's line. Both heads' lines count. One use
+  // only puts it on cooldown: naming it in the direction then kept it in
+  // front of the model on every turn. Coming back during the cooldown is a
+  // repeat, and that is named.
+  it('after Small says the remotes vanished again, they are not offered for their cooldown, and named only when they come back during it', () => {
     noteReplyLines([{ head: 'main', text: 'Nice coat.' }, { head: 'small', text: 'The remotes vanished again.' }], T0);
 
-    expect(status('projector-remotes', T0)).toMatchObject({ uses: 1, lastUsedAt: T0, cooldownLeftMs: remotes().cooldownMin * MIN });
+    expect(status('projector-remotes', T0)).toMatchObject({ uses: 1, lastUsedAt: T0, cooldownLeftMs: remotes().cooldownMin * MIN, stayOff: false });
     for (const after of [1, 20, remotes().cooldownMin - 1]) {
-      expect(offeredOver(2000, 'dual', T0 + after * MIN).has('projector-remotes')).toBe(false);
+      expect(offeredOver(2000, 'dual', T0 + after * MIN, 'Where did the remote go?').has('projector-remotes')).toBe(false);
     }
     expect(offeredOver(2000, 'dual', T0 + (remotes().cooldownMin + 1) * MIN, 'Where did the remote go?').has('projector-remotes')).toBe(true);
+    expect(direction('dual', () => 0.99)).not.toContain('remote');
 
+    noteReplyLines([{ head: 'main', text: 'Blame the projector.' }], T0 + MIN);
+    vi.setSystemTime(T0 + MIN);
     const next = direction('dual', () => 0.99);
-    expect(next).toMatch(/Stay off them this time/);
     expect(next).toContain('"projector remotes"');
+    expect(next).toMatch(/Find a new subject this time/);
   });
 
   it('keeps the remotes, the one the user tired of, on a longer cooldown than the other bits', () => {
@@ -97,19 +103,20 @@ describe('running bits', () => {
     expect(wornMotifs(recentReplyTexts(T0 + 2 * MIN)).filter((term) => /remote|projector/.test(term))).toEqual([]);
   });
 
-  // At 15% of turns, offered whatever the visitor was on about, bits came out
-  // as non-sequiturs ("I hid your laptop charger under the floorboards." to
-  // someone testing the mic). Rare out of the blue; likely on topic.
-  it('offers a bit rarely out of the blue, and likely when the visitor brings its topic up', () => {
+  // Offered whatever the visitor was on about, even on one turn in twenty,
+  // a bit came out as a non-sequitur every time ("run your little tests while
+  // the studio plays Alan Watts clips", "I hid your laptop charger under the
+  // floorboards." to someone testing the mic). Asked about the rent, the rent
+  // bit came out as an answer. So a bit comes up only when the visitor does.
+  it('offers a bit only when the visitor brings its topic up, and then likely', () => {
     const rate = (heard: string) => {
       const random = seeded(42);
       let offered = 0;
       for (let i = 0; i < 2000; i += 1) if (direction('dual', random, heard).includes('may use this')) offered += 1;
       return offered / 2000;
     };
-    expect(rate('')).toBeGreaterThan(0.005);
-    expect(rate('')).toBeLessThan(0.08);
-    expect(rate('I am trying to test the subtitles on the small displays.')).toBeLessThan(0.08);
+    expect(rate('')).toBe(0);
+    expect(rate('I am trying to test the subtitles on the small displays.')).toBe(0);
     const remotesOffered = offeredOver(2000, 'dual', T0, 'And where are all the projector remotes going?').get('projector-remotes') ?? 0;
     expect(remotesOffered / 2000).toBeGreaterThan(0.2);
   });
@@ -126,7 +133,7 @@ describe('running bits', () => {
 
   it('never offers a bit the operator switched off, and still offers the others', () => {
     expect(setBitEnabled('projector-remotes', false)).toBe(true);
-    const seen = offeredOver(3000, 'dual', T0);
+    const seen = offeredOver(3000, 'dual', T0, 'Where are the remotes, and does Dimi pay the rent?');
     expect(seen.has('projector-remotes')).toBe(false);
     expect(seen.size).toBeGreaterThan(0);
     expect(status('projector-remotes', T0).enabled).toBe(false);
@@ -166,16 +173,29 @@ describe('running bits', () => {
   // A "stay off" list naming every bit on cooldown would put all the lore back
   // in front of the model every turn. Only one used just now, or one the model
   // reached for again during its cooldown.
-  it('names a bit to stay off right after a use, and for its whole cooldown once it is used again during it', () => {
+  // Each turn that names it puts it in front of the model again: named for
+  // the next few turns after a repeat, then left to the cooldown.
+  it('names a bit only once it was repeated, and only for the next few turns', () => {
     noteReplyLines([{ head: 'main', text: 'Dimi pays the rent, I pay attention.' }], T0);
-    expect(status('dimi-and-the-rent', T0 + 5 * MIN).stayOff).toBe(true);
-    expect(status('dimi-and-the-rent', T0 + 15 * MIN)).toMatchObject({ stayOff: false });
-    expect(status('dimi-and-the-rent', T0 + 15 * MIN).cooldownLeftMs).toBeGreaterThan(0);
+    expect(status('dimi-and-the-rent', T0 + MIN).stayOff).toBe(false);
 
-    noteReplyLines([{ head: 'small', text: 'The landlord is listening.' }], T0 + 20 * MIN);
-    const cooldown = activeBits().find((bit) => bit.id === 'dimi-and-the-rent')!.cooldownMin;
-    expect(status('dimi-and-the-rent', T0 + (20 + cooldown - 1) * MIN).stayOff).toBe(true);
-    expect(status('dimi-and-the-rent', T0 + (20 + cooldown + 1) * MIN).stayOff).toBe(false);
+    noteReplyLines([{ head: 'small', text: 'The landlord is listening.' }], T0 + 2 * MIN);
+    expect(status('dimi-and-the-rent', T0 + 2 * MIN).stayOff).toBe(true);
+    for (let turn = 1; turn <= 3; turn += 1) noteReplyLines([{ head: 'main', text: `Nice shoes, ${turn}.` }], T0 + (2 + turn) * MIN);
+    expect(status('dimi-and-the-rent', T0 + 6 * MIN).stayOff).toBe(true);
+    noteReplyLines([{ head: 'main', text: 'Nice hat.' }], T0 + 7 * MIN);
+    expect(status('dimi-and-the-rent', T0 + 7 * MIN)).toMatchObject({ stayOff: false });
+    expect(status('dimi-and-the-rent', T0 + 7 * MIN).cooldownLeftMs).toBeGreaterThan(0);
+  });
+
+  // Asked twice about the remotes, answering twice is a conversation.
+  it('does not count answering the visitor about it as a repeat', () => {
+    noteReplyLines([{ head: 'main', text: 'The remotes walk off on their own.' }], T0, 'Where are the projector remotes?');
+    noteReplyLines([{ head: 'main', text: 'Still no remote. Check the couch.' }], T0 + MIN, 'Seriously, where is the remote?');
+    expect(status('projector-remotes', T0 + MIN)).toMatchObject({ uses: 2, stayOff: false });
+    expect(status('projector-remotes', T0 + MIN).cooldownLeftMs).toBeGreaterThan(0);
+    noteReplyLines([{ head: 'small', text: 'I ate a remote once.' }], T0 + 2 * MIN, 'Nice hat.');
+    expect(status('projector-remotes', T0 + 2 * MIN).stayOff).toBe(true);
   });
 
   it('refuses a broken bit instead of guessing', async () => {
@@ -211,8 +231,8 @@ describe('worn motifs beyond the running bits', () => {
     expect(wornMotifs(recentReplyTexts(now))).not.toContain('smell');
     expect(stayOffMotifs(now).small).toContain('smell');
     vi.setSystemTime(now);
-    expect(direction('dual', () => 0.99)).toContain('Small keeps coming back to "smell". Small stays off it this time.');
-    expect(direction('single', () => 0.99)).not.toContain('Small keeps');
+    expect(direction('dual', () => 0.99)).toContain('Small has said "smell" a lot tonight. Small finds a new subject this time.');
+    expect(direction('single', () => 0.99)).not.toContain('Small has said');
   });
 });
 
@@ -230,7 +250,20 @@ describe('the static persona', () => {
   });
 
   it('kept the lore as bits in the built-in character', () => {
-    expect(activeBits().map((bit) => bit.id)).toEqual(expect.arrayContaining(['projector-remotes', 'dimi-and-the-rent', 'alan-watts', 'studio-wifi', 'your-own-body']));
+    expect(activeBits().map((bit) => bit.id)).toEqual(expect.arrayContaining(['projector-remotes', 'dimi-and-the-rent', 'alan-watts', 'your-own-body']));
+  });
+
+  // The Wi-Fi was never studio lore; as a bit, its joke-shaped text came back
+  // nearly word for word ("I am fairly sure we run on the neighbors Wi-Fi.").
+  // Offered bits are short facts the model tells in its own words, and the
+  // body and Small's hiding are only watched for repeats, never offered.
+  it('offers only short facts, no invented lore, and never the body or Small\'s hiding', () => {
+    const bits = activeBits();
+    expect(bits.some((bit) => bit.match.some((entry) => /wi-?fi/i.test(entry)))).toBe(false);
+    for (const bit of bits.filter((each) => (each.chance ?? 1) > 0)) expect(bit.text.split(/\s+/).length).toBeLessThanOrEqual(14);
+    const offered = offeredOver(5000, 'dual', T0, 'my tubs, my plastic, stolen keys, hiding');
+    expect(offered.has('your-own-body')).toBe(false);
+    expect(offered.has('small-hides-things')).toBe(false);
   });
 });
 

@@ -160,9 +160,11 @@ export const bitLabel = (bit: Pick<RunningBit, 'id'>): string => bit.id.replace(
 
 // ---- tonight's uses (memory only, like the field notes) ----
 
-interface BitUse { uses: number; lastUsedAt: number | null; overused: boolean }
+interface BitUse { uses: number; lastUsedAt: number | null; lastUsedTurn: number; overused: boolean }
 const usage = new Map<string, BitUse>();
 const disabled = new Set<string>();
+/** Heard replies noted tonight; the stay-off line counts turns, not minutes. */
+let turnsNoted = 0;
 
 const minutes = (value: number) => value * 60_000;
 
@@ -171,35 +173,37 @@ function cooldownLeftMs(bit: RunningBit, now: number): number {
   return lastUsedAt == null ? 0 : Math.max(0, lastUsedAt + minutes(bit.cooldownMin) - now);
 }
 
-// Right after a use the visitor has just heard it, and a callback a turn or
-// two later was the "every second line" pattern. Only for a while, though: a
-// "stay off" list naming every bit on cooldown would put all the lore back in
-// front of the model on every turn.
-const STAY_OFF_AFTER_USE_MS = minutes(10);
+// Named in the stay-off line only once it was repeated: used again during its
+// cooldown, so the model is reaching for it on its own. After a single use
+// the cooldown alone keeps it from being offered; naming it then put it in
+// front of the model on every turn ("studio wifi" stayed on the list for a
+// quarter of an hour after one mention). And only for the next few turns:
+// each one that names it puts it in front of the model again.
+const STAY_OFF_TURNS = 4;
 
 function staysOff(bit: RunningBit, now: number): boolean {
   const use = usage.get(bit.id);
-  if (!use || use.lastUsedAt == null) return false;
-  const left = cooldownLeftMs(bit, now);
-  if (now - use.lastUsedAt < Math.min(STAY_OFF_AFTER_USE_MS, minutes(bit.cooldownMin))) return true;
-  // Used again while it was on cooldown, without being offered: the model is
-  // reaching for it on its own, so it stays off until the cooldown is over.
-  return use.overused && left > 0;
+  if (!use?.overused) return false;
+  return turnsNoted - use.lastUsedTurn < STAY_OFF_TURNS && cooldownLeftMs(bit, now) > 0;
 }
 
 /**
  * Notes the bits a heard reply used: a match in any head's line counts, once
- * per reply. Returns their ids. A use restarts the cooldown.
+ * per reply. Returns their ids. A use restarts the cooldown. Answering the
+ * visitor about it (their words hit it too) is not a repeat: asked twice
+ * about the remotes, Tubs answering twice is a conversation, not a tic.
  */
-export function noteBitLines(lines: readonly SpokenLine[], now = Date.now()): string[] {
+export function noteBitLines(lines: readonly SpokenLine[], now = Date.now(), heard = ''): string[] {
+  turnsNoted += 1;
   const used: string[] = [];
   for (const bit of activeBits()) {
     const matcher = matcherOf(bit);
     if (!lines.some((line) => hits(matcher, line.text))) continue;
-    const use = usage.get(bit.id) ?? { uses: 0, lastUsedAt: null, overused: false };
-    use.overused = cooldownLeftMs(bit, now) > 0;
+    const use = usage.get(bit.id) ?? { uses: 0, lastUsedAt: null, lastUsedTurn: 0, overused: false };
+    use.overused = cooldownLeftMs(bit, now) > 0 && !(heard && hits(matcher, heard));
     use.uses += 1;
     use.lastUsedAt = now;
+    use.lastUsedTurn = turnsNoted;
     usage.set(bit.id, use);
     used.push(bit.id);
   }
@@ -211,18 +215,17 @@ export function bitsToStayOff(now = Date.now()): string[] {
   return activeBits().filter((bit) => staysOff(bit, now)).map(bitLabel);
 }
 
-// Most turns offer nothing: a bit is a callback the audience enjoys because it
-// is rare. At 15% of turns, and offered whatever the visitor was talking
-// about, it came out as a non-sequitur ("I hid your laptop charger under the
-// floorboards." to someone testing the mic). Out of the blue it is rare now;
-// when the visitor brings its topic up themselves, it is likely.
-export const BIT_OFFER_CHANCE = 0.05;
+// Only when the visitor brings it up. Out of the blue, even rarely, an offer
+// came out as a non-sequitur every time ("Fair enough, run your little tests
+// while the studio plays Alan Watts clips.", "I hid your laptop charger under
+// the floorboards." to someone testing the mic); asked about the rent, Dimi
+// and the rent came out as an answer.
 export const BIT_TOPIC_CHANCE = 0.6;
 
 /**
- * The bit offered this turn, if any: rolled among the enabled bits that are
- * off cooldown, preferring one whose words the visitor just used. A "small"
- * bit only when the visitor brought it up and Small is invited to speak.
+ * The bit offered this turn, if any: one the visitor's words just hit,
+ * enabled, offered at all (chance above 0) and off cooldown. A "small" bit
+ * only when Small is invited to speak.
  *
  * Everything acts through the prompt before the one generation call: this
  * offer and the "stay off" line are all there is. No rerun, no regeneration,
@@ -231,15 +234,14 @@ export const BIT_TOPIC_CHANCE = 0.6;
  * that shapes the next turn's stage direction.
  */
 export function offerBit(mode: 'single' | 'dual', random: () => number, now = Date.now(), heard = '', smallOnStage = mode === 'dual'): RunningBit | null {
-  const topical = (bit: RunningBit) => heard !== '' && hits(matcherOf(bit), heard);
-  const eligible = activeBits().filter((bit) => !disabled.has(bit.id)
+  if (!heard) return null;
+  const onTopic = activeBits().filter((bit) => !disabled.has(bit.id)
+    && (bit.chance ?? 1) > 0
     && cooldownLeftMs(bit, now) === 0
-    && ((bit.head ?? 'both') !== 'small' || (mode === 'dual' && smallOnStage && topical(bit))));
-  const onTopic = eligible.filter(topical);
-  if (random() >= (onTopic.length > 0 ? BIT_TOPIC_CHANCE : BIT_OFFER_CHANCE)) return null;
-  const pool = onTopic.length > 0 ? onTopic : eligible;
-  if (pool.length === 0) return null;
-  const bit = pool[Math.floor(random() * pool.length)]!;
+    && ((bit.head ?? 'both') !== 'small' || (mode === 'dual' && smallOnStage))
+    && hits(matcherOf(bit), heard));
+  if (onTopic.length === 0 || random() >= BIT_TOPIC_CHANCE) return null;
+  const bit = onTopic[Math.floor(random() * onTopic.length)]!;
   return random() < (bit.chance ?? 1) ? bit : null;
 }
 
@@ -274,4 +276,5 @@ export function resetBits(): void {
   builtin = null;
   usage.clear();
   disabled.clear();
+  turnsNoted = 0;
 }

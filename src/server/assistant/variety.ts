@@ -18,8 +18,11 @@ const NAME_CHANCE = 0.3;
 // on some turns (once per person), so it comes up naturally.
 const ASK_NAME_CHANCE = 0.35;
 // Swearing is in the persona, but left alone the model stays polite. Asked on
-// some turns, it lands where it fits instead of in every line.
-const SWEAR_CHANCE = 0.3;
+// some turns, it lands where it fits instead of in every line. Two heads:
+// addressed to Main at 0.3, Main swore in 35% of its lines. Main swears on
+// every turn that asks and on about one in twenty that doesn't, so this
+// keeps it near one line in seven.
+const SWEAR_CHANCE = { single: 0.3, dual: 0.1 } as const;
 const SIDE: Record<Position, string> = { left: 'on the left', center: 'in the middle', right: 'on the right' };
 
 interface PersonRef { position: Position; name: string | null }
@@ -98,7 +101,7 @@ const MOVE_CHANCE = 0.55;
 // Kept by time as well as by count: on a busy studio night the last ten
 // replies are a few minutes, and a motif could come back every quarter of an
 // hour without ever being three of the last ten.
-interface NotedReply { at: number; lines: SpokenLine[] }
+interface NotedReply { at: number; lines: SpokenLine[]; heard: string }
 const recentReplies: NotedReply[] = [];
 const MOTIF_MEMORY = 10;
 const MOTIF_WINDOW_MS = 30 * 60_000;
@@ -114,15 +117,16 @@ const MOTIF_STOPWORDS = new Set(('about after again also always another anyone a
 // with a cooldown. The count here is for everything else the heads fall into.
 
 /**
- * What the heads said in a reply that was heard, both heads' lines: the
- * worn-motif memory and the running bits learn from it.
+ * What the heads said in a reply that was heard, both heads' lines, and what
+ * the visitor had said to it: the worn-motif memory and the running bits
+ * learn from it.
  */
-export function noteReplyLines(lines: readonly SpokenLine[], now = Date.now()): void {
+export function noteReplyLines(lines: readonly SpokenLine[], now = Date.now(), heard = ''): void {
   const spoken = lines.filter((line) => line.text.trim()).map((line) => ({ head: line.head, text: line.text }));
   if (spoken.length === 0) return;
-  recentReplies.push({ at: now, lines: spoken });
+  recentReplies.push({ at: now, lines: spoken, heard });
   if (recentReplies.length > MOTIF_KEPT_MAX) recentReplies.shift();
-  noteBitLines(spoken, now);
+  noteBitLines(spoken, now, heard);
 }
 
 /** The last ten, or everything from the last half hour when that is more. */
@@ -130,37 +134,44 @@ function motifWindow<T extends { at: number }>(items: readonly T[], now: number)
   return items.filter((item, index) => index >= items.length - MOTIF_MEMORY || now - item.at <= MOTIF_WINDOW_MS);
 }
 
+/** A reply's text, and what the visitor said to it. */
+export interface HeardReply { text: string; heard: string }
+
 /** Recent replies, both heads' lines as one text each. */
-export function recentReplyTexts(now = Date.now()): string[] {
-  return motifWindow(recentReplies, now).map((reply) => reply.lines.map((line) => line.text).join(' '));
+export function recentReplyTexts(now = Date.now()): HeardReply[] {
+  return motifWindow(recentReplies, now).map((reply) => ({ text: reply.lines.map((line) => line.text).join(' '), heard: reply.heard }));
 }
 
 /** One head's recent lines, by its own count: Small speaks on fewer turns, so its last ten lines reach further back. */
-function recentHeadLines(head: Head, now: number): string[] {
-  const lines = recentReplies.flatMap((reply) => reply.lines.filter((line) => line.head === head).map((line) => ({ at: reply.at, text: line.text })));
-  return motifWindow(lines, now).map((line) => line.text);
+function recentHeadLines(head: Head, now: number): HeardReply[] {
+  const lines = recentReplies.flatMap((reply) => reply.lines.filter((line) => line.head === head).map((line) => ({ at: reply.at, text: line.text, heard: reply.heard })));
+  return motifWindow(lines, now).map(({ text, heard }) => ({ text, heard }));
 }
 
 /**
  * Words and two-word phrases that keep coming back across recent replies,
  * phrases first. Plurals count as the word ("remote", "remotes"), and words a
- * running bit owns are left to the bit.
+ * running bit owns are left to the bit. A word the visitor said in that turn
+ * does not count: asked about the subtitles three times, Main said "text"
+ * three times and was told to find a new subject, away from the visitor's.
  */
-export function wornMotifs(replies: readonly string[] = recentReplyTexts(), max = 3, owned: ReadonlySet<string> = bitWordStems()): string[] {
+export function wornMotifs(replies: ReadonlyArray<string | HeardReply> = recentReplyTexts(), max = 3, owned: ReadonlySet<string> = bitWordStems()): string[] {
   const counts = new Map<string, number>();
   // As first said, for the stage direction; counted by stem.
   const said = new Map<string, string>();
   for (const reply of replies) {
-    const words = lineWords(reply);
+    const { text, heard } = typeof reply === 'string' ? { text: reply, heard: '' } : reply;
+    const theirs = new Set(lineWords(heard).map(stem));
+    const words = lineWords(text);
     const terms = new Set<string>();
     words.forEach((word, index) => {
       if (word.length < 4 || MOTIF_STOPWORDS.has(word)) return;
       const key = stem(word);
-      if (owned.has(key)) return;
+      if (owned.has(key) || theirs.has(key)) return;
       terms.add(key);
       if (!said.has(key)) said.set(key, word);
       const next = words[index + 1];
-      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next) && !owned.has(stem(next))) {
+      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next) && !owned.has(stem(next)) && !theirs.has(stem(next))) {
         const phrase = `${key} ${stem(next)}`;
         terms.add(phrase);
         if (!said.has(phrase)) said.set(phrase, `${word} ${next}`);
@@ -199,11 +210,13 @@ const HEAD_NAMES: Record<Head, string> = { main: 'Main', small: 'Small' };
 function stayOffLines(motifs: { all: string[]; main: string[]; small: string[] }, mode: 'single' | 'dual' | 'proactive'): string[] {
   const quoted = (terms: string[]) => terms.map((term) => `"${term}"`).join(', ');
   const lines: string[] = [];
-  if (motifs.all.length > 0) lines.push(`Fresh material: you keep coming back to ${quoted(motifs.all)}. Stay off them this time.`);
+  // Said as "find a new subject", not "stay off": a list of what not to say
+  // is still a list of things to say.
+  if (motifs.all.length > 0) lines.push(`You have said ${quoted(motifs.all)} a lot tonight. Find a new subject this time.`);
   // Tubs alone has only Main's lines, and those are the combined count.
   if (mode !== 'single') {
     for (const head of ['main', 'small'] as const) {
-      if (motifs[head].length > 0) lines.push(`${HEAD_NAMES[head]} keeps coming back to ${quoted(motifs[head])}. ${HEAD_NAMES[head]} stays off ${motifs[head].length > 1 ? 'them' : 'it'} this time.`);
+      if (motifs[head].length > 0) lines.push(`${HEAD_NAMES[head]} has said ${quoted(motifs[head])} a lot tonight. ${HEAD_NAMES[head]} finds a new subject this time.`);
     }
   }
   return lines;
@@ -262,11 +275,12 @@ export interface DualShape {
 // night of 9 Nov), because most shapes asked for two or three speak beats;
 // with nothing of its own to say, Small filled the slot with a jab that fit
 // any visitor ("Say goodbye instead.", "Give us your teeth."). Now Main
-// carries half the turns alone, and Small is invited on about two in five.
+// carries most turns alone, and Small is invited on about one in three: in
+// the check runs it took nearly every invitation, so this is its share.
 const DUAL_SHAPES: ReadonlyArray<DualShape & { until: number }> = [
-  { until: 0.5, small: false, text: 'Only Main speaks this time: one sentence, under fifteen words. Small stays quiet or only reacts.' },
-  { until: 0.73, small: true, text: 'Main speaks: one sentence, under fifteen words. Small may add one line after it, under twelve words.' },
-  { until: 0.8, small: true, text: 'A quick back-and-forth this time, Main, Small, Main, each line under ten words.' },
+  { until: 0.58, small: false, text: 'Only Main speaks this time: one sentence, under fifteen words. Small stays quiet or only reacts.' },
+  { until: 0.77, small: true, text: 'Main speaks: one sentence, under fifteen words. Small may add one line after it, under twelve words.' },
+  { until: 0.82, small: true, text: 'A quick back-and-forth this time, Main, Small, Main, each line under ten words.' },
   { until: 0.88, small: true, text: 'Small answers this one, under twelve words. Main may add one line under ten words, or only react.' },
   { until: 0.97, small: false, text: 'Main takes the room for a bit this time: three to six short sentences in its speak beat, each under twelve words, punchline last. Small stays quiet or only reacts.' },
   { until: 1, small: true, text: 'Small takes the room for a bit this time: three to six short sentences in its speak beat, each under twelve words, punchline last. Main may cut in once with a few words, or stay quiet.' },
@@ -317,8 +331,8 @@ export function isRealQuestion(heard: string): boolean {
 }
 
 const ENGAGE = {
-  single: 'They asked or told you something real. Answer what they actually said, for real and in your voice (you know a lot: tech, people, this studio, how you yourself work), and build the joke on that answer, not instead of it.',
-  dual: 'They asked or told you something real. Main answers what they actually said, for real and in its voice (you know a lot: tech, people, this studio, how you yourselves work), and builds the joke on that answer, not instead of it.',
+  single: 'They asked or told you something real. Answer what they actually said, for real and in your voice, and build the joke on that answer, not instead of it.',
+  dual: 'They asked or told you something real. Main answers what they actually said, for real and in its voice, and builds the joke on that answer, not instead of it.',
 } as const;
 
 export function pickLength(recent: string[], random: Random): LengthKey {
@@ -459,7 +473,7 @@ export function buildTurnDirection(
 
   lines.push(...stayOffLines(stayOffMotifs(), mode));
 
-  if (random() < SWEAR_CHANCE) {
+  if (random() < SWEAR_CHANCE[mode]) {
     // Main's: Small swearing ("Everything is completely fucked anyway.") was
     // just a second roast; Small's calm is what makes it unsettling.
     lines.push(mode === 'dual'

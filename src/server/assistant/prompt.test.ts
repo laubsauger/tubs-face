@@ -50,11 +50,12 @@ describe('system instructions built from the persona template', () => {
   });
 
   // The body and "humans" stayed on the stay-off list all night on 9 Nov:
-  // the persona itself kept them in front of the model.
+  // the persona itself kept them in front of the model. With the straps still
+  // in it, "plastic straps" came back three turns running in a check run.
   it('describes the body once, plainly, and real questions get real answers', () => {
     const prompt = buildAssistantSystemInstruction();
-    for (const pull of ['lunchbox', 'questionable engineering', 'cheap computer', 'Your lens is humans']) expect(prompt).not.toContain(pull);
-    expect(prompt).toContain('two plastic storage tubs held together with ratchet straps');
+    for (const pull of ['lunchbox', 'questionable engineering', 'cheap computer', 'Your lens is humans', 'ratchet straps']) expect(prompt).not.toContain(pull);
+    expect(prompt).toContain('two plastic storage tubs');
     expect(prompt).toContain('A real question gets a real answer');
   });
 

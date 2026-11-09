@@ -42,7 +42,7 @@ describe('buildTurnDirection', () => {
 
   it('varies the number of beats in two-head mode', () => {
     expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain('Only Main speaks');
-    expect(buildTurnDirection('dual', fixed(0.75, 0.99, 0.99), [])).toContain('back-and-forth');
+    expect(buildTurnDirection('dual', fixed(0.8, 0.99, 0.99), [])).toContain('back-and-forth');
   });
 
   // Two heads trading one-liners every turn never got to a joke: on some
@@ -179,14 +179,16 @@ describe('Small in two-head turns', () => {
     };
   };
 
-  it('is invited on about two turns in five, and Main has half the turns to itself', () => {
+  // In the check runs Small took nearly every invitation, so the invited
+  // share is the share of turns it speaks on.
+  it('is invited on about one turn in three, and Main has more than half the turns to itself', () => {
     const random = seeded(3);
     const shapes = Array.from({ length: 10_000 }, () => dualShape(random()));
     const small = shapes.filter((shape) => shape.small).length / shapes.length;
     const mainAlone = shapes.filter((shape) => shape.text.startsWith('Only Main speaks')).length / shapes.length;
-    expect(small).toBeGreaterThan(0.33);
-    expect(small).toBeLessThan(0.47);
-    expect(mainAlone).toBeGreaterThan(0.45);
+    expect(small).toBeGreaterThan(0.28);
+    expect(small).toBeLessThan(0.4);
+    expect(mainAlone).toBeGreaterThan(0.5);
   });
 
   it('demands a hook whenever Small may speak, and keeps Small quiet otherwise', () => {
@@ -285,6 +287,13 @@ describe('worn motifs', () => {
   });
   it('leaves a motif used twice alone, and ignores filler words', () => {
     expect(wornMotifs([...printer(2), 'You really think that is going to work?', 'I really think so.', 'Really.'])).toEqual([]);
+  });
+  // Asked about the subtitles three times, Main said "text" three times and
+  // was told to find a new subject, away from what the visitor wanted.
+  it('does not count a word the visitor said in that turn', () => {
+    const answers = ['Shrink the text.', 'The text overflows.', 'Cut the text then.'].map((text) => ({ text, heard: 'The subtitle text is cut off on small displays.' }));
+    expect(wornMotifs(answers)).toEqual([]);
+    expect(wornMotifs(answers.map(({ text }) => ({ text, heard: 'Nice hat.' })))).toEqual(['text']);
   });
   // "remote" and "remotes" were two terms, so neither reached the limit.
   it('counts a plural as the word', () => {
