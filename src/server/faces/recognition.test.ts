@@ -30,7 +30,7 @@ function line(faces: Array<Partial<ServiceFace> & { embedding: number[] | null }
   };
 }
 
-function setup(options: { library?: EnrolledFace[]; config?: Partial<RecognitionConfig>; capture?: () => Promise<ServiceCapture> } = {}) {
+function setup(options: { library?: EnrolledFace[]; config?: Partial<RecognitionConfig>; capture?: () => Promise<ServiceCapture>; detect?: (picture: Buffer) => Promise<ServiceCapture> } = {}) {
   const applied: ListenerEffect[] = [];
   const published: FaceObservation[] = [];
   const added: Array<{ name: string; embedding: number[]; thumbnail?: string }> = [];
@@ -48,6 +48,7 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
     frame: async (maxPx) => { frames.push(maxPx); return 'data:image/jpeg;base64,AAAA'; },
     thumbnail: async () => 'data:image/jpeg;base64,BBBB',
     capture: options.capture ?? (async () => ({ frame: { w: 960, h: 540 }, faces: [] })),
+    detect: options.detect ?? (async () => ({ frame: { w: 640, h: 480 }, faces: [] })),
     where: () => 'studio-mac:3004',
     now: () => clock,
     delay: async () => undefined,
@@ -200,6 +201,41 @@ describe('recognition on the server', () => {
     expect(await recognition.faceCall('saveEnrollment', { name: ' Joe ', samples: [first, { embedding: 'nope', thumbnail: 'x' }] })).toBe(1);
     expect(added).toEqual([{ name: 'Joe', embedding: biden, thumbnail: 'data:image/jpeg;base64,T1' }]);
     expect(changed()).toBe(1);
+  });
+
+  // The dashboard's onboarding works the same whichever answers it (the
+  // listener page or the face service): with two people in view it takes the
+  // one the operator picked, and an uploaded photo is used only with exactly
+  // one face in it, else refused with the reason the browser gives.
+  it('onboarding through the service takes the face picked among several, and refuses uploads without exactly one face', async () => {
+    const biden = embeddingOf('biden-2021.jpg');
+    const harris = embeddingOf('harris-2021.jpg');
+    const two: ServiceCapture = {
+      frame: { w: 1000, h: 500 },
+      faces: [
+        { track: 1, box: [100, 100, 300, 400], score: 0.9, embedding: biden, thumbnail: 'data:image/jpeg;base64,B' },
+        { track: 2, box: [600, 100, 800, 400], score: 0.9, embedding: harris, thumbnail: 'data:image/jpeg;base64,H' },
+      ],
+    };
+    const pictures: Buffer[] = [];
+    const uploads: ServiceCapture[] = [
+      { frame: { w: 640, h: 480 }, faces: [] },
+      two,
+      { frame: { w: 640, h: 480 }, faces: [two.faces[1]!] },
+    ];
+    const { recognition } = setup({ capture: async () => two, detect: async (picture) => { pictures.push(picture); return uploads.shift()!; } });
+    // Two in view and no choice: no pose (the wizard asks which face first).
+    expect(await recognition.faceCall('captureEnrollmentSample', { previous: [] })).toBeNull();
+    const picked = await recognition.faceCall('captureEnrollmentSample', { previous: [], choose: [0.61, 0.2, 0.2, 0.6] }) as { embedding: number[]; thumbnail: string };
+    expect(picked).toMatchObject({ embedding: harris, thumbnail: 'data:image/jpeg;base64,H' });
+
+    const photo = `data:image/jpeg;base64,${Buffer.from('a photo').toString('base64')}`;
+    expect(await recognition.faceCall('embedPicture', { image: photo })).toEqual({ ok: false, reason: 'no face found' });
+    expect(pictures[0]!.toString()).toBe('a photo');
+    expect(await recognition.faceCall('embedPicture', { image: photo })).toEqual({ ok: false, reason: '2 faces: use a photo of one person' });
+    expect(await recognition.faceCall('embedPicture', { image: photo })).toEqual({ ok: true, sample: { embedding: harris, thumbnail: 'data:image/jpeg;base64,H', duplicate: false } });
+    expect(await recognition.faceCall('embedPicture', { image: 'data:text/html;base64,PGI+' })).toEqual({ ok: false, reason: 'not a JPEG, PNG or WebP picture (or too large)' });
+    expect(pictures).toHaveLength(3);
   });
 
   it('auto onboarding: snapshots of an unnamed visitor become their library entry once they say their name', async () => {

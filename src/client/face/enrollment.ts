@@ -4,7 +4,7 @@
 import type { DetectedFace } from '../../shared/contracts/faces.js';
 import type { AppStore } from '../state/app-state.js';
 import { createFaceEntry } from './library.js';
-import { cosineSimilarity } from './matching.js';
+import { chosenFace, cosineSimilarity } from './matching.js';
 import type { FaceWorkerClient } from './worker-client.js';
 
 const ENROLLMENT_CAPTURE_RETRY_DELAY_MS = 250;
@@ -90,23 +90,6 @@ export async function saveEnrollment(
 export function normalizedBox(box: [number, number, number, number], width: number, height: number): [number, number, number, number] {
   const [x1, y1, x2, y2] = box;
   return [x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height];
-}
-
-/** The face overlapping the chosen box most (and at least a little): the person picked among several. */
-export function chosenFace(faces: DetectedFace[], choose: [number, number, number, number], width: number, height: number): DetectedFace | null {
-  const [cx, cy, cw, ch] = choose;
-  const box = [cx * width, cy * height, (cx + cw) * width, (cy + ch) * height];
-  let best: { face: DetectedFace; overlap: number } | null = null;
-  for (const face of faces) {
-    const [x1, y1, x2, y2] = face.box;
-    const ix = Math.max(0, Math.min(x2, box[2]!) - Math.max(x1, box[0]!));
-    const iy = Math.max(0, Math.min(y2, box[3]!) - Math.max(y1, box[1]!));
-    const inter = ix * iy;
-    const union = (x2 - x1) * (y2 - y1) + (box[2]! - box[0]!) * (box[3]! - box[1]!) - inter;
-    const overlap = union > 0 ? inter / union : 0;
-    if (overlap > 0.2 && (!best || overlap > best.overlap)) best = { face, overlap };
-  }
-  return best?.face ?? null;
 }
 
 function captureVideoFrame(videoEl: HTMLVideoElement | null, captureCanvas: HTMLCanvasElement): { imageData: ImageData } | null {

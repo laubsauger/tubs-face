@@ -89,6 +89,8 @@ export interface FaceServiceClient {
   setSource(source: { url: string; label: string; fps: number } | null): void;
   status(): FaceServiceStatus;
   capture(): Promise<ServiceCapture>;
+  /** The faces in a picture (JPEG, PNG or WebP bytes), each embedded, with its thumbnail. */
+  detect(picture: Buffer): Promise<ServiceCapture>;
   /** The newest frame as a JPEG data URL, longest side at most maxPx. */
   frame(maxPx: number): Promise<string | null>;
   thumbnail(track: number): Promise<string | null>;
@@ -310,6 +312,13 @@ export function createFaceServiceClient(options: FaceServiceOptions): FaceServic
     async capture() {
       if (!base) throw new Error('face service not found');
       const response = await fetch(`${base}/capture`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const body = await response.json() as ServiceCapture & { error?: string };
+      if (!response.ok) throw new Error(body.error || `the face service answered ${response.status}`);
+      return body;
+    },
+    async detect(picture) {
+      if (!base) throw new Error('face service not found');
+      const response = await fetch(`${base}/detect`, { method: 'POST', body: new Uint8Array(picture), headers: { 'Content-Type': 'application/octet-stream' }, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       const body = await response.json() as ServiceCapture & { error?: string };
       if (!response.ok) throw new Error(body.error || `the face service answered ${response.status}`);
       return body;

@@ -8,12 +8,13 @@
 // appearance_frame, camera_frame), as one FaceObservation per frame for the
 // pages, and as the face fields of the studio_live relay and the pulse.
 
-import { annotateDetectedFaces, cosineSimilarity } from '../../client/face/matching.js';
+import { annotateDetectedFaces, chosenFace, cosineSimilarity } from '../../client/face/matching.js';
+import { uploadVerdict } from '../../client/face/person-match.js';
 import { createPeopleTracker, type TrackedPerson } from '../../client/face/people-tracker.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from '../../client/face/visitor-tracker.js';
 import { type Snapshot, wantsSnapshot } from '../../client/face/auto-onboarding.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
-import type { FaceObservation, FaceObservationFace, FaceWorkerStatus, StudioFaceMethod, StudioLiveFace, StudioLiveStatus } from '../../shared/contracts/studio.js';
+import { NOT_A_STUDIO_PICTURE, isStudioPicture, studioFaceBoxOf, type FaceObservation, type FaceObservationFace, type FaceWorkerStatus, type StudioFaceMethod, type StudioLiveFace, type StudioLiveStatus } from '../../shared/contracts/studio.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import type { ServiceCapture, ServiceHealth, ServiceLine } from './service.js';
 
@@ -48,6 +49,8 @@ export interface RecognitionDeps {
   frame(maxPx: number): Promise<string | null>;
   thumbnail(track: number): Promise<string | null>;
   capture(): Promise<ServiceCapture>;
+  /** The faces in a picture (an upload for someone's samples), each embedded, with its thumbnail. */
+  detect(picture: Buffer): Promise<ServiceCapture>;
   /** "mac:3004": where the service runs. */
   where(): string;
   now?: () => number;
@@ -346,21 +349,34 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
         case 'captureEnrollmentSample': {
           enrollmentUntil = now() + ENROLLMENT_IDLE_MS;
           const previous = embeddingsOf(args.previous);
+          // With several people in view the dashboard says whose photos (the box it was shown), as with the browser.
+          const choose = studioFaceBoxOf(args.choose);
           for (let attempt = 0; attempt < ENROLLMENT_MAX_CAPTURE_ATTEMPTS; attempt += 1) {
             const captured = await deps.capture();
             const candidates = captured.faces.filter((face) => Array.isArray(face.embedding));
-            if (candidates.length !== 1 || !candidates[0]!.thumbnail) {
+            const face = choose ? chosenFace(candidates, choose, captured.frame.w, captured.frame.h) : candidates.length === 1 ? candidates[0]! : null;
+            if (!face?.thumbnail) {
               await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
               continue;
             }
-            const embedding = candidates[0]!.embedding!;
+            const embedding = face.embedding!;
             return {
               embedding,
-              thumbnail: candidates[0]!.thumbnail,
+              thumbnail: face.thumbnail,
               duplicate: previous.some((sample) => cosineSimilarity(sample, embedding) >= ENROLLMENT_DUPLICATE_THRESHOLD),
             };
           }
           return null;
+        }
+        case 'embedPicture': {
+          // An uploaded photo for someone's samples: exactly one face, or the reason (client/face/runtime.ts embedPicture).
+          if (!isStudioPicture(args.image)) return { ok: false, reason: NOT_A_STUDIO_PICTURE };
+          const detected = await deps.detect(Buffer.from(args.image.slice(args.image.indexOf(',') + 1), 'base64'));
+          const verdict = uploadVerdict(detected.faces.length);
+          if (!verdict.ok) return verdict;
+          const face = detected.faces[0]!;
+          if (!Array.isArray(face.embedding) || !face.thumbnail) return { ok: false, reason: 'the face could not be read' };
+          return { ok: true, sample: { embedding: face.embedding, thumbnail: face.thumbnail, duplicate: false } };
         }
         case 'saveEnrollment': {
           const name = typeof args.name === 'string' ? args.name.trim() : '';

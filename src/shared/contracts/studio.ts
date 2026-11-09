@@ -271,6 +271,22 @@ export interface StudioPulse {
 export const STUDIO_FACE_METHODS = ['beginEnrollment', 'endEnrollment', 'captureEnrollmentSample', 'saveEnrollment', 'embedPicture'] as const;
 export type StudioFaceMethod = (typeof STUDIO_FACE_METHODS)[number];
 
+/** embedPicture's image: a JPEG, PNG or WebP data URL of at most this many characters. */
+export const STUDIO_PICTURE_MAX_CHARS = 12 * 1024 * 1024;
+
+export const NOT_A_STUDIO_PICTURE = 'not a JPEG, PNG or WebP picture (or too large)';
+
+export function isStudioPicture(value: unknown): value is string {
+  return typeof value === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(value) && value.length <= STUDIO_PICTURE_MAX_CHARS;
+}
+
+/** captureEnrollmentSample's choose: which of several people to take, [x, y, w, h] in 0..1, or nothing. */
+export function studioFaceBoxOf(value: unknown): [number, number, number, number] | undefined {
+  return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= -0.5 && n <= 1.5)
+    ? [value[0], value[1], value[2], value[3]]
+    : undefined;
+}
+
 /** The last picture sent to the vision provider, and what came back. */
 export interface StudioVisionCheck {
   at: number;

@@ -78,6 +78,7 @@ const recognition = createRecognition({
   frame: (maxPx) => client.frame(maxPx),
   thumbnail: (track) => client.thumbnail(track),
   capture: () => client.capture(),
+  detect: (picture) => client.detect(picture),
   where: () => client.status().where ?? (mode.kind === 'fleet' ? 'fleet:faces' : 'face service'),
 });
 
