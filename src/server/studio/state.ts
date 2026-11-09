@@ -6,6 +6,7 @@ import {
   STUDIO_ACTORS,
   parseMicSource,
   parseVisionSource,
+  type FaceRecognizer,
   type StudioActor,
   type StudioCadence,
   type StudioDevices,
@@ -28,6 +29,8 @@ export interface StudioSettings {
   /** Stream path prefix: "tubs-" gives tubs-main and tubs-small. */
   prefix: string;
   launch: StudioLaunchMode;
+  /** FACE_SERVICE is set (not off): the face service recognises what the server can read (docs/face-service.md). */
+  faceService?: boolean;
 }
 
 /** Env defaults. Studio mode is off unless TUBS_STUDIO says otherwise. */
@@ -48,7 +51,19 @@ export function studioSettingsFromEnv(env: NodeJS.ProcessEnv): StudioSettings {
     visionSource,
     prefix,
     launch: env.TUBS_STUDIO_LAUNCH?.trim() === 'external' ? 'external' : 'chrome',
+    faceService: Boolean(env.FACE_SERVICE?.trim()) && env.FACE_SERVICE?.trim() !== 'off',
   };
+}
+
+/**
+ * Who recognises the studio camera's faces: the face service for a camera the
+ * server can read (a site stream, a snapshot URL), the listener page's browser
+ * worker for a local camera or without FACE_SERVICE, nobody without a camera.
+ */
+export function recognizerOf(settings: StudioSettings = studioSettings): FaceRecognizer {
+  const source = parseVisionSource(settings.visionSource);
+  if (!settings.enabled || !source || source.kind === 'off') return 'off';
+  return settings.faceService && (source.kind === 'site' || source.kind === 'snapshot') ? 'service' : 'browser';
 }
 
 export const studioSettings: StudioSettings = studioSettingsFromEnv(process.env);
@@ -66,6 +81,8 @@ export function studioConfigMessage(settings: StudioSettings = studioSettings): 
     micSource: settings.micSource,
     visionSource: settings.visionSource,
     streams: { main: streamName('main', settings), small: streamName('small', settings) },
+    // Absent: the browser worker, as before.
+    ...(recognizerOf(settings) === 'service' ? { faces: 'service' as const } : {}),
   };
 }
 

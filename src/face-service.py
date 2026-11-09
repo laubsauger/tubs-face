@@ -185,33 +185,27 @@ def pick_backend(available):
     return "CPU", ["CPUExecutionProvider"]
 
 
-class quiet_coreml:  # noqa: N801
+def drop_coreml_noise():
     """
-    CoreML prints "E5RT encountered an STL exception ... unbounded dimension" to stderr for
-    the detector's free input size while it compiles (it then runs the model anyway); those
-    lines are dropped, anything else written to stderr meanwhile is passed on.
+    CoreML prints "E5RT encountered an STL exception ... unbounded dimension" on stdout for the
+    detector's free input size, now and then and at exit (it runs the model anyway). stdout goes
+    through a pipe that drops those lines and passes everything else on.
     """
+    sys.stdout.flush()
+    read_fd, write_fd = os.pipe()
+    original = os.dup(1)
+    os.dup2(write_fd, 1)
+    os.close(write_fd)
 
-    def __enter__(self):
-        import tempfile
+    def pump():
+        with os.fdopen(read_fd, "rb") as pipe:
+            for raw in pipe:
+                text = raw.decode("utf-8", "replace").replace("..E5RT", ".\nE5RT")
+                kept = "".join(part for part in text.splitlines(keepends=True) if "E5RT encountered" not in part)
+                if kept.strip():
+                    os.write(original, kept.encode("utf-8"))
 
-        sys.stderr.flush()
-        self.saved = os.dup(2)
-        self.capture = tempfile.TemporaryFile()
-        os.dup2(self.capture.fileno(), 2)
-        return self
-
-    def __exit__(self, *exc):
-        sys.stderr.flush()
-        os.dup2(self.saved, 2)
-        os.close(self.saved)
-        self.capture.seek(0)
-        text = self.capture.read().decode("utf-8", "replace")
-        self.capture.close()
-        kept = [part for part in text.replace("..E5RT", ".\nE5RT").splitlines() if part.strip() and "E5RT encountered" not in part]
-        if kept:
-            sys.stderr.write("\n".join(kept) + "\n")
-        return False
+    threading.Thread(target=pump, daemon=True).start()
 
 
 def load_models():
@@ -231,19 +225,19 @@ def load_models():
         S.download = None
     import onnxruntime as ort
 
+    ort.set_default_logger_severity(3)  # errors only: CoreML warns about every op it leaves to the CPU
     backend, providers = pick_backend(ort.get_available_providers())
     threads = max(1, min(4, (os.cpu_count() or 2) - 2))
     options = ort.SessionOptions()
     options.intra_op_num_threads = threads
     options.log_severity_level = 3
     try:
-        with quiet_coreml():
-            det = ort.InferenceSession(paths["det_10g.onnx"], options, providers=providers)
-            rec = ort.InferenceSession(paths["w600k_r50.onnx"], options, providers=providers)
-            pipeline = face_pipeline.Pipeline(det, rec)
-            # One run each, so the first camera frame is not the slow one (CoreML compiles here).
-            pipeline.detect(np.zeros((360, 640, 3), dtype=np.uint8))
-            pipeline.rec.run(None, {pipeline.rec_input: np.zeros((1, 3, 112, 112), dtype=np.float32)})
+        det = ort.InferenceSession(paths["det_10g.onnx"], options, providers=providers)
+        rec = ort.InferenceSession(paths["w600k_r50.onnx"], options, providers=providers)
+        pipeline = face_pipeline.Pipeline(det, rec)
+        # One run each, so the first camera frame is not the slow one (CoreML compiles here).
+        pipeline.detect(np.zeros((360, 640, 3), dtype=np.uint8))
+        pipeline.rec.run(None, {pipeline.rec_input: np.zeros((1, 3, 112, 112), dtype=np.float32)})
     except Exception as error:  # noqa: BLE001
         reason = f"could not load the face models with {backend}: {error}"
         log(reason)
@@ -646,6 +640,8 @@ def main():
     parser.add_argument("--port", type=int, default=int(os.environ.get("FACE_SERVICE_PORT", "3004")))
     parser.add_argument("--host", default=os.environ.get("FACE_SERVICE_HOST", "127.0.0.1"))
     args = parser.parse_args()
+    if sys.platform == "darwin":
+        drop_coreml_noise()
     server = Server((args.host, args.port), Handler)
     log(f"listening on http://{args.host}:{args.port} ({platform.machine()}, models in {MODEL_DIR})")
     threading.Thread(target=load_models, daemon=True).start()

@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import type { HealthParts } from '../../shared/contracts/http.js';
 import type { StudioResponse } from '../../shared/contracts/studio.js';
-import { studioParts, type PartsSources } from './parts.js';
+import { studioParts, type PartsSources, type RecognitionSource } from './parts.js';
 
 // The operator (and the sentient panel) read GET /studio parts to see what
 // runs where when something is off: which box the fleet picked for vision,
@@ -91,6 +91,48 @@ describe('studioParts', () => {
   });
 });
 
+describe('the recognition part', () => {
+  // Face recognition used to fail silently inside a Chrome page ("LOADING
+  // WORKER" for ever). Now the card says where it runs and what is wrong.
+  const READY = { state: 'ready' as const, backend: 'CoreML', fps: 5, inferMs: 40.4, frames: 99, source: 'site:cam-flo-mac', camera: 'ok', where: 'studio-mac' };
+  const withService = (service: RecognitionSource['service'], recognizer: RecognitionSource['recognizer'] = 'service'): PartsSources =>
+    ({ ...base, recognition: { recognizer, service, browser: null, people: 10 } });
+  const up = { mode: 'local' as const, where: 'studio-mac:3004', health: READY, error: null };
+
+  it('comes right after vision, with the service host and its numbers', () => {
+    expect(studioParts(withService(up)).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'recognition', 'mic', 'faces', 'site']);
+    expect(part(withService(up), 'recognition')).toEqual({
+      id: 'recognition', label: 'Recognition', where: 'studio-mac:3004', ok: true, detail: 'SCRFD+ArcFace · CoreML · 40 ms · 5 fps · 10 people',
+    });
+  });
+
+  it('is not ok, with the reason, when the service is down, failing or gets no frames', () => {
+    expect(part(withService({ ...up, health: null, error: 'connection refused (not running?)' }), 'recognition'))
+      .toMatchObject({ where: 'studio-mac:3004', ok: false, detail: 'face service not answering: connection refused (not running?)' });
+    expect(part(withService({ ...up, health: { ...READY, state: 'error', error: 'could not download the face models from huggingface.co (HTTP Error 503); retrying in 30 s' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'could not download the face models from huggingface.co (HTTP Error 503); retrying in 30 s' });
+    expect(part(withService({ ...up, health: { ...READY, camera: 'no frames', error: 'method DESCRIBE failed: 404 Not Found' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'method DESCRIBE failed: 404 Not Found' });
+    expect(part(withService({ ...up, health: { ...READY, camera: 'no frames' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'SCRFD+ArcFace · CoreML · no frames from the camera · 10 people' });
+    expect(part(withService({ mode: 'fleet', where: null, health: null, error: 'fleet:faces: the hub lists no face service box (or does not answer)' }), 'recognition'))
+      .toMatchObject({ where: 'fleet:faces (no box found yet)', ok: false });
+  });
+
+  it('shows the model download while loading, as not known yet rather than broken', () => {
+    expect(part(withService({ ...up, health: { ...READY, state: 'loading', download: { file: 'w600k_r50.onnx', pct: 45, mb: 78.5, totalMb: 174.4 } } }), 'recognition'))
+      .toMatchObject({ ok: null, detail: 'downloading w600k_r50.onnx 45% (78.5 MB)' });
+  });
+
+  it('points at the listener page when the browser worker recognises', () => {
+    const browser: PartsSources = { ...base, recognition: { recognizer: 'browser', service: null, browser: { ready: false, status: 'Loading worker' }, people: 1 } };
+    expect(part(browser, 'recognition')).toEqual({ id: 'recognition', label: 'Recognition', where: 'Chrome @ studio-mac', ok: false, detail: 'browser worker · Loading worker · 1 person' });
+    // FACE_SERVICE on, but the camera is this Mac's: it stays with the listener page, and the card says so.
+    expect(part({ ...browser, recognition: { ...browser.recognition!, service: up } }, 'recognition').detail).toContain('a local camera stays with the listener page');
+    expect(part({ ...base, recognition: { recognizer: 'off', service: up, browser: null, people: 1 } }, 'recognition')).toMatchObject({ where: 'off', ok: null, detail: 'no camera' });
+  });
+});
+
 describe('GET /studio', () => {
   it('carries the parts', async () => {
     const { handleStudioRoute } = await import('../routes/studio-routes.js');
@@ -100,7 +142,7 @@ describe('GET /studio', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
       const body = (await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/studio`)).json()) as StudioResponse;
-      expect(body.parts?.map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site']);
+      expect(body.parts?.map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'recognition', 'mic', 'faces', 'site']);
       for (const entry of body.parts ?? []) expect(typeof entry.where).toBe('string');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

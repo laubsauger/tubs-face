@@ -16,13 +16,16 @@ import { studioSettings, toStudioResponse } from '../studio/state.js';
 import { listPresets } from '../presets/presets.js';
 import { persistState } from '../state-file.js';
 import { parseVisionSource, type StudioPart, type StudioResponse, type StudioUiLinks } from '../../shared/contracts/studio.js';
-import { studioParts } from '../studio/parts.js';
+import { studioParts, type RecognitionSource } from '../studio/parts.js';
 import { readiness } from './system-routes.js';
 import { lastLlmCall } from '../llm/last-call.js';
 import { resolveLlmProvider } from '../llm/provider.js';
 import { visionService } from '../assistant/vision.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { MING_PORT, SPEECH_SERVICE_PORT } from '../processing/speech-service.js';
+import { faceServiceStatus, libraryPeople, recognizer, serviceObservation } from '../faces/studio-faces.js';
+import { lastLiveStatus } from '../studio/live.js';
+import { lastBrowserObservation } from '../ws/server.js';
 
 const SNAPSHOT_TIMEOUT_MS = 4000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
@@ -42,6 +45,15 @@ export async function handleStudioRoute(request: IncomingMessage, response: Serv
     notePulsePoll();
     syncStudioWatch();
     sendJson(response, 200, studioPulse());
+    return true;
+  }
+  if (url.pathname === '/studio/faces' && request.method === 'GET') {
+    // The last FaceObservation (docs/face-service.md), from whichever producer recognises: names, local network only.
+    if (!isLocalNetworkAddress(request.socket.remoteAddress)) {
+      sendJson(response, 403, { error: 'The faces are for the local network only' } satisfies ErrorResponse);
+      return true;
+    }
+    sendJson(response, 200, serviceObservation() ?? lastBrowserObservation());
     return true;
   }
   if (url.pathname === '/studio/sources' && request.method === 'GET') {
@@ -87,7 +99,19 @@ function partsOf(studio: StudioResponse): StudioPart[] {
     fleetBase: visionService.fleetBase(),
     speechPort: SPEECH_SERVICE_PORT,
     mingUrl: process.env.MING_TTS_URL?.trim() || `http://127.0.0.1:${MING_PORT}`,
+    recognition: recognitionSource(),
   });
+}
+
+function recognitionSource(): RecognitionSource {
+  const live = lastLiveStatus();
+  const service = faceServiceStatus();
+  return {
+    recognizer: recognizer(),
+    service: service.mode === 'off' ? null : service,
+    browser: live ? { ready: live.faceWorkerReady, status: live.faceStatus } : null,
+    people: libraryPeople(),
+  };
 }
 
 function presetNames(): { names: string[]; active: string | null } {

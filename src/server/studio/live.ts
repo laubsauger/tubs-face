@@ -7,6 +7,7 @@
 
 import type { StudioLiveFace, StudioLiveStatus } from '../../shared/contracts/studio.js';
 import type { WsStudioLiveClientMessage, WsStudioLiveServerMessage, WsStudioWatchServerMessage } from '../../shared/contracts/ws.js';
+import type { LiveFaceFields } from '../faces/recognition.js';
 
 /** Reports closer together than this are dropped (the page sends ~10 Hz). */
 export const RELAY_MIN_MS = 50;
@@ -21,7 +22,41 @@ export interface Watch {
 }
 
 let last: StudioLiveStatus | null = null;
+let lastSpeaking = false;
 let lastRelayAt = 0;
+/**
+ * While the face service recognises (docs/face-service.md), the faces come
+ * from the server, not from the listener page: they replace the page's face
+ * fields, with or without a report from the page.
+ */
+let serverFaces: (() => LiveFaceFields | null) | null = null;
+/** The listener as it is before it reports anything: no mic, no camera. */
+const SILENT_LISTENER: StudioLiveStatus = {
+  micReady: false,
+  micDenied: false,
+  micLevel: 0,
+  recording: false,
+  listenState: '',
+  voiceLastTranscript: '',
+  audioPlaying: false,
+  faceCameraActive: false,
+  faceWorkerReady: false,
+  faceStatus: '',
+  faceLastDetectedCount: 0,
+  faceFrameWidth: null,
+  faceFrameHeight: null,
+  faceLastFaces: [],
+};
+
+function withServerFaces(status: StudioLiveStatus | null): StudioLiveStatus | null {
+  const faces = serverFaces?.() ?? null;
+  return faces ? { ...(status ?? SILENT_LISTENER), ...faces } : status;
+}
+
+/** Where the faces come from while the face service recognises; null: from the listener page. */
+export function useServerFaces(source: (() => LiveFaceFields | null) | null): void {
+  serverFaces = source;
+}
 let lastFrameAt = 0;
 const watchers = new Map<unknown, Watch>();
 let pulseLeaseUntil = 0;
@@ -63,7 +98,16 @@ export function liveRelay(message: WsStudioLiveClientMessage, now = Date.now()):
   if (message.status && now - lastRelayAt < RELAY_MIN_MS) return null;
   lastRelayAt = now;
   last = message.status ? copyStatus(message.status) : null;
-  return { type: 'studio_live', actor: message.actor, status: last, speaking: message.status ? message.speaking : false };
+  lastSpeaking = message.status ? message.speaking : false;
+  return { type: 'studio_live', actor: message.actor, status: last ? withServerFaces(last) : null, speaking: lastSpeaking };
+}
+
+/** A relay for the server's own faces (each face service frame), or null when the last went out too recently. */
+export function serverFacesRelay(now = Date.now()): WsStudioLiveServerMessage | null {
+  const status = withServerFaces(last);
+  if (!status || !serverFaces?.() || now - lastRelayAt < RELAY_MIN_MS) return null;
+  lastRelayAt = now;
+  return { type: 'studio_live', actor: 'main', status, speaking: lastSpeaking };
 }
 
 /** Whether this frame goes out (at most one per FRAME_MIN_MS). */
@@ -73,16 +117,18 @@ export function frameDue(now = Date.now()): boolean {
   return true;
 }
 
-/** The listener's last report; null once it stopped or went away. */
+/** The listener's last report (with the server's faces while the face service recognises); null once it stopped or went away. */
 export function lastLiveStatus(): StudioLiveStatus | null {
-  return last;
+  return withServerFaces(last);
 }
 
 /** The listener page is gone: what it last said no longer holds. */
 export function liveGone(): WsStudioLiveServerMessage {
   last = null;
+  lastSpeaking = false;
   lastRelayAt = 0;
-  return { type: 'studio_live', actor: 'main', status: null, speaking: false };
+  // The server's faces stay: they never came from the page.
+  return { type: 'studio_live', actor: 'main', status: withServerFaces(null), speaking: false };
 }
 
 /** A dashboard shows (or stopped showing) the live state and the camera. */
@@ -123,6 +169,8 @@ export function resetLive(): void {
   watchers.clear();
   pulseLeaseUntil = 0;
   last = null;
+  lastSpeaking = false;
   lastRelayAt = 0;
   lastFrameAt = 0;
+  serverFaces = null;
 }

@@ -9,6 +9,19 @@ import { parseMicSource, type StudioPart, type StudioResponse } from '../../shar
 import type { StudioVisionCheck } from '../../shared/contracts/studio.js';
 import type { LastLlmCall } from '../llm/last-call.js';
 import type { RuntimeConfig } from '../../shared/contracts/config.js';
+import type { FaceRecognizer } from '../../shared/contracts/studio.js';
+import type { FaceServiceStatus } from '../faces/service.js';
+
+/** Who recognises faces and how it is doing, for the recognition part. */
+export interface RecognitionSource {
+  recognizer: FaceRecognizer;
+  /** FACE_SERVICE's status; null when FACE_SERVICE is off. */
+  service: FaceServiceStatus | null;
+  /** The listener page's browser worker, as its last live report says. */
+  browser: { ready: boolean; status: string } | null;
+  /** People in the face library. */
+  people: number;
+}
 
 export interface PartsSources {
   config: Pick<RuntimeConfig, 'llmModel' | 'kokoroVoice' | 'secondaryVoice' | 'dualHeadEnabled' | 'dualHeadMode' | 'visionProvider' | 'visionModel' | 'visionBaseUrl'>;
@@ -26,6 +39,7 @@ export interface PartsSources {
   mingUrl: string;
   /** This machine's name, for work done on loopback. */
   hostname?: string;
+  recognition?: RecognitionSource;
 }
 
 const GEMINI_HOST = 'generativelanguage.googleapis.com';
@@ -115,6 +129,8 @@ export function studioParts(sources: PartsSources): StudioPart[] {
       : [visionModel, check?.ok ? `${check.ms} ms` : check?.ok === false ? check.error ?? 'failed' : ''].filter(Boolean).join(' · '),
   });
 
+  if (sources.recognition) parts.push(recognitionPart(sources.recognition, studio, here));
+
   // The mic: its device or site stream, and whether the listener hears through it.
   const mic = parseMicSource(studio.micSource);
   const siteHost = whereOf(studio.site, hostname);
@@ -149,4 +165,60 @@ export function studioParts(sources: PartsSources): StudioPart[] {
   });
 
   return parts;
+}
+
+/**
+ * Face recognition (docs/face-service.md): the face service's host, or the
+ * listener page; not ok with the reason when the service is down, loading
+ * models or without camera frames. Never waits on the network.
+ */
+export function recognitionPart(source: RecognitionSource, studio: StudioResponse, here: string): StudioPart {
+  const people = `${source.people} ${source.people === 1 ? 'person' : 'people'}`;
+  if (source.recognizer === 'off') {
+    return { id: 'recognition', label: 'Recognition', where: 'off', ok: null, detail: !studio.enabled ? 'studio mode off' : 'no camera' };
+  }
+  if (source.recognizer === 'browser') {
+    const where = studio.launch === 'chrome' ? `Chrome @ ${here}` : 'listener page';
+    const why = source.service ? 'a local camera stays with the listener page' : 'browser worker';
+    return {
+      id: 'recognition',
+      label: 'Recognition',
+      where,
+      ok: source.browser ? source.browser.ready : null,
+      detail: [why, source.browser?.status ?? 'no report from the listener page yet', people].filter(Boolean).join(' · '),
+    };
+  }
+  const service = source.service;
+  const where = service?.where ?? (service?.mode === 'fleet' ? 'fleet:faces (no box found yet)' : 'face service');
+  const health = service?.health ?? null;
+  if (!health) {
+    return { id: 'recognition', label: 'Recognition', where, ok: false, detail: `face service not answering${service?.error ? `: ${service.error}` : ''}` };
+  }
+  if (health.state === 'loading') {
+    const download = health.download;
+    return {
+      id: 'recognition',
+      label: 'Recognition',
+      where,
+      ok: null,
+      detail: download ? `downloading ${download.file} ${download.pct ?? '?'}% (${download.mb} MB)` : 'loading models',
+    };
+  }
+  if (health.state === 'error' || health.error) {
+    return { id: 'recognition', label: 'Recognition', where, ok: false, detail: health.error ?? 'error' };
+  }
+  const receiving = health.camera === 'ok';
+  return {
+    id: 'recognition',
+    label: 'Recognition',
+    where,
+    ok: receiving,
+    detail: [
+      'SCRFD+ArcFace',
+      health.backend,
+      receiving ? `${Math.round(health.inferMs)} ms` : 'no frames from the camera',
+      receiving ? `${Math.round(health.fps * 10) / 10} fps` : '',
+      people,
+    ].filter(Boolean).join(' · '),
+  };
 }

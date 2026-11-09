@@ -400,6 +400,43 @@ test('the listener sends its live state and camera only while watched, and runs 
   expect((await sentOf('studio_live')).length).toBe(reports);
 });
 
+// With the face service on (docs/face-service.md), recognition runs on the
+// server: the listener page must not load the face models or open the camera
+// (two recognisers would greet everyone twice), yet its sleep, proactive lines
+// and live relay still follow who is in view, from the server's observations.
+test('with the face service the listener starts no face worker, and shows the server\'s faces', async ({ page, request }) => {
+  const models: string[] = [];
+  await page.route('https://huggingface.co/**', async (route) => {
+    models.push(route.request().url());
+    await route.abort();
+  });
+  const site = await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/__test/face-service`, { data: { on: true } });
+  await setStudio(request, { enabled: true, visionSource: 'site:cam-facetest' });
+  const sentOf = async (type: string) => (await received(request)).ws.filter((m) => m.type === type);
+  await send(request, { type: 'studio_watch', live: true, video: false });
+  await send(request, {
+    type: 'face_observation',
+    observation: {
+      t: Date.now(),
+      source: 'site:cam-facetest',
+      frame: { w: 960, h: 540 },
+      faces: [{ track: 1, box: [0.1, 0.2, 0.2, 0.5], score: 0.9, candidates: [{ name: 'Flo', sim: 0.82 }], decision: 'match', name: 'Flo' }],
+      worker: { kind: 'service', state: 'ready', backend: 'CoreML', inferMs: 40, fps: 5, where: 'studio-mac:3004' },
+    },
+  });
+  await expect.poll(async () => (await sentOf('studio_live')).at(-1)?.status, { timeout: 8000 })
+    .toMatchObject({ faceCameraActive: true, faceWorkerReady: true, faceLastDetectedCount: 1, faceFrameWidth: 960, faceLastFaces: [{ name: 'Flo', match: { name: 'Flo', score: 0.82 } }] });
+  await page.waitForTimeout(1500);
+  expect(models, 'no face model is fetched').toEqual([]);
+  expect(site.filter((r) => r.path.startsWith('/cam-facetest')), 'the page does not open the camera').toEqual([]);
+
+  // FACE_SERVICE off again: the same page takes the camera back and loads its worker.
+  await request.post(`${MOCK}/__test/face-service`, { data: { on: false } });
+  await expect.poll(() => models.length, { timeout: 15_000 }).toBeGreaterThan(0);
+});
+
 // A studio camera without a video (snapshot URL, site stream): each onboarding
 // pose is a fresh picture, not the last one the detector happened to take.
 test('onboarding through a snapshot camera takes a fresh picture per pose', async ({ page, request }) => {

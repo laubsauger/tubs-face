@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { EnrolledFace, FaceLibraryDocument } from '../../shared/contracts/faces.js';
 
 // Private, never in git: data/ (TUBS_FACE_LIBRARY points elsewhere, e.g. for tests).
-const faceLibraryPath = resolve(process.env.TUBS_FACE_LIBRARY?.trim() || resolve(process.cwd(), 'data/face-library.json'));
+export const faceLibraryPath = resolve(process.env.TUBS_FACE_LIBRARY?.trim() || resolve(process.cwd(), 'data/face-library.json'));
 
 export function readFaceLibrary(): FaceLibraryDocument {
   try {
