@@ -23,8 +23,8 @@ const STUDIO: StudioResponse = {
   visionSource: 'site:cam-flo-mac',
   launch: 'chrome',
   actors: [
-    { id: 'main', stream: 'tubs-main', publishing: true, cadence: { renderFps: 59.8, renderMaxGapMs: 30, renderStalls: 0, encodedFps: 29.9 } },
-    { id: 'small', stream: 'tubs-small', publishing: true, cadence: { renderFps: 60, renderMaxGapMs: 28, renderStalls: 0, encodedFps: 30 } },
+    { id: 'main', stream: 'tubs-main', publishing: true, cadence: { renderFps: 59.8, renderMaxGapMs: 30, renderStalls: 0, encodedFps: 29.9, visible: true, focused: false } },
+    { id: 'small', stream: 'tubs-small', publishing: true, cadence: { renderFps: 60, renderMaxGapMs: 28, renderStalls: 0, encodedFps: 30, visible: true, focused: false } },
   ],
   mic: { source: 'site:cam-flo-mac', listening: true },
 };
