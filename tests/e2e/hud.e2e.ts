@@ -292,6 +292,32 @@ test('a two-head back-and-forth shows one bubble per line, in spoken order', asy
   await expect(page.locator('#chat-log-list .chat-entry:not(.chat-tone-system) .chat-entry-card')).toHaveText(beats.map((beat) => beat.text));
 });
 
+// A bit is logged one sentence per line, each with its own reaction. Inline,
+// those emojis broke up the reading; the moods sit outside the bubble instead,
+// level with their lines, so the text reads clean and the mood changes still show.
+test('a bit reads as clean text, with each sentence\'s mood outside the bubble', async ({ page, request }) => {
+  await openFace(page, request);
+  await page.keyboard.press('Backquote');
+  const text = '😏 Flo, I watched a spider build a web.\n🙂 It worked so hard, line after line.\n😐 Then it sat there, waiting.\n😏 Like your management style.';
+  await send(request,
+    { type: 'turn_start', turnId: 't-bit' },
+    { type: 'audio_chunk', audio: tone(300), text, turnId: 't-bit', chunkIndex: 0 },
+    { type: 'speak_end', turnId: 't-bit', text, fullText: text },
+  );
+  await page.keyboard.press('Backquote');
+  const entry = page.locator('#chat-log-list .chat-entry:not(.chat-tone-system)').last();
+  const moods = entry.locator('.chat-entry-moods');
+  await expect(moods).toBeVisible({ timeout: 10_000 });
+  await expect(moods.locator('.chat-entry-line-emoji')).toHaveText(['😏', '🙂', '😐', '😏']);
+  const bubbleText = await moods.innerText();
+  for (const line of ['Flo, I watched a spider build a web.', 'It worked so hard, line after line.', 'Then it sat there, waiting.', 'Like your management style.']) expect(bubbleText).toContain(line);
+  // The moods sit left of the bubble, not inside it.
+  const card = await moods.locator('.chat-entry-card').boundingBox();
+  const firstMood = await moods.locator('.chat-entry-line-emoji').first().boundingBox();
+  expect(card && firstMood && firstMood.x + firstMood.width <= card.x + 1).toBe(true);
+  await entry.screenshot({ path: process.env.CHAT_SHOT ?? 'test-results/chat-moods.png' });
+});
+
 test('with reduced motion a reply shows whole at once', async ({ page, request }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openFace(page, request);

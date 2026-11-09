@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
-import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { splitLeadingEmoji, splitLineEmojis } from '../../chat/emoji.js';
 import { chatTailKey, nearBottom } from '../../chat/scroll.js';
 import { withFillerLeads } from '../../chat/filler-lead.js';
 import { sendChatComposer } from '../../chat/send.js';
@@ -80,6 +80,9 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
               const isSystem = actor === 'system';
               // Reply emojis go next to the name; the stored text keeps them.
               const { emoji, body } = isAssistant ? splitLeadingEmoji(entry.text) : { emoji: '', body: entry.text };
+              // A bit has a reaction per sentence: shown in a faint column beside the text, not inline.
+              const lines = isAssistant ? splitLineEmojis(body) : [];
+              const perLine = lines.length > 1 && lines.some((line) => line.emoji);
               return (
                 <li
                   key={entry.id}
@@ -87,14 +90,41 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
                 >
                   <div className={`chat-entry-head flex items-baseline gap-2 text-[10px] ${isAssistant ? 'flex-row' : isSystem ? '' : 'flex-row-reverse'}`}>
                     <strong className="chat-entry-name uppercase tracking-wider">{renderChatPrefix(entry.type, entry.actor)}</strong>
-                    {emoji ? <span className="chat-entry-emoji" aria-label="reaction">{emoji}</span> : null}
+                    {emoji && !perLine ? <span className="chat-entry-emoji" aria-label="reaction">{emoji}</span> : null}
                     {entry.filler ? <span className="text-slate-500">filler</span> : null}
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
-                  <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
-                    {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
-                    {body}
-                  </div>
+                  {perLine
+                    ? (
+                      // The bubble holds clean text; each sentence's mood sits outside it, level with its line.
+                      <div className="chat-entry-moods grid grid-cols-[1.6em_minmax(0,auto)] max-w-[90%]">
+                        <div className="chat-entry-card rounded-xl rounded-tl-sm" style={{ gridColumn: 2, gridRow: `1 / span ${lines.length}` }} />
+                        {lines.map((line, index) => (
+                          <Fragment key={index}>
+                            <span
+                              className={`chat-entry-line-emoji text-[11px] opacity-60 select-none text-right pr-1 ${index === 0 ? 'pt-2' : ''}`}
+                              style={{ gridColumn: 1, gridRow: index + 1 }}
+                              aria-label="mood"
+                            >
+                              {line.emoji || (index === 0 ? emoji : '')}
+                            </span>
+                            <span
+                              className={`px-3 whitespace-pre-wrap break-words ${index === 0 ? 'pt-2' : ''} ${index === lines.length - 1 ? 'pb-2' : ''}`}
+                              style={{ gridColumn: 2, gridRow: index + 1 }}
+                            >
+                              {index === 0 && entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
+                              {line.text}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </div>
+                    )
+                    : (
+                      <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
+                        {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
+                        {body}
+                      </div>
+                    )}
                 </li>
               );
             })}
