@@ -36,6 +36,7 @@ import { noteHeadSpeaking, studioPulse } from '../studio/pulse.js';
 import type { FaceObservation } from '../../shared/contracts/studio.js';
 import { bindRecognitionHooks, recognizer, serviceAutoEnroll, serviceFaceCall, serviceFaceWorker, serviceLiveFaces } from '../faces/studio-faces.js';
 import type { ListenerEffect } from '../faces/recognition.js';
+import { noteAudioSent, noteHeadSpeaking as noteHeadTalking } from '../assistant/heads.js';
 import { forgetObservation, noteObservation } from '../studio/faces.js';
 
 const clients = new Set<WebSocket>();
@@ -183,6 +184,7 @@ function isWebSocketRequest(request: IncomingMessage): boolean {
 }
 
 export function broadcast(message: WsServerMessage): void {
+  if (message.type === 'audio_chunk') noteAudioSent();
   const payload = JSON.stringify(message);
   // The site login goes to the studio face pages only (studio/site-auth.ts).
   const pagePayload = message.type === 'studio_config' ? JSON.stringify(withSiteLogin(message)) : payload;
@@ -369,6 +371,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       } satisfies WsFaceBlinkServerMessage);
       return;
     case 'head_speech_state':
+      // A face window's head talking (outside studio mode): proactive lines wait for it.
+      if (!studioSettings.enabled) noteHeadTalking(message.actor ?? 'main', message.state === 'start');
       broadcast({
         type: 'head_speech_state',
         actor: message.actor,

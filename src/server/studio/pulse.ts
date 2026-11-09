@@ -8,13 +8,13 @@ import { runtimeConfig } from '../config/runtime.js';
 import { lastLiveStatus } from './live.js';
 import { listenerFaceWorker, studioSettings } from './state.js';
 import { OBSERVATION_FRESH_MS, lastObservation } from './faces.js';
+import { headSpeaking, noteHeadSpeaking as noteHeadTalking, resetHeads } from '../assistant/heads.js';
 
-const speakingHeads = new Map<'main' | 'small', boolean>();
 let heard: { text: string; t: number } | null = null;
 
-/** A head's page said whether it is talking (studio_state). */
+/** A head's page said whether it is talking (studio_state); also what a proactive line waits on (assistant/heads.ts). */
 export function noteHeadSpeaking(actor: 'main' | 'small', speaking: boolean): void {
-  speakingHeads.set(actor, speaking);
+  noteHeadTalking(actor, speaking);
 }
 
 /** The mic heard a line (a voice turn). */
@@ -24,7 +24,7 @@ export function noteHeard(text: string, now = Date.now()): void {
 }
 
 export function resetPulse(): void {
-  speakingHeads.clear();
+  resetHeads();
   heard = null;
 }
 
@@ -68,7 +68,7 @@ export function studioPulse(now = Date.now()): StudioPulse {
   // Whichever producer runs (docs/face-service.md); an old observation says nothing about now.
   const observed = lastObservation();
   const observation = observed && now - observed.at <= OBSERVATION_FRESH_MS ? observed.observation : null;
-  const speaking = speakingHeads.get('main') ? 'main' : speakingHeads.get('small') ? 'small' : null;
+  const speaking = headSpeaking();
   const check = visionService.lastCheck();
   return {
     t: now,

@@ -28,3 +28,21 @@ export function splitLeadingEmoji(text: string): SplitEmoji {
   }
   return { emoji, body };
 }
+
+export interface EmojiLine {
+  /** The line's reaction emoji, or '' when it has none. */
+  emoji: string;
+  text: string;
+}
+
+/**
+ * A reply's lines with each line's leading emoji lifted off. A bit is logged
+ * one sentence per line, each with its own reaction; inline, those emojis
+ * broke up the text, so the chat log shows them in a narrow column beside it.
+ */
+export function splitLineEmojis(text: string): EmojiLine[] {
+  return text.split('\n').filter((line) => line.trim()).map((line) => {
+    const { emoji, body } = splitLeadingEmoji(line);
+    return { emoji, text: emoji ? body : line.trim() };
+  });
+}
