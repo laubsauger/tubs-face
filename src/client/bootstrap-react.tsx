@@ -60,6 +60,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const studioActor: 'main' | 'small' | undefined = isStudio ? (options.actor ?? 'main') : undefined;
   const isStudioListener = studioActor === 'main';
   const store = createAppStore(isController ? UI_PREFS_STORAGE_KEY : isDashboard ? DASHBOARD_UI_PREFS_STORAGE_KEY : undefined);
+  // Dev server only (browser tests read what a face shows): never in a build.
+  if (import.meta.env.DEV) (window as unknown as { __tubsStore?: AppStore }).__tubsStore = store;
   // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
   // uses 'mini' for speech runtime (don't generate own TTS — only play broadcast audio_chunks).
   const messageMode: 'main' | 'mini' = options.mode === 'mini' || studioActor === 'small' ? 'mini' : 'main';
@@ -75,7 +77,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const hasFace = !isDashboard;
   // Studio pages leave the room's sound to the studio: no ambient bed in the stream.
   const ambientRuntime = isSpectator || isDashboard || isStudio ? null : createAmbientRuntime(store, messageMode);
-  const emotionRuntime = isController || isStudioListener ? createEmotionRuntime(store) : null;
+  // Each studio head has its own mood (Small used to have none); the face window has Tubs's.
+  const emotionRuntime = isController || isStudio ? createEmotionRuntime(store) : null;
   const fxRuntime = isOperator ? createFxRuntime(store) : null;
   const glitchRuntime = hasFace
     ? createGlitchRuntime(store, messageMode, isStudio ? { studioCanvasPx: options.studio?.size ?? 1024 } : {})
@@ -361,9 +364,13 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       if (message.type === 'speak' && message.emotion?.impulse) {
         emotionRuntime?.pushImpulse(message.emotion.impulse, 'spoken');
       }
-      // Streamed replies carry their emotion on every chunk; count it once per turn.
-      if (message.type === 'audio_chunk' && message.emotion?.impulse && message.turnId !== lastImpulseTurnId) {
-        lastImpulseTurnId = message.turnId;
+      // Streamed replies carry their emotion on every chunk; count it once per
+      // line, and only for this head's own lines (two heads, two moods).
+      const ownActor = studioActor ?? 'main';
+      const impulseKey = message.type === 'audio_chunk' ? `${message.turnId ?? ''}:${message.beatIndex ?? ''}` : '';
+      if (message.type === 'audio_chunk' && message.emotion?.impulse && impulseKey !== lastImpulseTurnId
+        && (!message.actor || message.actor === ownActor)) {
+        lastImpulseTurnId = impulseKey;
         emotionRuntime?.pushImpulse(message.emotion.impulse, 'spoken');
       }
       // Only the main face holds the camera snapshots.

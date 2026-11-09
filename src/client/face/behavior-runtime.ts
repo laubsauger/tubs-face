@@ -34,6 +34,17 @@ const MICRO_SACCADE_INTERVAL_MS = 1500;
 const MICRO_SACCADE_MAX_INTERVAL_MS = 3500;
 // Barely visible on purpose: a still eye looks dead, a twitchy one nervous.
 const MICRO_SACCADE_AMPLITUDE = 0.018;
+/**
+ * While the director holds a look, the eyes now and then flick to a nearby
+ * point (another feature of the person, something beside them) and back, as
+ * eyes on a face do. Without them a studio head stared like a photograph.
+ */
+export const GLANCE_MIN_MS = 2500;
+export const GLANCE_MAX_MS = 6000;
+const GLANCE_X = 0.09;
+const GLANCE_Y = 0.05;
+const GLANCE_HOLD_MIN_MS = 350;
+const GLANCE_HOLD_MAX_MS = 900;
 // People look away while working out what to say and back when they start
 // talking. A face that stares while "thinking" reads as a frozen screen.
 const THINKING_GAZE_CHANCE = 0.7;
@@ -90,6 +101,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let partnerMotionHandler: ((event: Event) => void) | null = null;
   let partnerBlinkHandler: ((event: Event) => void) | null = null;
   let microSaccadeTimer: number | null = null;
+  let glanceTimer: number | null = null;
   let lastMotionSentAt = 0;
   let lastSentX = Number.NaN;
   let lastSentY = Number.NaN;
@@ -133,6 +145,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       scheduleBlink();
       scheduleBehavior();
       scheduleMicroSaccade();
+      scheduleGlance();
       resetGaze();
 
       // Asleep, the eyes are closed: nothing steers them, they drift a little
@@ -202,6 +215,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(partnerSettleTimer);
       clearManagedTimer(partnerGlanceTimer);
       clearManagedTimer(microSaccadeTimer);
+      clearManagedTimer(glanceTimer);
       clearManagedTimer(thinkingGazeTimer);
       clearManagedTimer(externalLookTimer);
       stopSleepGaze();
@@ -363,6 +377,24 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       }
       scheduleMicroSaccade();
     }, randBetween(MICRO_SACCADE_INTERVAL_MS, MICRO_SACCADE_MAX_INTERVAL_MS));
+  }
+
+  function scheduleGlance(): void {
+    clearManagedTimer(glanceTimer);
+    glanceTimer = window.setTimeout(() => {
+      if (shouldAnimate() && externalLook && !thinkingGaze) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        gaze.microSaccade(side * GLANCE_X * (0.6 + Math.random() * 0.4), (Math.random() * 2 - 1) * GLANCE_Y, performance.now());
+        startAnimationLoop();
+        glanceTimer = window.setTimeout(() => {
+          gaze.microSaccade(0, 0, performance.now());
+          startAnimationLoop();
+          scheduleGlance();
+        }, randBetween(GLANCE_HOLD_MIN_MS, GLANCE_HOLD_MAX_MS));
+        return;
+      }
+      scheduleGlance();
+    }, randBetween(GLANCE_MIN_MS, GLANCE_MAX_MS));
   }
 
   function blink(): void {

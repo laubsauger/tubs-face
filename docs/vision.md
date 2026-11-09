@@ -42,8 +42,8 @@ people hold) that current small open models do well on our own GPUs.
 - All of these are also live in `POST /config` (`visionProvider`,
   `visionModel`, `visionBaseUrl`, `visionMaxPx`), so the operator or the
   studio panel can switch to local or off mid-show.
-- The prompt and the 60-word, no-judgement rules in `vision.ts` stay the same
-  for every provider.
+- The prompt (a factual inventory, Left/Middle/Right with several people,
+  under 60 words) is the same for every provider.
 
 ### 2. A budget, whatever the provider
 
@@ -113,7 +113,6 @@ running), with a public test photo of one person with an umbrella (272 × 512):
   a single person "Left:" (and sometimes "Right: no other people"); the
   prompt now asks for labels only with two or more people (checked: one person
   5 of 5 without a label, two people 5 of 5 with Left:/Right:, Gemini the same).
-  It still writes "a man"/"he" at times despite the no-gender rule.
 - For comparison, Gemini (`gemini-3.5-flash`) took 1.7–1.8 s per picture.
 
 ### Where it runs: any box, picked by load
@@ -135,8 +134,7 @@ resolved URL. A plain URL still works for a fixed box or a setup without
 studio-manager.
 
 Acceptance for a model: the description of a two-person test picture in
-under 1.5 s on the chosen box, no judgement words, left/middle/right order
-kept, and an operator reading ten descriptions side by side with Gemini's
+under 1.5 s on the chosen box, left/middle/right order kept, and an operator reading ten descriptions side by side with Gemini's
 finds them good enough for Tubs' remarks.
 
 ## Tests that have to exist

@@ -38,6 +38,12 @@ export interface GlitchRuntime {
    * can only be copied (drawImage) then; once presented, a copy reads black.
    */
   onFrame(callback: ((canvas: HTMLCanvasElement) => void) | null): void;
+  /**
+   * Draw at most this many frames a second (0: every display frame). A studio
+   * page publishes 30 fps; drawing the face at the display's 100-120 Hz only
+   * took CPU and GPU from the voice next to it.
+   */
+  setMaxFps(fps: number): void;
 }
 
 interface RendererState {
@@ -96,6 +102,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
   let lastRendererSignature = '';
   const rendererState: RendererState = { ready: false, initPromise: null };
   let frameCallback: ((canvas: HTMLCanvasElement) => void) | null = null;
+  let minFrameMs = 0;
+  let lastDrawnAt = Number.NEGATIVE_INFINITY;
   let sleepingFace: SleepingFace | null = null;
   let sleepingFaceKey = '';
   const gpu: WebGpuState = createWebGpuState();
@@ -137,6 +145,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     },
     onFrame(callback): void {
       frameCallback = callback;
+    },
+    setMaxFps(fps): void {
+      minFrameMs = fps > 0 ? 1000 / fps : 0;
     },
     sleepingFacePx(): SleepingFace | null {
       if (!containerCssW || !containerCssH) return null;
@@ -486,6 +497,10 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
       setCanvasVisible(false);
       return;
     }
+    // Capped: skip display frames that come sooner than the cap allows (a
+    // 2 ms slack keeps 60 fps on a 120 Hz display from dropping to 40).
+    if (minFrameMs > 0 && now - lastDrawnAt < minFrameMs - 2) return;
+    lastDrawnAt = now;
 
     if (gridDirty) {
       buildGrid();

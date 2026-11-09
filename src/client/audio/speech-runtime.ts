@@ -959,12 +959,16 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     }));
   }
 
-  /** Silences scheduled streaming audio and resets chunk ordering for the next session. */
+  /**
+   * Silences scheduled streaming audio and resets chunk ordering for the next
+   * session. The turn's beats stay: in two-head mode each line is a session of
+   * its own, and clearing them here left every line after the first without
+   * its feeling on the face.
+   */
   function resetStreamingAudio(): void {
     clearPendingEndTimer();
     streamSession?.stop();
     streamSession = null;
-    pendingBeatMeta = [];
     lastStreamingBeatIndex = -1;
   }
 
@@ -973,6 +977,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     queue.length = 0;
     cancelQueueRun();
     lastEmotion = null;
+    pendingBeatMeta = [];
     activeQueueTurnId = null;
     activeSpeechTurnId = null;
     pendingInferencePlayback = null;

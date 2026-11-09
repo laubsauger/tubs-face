@@ -31,12 +31,23 @@ export interface CaptionTracker {
  * heard and gets exactly one done: when it has played out, when the voice is
  * cut off (with what was heard by then), or at the latest when the next line
  * starts.
+ *
+ * The same text again in the same turn is the same line carrying on (the late
+ * audio of a stalled stream): it continues where it was, `spoken` never goes
+ * back, and the line is not ended in between. Under load a window was shown
+ * the start and the end of one reply in turn, several times a second.
  */
 export function createCaptionTracker(): CaptionTracker {
   // Lines that were already there or already finished: never reported (again).
   const seen = new WeakSet<SpokenItem>();
-  let current: { item: SpokenItem; sent: StudioCaptionState | null } | null = null;
+  let current: { item: SpokenItem; sent: StudioCaptionState | null; floor: number } | null = null;
+  // The last line reported (done or not), so a repeat of it carries on from there.
+  let last: StudioCaptionState | null = null;
   let started = false;
+  const report = (out: StudioCaptionState[], caption: StudioCaptionState) => {
+    out.push(caption);
+    last = caption;
+  };
 
   return {
     update(clock, now) {
@@ -48,14 +59,19 @@ export function createCaptionTracker(): CaptionTracker {
         for (const item of clock.items) seen.add(item);
         return out;
       }
+      if (current && latest && current.item !== latest && sameLine(current.item, latest)) {
+        seen.add(latest);
+        current = { item: latest, sent: current.sent, floor: current.sent?.spoken ?? current.floor };
+      }
       if (current && current.item !== latest) {
         // The next line started: this one played out (audio plays in order).
-        out.push({ ...captionOf(current.item, 1), done: true });
+        report(out, { ...captionOf(current.item, 1), done: true });
         current = null;
       }
       if (!current && latest && !seen.has(latest)) {
         seen.add(latest);
-        current = { item: latest, sent: null };
+        const repeat = last !== null && last.turnId === (latest.turnId ?? '') && last.text === captionOf(latest, 0).text;
+        current = { item: latest, sent: null, floor: repeat ? last!.spoken : 0 };
       }
       if (!current) return out;
 
@@ -63,9 +79,10 @@ export function createCaptionTracker(): CaptionTracker {
       const cutOff = clock.quietAt != null && clock.quietAt >= item.startedAt;
       const share = spokenShare(item, now);
       const caption = captionOf(item, share);
+      caption.spoken = Math.max(caption.spoken, current.floor);
       caption.done = cutOff || (!item.open && share >= 1);
       if (!sameCaption(current.sent, caption)) {
-        out.push(caption);
+        report(out, caption);
         current.sent = caption;
       }
       if (caption.done) current = null;
@@ -82,6 +99,10 @@ function captionOf(item: SpokenItem, share: number): StudioCaptionState {
     spoken: Math.min(text.length, Math.floor(text.length * share)),
     done: false,
   };
+}
+
+function sameLine(a: SpokenItem, b: SpokenItem): boolean {
+  return (a.turnId ?? '') === (b.turnId ?? '') && (a.text ?? '') === (b.text ?? '') && Boolean(a.text);
 }
 
 function sameCaption(a: StudioCaptionState | null, b: StudioCaptionState): boolean {

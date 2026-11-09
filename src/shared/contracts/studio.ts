@@ -131,6 +131,15 @@ export interface StudioCadence {
   encoder?: string;
   encodeMsPerFrame?: number;
   frameWidth?: number;
+  /** Audio packets sent per second (Opus, 20 ms each: 50). */
+  audioPacketsPerSecond?: number;
+  /** Holes inside a streamed reply (a piece came after the one before had played), and the largest. */
+  speechHoles?: number;
+  speechMaxHoleMs?: number;
+  /** Time replies were held back until enough of them was here to play through. */
+  speechHeldMs?: number;
+  /** Audio seconds the TTS delivers per second, as last measured (below 1: slower than speech). */
+  ttsRate?: number;
   visible: boolean;
   focused: boolean;
 }

@@ -1,7 +1,7 @@
 // Plays a two-head beat script: TTS per speak beat, routed to its head, with
 // the pauses between beats.
 
-import type { TurnBeat } from '../../shared/contracts/turn-script.js';
+import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { WsAudioChunkServerMessage, WsServerMessage, WsSpeakEndServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig } from '../config/runtime.js';
 import type { TurnTimer } from '../turn-timing.js';
@@ -155,6 +155,7 @@ export async function streamDualHeadBeatAudio(
       early: earlyForBeat,
       nextChunkIndex: chunkIndex,
       callout: beat.callout === true,
+      ...(beat.emotion ? { emotion: beat.emotion } : {}),
       onRendered: () => {
         const nextIndex = nextSpeakBeatIndex(beats, index);
         if (nextIndex < 0 || !isAssistantTurnActive(turnId, epoch)) return;
@@ -210,6 +211,8 @@ async function streamDualHeadSpeakBeat(args: {
   nextChunkIndex: number;
   /** A studio call-out (TurnBeat.callout): the face page plays it without waiting. */
   callout?: boolean;
+  /** The line's feeling, on every chunk: that head shows it while it speaks, and its mood takes the impulse. */
+  emotion?: TurnEmotion;
   /** Ming is done with this line (its audio may still be playing). */
   onRendered?: () => void;
   onFirstChunk?: () => void;
@@ -225,6 +228,7 @@ async function streamDualHeadSpeakBeat(args: {
     early,
     nextChunkIndex,
     callout,
+    emotion,
     onRendered,
     onFirstChunk,
   } = args;
@@ -279,6 +283,7 @@ async function streamDualHeadSpeakBeat(args: {
           beatIndex,
           ...(chunk.more ? { more: true } : {}),
           ...(callout ? { callout: true } : {}),
+          ...(emotion ? { emotion } : {}),
         } satisfies WsAudioChunkServerMessage);
         chunkCount += 1;
       },
