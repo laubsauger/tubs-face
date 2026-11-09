@@ -58,7 +58,7 @@ let server: http.Server;
 let port = 0;
 
 function push(faces: Array<{ track: number; box: [number, number, number, number]; embedding: number[] }>): void {
-  const line = { t: Date.now(), source: 'site:cam-facetest', frame: { w: 960, h: 540 }, faces: faces.map((face) => ({ ...face, score: 0.9 })), status: READY };
+  const line = { t: Date.now(), source: 'site:cam-facetest', frame: { w: 960, h: 540 }, faces: faces.map((face) => ({ ...face, score: 0.9, fresh: true })), status: READY };
   for (const stream of streams) stream.write(`${JSON.stringify(line)}\n`);
 }
 
@@ -111,10 +111,13 @@ describe('studio faces through the face service', () => {
 
   it('names the enrolled face in the pulse, with how sure, and leaves the stranger unnamed', async () => {
     const listener = await connect('?studio=main');
-    push([
-      { track: 1, box: [96, 54, 288, 324], embedding: embeddingOf('obama-2009.jpg') },
-      { track: 2, box: [600, 100, 700, 220], embedding: embeddingOf('apollo-11-crew.jpg', 1) },
-    ]);
+    // Two fresh checks: a name settles on its track's second matching check (client/face/settle.ts).
+    for (let check = 0; check < 2; check += 1) {
+      push([
+        { track: 1, box: [96, 54, 288, 324], embedding: embeddingOf('obama-2009.jpg') },
+        { track: 2, box: [600, 100, 700, 220], embedding: embeddingOf('apollo-11-crew.jpg', 1) },
+      ]);
+    }
     await expect.poll(async () => (await get<StudioPulse>('/studio/pulse')).body.seen.length).toBe(2);
     const seen = (await get<StudioPulse>('/studio/pulse')).body.seen;
     expect(seen[0]).toMatchObject({ name: 'Obama', box: [0.1, 0.1, 0.2, 0.5] });
@@ -131,6 +134,7 @@ describe('studio faces through the face service', () => {
   });
 
   it('lets go of the camera and of who was in view at once when the camera is switched off', async () => {
+    push([{ track: 1, box: [96, 54, 288, 324], embedding: embeddingOf('obama-2009.jpg') }]);
     push([{ track: 1, box: [96, 54, 288, 324], embedding: embeddingOf('obama-2009.jpg') }]);
     await expect.poll(async () => (await get<StudioPulse>('/studio/pulse')).body.seen.length).toBe(1);
     studioSettings.cameraOn = false;

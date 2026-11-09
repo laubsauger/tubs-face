@@ -38,6 +38,8 @@ export interface ServiceFace {
   score: number;
   landmarks?: Array<[number, number]> | null;
   embedding: number[] | null;
+  /** The embedding was computed for this frame (false: the track's, kept from an earlier one). */
+  fresh?: boolean;
 }
 
 /** The service's own state (its GET /health, and every line of its stream). */

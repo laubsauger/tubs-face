@@ -387,6 +387,8 @@ def face_out(face, with_landmarks=True):
         "box": [round(v, 2) for v in face["box"]],
         "score": round(face["score"], 4),
         "embedding": None if face.get("embedding") is None else [round(float(v), 6) for v in face["embedding"]],
+        # Computed for this frame, or the track's from up to a second ago (one piece of evidence, not two).
+        "fresh": face.get("embedding") is not None and face.get("reuse") is None,
     }
     if with_landmarks:
         out["landmarks"] = face.get("landmarks") and [[round(x, 2), round(y, 2)] for x, y in face["landmarks"]]

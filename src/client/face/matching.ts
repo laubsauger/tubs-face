@@ -1,7 +1,15 @@
 import type { DetectedFace, EnrolledFace, RecognitionMatch } from '../../shared/contracts/faces.js';
 
 export const MATCH_THRESHOLD = 0.65;
-export const MATCH_MARGIN = 0.01;
+/**
+ * A frame names someone only this far ahead of the next person. It was 0.01,
+ * and one frame with a 0.037 lead (Rapha 0.715, Flo 0.678) named Flo "Rapha".
+ * On the studio library (src/scripts/face-library-audit.ts, each sample matched
+ * without its own sitting) 0.12 named nobody wrong where 0.01 named 17 of 110
+ * wrong; right matches lead by 0.56 (median). Names then settle per track
+ * (settle.ts).
+ */
+export const MATCH_MARGIN = 0.12;
 const MAX_MATCHES = 3;
 
 export function cosineSimilarity(left: number[], right: number[]): number {
@@ -60,19 +68,24 @@ export function annotateDetectedFaces(faces: DetectedFace[], library: EnrolledFa
     const matches = [...bestByName.values()]
       .sort((left, right) => right.score - left.score)
       .slice(0, MAX_MATCHES);
-    const best = matches[0] ?? null;
-    const second = matches[1] ?? null;
-    const accepted = Boolean(
-      best &&
-      best.score >= MATCH_THRESHOLD &&
-      (!second || (best.score - second.score) >= MATCH_MARGIN),
-    );
+    const accepted = acceptedMatch(matches);
 
     return {
       ...face,
-      name: accepted ? best?.name ?? null : null,
-      match: accepted ? best : null,
+      name: accepted?.name ?? null,
+      match: accepted,
       matches,
     };
   });
+}
+
+/**
+ * This frame's verdict from the best sample per name, best first: the best if
+ * it clears the threshold and is MATCH_MARGIN ahead of the next name, else
+ * null. Settled per track in settle.ts.
+ */
+export function acceptedMatch(matches: readonly RecognitionMatch[], margin = MATCH_MARGIN): RecognitionMatch | null {
+  const best = matches[0] ?? null;
+  const second = matches[1] ?? null;
+  return best && best.score >= MATCH_THRESHOLD && (!second || best.score - second.score >= margin) ? best : null;
 }
