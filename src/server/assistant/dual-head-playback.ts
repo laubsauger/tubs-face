@@ -4,6 +4,7 @@
 import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { WsAudioChunkServerMessage, WsServerMessage, WsSpeakEndServerMessage } from '../../shared/contracts/ws.js';
 import { runtimeConfig } from '../config/runtime.js';
+import { studioSettings } from '../studio/state.js';
 import type { TurnTimer } from '../turn-timing.js';
 import { sanitizeForTts, stripFormatting } from './text.js';
 import { openTtsStream, type TtsStreamSession } from '../tts/stream.js';
@@ -22,6 +23,14 @@ const ESTIMATED_MIN_SPEECH_MS = 800;
  */
 const HANDOVER_MS = 300;
 const HANDOVER_MAX_MS = 1_200;
+/**
+ * Studio mode: the other head's next line goes out this long before the line
+ * now playing is expected to end, and its face page starts it a breath after
+ * that line's caption is done. Timed by the server alone, the handover was
+ * 350-650 ms, and a line held on its page (the face still travelling, a slow
+ * render) made the other head talk over it.
+ */
+export const STUDIO_HANDOVER_LEAD_MS = 1_500;
 
 type TtsHandlers = Parameters<typeof openTtsStream>[0];
 
@@ -144,6 +153,11 @@ export async function streamDualHeadBeatAudio(
       prefetch.next = null;
     }
 
+    // The other head's line this one answers, and whether the next one is the other head's.
+    const previousSpeak = previousSpeakBeat(beats, index);
+    const after = previousSpeak && previousSpeak.actor !== actor ? { actor: previousSpeak.actor === 'small' ? 'small' as const : 'main' as const, text: ttsTextOf(previousSpeak) } : null;
+    const nextIndex = nextSpeakBeatIndex(beats, index);
+    const handsOver = studioSettings.enabled && nextIndex >= 0 && (beats[nextIndex]!.actor === 'small' ? 'small' : 'main') !== actor && beat.delayMs == null;
     const beatChunks = await streamDualHeadSpeakBeat({
       turnId,
       epoch,
@@ -156,6 +170,8 @@ export async function streamDualHeadBeatAudio(
       nextChunkIndex: chunkIndex,
       callout: beat.callout === true,
       ...(beat.emotion ? { emotion: beat.emotion } : {}),
+      ...(after ? { after } : {}),
+      ...(handsOver ? { releaseEarlyMs: STUDIO_HANDOVER_LEAD_MS } : {}),
       onRendered: () => {
         const nextIndex = nextSpeakBeatIndex(beats, index);
         if (nextIndex < 0 || !isAssistantTurnActive(turnId, epoch)) return;
@@ -176,11 +192,21 @@ export async function streamDualHeadBeatAudio(
       break;
     }
 
-    await waitForBeatDelay(beat.delayMs != null ? Math.min(HANDOVER_MAX_MS, clampBeatDelay(beat.delayMs, HANDOVER_MS)) : HANDOVER_MS);
+    // In studio mode the next head's page times the handover itself (above).
+    if (!handsOver) {
+      await waitForBeatDelay(beat.delayMs != null ? Math.min(HANDOVER_MAX_MS, clampBeatDelay(beat.delayMs, HANDOVER_MS)) : HANDOVER_MS);
+    }
   }
   } finally {
     prefetch.next?.beat.close();
   }
+}
+
+function previousSpeakBeat(beats: TurnBeat[], before: number): TurnBeat | null {
+  for (let index = before - 1; index >= 0; index -= 1) {
+    if (beats[index]!.action === 'speak' && ttsTextOf(beats[index]!)) return beats[index]!;
+  }
+  return null;
 }
 
 function nextSpeakBeatIndex(beats: TurnBeat[], after: number): number {
@@ -213,6 +239,10 @@ async function streamDualHeadSpeakBeat(args: {
   callout?: boolean;
   /** The line's feeling, on every chunk: that head shows it while it speaks, and its mood takes the impulse. */
   emotion?: TurnEmotion;
+  /** The other head's line this one answers (WsAudioChunkServerMessage.after). */
+  after?: { actor: 'main' | 'small'; text: string };
+  /** Resolve this long before the line's audio is expected to end (studio handover). */
+  releaseEarlyMs?: number;
   /** Ming is done with this line (its audio may still be playing). */
   onRendered?: () => void;
   onFirstChunk?: () => void;
@@ -229,6 +259,8 @@ async function streamDualHeadSpeakBeat(args: {
     nextChunkIndex,
     callout,
     emotion,
+    after,
+    releaseEarlyMs = 0,
     onRendered,
     onFirstChunk,
   } = args;
@@ -284,6 +316,7 @@ async function streamDualHeadSpeakBeat(args: {
           ...(chunk.more ? { more: true } : {}),
           ...(callout ? { callout: true } : {}),
           ...(emotion ? { emotion } : {}),
+          ...(after ? { after } : {}),
         } satisfies WsAudioChunkServerMessage);
         chunkCount += 1;
       },
@@ -323,7 +356,7 @@ async function streamDualHeadSpeakBeat(args: {
         const remainingPlaybackMs = Math.max(
           0,
           // A bit runs well past 8 s; a shorter wait let the other head talk over it.
-          Math.min(20_000, playbackEndsAt ? playbackEndsAt - Date.now() : estimateSpeechDurationMs(text) - streamedPlaybackMs),
+          Math.min(20_000, playbackEndsAt ? playbackEndsAt - Date.now() : estimateSpeechDurationMs(text) - streamedPlaybackMs) - releaseEarlyMs,
         );
         if (remainingPlaybackMs <= 0 || !isAssistantTurnActive(turnId, epoch)) {
           finishResolve();

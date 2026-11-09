@@ -563,6 +563,36 @@ describe('assistant turn', () => {
       expect(miniStart - mainStart).toBeLessThan(1_700);
     });
 
+    // In the studio each head is its own face page. The answer goes out ahead,
+    // naming the line it answers, and the page starts it a breath after that
+    // line's caption is done: a server guess at the end made the pause 350-650
+    // ms, and a held line got talked over.
+    it('in studio mode sends the answer ahead, naming the line it answers', async () => {
+      const { studioSettings } = await import('../studio/state.js');
+      studioSettings.enabled = true;
+      try {
+        runtimeConfig.ttsStreamingEnabled = true;
+        const first = 'This one runs for two whole seconds of audio, give or take.';
+        const second = 'And I answer right on cue.';
+        fakes.ttsChunks = (text) => [0, 1, 2, 3].map((i) => ({ text, audio: wavOf(0.5), ...(i < 3 ? { more: true } : {}) }));
+        fakes.provider = queuedProvider([JSON.stringify({ beats: [
+          { actor: 'main', action: 'speak', text: first },
+          { actor: 'small', action: 'speak', text: second },
+        ] })]);
+        const sentAt: Array<{ message: WsServerMessage; at: number }> = [];
+        await runAssistantTurn('go on then', (message) => sentAt.push({ message, at: Date.now() }));
+        const audio = sentAt.flatMap(({ message, at }) => (message.type === 'audio_chunk' ? [{ message, at }] : []));
+        const main = audio.filter(({ message }) => message.actor === 'main');
+        const small = audio.filter(({ message }) => message.actor === 'small');
+        expect(main.every(({ message }) => !message.after)).toBe(true);
+        expect(small.every(({ message }) => message.after?.actor === 'main' && message.after.text === first)).toBe(true);
+        // Main's audio runs 2 s from its first chunk; the answer is out well before that ends.
+        expect(small[0]!.at - main[0]!.at).toBeLessThan(2_000 - 1_000);
+      } finally {
+        studioSettings.enabled = false;
+      }
+    });
+
     // Ming's first chunk (~0.2 s) used to wait for the whole script; now it
     // renders while the model writes the rest. Clients must still get the
     // turn_script before any of its audio, and the line is rendered once.

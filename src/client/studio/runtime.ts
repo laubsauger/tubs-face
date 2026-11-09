@@ -8,7 +8,7 @@
 // which is all the echo guard needs, and the studio needs no third page.
 
 import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
-import type { WsClientMessage, WsStudioConfigServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
+import type { WsAudioChunkServerMessage, WsClientMessage, WsStudioConfigServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
 import { redirectSpeech } from '../audio/speech-level.js';
 import { readVoiceClock } from '../audio/voice-clock.js';
 import type { SpeechRuntime } from '../audio/speech-runtime.js';
@@ -19,6 +19,7 @@ import type { GlitchRuntime } from '../glitch/runtime.js';
 import type { AppStore } from '../state/app-state.js';
 import { createBlackFrameMonitor } from './black-frame.js';
 import { createStageGate } from './stage.js';
+import { createHandoverGate } from './handover.js';
 import { createCadenceMeter } from './cadence.js';
 import { takeStreamingAudioStats } from '../audio/streaming-session.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
@@ -70,6 +71,9 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   let pictureSource = 'off';
   // Lines wait for this head's face to be in place (studio_stage, stage.ts).
   const stage = createStageGate();
+  // A line answering the other head starts a breath after that head's line played out (handover.ts).
+  const handover = createHandoverGate();
+  const stagedTurns = new Set<string>();
   let faceStarted = false;
   let publisherStatus: PublisherStatus = { publishing: false };
   // The published frame itself went black (see black-frame.ts).
@@ -119,6 +123,26 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       ...(micStatus ? { mic: { ...micStatus, ...(micStatus.error ? { error: micStatus.error.slice(0, 300) } : {}) } } : {}),
       ...(withCadence ? { cadence: withCadence } : {}),
     });
+  }
+
+  /**
+   * What a line waits for before it plays: the turn's first line, for the face
+   * to be in place (studio_stage; call-outs go at once); a line answering the
+   * other head, for that head's line to have played out, plus a breath.
+   */
+  function lineGate(message: WsAudioChunkServerMessage): Promise<unknown> | null {
+    if (message.callout) return null;
+    const turnId = message.turnId ?? '';
+    const waits: Array<Promise<unknown>> = [];
+    if (!stagedTurns.has(turnId)) {
+      stagedTurns.add(turnId);
+      if (stagedTurns.size > 64) stagedTurns.delete(stagedTurns.values().next().value!);
+      waits.push(stage.wait());
+    }
+    if (message.after && message.turnId) {
+      waits.push(handover.waitFor({ actor: message.after.actor, turnId: message.turnId, text: message.after.text }));
+    }
+    return waits.length > 0 ? Promise.all(waits) : null;
   }
 
   /** Render cadence of the face plus what WebRTC made of it, every CADENCE_REPORT_MS. */
@@ -304,7 +328,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         }
       }
     }
-    options.speech.setLineGate(next.enabled ? () => stage.wait() : null);
+    options.speech.setLineGate(next.enabled ? lineGate : null);
     if (next.enabled) startStateReports();
     else stopStateReports();
     // Also after a reconnect: the server forgot this page's status when its socket closed.
@@ -387,8 +411,11 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         case 'studio_stage':
           if (message.actor === actor) stage.note(message.ready);
           return;
-        case 'studio_state':
         case 'studio_caption':
+          handover.noteCaption(message);
+          return;
+        case 'studio_state':
+          handover.noteAlive(message.actor);
           return;
       }
     },
@@ -398,6 +425,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     },
     dispose() {
       stage.dispose();
+      handover.dispose();
       options.speech.setLineGate(null);
       window.removeEventListener('pagehide', onPageHide);
       stopStateReports();

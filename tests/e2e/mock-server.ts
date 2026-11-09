@@ -225,6 +225,8 @@ server.on('upgrade', (request, socket, head) => {
       }
       if (!message || message.type === 'ping' || message.type === 'face_motion' || message.type === 'face_blink') return;
       wsReceived.push({ ...message, receivedAt: Date.now() });
+      // As the real server: a head's captions go to everyone (the other head times its answer by them).
+      if (message.type === 'studio_caption') broadcast(message);
       if (message.type === 'tts_request' && message.text) {
         // Answer like the TTS stream: one chunk per request, then speak_end.
         const { text, turnId } = message;

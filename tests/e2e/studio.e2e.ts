@@ -735,3 +735,48 @@ test('a line\'s emotion shows on that head\'s face, and moves that head\'s mood 
   await send(request, line('small', 2, 'Fine, it is.', smug, 2), { type: 'speak_end', turnId, actor: 'small', text: 'Fine, it is.', fullText: 'Fine, it is.' });
   await expect(smallFace).toHaveAttribute('data-expression', 'smug', { timeout: 5000 });
 });
+
+// Two heads, two face pages. The answer arrives ahead (the server sends it
+// early in studio mode) and starts a breath after the other head's line has
+// actually played out: not over it, and not 0.9 s later.
+test('an answer from the other head starts a breath after the line it answers ends', async ({ context, request }) => {
+  const main = await context.newPage();
+  const small = await context.newPage();
+  for (const page of [main, small]) {
+    await instrumentAudio(page);
+    await fakeSiteNode(page);
+  }
+  await openStudio(main, request, 'main');
+  await small.goto('/studio-face.html?actor=small');
+  await small.locator('#visual-face').waitFor();
+  await setStudio(request, { enabled: true });
+  await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
+  await main.waitForTimeout(500);
+
+  const turnId = 't-handover';
+  const first = 'Did you get lost on purpose?';
+  await send(request,
+    { type: 'turn_start', turnId },
+    { type: 'turn_script', turnId, ts: Date.now(), beats: [{ actor: 'main', action: 'speak', text: first }, { actor: 'small', action: 'speak', text: 'He has a map.' }] },
+    { type: 'audio_chunk', audio: tone(2000), text: first, turnId, chunkIndex: 0, actor: 'main', beatIndex: 0 },
+    { type: 'speak_end', turnId, actor: 'main', text: first, fullText: first },
+  );
+  await main.waitForTimeout(300);
+  // Sent while Tubs still has 1.7 s to go.
+  await send(request,
+    { type: 'audio_chunk', audio: tone(800), text: 'He has a map.', turnId, chunkIndex: 1, actor: 'small', beatIndex: 1, after: { actor: 'main', text: first } },
+    { type: 'speak_end', turnId, actor: 'small', text: 'He has a map.', fullText: 'He has a map.' },
+  );
+  const epoch = async (page: typeof main) => {
+    const origin = await page.evaluate(() => performance.timeOrigin);
+    return (await speechAudio(page)).map((rec) => ({ start: origin + rec.calledAt, end: rec.endedAt === null ? null : origin + rec.endedAt }));
+  };
+  await expect.poll(async () => (await speechAudio(small)).length, { timeout: 8000 }).toBe(1);
+  await expect.poll(async () => (await epoch(main))[0]?.end ?? null, { timeout: 8000 }).not.toBeNull();
+  const mainEnd = (await epoch(main))[0]!.end!;
+  const smallStart = (await epoch(small))[0]!.start;
+  // Not over Tubs, and right after him: a short breath plus the caption tick (100 ms). With
+  // Ming's own silence at the ends of lines that is the 250-450 ms pause heard live.
+  expect(smallStart - mainEnd).toBeGreaterThanOrEqual(40);
+  expect(smallStart - mainEnd).toBeLessThanOrEqual(300);
+});

@@ -256,6 +256,18 @@ describe('createStreamingSession', () => {
       expect(context.sources).toHaveLength(2);
     });
 
+    // In studio mode the next head's line is sent ahead, all of it at once
+    // once Ming is done: a slow rate measured before must not hold a line that is all here.
+    it('never holds a line whose audio is all here, however slow Ming was before', async () => {
+      const { context, session, pass } = ming(0.3);
+      session.addChunk('a', REPLY, true);
+      session.addChunk('b', REPLY, true);
+      session.addChunk('c', REPLY, false);
+      await pass(50);
+      expect(context.sources).toHaveLength(3);
+      expect(context.sources[0]!.startedAt).toBeLessThan(0.1);
+    });
+
     it('plays at once when the pieces come faster than real time', async () => {
       const { context, session, pass } = ming(1.7);
       session.addChunk('a', REPLY, true);

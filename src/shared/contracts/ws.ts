@@ -299,6 +299,12 @@ export interface WsAudioChunkServerMessage {
    * keeps one subtitle across them.
    */
   more?: boolean;
+  /**
+   * Two-head: the other head's line this one answers. In studio mode it is sent
+   * ahead, and the face page starts it a breath after that line's caption says
+   * it has played out.
+   */
+  after?: { actor: 'main' | 'small'; text: string };
 }
 
 export interface WsTurnStartServerMessage {
