@@ -13,7 +13,9 @@ import type { Readable, Writable } from 'node:stream';
 export type StudioWindows = 'offscreen' | 'visible';
 
 const VISIBLE = { width: 560, height: 600, gap: 20, left: 40, top: 60 };
-const OFFSCREEN = { width: 240, height: 180, far: 100_000 };
+// Same size as on screen: the face's pixel grid is sized from the window, so a
+// small off-screen window drew four-pixel eyes into the 1024 px stream.
+const OFFSCREEN = { width: VISIBLE.width, height: VISIBLE.height, far: 100_000 };
 const CALL_TIMEOUT_MS = 5000;
 const PAGE_WAIT_MS = 10_000;
 
