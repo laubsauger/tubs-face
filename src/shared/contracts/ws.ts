@@ -4,7 +4,7 @@ import type {
   SessionStats,
 } from './config.js';
 import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
-import type { StudioActor, StudioCadence, StudioDevices, StudioFaceMethod, StudioGaze, StudioLiveStatus, StudioMicStatus, StudioMood, StudioPulse } from './studio.js';
+import type { FaceObservation, FaceRecognizer, StudioActor, StudioCadence, StudioDevices, StudioFaceMethod, StudioGaze, StudioLiveStatus, StudioMicStatus, StudioMood, StudioPulse } from './studio.js';
 
 export interface TokenUsage {
   in: number;
@@ -276,7 +276,18 @@ export type WsClientMessage =
   | WsStudioFaceResultClientMessage
   | WsStudioCaptionClientMessage
   | WsStudioContextClientMessage
-  | WsStudioStageClientMessage;
+  | WsStudioStageClientMessage
+  | WsFaceObservationClientMessage;
+
+/**
+ * The listener page's browser worker reports a frame's faces in the same shape
+ * the face service does (docs/face-service.md); the server passes it on to the
+ * dashboards. Studio listener page (main) only.
+ */
+export interface WsFaceObservationClientMessage {
+  type: 'face_observation';
+  observation: FaceObservation;
+}
 
 export interface WsPingServerMessage {
   type: 'ping';
@@ -471,6 +482,22 @@ export interface WsStudioConfigServerMessage {
   streams: Record<StudioActor, string>;
   /** Studio face pages only: the Authorization headers for the site node (TUBS_STUDIO_SITE_AUTH). */
   siteAuth?: { publish?: string; read?: string };
+  /**
+   * Who recognises faces (docs/face-service.md). 'service': the listener page
+   * starts no face worker and takes the server's face_observation instead.
+   * Absent: 'browser', as before.
+   */
+  faces?: FaceRecognizer;
+}
+
+/**
+ * One frame's faces (docs/face-service.md), from whichever producer runs: to
+ * the listener page while the face service recognises (its sleep and proactive
+ * lines follow who is in view), and to dashboards that watch the studio.
+ */
+export interface WsFaceObservationServerMessage {
+  type: 'face_observation';
+  observation: FaceObservation;
 }
 
 /** The director's stage, passed on to the studio face pages: is this head in place to speak? */
@@ -522,7 +549,8 @@ export type WsStudioServerMessage =
   | WsStudioPresenceServerMessage
   | WsStudioStateServerMessage
   | WsStudioWatchServerMessage
-  | WsStudioFaceCallServerMessage;
+  | WsStudioFaceCallServerMessage
+  | WsFaceObservationServerMessage;
 
 /** The studio listener's live state, relayed to dashboards on the local network while studio mode is on. */
 export interface WsStudioLiveServerMessage {

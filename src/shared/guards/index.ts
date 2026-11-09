@@ -1,5 +1,5 @@
 import type { WsClientMessage, WsServerMessage, WsStudioServerMessage } from '../contracts/ws.js';
-import { STUDIO_FACE_METHODS } from '../contracts/studio.js';
+import { STUDIO_FACE_METHODS, type FaceObservation } from '../contracts/studio.js';
 
 const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'ping',
@@ -26,6 +26,7 @@ const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'studio_frame',
   'studio_face_call',
   'studio_face_result',
+  'face_observation',
 ]);
 
 const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
@@ -67,9 +68,10 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'studio_pulse',
   'studio_face_call',
   'studio_face_result',
+  'face_observation',
 ]);
 
-const WS_STUDIO_SERVER_TYPES = new Set<WsStudioServerMessage['type']>(['studio_config', 'studio_look', 'studio_presence', 'studio_state', 'studio_caption', 'studio_stage', 'studio_watch', 'studio_face_call']);
+const WS_STUDIO_SERVER_TYPES = new Set<WsStudioServerMessage['type']>(['studio_config', 'studio_look', 'studio_presence', 'studio_state', 'studio_caption', 'studio_stage', 'studio_watch', 'studio_face_call', 'face_observation']);
 
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -196,6 +198,8 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
       return isStudioContext(m);
     case 'studio_stage':
       return isActor(m.actor) && typeof m.ready === 'boolean';
+    case 'face_observation':
+      return isFaceObservation(m.observation);
     case 'studio_caption':
       return isActor(m.actor) && typeof m.turnId === 'string' && m.turnId.length <= MAX_ID_CHARS
         && typeof m.text === 'string' && m.text.length <= MAX_TEXT_CHARS
@@ -230,6 +234,35 @@ function isStudioContext(m: Record<string, unknown>): boolean {
     if (!v.windows.every((w) => isRecord(w) && shortText(w.id) && shortText(w.name) && typeof w.about === 'string')) return false;
   }
   return true;
+}
+
+const MAX_OBSERVED_FACES = 32;
+const unit = (v: unknown): boolean => isFiniteNumber(v) && (v as number) >= 0 && (v as number) <= 1;
+const shortName = (v: unknown): boolean => typeof v === 'string' && v.length > 0 && v.length <= 80;
+function isObservedFace(v: unknown): boolean {
+  if (!isRecord(v) || !Number.isInteger(v.track) || !unit(v.score)) return false;
+  if (!Array.isArray(v.box) || v.box.length !== 4 || !v.box.every(isFiniteNumber)) return false;
+  // x, y, w, h in 0..1; a box may poke out of the frame a little (a face at the edge).
+  const [x, y, w, h] = v.box as number[];
+  if (w! < 0 || h! < 0 || x! < -0.5 || y! < -0.5 || x! + w! > 1.5 || y! + h! > 1.5) return false;
+  if (!Array.isArray(v.candidates) || v.candidates.length > 3
+    || !v.candidates.every((c) => isRecord(c) && shortName(c.name) && isFiniteNumber(c.sim) && Math.abs(c.sim as number) <= 1.0001)) return false;
+  if (v.decision === 'match') return shortName(v.name);
+  return (v.decision === 'unknown' || v.decision === 'onboarding') && v.name === undefined;
+}
+
+/** A FaceObservation (contracts/studio.ts, docs/face-service.md), from either producer. */
+export function isFaceObservation(value: unknown): value is FaceObservation {
+  if (!isRecord(value) || !isFiniteNumber(value.t) || !shortText(value.source)) return false;
+  const frameSize = value.frame;
+  if (!isRecord(frameSize) || !isFiniteNumber(frameSize.w) || !isFiniteNumber(frameSize.h) || (frameSize.w as number) < 0 || (frameSize.h as number) < 0) return false;
+  if (!Array.isArray(value.faces) || value.faces.length > MAX_OBSERVED_FACES || !value.faces.every(isObservedFace)) return false;
+  const w = value.worker;
+  return isRecord(w) && (w.kind === 'service' || w.kind === 'browser')
+    && (w.state === 'off' || w.state === 'loading' || w.state === 'ready' || w.state === 'error')
+    && shortText(w.backend) && (w.threads === undefined || (Number.isInteger(w.threads) && (w.threads as number) > 0))
+    && isFiniteNumber(w.inferMs) && (w.inferMs as number) >= 0 && isFiniteNumber(w.fps) && (w.fps as number) >= 0
+    && (w.error === undefined || shortText(w.error)) && shortText(w.where);
 }
 
 export function isWsServerMessage(value: unknown): value is WsServerMessage {

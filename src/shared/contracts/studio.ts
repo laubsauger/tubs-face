@@ -112,7 +112,7 @@ export interface StudioResponse {
  * short detail (model, latency, voices, fps).
  */
 export interface StudioPart {
-  id: 'brain' | 'voices' | 'realtime' | 'vision' | 'mic' | 'faces' | 'site';
+  id: 'brain' | 'voices' | 'realtime' | 'vision' | 'recognition' | 'mic' | 'faces' | 'site';
   label: string;
   where: string;
   ok: boolean | null;
@@ -319,4 +319,67 @@ export interface StudioMood {
   pos: number;
   neg: number;
   arousal: number;
+}
+
+/**
+ * Who recognises the faces in the studio camera's pictures (docs/face-service.md):
+ * the face service on the server ('service', FACE_SERVICE set and a site: or
+ * snapshot: vision source), the listener page's browser worker ('browser', the
+ * default, and a local camera), or nobody ('off').
+ */
+export type FaceRecognizer = 'service' | 'browser' | 'off';
+
+/**
+ * One frame's faces, as either producer reports them (docs/face-service.md):
+ * the face service on the server, or the listener page's browser worker. Same
+ * shape from both, so the dashboards and the debug view need not know which ran.
+ */
+export interface FaceObservation {
+  /** When the frame was taken (ms since epoch). */
+  t: number;
+  /** The vision source it came from, as visionSource, e.g. "site:cam-1". */
+  source: string;
+  /** The picture's size in pixels, as the detector saw it. */
+  frame: { w: number; h: number };
+  faces: FaceObservationFace[];
+  worker: FaceWorkerStatus;
+}
+
+export type FaceDecision = 'match' | 'unknown' | 'onboarding';
+
+export interface FaceObservationFace {
+  /** Stays the same while this face stays in view (tracked across frames by overlap); per producer. */
+  track: number;
+  /** x, y, w, h in 0..1 of the frame, x to the right as the camera sees it (not mirrored). */
+  box: [number, number, number, number];
+  /** Detection score, 0..1. */
+  score: number;
+  /** The library's best sample per name, best first, at most 3; cosine similarity -1..1. */
+  candidates: Array<{ name: string; sim: number }>;
+  /**
+   * match: the best candidate is at or over the threshold and clear of the
+   * second (client/face/matching.ts); onboarding: not recognised, and being
+   * onboarded now (an onboarding dialog is open, or auto onboarding holds
+   * snapshots of them); unknown: anyone else.
+   */
+  decision: FaceDecision;
+  /** With decision 'match': who. */
+  name?: string;
+}
+
+/** The producer of an observation, and how it is doing. */
+export interface FaceWorkerStatus {
+  kind: 'service' | 'browser';
+  state: 'off' | 'loading' | 'ready' | 'error';
+  /** Where the models run: "CoreML", "CPU", "CUDA" (service) or "wasm" (browser). */
+  backend: string;
+  threads?: number;
+  /** Detection plus embeddings for the last frame, ms. */
+  inferMs: number;
+  /** Frames checked per second, over the last few seconds. */
+  fps: number;
+  /** Why it is not working (state 'error'), or what it is waiting for (loading). Never a secret. */
+  error?: string;
+  /** host or host:port doing the work (this machine's name for loopback). */
+  where: string;
 }
