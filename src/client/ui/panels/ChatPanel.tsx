@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
-import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { splitLeadingEmoji, splitLineEmojis } from '../../chat/emoji.js';
 import { chatTailKey, nearBottom } from '../../chat/scroll.js';
 import { withFillerLeads } from '../../chat/filler-lead.js';
 import { sendChatComposer } from '../../chat/send.js';
@@ -80,6 +80,9 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
               const isSystem = actor === 'system';
               // Reply emojis go next to the name; the stored text keeps them.
               const { emoji, body } = isAssistant ? splitLeadingEmoji(entry.text) : { emoji: '', body: entry.text };
+              // A bit has a reaction per sentence: shown in a faint column beside the text, not inline.
+              const lines = isAssistant ? splitLineEmojis(body) : [];
+              const perLine = lines.length > 1 && lines.some((line) => line.emoji);
               return (
                 <li
                   key={entry.id}
@@ -87,13 +90,24 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
                 >
                   <div className={`chat-entry-head flex items-baseline gap-2 text-[10px] ${isAssistant ? 'flex-row' : isSystem ? '' : 'flex-row-reverse'}`}>
                     <strong className="chat-entry-name uppercase tracking-wider">{renderChatPrefix(entry.type, entry.actor)}</strong>
-                    {emoji ? <span className="chat-entry-emoji" aria-label="reaction">{emoji}</span> : null}
+                    {emoji && !perLine ? <span className="chat-entry-emoji" aria-label="reaction">{emoji}</span> : null}
                     {entry.filler ? <span className="text-slate-500">filler</span> : null}
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
                   <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
                     {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
-                    {body}
+                    {perLine
+                      ? (
+                        <div className="chat-entry-lines grid grid-cols-[1.4em_1fr] gap-x-1">
+                          {lines.map((line, index) => (
+                            <div key={index} className="contents">
+                              <span className="chat-entry-line-emoji text-[10px] opacity-50 select-none" aria-label="reaction">{line.emoji || (index === 0 ? emoji : '')}</span>
+                              <span>{line.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )
+                      : body}
                   </div>
                 </li>
               );
