@@ -9,6 +9,7 @@ import { serveStatic } from './http/static.js';
 import { initWebSocketServer } from './ws/server.js';
 import { shutdownLangfuse } from './observability/langfuse.js';
 import { startStudio, stopStudio } from './studio/control.js';
+import { restoreState } from './state-file.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -36,6 +37,8 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
+// TUBS_STATE_FILE: the studio choices as they were before a restart.
+restoreState();
 const wss = initWebSocketServer(server);
 void startProcessingStack();
 void prepareFillersAtStartup(runtimeConfig.kokoroVoice ?? 'af_heart');

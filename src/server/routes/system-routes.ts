@@ -17,6 +17,7 @@ import { createReadiness, probeJson } from '../health/readiness.js';
 import { toStudioResponse } from '../studio/state.js';
 import { visionService } from '../assistant/vision.js';
 import { personaOverride } from '../persona/index.js';
+import { persistState } from '../state-file.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
@@ -65,6 +66,7 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
         await restartSpeechService(patch.sttModel, 'config patch');
       }
       broadcastConfig();
+      persistState();
       if (!wasMuted && runtimeConfig.muted) {
         // Mute means silence now: drop the turn in flight and stop client audio.
         interruptAssistantTurns();
