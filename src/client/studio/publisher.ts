@@ -1,7 +1,7 @@
 // Keeps one face stream published to the site node: WHIP, re-published with
 // backoff whenever the session fails, drops or the site node restarts.
 
-import { endSession, reconnectDelayMs, whipPublish, type WhipSession } from '../transport/whip.js';
+import { SiteLoginError, endSession, reconnectDelayMs, whipPublish, type WhipSession } from '../transport/whip.js';
 
 export interface PublisherStatus {
   publishing: boolean;
@@ -37,6 +37,8 @@ export interface PublishStats {
 const MAX_BITRATE = 8_000_000;
 const MAX_FRAMERATE = 30;
 const DISCONNECT_GRACE_MS = 4000;
+/** After the site node refused the login: try again this rarely. */
+export const SITE_LOGIN_RETRY_MS = 30_000;
 // Keyframes come when the site node asks (mediamtx: every 2 s, and on loss).
 // Forcing more by switching the encoding off and on held a frame each time:
 // a 60-150 ms stall in the stream about once a second, visible as a jump.
@@ -82,10 +84,10 @@ export function createFacePublisher(options: {
     void connect(generation);
   }
 
-  function retry(gen: number, error: string): void {
+  function retry(gen: number, error: string, minDelayMs = 0): void {
     if (gen !== generation || disposed) return;
     teardown();
-    const delay = reconnectDelayMs(attempt);
+    const delay = Math.max(minDelayMs, reconnectDelayMs(attempt));
     attempt += 1;
     status({ publishing: false, error });
     options.log(`${error}; publishing again in ${(delay / 1000).toFixed(1)} s`);
@@ -130,7 +132,8 @@ export function createFacePublisher(options: {
       };
       if (next.pc.connectionState === 'connected') status({ publishing: true });
     } catch (error) {
-      retry(gen, error instanceof Error ? error.message : String(error));
+      // A refused login is not fixed by asking again at once: someone has to fix the file.
+      retry(gen, error instanceof Error ? error.message : String(error), error instanceof SiteLoginError ? SITE_LOGIN_RETRY_MS : 0);
     }
   }
 

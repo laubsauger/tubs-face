@@ -14,6 +14,7 @@ import {
   type StudioResponse,
 } from '../../shared/contracts/studio.js';
 import type { WsStudioConfigServerMessage } from '../../shared/contracts/ws.js';
+import { siteLoginProblem } from './site-auth.js';
 
 export const DEFAULT_STUDIO_SITE = 'http://127.0.0.1:8889';
 
@@ -152,7 +153,7 @@ export function toStudioResponse(settings: StudioSettings = studioSettings): Stu
     const publishing = settings.enabled && Boolean(report?.connected && report.publishing);
     const error = !settings.enabled
       ? undefined
-      : launcherErrors.get(id) ?? (report?.connected ? report.error : 'face page not connected');
+      : launcherErrors.get(id) ?? siteLoginProblem() ?? (report?.connected ? report.error : 'face page not connected');
     return { id, stream: streamName(id, settings), publishing, ...(error && !publishing ? { error } : {}), ...(settings.enabled && report?.connected && report.cadence ? { cadence: report.cadence } : {}) };
   });
   // The main page is the listener (see client/studio/runtime.ts).

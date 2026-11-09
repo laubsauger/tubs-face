@@ -63,3 +63,42 @@ describe('the start bitrate of a face stream', () => {
     expect(withStartBitrate(shaped)).toBe(shaped);
   });
 });
+
+// The studio's mediamtx needs a login to publish. Every request of a session
+// carries it: the WHIP POST and the DELETE that ends it.
+describe('the site login', () => {
+  it('goes with the WHIP POST and with the DELETE that ends the session', async () => {
+    const { endSession, setSiteLogin, whipPublish } = await import('./whip.js');
+    const sent: Array<{ method: string; url: string; authorization: string | null }> = [];
+    const realFetch = globalThis.fetch;
+    const realPc = (globalThis as { RTCPeerConnection?: unknown }).RTCPeerConnection;
+    (globalThis as { window?: unknown }).window ??= globalThis;
+    globalThis.fetch = (async (url: string, init: RequestInit = {}) => {
+      const headers = new Headers(init.headers);
+      sent.push({ method: init.method ?? 'GET', url: String(url), authorization: headers.get('authorization') });
+      return new Response('v=0\r\n', { status: 201, headers: { Location: '/tubs-main/whip/session-1' } });
+    }) as typeof fetch;
+    (globalThis as { RTCPeerConnection?: unknown }).RTCPeerConnection = class {
+      iceGatheringState = 'complete';
+      localDescription = { sdp: 'v=0\r\n' };
+      async createOffer() { return { type: 'offer', sdp: 'v=0\r\n' }; }
+      async setLocalDescription() {}
+      async setRemoteDescription() {}
+      close() {}
+    };
+    try {
+      setSiteLogin({ publish: 'Basic dHViczpzZWNyZXQ=' });
+      const session = await whipPublish('http://site/tubs-main/whip', { getVideoTracks: () => [], getAudioTracks: () => [] } as unknown as MediaStream, { maxBitrate: 1, maxFramerate: 1 });
+      endSession(session.resource);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(sent).toEqual([
+        { method: 'POST', url: 'http://site/tubs-main/whip', authorization: 'Basic dHViczpzZWNyZXQ=' },
+        { method: 'DELETE', url: 'http://site/tubs-main/whip/session-1', authorization: 'Basic dHViczpzZWNyZXQ=' },
+      ]);
+    } finally {
+      setSiteLogin(undefined);
+      globalThis.fetch = realFetch;
+      (globalThis as { RTCPeerConnection?: unknown }).RTCPeerConnection = realPc;
+    }
+  });
+});

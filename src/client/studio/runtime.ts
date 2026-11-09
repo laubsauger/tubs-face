@@ -20,6 +20,7 @@ import type { AppStore } from '../state/app-state.js';
 import { createBlackFrameMonitor } from './black-frame.js';
 import { createStageGate } from './stage.js';
 import { createHandoverGate } from './handover.js';
+import { setSiteLogin } from '../transport/whip.js';
 import { createCadenceMeter } from './cadence.js';
 import { takeStreamingAudioStats } from '../audio/streaming-session.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
@@ -302,6 +303,8 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
 
   function applyConfig(next: WsStudioConfigServerMessage): void {
     config = next;
+    // The site node's login, if it needs one (TUBS_STUDIO_SITE_AUTH); before publishing.
+    setSiteLogin(next.siteAuth);
     publisher.publish(next.enabled ? `${next.site}/${next.streams[actor]}/whip` : null);
     if (options.voice) {
       const source = next.enabled ? parseMicSource(next.micSource) : { kind: 'off' as const };

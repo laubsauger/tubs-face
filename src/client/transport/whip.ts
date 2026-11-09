@@ -45,6 +45,24 @@ export function withStartBitrate(sdp: string, startKbps = PUBLISH_START_KBPS, mi
     h264.has(payload) && !line.includes('x-google-start-bitrate') ? `${line};x-google-start-bitrate=${startKbps};x-google-min-bitrate=${minKbps}` : line);
 }
 
+// The site node's logins (TUBS_STUDIO_SITE_AUTH, given to studio face pages
+// in their studio_config): a header per direction, kept for each session so
+// its DELETE carries it too. Never in a URL or a log.
+let siteLogin: { publish?: string; read?: string } = {};
+const sessionLogins = new Map<string, string>();
+
+export function setSiteLogin(login: { publish?: string; read?: string } | undefined): void {
+  siteLogin = { ...(login?.publish ? { publish: login.publish } : {}), ...(login?.read ? { read: login.read } : {}) };
+}
+
+/** The site node refused the login (or asked for one): retrying soon would not help. */
+export class SiteLoginError extends Error {
+  constructor(readonly status: number) {
+    super(`the site node refused the login (${status}): check TUBS_STUDIO_SITE_AUTH`);
+    this.name = 'SiteLoginError';
+  }
+}
+
 export interface WhipSession {
   pc: RTCPeerConnection;
   /** The session resource (Location); DELETE ends it. */
@@ -52,14 +70,16 @@ export interface WhipSession {
 }
 
 /** Offers `pc`'s transceivers to a WHIP/WHEP endpoint and applies the answer. */
-async function negotiate(pc: RTCPeerConnection, url: string, shapeAnswer: (sdp: string) => string = (sdp) => sdp): Promise<string | null> {
+async function negotiate(pc: RTCPeerConnection, url: string, direction: 'publish' | 'read', shapeAnswer: (sdp: string) => string = (sdp) => sdp): Promise<string | null> {
   await pc.setLocalDescription(await pc.createOffer());
   await iceGathered(pc);
+  const authorization = siteLogin[direction];
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/sdp' },
+    headers: { 'Content-Type': 'application/sdp', ...(authorization ? { Authorization: authorization } : {}) },
     body: pc.localDescription?.sdp ?? '',
   });
+  if (response.status === 401 || response.status === 403) throw new SiteLoginError(response.status);
   if (response.status !== 201 && response.status !== 200) {
     const detail = (await response.text().catch(() => '')).trim().slice(0, 200);
     throw new Error(`${url} answered ${response.status}${detail ? `: ${detail}` : ''}`);
@@ -67,7 +87,9 @@ async function negotiate(pc: RTCPeerConnection, url: string, shapeAnswer: (sdp: 
   const answer = await response.text();
   await pc.setRemoteDescription({ type: 'answer', sdp: shapeAnswer(answer) });
   const location = response.headers.get('Location');
-  return location ? new URL(location, url).toString() : null;
+  const resource = location ? new URL(location, url).toString() : null;
+  if (resource && authorization) sessionLogins.set(resource, authorization);
+  return resource;
 }
 
 function iceGathered(pc: RTCPeerConnection): Promise<void> {
@@ -90,7 +112,9 @@ function iceGathered(pc: RTCPeerConnection): Promise<void> {
 /** Ends a session on the site node; best effort (it times the session out anyway). */
 export function endSession(resource: string | null): void {
   if (!resource) return;
-  void fetch(resource, { method: 'DELETE' }).catch(() => {});
+  const authorization = sessionLogins.get(resource);
+  sessionLogins.delete(resource);
+  void fetch(resource, { method: 'DELETE', ...(authorization ? { headers: { Authorization: authorization } } : {}) }).catch(() => {});
 }
 
 /** Publishes the video and audio track of `stream` in one session, so lip sync holds. */
@@ -114,7 +138,7 @@ export async function whipPublish(url: string, stream: MediaStream, options: { m
     for (const track of stream.getAudioTracks()) {
       pc.addTransceiver(track, { direction: 'sendonly', streams: [stream] });
     }
-    const resource = await negotiate(pc, url, withStartBitrate);
+    const resource = await negotiate(pc, url, 'publish', withStartBitrate);
     return { pc, resource };
   } catch (error) {
     pc.close();
@@ -169,7 +193,7 @@ export async function whepAudio(url: string, onEnded: (reason: string) => void):
         resolve();
       };
     });
-    resource = await negotiate(pc, url);
+    resource = await negotiate(pc, url, 'read');
     await gotTrack;
     element.srcObject = stream;
     void element.play().catch(() => {});
@@ -214,7 +238,7 @@ export async function whepPicture(url: string, timeoutMs = 8000): Promise<ImageB
         resolve();
       };
     });
-    resource = await negotiate(pc, url);
+    resource = await negotiate(pc, url, 'read');
     await gotTrack;
     video.srcObject = stream;
     await video.play().catch(() => {});

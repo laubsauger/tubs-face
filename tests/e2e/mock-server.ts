@@ -37,6 +37,9 @@ const defaultConfig = structuredClone(config);
 // Nothing listens there; studio tests answer its WHIP/WHEP requests with page.route.
 const MOCK_SITE = 'http://127.0.0.1:39011';
 const studio = studioSettingsFromEnv({ TUBS_STUDIO_SITE: MOCK_SITE });
+// The site login the real server gives studio face pages (TUBS_STUDIO_SITE_AUTH); set by a test.
+let siteAuth: { publish?: string; read?: string } | null = null;
+const studioConfig = () => ({ ...studioConfigMessage(studio), ...(siteAuth ? { siteAuth } : {}) });
 const defaultStudio = structuredClone(studio);
 const clients = new Set<WebSocket>();
 let wsReceived: unknown[] = [];
@@ -113,9 +116,16 @@ const server = http.createServer(async (request, response) => {
     json(response, 200, { ws: wsReceived, http: httpReceived });
     return;
   }
+  if (path === '/__test/site-auth' && method === 'POST') {
+    siteAuth = (await readBody(request)) as { publish?: string } | null;
+    broadcast(studioConfig());
+    json(response, 200, { ok: true });
+    return;
+  }
   if (path === '/__test/reset' && method === 'POST') {
     wsReceived = [];
     httpReceived = [];
+    siteAuth = null;
     // Config changes from one test must not leak into the next.
     if (JSON.stringify(config) !== JSON.stringify(defaultConfig)) {
       for (const key of Object.keys(config)) delete config[key];
@@ -124,7 +134,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (JSON.stringify(studio) !== JSON.stringify(defaultStudio)) {
       Object.assign(studio, structuredClone(defaultStudio));
-      broadcast(studioConfigMessage(studio));
+      broadcast(studioConfig());
     }
     json(response, 200, { ok: true });
     return;
@@ -179,7 +189,7 @@ const server = http.createServer(async (request, response) => {
   }
   if (method === 'POST' && path === '/studio') {
     try {
-      if (applyStudioPatch(body, studio).length > 0) broadcast(studioConfigMessage(studio));
+      if (applyStudioPatch(body, studio).length > 0) broadcast(studioConfig());
       json(response, 200, { ...studio, actors: [] });
     } catch (error) {
       json(response, 400, { error: error instanceof Error ? error.message : String(error) });
@@ -214,7 +224,7 @@ server.on('upgrade', (request, socket, head) => {
     ws.send(JSON.stringify({ type: 'system', text: 'Connected to mock server' }));
     // As the real server: face pages always, other pages only while studio mode is on.
     if (new URL(request.url, 'http://localhost').searchParams.has('studio') || studio.enabled) {
-      ws.send(JSON.stringify(studioConfigMessage(studio)));
+      ws.send(JSON.stringify(studioConfig()));
     }
     ws.on('message', (raw) => {
       let message: { type?: string; text?: string; turnId?: string } | null = null;

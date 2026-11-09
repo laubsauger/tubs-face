@@ -44,6 +44,8 @@ data/face-library.json
 data/ming-voices/
 # Studio choices kept across restarts (TUBS_STATE_FILE)
 data/tubs-state.json
+# The studio site node's login (TUBS_STUDIO_SITE_AUTH)
+data/site-login.json
 
 # Ad-hoc TTS test output
 /*.wav

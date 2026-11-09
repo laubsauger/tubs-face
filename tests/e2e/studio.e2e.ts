@@ -780,3 +780,29 @@ test('an answer from the other head starts a breath after the line it answers en
   expect(smallStart - mainEnd).toBeGreaterThanOrEqual(40);
   expect(smallStart - mainEnd).toBeLessThanOrEqual(300);
 });
+
+// The studio's mediamtx lets the face pages publish only with a login
+// (TUBS_STUDIO_SITE_AUTH). The page sends it on every WHIP request, the
+// session's DELETE included; and a refused login is reported, not retried in
+// a tight loop.
+test('publishes with the site login it was given, never in the page address', async ({ page, request }) => {
+  const requests = await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  const header = `Basic ${Buffer.from('tubs:not-a-real-pass').toString('base64')}`;
+  await request.post(`${MOCK}/__test/site-auth`, { data: { publish: header } });
+  await setStudio(request, { enabled: true });
+  await expect.poll(() => requests.filter((r) => r.method === 'POST').length, { timeout: 8000 }).toBeGreaterThan(0);
+  expect(requests.find((r) => r.method === 'POST')!.authorization).toBe(header);
+  // Never in the page's address. (The session's DELETE: transport/whip.test.ts.)
+  expect(page.url()).not.toContain('not-a-real-pass');
+});
+
+test('a refused site login is reported and not retried in a tight loop', async ({ page, request }) => {
+  const requests = await fakeSiteNode(page, () => ({ status: 401 }));
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/__test/reset-received`);
+  await setStudio(request, { enabled: true });
+  await expect.poll(async () => (await received(request)).ws.some((m) => m.type === 'studio_status' && typeof m.error === 'string' && /login/.test(m.error as string)), { timeout: 8000 }).toBe(true);
+  await page.waitForTimeout(3000);
+  expect(requests.filter((r) => r.method === 'POST').length).toBeLessThanOrEqual(2);
+});

@@ -12,6 +12,7 @@ import type {
   WsPingServerMessage,
   WsServerMessage,
   WsSpeakEndServerMessage,
+  WsStudioConfigServerMessage,
   WsStudioServerMessage,
   WsSystemServerMessage,
 } from '../../shared/contracts/ws.js';
@@ -25,6 +26,7 @@ import { fieldNotesSnapshot, onEnrollRequest, onFieldNotesChange, setPeople } fr
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings } from '../studio/state.js';
+import { siteLogin } from '../studio/site-auth.js';
 import { noteStudioContext } from '../studio/context.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 import { isRendering, onRenderingChange } from '../tts/rendering.js';
@@ -88,7 +90,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     // mode is on (the operator face then leaves the mic to the studio listener);
     // with it off they get nothing new.
     if (studioActor || studioSettings.enabled) {
-      send(socket, studioConfigMessage());
+      send(socket, studioActor ? withSiteLogin(studioConfigMessage()) : studioConfigMessage());
     }
     if (isRendering()) send(socket, { type: 'tts_rendering', rendering: true });
 
@@ -136,9 +138,11 @@ function isWebSocketRequest(request: IncomingMessage): boolean {
 
 export function broadcast(message: WsServerMessage): void {
   const payload = JSON.stringify(message);
+  // The site login goes to the studio face pages only (studio/site-auth.ts).
+  const pagePayload = message.type === 'studio_config' ? JSON.stringify(withSiteLogin(message)) : payload;
   for (const client of clients) {
     if (client.readyState === client.OPEN) {
-      client.send(payload);
+      client.send(studioPages.has(client) ? pagePayload : payload);
     } else if (client.readyState > client.OPEN) {
       clients.delete(client);
     }
@@ -408,6 +412,11 @@ function handleTtsStreamRequest(socket: WebSocket, message: Extract<WsClientMess
       ttsSession.close();
     }
   }, 30_000);
+}
+
+function withSiteLogin(message: WsStudioConfigServerMessage): WsStudioConfigServerMessage {
+  const login = siteLogin();
+  return login.publish || login.read ? { ...message, siteAuth: login } : message;
 }
 
 function send(socket: WebSocket, message: WsServerMessage): void {
