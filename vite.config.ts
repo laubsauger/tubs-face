@@ -71,5 +71,15 @@ export default defineConfig({
   },
   worker: {
     format: 'es',
+    rollupOptions: {
+      output: {
+        // onnxruntime-web starts its WASM threads as workers of its own module
+        // (import.meta.url). Inlined into the face worker's chunk, each thread
+        // loaded the face worker instead, never started, and the model never
+        // loaded: no face was ever detected in a built page. Its own chunk, as
+        // in dev, keeps that URL its own.
+        manualChunks: (id) => (id.includes('/node_modules/onnxruntime-web/') ? 'ort' : undefined),
+      },
+    },
   },
 });
