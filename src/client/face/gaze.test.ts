@@ -224,6 +224,25 @@ describe('following the director\'s look', () => {
     expect(path.at(-1)! - resting).toBeCloseTo(0.018, 3);
   });
 
+  it('holds a fixation once the look is steady: a swaying target does not drag the eyes along', () => {
+    const gaze = createGazeController();
+    const out = sampleOut();
+    gaze.sample(0, out);
+    let t = 0;
+    for (; t <= 800; t += FRAME) {
+      gaze.pursue(0.3, 0, t);
+      gaze.sample(t, out);
+    }
+    const fixed = out.x;
+    const path: number[] = [];
+    for (let i = 0; i < 60; i += 1, t += FRAME) {
+      gaze.pursue(0.3 + (i % 2 ? 0.01 : -0.01), 0, t);
+      gaze.sample(t, out);
+      path.push(out.x);
+    }
+    expect(Math.max(...path.map((x) => Math.abs(x - fixed)))).toBeLessThan(1e-9);
+  });
+
   it('solves the spring exactly, so a long frame cannot make it overshoot', () => {
     const [x, v] = criticallyDamped(0, 0, 1, 1000);
     expect(x).toBeLessThanOrEqual(1);

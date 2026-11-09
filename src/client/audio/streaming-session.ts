@@ -13,6 +13,57 @@ export const STREAMING_GAP_GRACE_MS = 280;
 /** Give up waiting after this many grace periods (~11 s). */
 export const STREAMING_FINALIZE_MAX_ATTEMPTS = 40;
 
+/**
+ * Ming streams a reply in pieces as it renders. Under GPU load it renders
+ * slower than it speaks (0.5x was measured), and piece after piece arrived
+ * after the previous one had played: a 230-260 ms hole every few seconds,
+ * inside words. So a reply that is still coming starts only once enough of it
+ * is here to play through at the rate the pieces arrive. At normal speed
+ * (faster than real time) that is at once.
+ */
+/**
+ * Safety only: a reply that would need longer is played anyway. A pause before
+ * a line reads as thinking; one in the middle of it as the voice breaking (an
+ * 8 s cap, under a GPU at 95 %, gave a 3-6 s pause inside each line).
+ */
+export const STREAM_MAX_HOLD_MS = 30_000;
+/** Extra audio held on top of the computed lead. */
+export const STREAM_LEAD_MARGIN_S = 0.3;
+/** For the length of a reply not all here yet: Ming speaks ~0.27-0.3 s per word. */
+const SECONDS_PER_WORD = 0.3;
+const HOLD_CHECK_MS = 100;
+
+/** With no rate measured yet (the page's first reply), wait this long at most for a second piece to measure it. */
+export const STREAM_FIRST_RATE_WAIT_MS = 1500;
+
+// Audio seconds Ming delivers per second, as last measured (NaN: not yet); one TTS service per page.
+let deliveryRate = Number.NaN;
+// For the page's cadence report.
+const audioStats = { underruns: 0, maxUnderrunMs: 0, heldMs: 0 };
+
+/** What streamed speech did since the last call: holes inside a reply, time held back, Ming's rate. */
+export function takeStreamingAudioStats(): { underruns: number; maxUnderrunMs: number; heldMs: number; deliveryRate: number | null } {
+  const out = { ...audioStats, deliveryRate: Number.isFinite(deliveryRate) ? Math.round(deliveryRate * 100) / 100 : null };
+  audioStats.underruns = 0;
+  audioStats.maxUnderrunMs = 0;
+  audioStats.heldMs = 0;
+  return out;
+}
+
+/** Test helper: forget the measured rate (NaN), or set one. */
+export function resetDeliveryRate(rate = Number.NaN): void {
+  deliveryRate = rate;
+}
+
+/**
+ * Seconds of audio to have in hand before playing a reply of `totalSeconds`
+ * whose pieces arrive at `rate` audio seconds per second, so it never runs dry.
+ */
+export function streamLeadSeconds(totalSeconds: number, rate: number): number {
+  if (!(rate < 1)) return 0;
+  return Math.max(0, 1 - Math.max(0, rate)) * totalSeconds + STREAM_LEAD_MARGIN_S;
+}
+
 export interface ScheduledChunk {
   index: number;
   decodedAt: number;
@@ -53,16 +104,24 @@ export interface StreamingSessionOptions {
   output?: (context: AudioContext) => AudioNode;
   onError?: (message: string) => void;
   log?: (message: string) => void;
+  /** Wall clock in ms (tests). */
+  now?: () => number;
 }
 
 export function createStreamingSession(options: StreamingSessionOptions): StreamingSession {
   const { turnId, getContext, decode, onFinished } = options;
   const log = options.log ?? (() => {});
+  const wall = options.now ?? (() => performance.now());
   const sources = new Set<AudioBufferSourceNode>();
   const timers = new Set<number>();
   const decoded = new Map<number, AudioBuffer>();
   const failed = new Set<number>();
   const texts = new Map<number, { text: string; more: boolean }>();
+  // Every chunk's text, whether more follows, its length and when it was here (decoded).
+  const meta = new Map<number, { text: string; more: boolean; seconds?: number; at?: number }>();
+  let holdSince: number | null = null;
+  let holdTimer: number | null = null;
+  let lastScheduledEnd = 0;
   const scheduled: ScheduledChunk[] = [];
   let received = 0;
   let nextToSchedule = 0;
@@ -110,12 +169,70 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
         finish();
         return;
       }
-      if (pendingDecodes > 0 || activeNodes > 0) {
+      // A reply that said more is coming is not over, however long the next piece takes.
+      const promised = !endMarked && received > 0 && meta.get(received - 1)?.more === true;
+      if (pendingDecodes > 0 || activeNodes > 0 || promised) {
         tryFinalize();
         return;
       }
       finish();
     }, STREAMING_GAP_GRACE_MS);
+  }
+
+  /** The chunk continues the one before it (same reply text, which said more was coming). */
+  function continues(index: number): boolean {
+    const before = meta.get(index - 1);
+    const self = meta.get(index);
+    return Boolean(before?.more && self && (!self.text || self.text === before.text));
+  }
+
+  function firstOfItem(index: number): number {
+    let start = index;
+    while (start > 0 && continues(start)) start -= 1;
+    return start;
+  }
+
+  /** Audio seconds per second at which this reply's pieces have been arriving; null with one piece. */
+  function itemRate(start: number): number | null {
+    const first = meta.get(start);
+    if (first?.at === undefined) return null;
+    let seconds = 0;
+    let lastAt = first.at;
+    for (let i = start + 1; continues(i) && meta.get(i)?.at !== undefined; i += 1) {
+      seconds += meta.get(i)!.seconds ?? 0;
+      lastAt = Math.max(lastAt, meta.get(i)!.at!);
+    }
+    const elapsed = (lastAt - first.at) / 1000;
+    return seconds > 0 && elapsed >= 0.2 ? seconds / elapsed : null;
+  }
+
+  /**
+   * Whether the reply starting (or running dry) at nextToSchedule should wait
+   * for more of itself: only while more is coming and too little is here.
+   */
+  function shouldHold(now: number): boolean {
+    const head = meta.get(nextToSchedule);
+    // The server said the reply is over: play what came.
+    if (!head?.more || endMarked) return false;
+    const dry = !context || nextStartTime <= context.currentTime + 0.005;
+    const start = firstOfItem(nextToSchedule);
+    if (start !== nextToSchedule && !dry) return false;
+    // In hand: this piece and the pieces after it that are here, up to the reply's end.
+    let buffered = 0;
+    for (let i = nextToSchedule; decoded.has(i); i += 1) {
+      buffered += decoded.get(i)!.duration;
+      if (!meta.get(i)?.more) return false; // the whole rest of the reply is here
+    }
+    let played = 0;
+    for (let i = start; i < nextToSchedule; i += 1) played += meta.get(i)?.seconds ?? 0;
+    const words = (head.text.trim().match(/\S+/g) ?? []).length;
+    const remaining = Math.max(buffered, words * SECONDS_PER_WORD - played);
+    const rate = itemRate(start) ?? deliveryRate;
+    holdSince ??= now;
+    // Nothing measured yet: wait for a second piece to tell how fast they come.
+    if (Number.isNaN(rate)) return now - holdSince < STREAM_FIRST_RATE_WAIT_MS;
+    const need = streamLeadSeconds(remaining, rate);
+    return buffered < need && now - holdSince < STREAM_MAX_HOLD_MS;
   }
 
   function scheduleReady(): void {
@@ -125,12 +242,34 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
         nextToSchedule += 1;
         continue;
       }
+      const wallNow = wall();
+      if (shouldHold(wallNow)) {
+        if (holdTimer == null) {
+          holdTimer = later(() => {
+            holdTimer = null;
+            scheduleReady();
+          }, HOLD_CHECK_MS);
+        }
+        return;
+      }
+      if (holdSince != null) {
+        const held = wallNow - holdSince;
+        audioStats.heldMs += held;
+        log(`held a reply ${Math.round(held)} ms for more of it (rate ${Number.isNaN(deliveryRate) ? 'unknown' : `${deliveryRate.toFixed(2)}x`})`);
+        holdSince = null;
+      }
       const buffer = decoded.get(nextToSchedule)!;
       decoded.delete(nextToSchedule);
       const index = nextToSchedule;
       nextToSchedule += 1;
 
       const now = context.currentTime;
+      // A piece of the same reply after the one before has already played out: a hole in the speech.
+      if (continues(nextToSchedule) && lastScheduledEnd > 0 && now > lastScheduledEnd + 0.005) {
+        const hole = (now - lastScheduledEnd) * 1000;
+        audioStats.underruns += 1;
+        audioStats.maxUnderrunMs = Math.max(audioStats.maxUnderrunMs, Math.round(hole));
+      }
       nextStartTime = Math.max(nextStartTime, now);
       const source = context.createBufferSource();
       source.buffer = buffer;
@@ -140,6 +279,7 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
       sources.add(source);
       source.start(scheduledAt);
       nextStartTime += buffer.duration;
+      lastScheduledEnd = nextStartTime;
 
       const { text = '', more = false } = texts.get(index) ?? {};
       const chunk: ScheduledChunk = { index, decodedAt: performance.now(), scheduledAt, duration: buffer.duration, ctxTime: now, activeNodes, text, more };
@@ -188,6 +328,7 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
       const index = received;
       received += 1;
       texts.set(index, { text, more });
+      meta.set(index, { text, more });
       void (async () => {
         try {
           context ??= await getContext();
@@ -195,6 +336,13 @@ export function createStreamingSession(options: StreamingSessionOptions): Stream
           const buffer = await decode(context, audioBase64);
           if (stopped) return;
           decoded.set(index, buffer);
+          const entry = meta.get(index);
+          if (entry) {
+            entry.seconds = buffer.duration;
+            entry.at = wall();
+          }
+          const rate = itemRate(firstOfItem(index));
+          if (rate !== null) deliveryRate = rate;
           scheduleReady();
         } catch (error) {
           options.onError?.(`chunk #${index} decode failed: ${error instanceof Error ? error.message : String(error)}`);

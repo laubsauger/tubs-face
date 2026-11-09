@@ -32,6 +32,15 @@ const PURSUIT_OMEGA = 4.74 / GAZE_PURSUIT_MS; // critically damped: 95 % at ωt 
 /** A frame longer than this (a stalled tab) is followed as if it were this long. */
 const PURSUIT_MAX_STEP_MS = 100;
 const PURSUIT_REST = 0.0005;
+/**
+ * Pursuit is for a look on the move. Once it holds still this long (and the
+ * eyes are on it), they go back to fixations and saccades, which read as
+ * alive; a look that jumps further than PURSUIT_TRIGGER starts pursuit again.
+ */
+export const PURSUIT_SETTLE_MS = 300;
+export const PURSUIT_TRIGGER = 0.08;
+/** A director update this small is the same look (rounding, a tracked person swaying); more is a move, followed smoothly. */
+const LOOK_STILL = 0.02;
 
 export interface GazeSample {
   x: number;
@@ -86,6 +95,10 @@ export function createGazeController(): GazeController {
   // Where the eyes were last drawn, without the micro offset: the next mode starts from here.
   let baseX = 0;
   let baseY = 0;
+  // The director's look, and when it last moved.
+  let lookX = Number.NaN;
+  let lookY = Number.NaN;
+  let lookMovedAt = Number.NEGATIVE_INFINITY;
 
   /** Saccades and fixations again, from where pursuit left the eyes. */
   function endPursuit(): void {
@@ -93,11 +106,30 @@ export function createGazeController(): GazeController {
     pursuing = false;
     fixX = baseX;
     fixY = baseY;
+    desiredX = baseX;
+    desiredY = baseY;
+    filtX = baseX;
+    filtY = baseY;
     saccadeActive = false;
   }
 
   return {
     pursue(x, y, nowMs) {
+      const moved = !Number.isNaN(lookX) && Math.hypot(x - lookX, y - lookY) > LOOK_STILL;
+      if (moved || Number.isNaN(lookX)) lookMovedAt = nowMs;
+      // Small sways keep the old reference, so they add up to a move instead of slipping under it.
+      if (moved || Number.isNaN(lookX)) {
+        lookX = x;
+        lookY = y;
+      }
+      if (!pursuing && !moved && Math.hypot(x - baseX, y - baseY) <= PURSUIT_TRIGGER) {
+        // A steady look near where the eyes are: held like any target, with
+        // fixations and a quick saccade when it drifts past the dead zone.
+        desiredX = x;
+        desiredY = y;
+        desiredDeadZone = GAZE_DEAD_ZONE;
+        return;
+      }
       if (!pursuing) {
         pursuing = true;
         pursueX = baseX;
@@ -156,6 +188,11 @@ export function createGazeController(): GazeController {
         out.moving = Math.hypot(pursueTargetX - pursueX, pursueTargetY - pursueY) > PURSUIT_REST
           || Math.hypot(pursueVX, pursueVY) * 16 > PURSUIT_REST
           || nowMs < microStart + MICRO_SACCADE_MS;
+        // The look has held still and the eyes are on it: fixations from here.
+        if (nowMs - lookMovedAt > PURSUIT_SETTLE_MS && Math.hypot(pursueTargetX - pursueX, pursueTargetY - pursueY) < 0.01) {
+          endPursuit();
+          lastSaccadeAt = nowMs;
+        }
         return out;
       }
       if (saccadeActive && nowMs >= saccadeStart + saccadeMs) {

@@ -28,6 +28,8 @@ export interface PublishStats {
   encodeMsPerFrame: number;
   /** The width the encoder sends now (1024 unless WebRTC scaled it down). */
   frameWidth: number;
+  /** Opus packets sent per second (50 at 20 ms each); fewer means the voice stalled. */
+  audioPacketsPerSecond: number;
 }
 
 // 1024x1024 at 30 fps: plenty for a pixel face on a LAN. maintain-resolution
@@ -52,7 +54,7 @@ export function createFacePublisher(options: {
   let retryTimer = 0;
   let dropTimer = 0;
   let disposed = false;
-  let previous: { at: number; source: number; encoded: number; keys: number; encodeTime: number } | null = null;
+  let previous: { at: number; source: number; encoded: number; keys: number; encodeTime: number; audioPackets: number } | null = null;
 
   function status(next: PublisherStatus): void {
     options.onStatus(next);
@@ -140,8 +142,13 @@ export function createFacePublisher(options: {
     },
     async stats() {
       const videoSender = session?.pc.getSenders().find((sender) => sender.track?.kind === 'video');
+      const audioSender = session?.pc.getSenders().find((sender) => sender.track?.kind === 'audio');
       if (!videoSender) return null;
       const report = await videoSender.getStats();
+      let audioPackets = 0;
+      (await audioSender?.getStats())?.forEach((entry: Record<string, unknown>) => {
+        if (entry.type === 'outbound-rtp') audioPackets = Number(entry.packetsSent ?? 0);
+      });
       let source = 0;
       let encoded = 0;
       let keys = 0;
@@ -162,7 +169,7 @@ export function createFacePublisher(options: {
       });
       const now = performance.now();
       const last = previous;
-      previous = { at: now, source, encoded, keys, encodeTime };
+      previous = { at: now, source, encoded, keys, encodeTime, audioPackets };
       if (!last) return null;
       const seconds = (now - last.at) / 1000;
       const frames = encoded - last.encoded;
@@ -174,6 +181,7 @@ export function createFacePublisher(options: {
         encoder,
         encodeMsPerFrame: frames > 0 ? Math.round(((encodeTime - last.encodeTime) / frames) * 10_000) / 10 : 0,
         frameWidth,
+        audioPacketsPerSecond: Math.round(((audioPackets - last.audioPackets) / seconds) * 10) / 10,
       };
     },
     dispose() {

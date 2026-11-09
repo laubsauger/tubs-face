@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page, type Route } from '@playwright/test';
-import { MOCK, chunk, instrumentAudio, now, openFace, received, resetMock, send, speechAudio } from './helpers.js';
+import { MOCK, chunk, instrumentAudio, now, openFace, received, resetMock, send, speechAudio, tone } from './helpers.js';
 import { fakeSiteNode, openStudio, setStudio } from './studio-helpers.js';
 import { DEFAULT_CONFIG } from '../../src/client/glitch/constants.js';
 import { STUDIO_LAYOUT, faceBox } from '../../src/client/glitch/pixel-grid.js';
@@ -373,32 +373,41 @@ test('captions follow a head\'s voice line by line, a filler included, each fini
 });
 
 // A streamed reply whose next piece is late must not light words nobody has
-// heard yet: the caption waits with the voice. (After 280 ms without audio the
-// speech runtime ends the line, as on the face's own subtitle; the caption then
-// ends with what was heard, and the late piece is a line of its own.)
-test('a caption never runs ahead of a stalled voice, and a line given up on ends with what was heard', async ({ page, request }) => {
+// heard yet: the caption waits with the voice. And it stays one line: under
+// load Ming sent a piece every ~0.8 s with ~0.3 s of audio in it, the line
+// ended after each piece, the next restarted it from the beginning, and the
+// windows showed the start and the end of one reply in turn (22 backward
+// jumps in 135 captions).
+test('a stalled Ming reply stays one line: spoken only grows, done once at the true end, never ahead of the voice', async ({ page, request }) => {
   await fakeSiteNode(page);
   await openStudio(page, request, 'main');
   await setStudio(request, { enabled: true });
   await page.waitForTimeout(300);
   await request.post(`${MOCK}/__test/reset-received`);
 
-  // Twenty words, streamed like Ming: one text over two pieces, the second late.
+  // Twenty words, streamed like Ming under load: four short pieces, each late.
   const text = 'One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty.';
-  await send(request, { type: 'turn_start', turnId: 't-stall' }, { ...chunk('t-stall', 0, text, 1000), more: true });
-  await page.waitForTimeout(2600);
-  const stalledUntil = Date.now();
-  await send(request, chunk('t-stall', 1, text, 1000), { type: 'speak_end', turnId: 't-stall', fullText: text });
-  await expect.poll(async () => (await captions(request)).some((c) => c.done), { timeout: 8000 }).toBe(true);
+  await send(request, { type: 'turn_start', turnId: 't-stall' });
+  let lastPieceAt = 0;
+  for (let piece = 0; piece < 4; piece += 1) {
+    if (piece === 3) lastPieceAt = Date.now();
+    await send(request, { ...chunk('t-stall', piece, text, 300), ...(piece < 3 ? { more: true } : {}) });
+    await page.waitForTimeout(800);
+  }
+  await send(request, { type: 'speak_end', turnId: 't-stall', fullText: text });
+  await expect.poll(async () => (await captions(request)).some((c) => c.done), { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(500);
 
   const all = await captions(request);
-  const duringStall = all.filter((c) => (c.receivedAt as number) < stalledUntil);
-  expect(duringStall.length, 'the first piece was captioned').toBeGreaterThan(0);
-  // One second of audio heard out of an expected ~6 s: about a sixth of the text,
-  // however long the wait. (Following wall time it would be near half by now.)
-  expect(Math.max(...duringStall.map((c) => c.spoken as number))).toBeLessThanOrEqual(Math.ceil(text.length / 6));
-  const firstDone = all.find((c) => c.done)!;
-  expect(firstDone.spoken as number, 'ended with what was heard, not the whole text').toBeLessThanOrEqual(Math.ceil(text.length / 6));
+  expect(all.every((c) => c.text === text && c.turnId === 't-stall')).toBe(true);
+  const spoken = all.map((c) => c.spoken as number);
+  expect(spoken, 'never backwards').toEqual([...spoken].sort((a, b) => a - b));
+  expect(all.filter((c) => c.done), 'done once, at the end, with all of it heard').toEqual([expect.objectContaining({ spoken: text.length })]);
+  expect(all.at(-1)!.done).toBe(true);
+  // Pieces this slow are held until the reply can play through (streaming-session.ts), so
+  // nothing is lit before then; whatever was, was never far ahead of the voice.
+  const stalled = all.filter((c) => (c.receivedAt as number) < lastPieceAt);
+  expect(Math.max(0, ...stalled.map((c) => c.spoken as number))).toBeLessThanOrEqual(Math.ceil(text.length * 0.25));
 });
 
 // Paused playback (a suspended audio context) holds the caption exactly where
@@ -679,4 +688,50 @@ test('a call-out plays at once, and the line after it waits for the face', async
   expect(early[0]!.calledAt - sentAt, 'the call-out did not wait').toBeLessThan(500);
   await send(request, { type: 'studio_stage', actor: 'main', ready: true });
   await expect.poll(async () => (await speechAudio(page)).length).toBe(2);
+});
+
+// Studio heads looked flat next to the face window: Small had no mood at all,
+// and every line after a head's first spoke with a plain face. Each head shows
+// its own line's feeling while it speaks, and its own mood takes the impulse.
+test('a line\'s emotion shows on that head\'s face, and moves that head\'s mood only', async ({ context, request }) => {
+  const small = await context.newPage();
+  const main = await context.newPage();
+  await fakeSiteNode(small);
+  await fakeSiteNode(main);
+  await openStudio(small, request, 'small');
+  await main.goto('/studio-face.html?actor=main');
+  await main.locator('#visual-face').waitFor();
+  await setStudio(request, { enabled: true });
+  await request.post(`${MOCK}/config`, { data: { dualHeadEnabled: true, dualHeadMode: 'llm_directed' } });
+  await small.waitForTimeout(500);
+
+  const happy = { emoji: '😄', expression: 'happy', impulse: { pos: 0.6, neg: 0, arousal: 0.7 } };
+  const angry = { emoji: '😤', expression: 'angry', impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 } };
+  const smug = { emoji: '😏', expression: 'smug', impulse: { pos: 0.5, neg: 0.16, arousal: 0.48 } };
+  const turnId = 't-feel';
+  const line = (actor: string, beatIndex: number, text: string, emotion: object, index: number) =>
+    ({ type: 'audio_chunk', audio: tone(900), text, turnId, chunkIndex: index, actor, beatIndex, emotion });
+  await send(request,
+    { type: 'turn_start', turnId },
+    { type: 'turn_script', turnId, ts: Date.now(), beats: [
+      { actor: 'main', action: 'speak', text: 'Lovely night.', emotion: happy },
+      { actor: 'small', action: 'speak', text: 'Says you.', emotion: angry },
+      { actor: 'small', action: 'speak', text: 'Fine, it is.', emotion: smug },
+    ] },
+    line('main', 0, 'Lovely night.', happy, 0),
+    { type: 'speak_end', turnId, actor: 'main', text: 'Lovely night.', fullText: 'Lovely night.' },
+    line('small', 1, 'Says you.', angry, 1),
+    { type: 'speak_end', turnId, actor: 'small', text: 'Says you.', fullText: 'Says you.' },
+  );
+  const smallFace = small.locator('#visual-face');
+  await expect(smallFace).toHaveAttribute('data-expression', 'angry', { timeout: 5000 });
+  // Small's mood took its own line's anger; Tubs's did not.
+  const mood = (page: typeof small) => page.evaluate(() => (window as unknown as { __tubsStore: { getState(): { moodNeg: number } } }).__tubsStore.getState().moodNeg);
+  await expect.poll(() => mood(small)).toBeGreaterThan(0.2);
+  expect(await mood(main)).toBeLessThan(0.1);
+  await expect(main.locator('#visual-face')).not.toHaveAttribute('data-expression', 'angry');
+
+  // Small's second line, later in the same turn, shows its own feeling too.
+  await send(request, line('small', 2, 'Fine, it is.', smug, 2), { type: 'speak_end', turnId, actor: 'small', text: 'Fine, it is.', fullText: 'Fine, it is.' });
+  await expect(smallFace).toHaveAttribute('data-expression', 'smug', { timeout: 5000 });
 });

@@ -92,11 +92,11 @@ describe('vision through an OpenAI-compatible server', () => {
 describe('the vision prompt', () => {
   // Field notes and Tubs's remarks rely on Left:/Middle:/Right: to tell people
   // apart; with one person a label made the model invent "Right: no other people".
-  it('asks for position labels only with several people, and keeps the rules', () => {
+  it('asks for position labels only with several people, and keeps the format', () => {
     expect(VISION_PROMPT).toMatch(/only one person[^.]*no label/i);
     expect(VISION_PROMPT).toMatch(/two or more people[^.]*Left:, Middle: or Right:/);
     expect(VISION_PROMPT).toContain('Never mention people who are not there.');
-    expect(VISION_PROMPT).toContain('no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.');
+    expect(VISION_PROMPT).toMatch(/Factual\. Under 60 words\.$/);
   });
 });
 

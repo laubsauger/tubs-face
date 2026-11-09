@@ -520,6 +520,21 @@ describe('assistant turn', () => {
       expect(hasActiveAssistantTurn()).toBe(false);
     });
 
+    // Each head showed only its first line's feeling: the chunks carried no
+    // emotion, so a studio face page knew a line's feeling only from the script.
+    it('puts each line\'s own emotion on its audio chunks, for that head\'s face and mood', async () => {
+      runtimeConfig.ttsStreamingEnabled = true;
+      const ws = collect();
+      const angry = { emoji: '😤', expression: 'angry', impulse: { pos: 0.24, neg: 0.56, arousal: 0.82 } } as const;
+      const happy = { emoji: '😄', expression: 'happy', impulse: { pos: 0.6, neg: 0, arousal: 0.7 } } as const;
+      const { done } = playManualTurnScript([
+        { actor: 'small', action: 'speak', text: 'I moved your chair.', emotion: angry },
+        { actor: 'main', action: 'speak', text: 'It was always there.', emotion: happy },
+      ], ws.broadcast);
+      await done;
+      expect(ws.ofType('audio_chunk').map((message) => [message.actor, message.emotion?.expression, message.emotion?.impulse?.neg])).toEqual([['small', 'angry', 0.56], ['main', 'happy', 0]]);
+    });
+
     // Mini answered seconds late: the next line was rendered only after the
     // last one was guessed to be over (440 ms a word, ~1.5x slower than Ming
     // talks). Now it renders while the line before it plays, and goes out

@@ -97,4 +97,25 @@ describe('studio captions', () => {
     const tracker = createCaptionTracker();
     expect(run(tracker, 12)).toEqual([]);
   });
+
+  // Under load a window showed the start and the end of one Ming reply in
+  // turn, several times a second: a stalled stream had ended the line, and its
+  // late audio started the same text as a new line from the beginning.
+  it('carry on one line through a stalled Ming stream: no second line, never backwards', () => {
+    const tracker = fresh();
+    const text = 'You walked up to a machine for validation. Your search history does that every single day.';
+    // The first piece plays for 1 s, then the stream stalls and the same reply carries on in a new item.
+    const first = say(text, 't9', 4, 0, true);
+    const out = run(tracker, 1.6);
+    say(text, 't9', 3, 1.6, true);
+    out.push(...run(tracker, 3));
+    first.open = false;
+    items.at(-1)!.open = false;
+    out.push(...run(tracker, 6));
+    const spoken = out.map((caption) => caption.spoken);
+    expect(spoken).toEqual([...spoken].sort((a, b) => a - b));
+    expect(out.every((caption) => caption.text === text && caption.turnId === 't9')).toBe(true);
+    expect(out.filter((caption) => caption.done)).toHaveLength(1);
+    expect(out.at(-1)).toMatchObject({ done: true, spoken: text.length });
+  });
 });

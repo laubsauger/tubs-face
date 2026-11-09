@@ -20,6 +20,7 @@ import type { AppStore } from '../state/app-state.js';
 import { createBlackFrameMonitor } from './black-frame.js';
 import { createStageGate } from './stage.js';
 import { createCadenceMeter } from './cadence.js';
+import { takeStreamingAudioStats } from '../audio/streaming-session.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
 import { createStudioPresence } from './presence.js';
 import { createFacePublisher, type PublisherStatus } from './publisher.js';
@@ -29,6 +30,8 @@ import { STUDIO_STATE_HEARTBEAT_MS, studioStateChanged, studioStateOf, type Stud
 const CAPTURE_FPS = 30;
 /** How often a face page says how steadily it renders and publishes (GET /studio actors[].cadence). */
 export const CADENCE_REPORT_MS = 5000;
+/** The face is published at 30 fps; drawing it faster only takes CPU and GPU from its voice. */
+export const STUDIO_RENDER_MAX_FPS = 60;
 
 export interface StudioRuntime {
   init(send: (message: WsClientMessage) => void): void;
@@ -122,11 +125,16 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   async function reportCadence(): Promise<void> {
     const render = cadence.take(performance.now());
     const published = await publisher.stats().catch(() => null);
+    const speech = takeStreamingAudioStats();
     reportStatus({
       renderFps: render.fps,
       renderMaxGapMs: render.maxGapMs,
       renderStalls: render.stalls,
       ...(published ?? {}),
+      speechHoles: speech.underruns,
+      speechMaxHoleMs: speech.maxUnderrunMs,
+      speechHeldMs: Math.round(speech.heldMs),
+      ...(speech.deliveryRate !== null ? { ttsRate: speech.deliveryRate } : {}),
       visible: document.visibilityState === 'visible',
       focused: document.hasFocus(),
     });
@@ -203,6 +211,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     };
     // The face is copied as each frame is drawn, the only moment a WebGPU
     // canvas can be read (a later copy is black in a windowed Chrome).
+    options.glitch.setMaxFps(STUDIO_RENDER_MAX_FPS);
     options.glitch.onFrame(() => {
       lastFaceFrameAt = performance.now();
       cadence.frame(lastFaceFrameAt);
@@ -237,6 +246,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     stopCompositor = () => {
       window.clearInterval(probeTimer);
       options.glitch.onFrame(null);
+      options.glitch.setMaxFps(0);
       window.cancelAnimationFrame(raf);
       canvas.remove();
     };

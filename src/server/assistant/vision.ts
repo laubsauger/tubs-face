@@ -19,7 +19,7 @@ export const VISION_SYSTEM = 'You are a visual context extraction tool.';
 // impression includes clothing too. The same for every provider.
 // Position labels only with several people: with one, qwen3-vl wrote "Left:"
 // and sometimes "Right: no other people".
-export const VISION_PROMPT = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. If only one person is visible, write about them directly, with no label (for example "A person in a red coat, ..."). If two or more people are visible, go left to right as the image shows them and start each person with Left:, Middle: or Right: (labels are for people only). Never mention people who are not there. Factual, no judgments, no guesses about age, body, ethnicity or gender. Under 60 words.';
+export const VISION_PROMPT = 'Describe what the camera sees for a robot host: each person\'s clothing, accessories, hair colour and expression; anything they hold; the setting. If only one person is visible, write about them directly, with no label (for example "A person in a red coat, ..."). If two or more people are visible, go left to right as the image shows them and start each person with Left:, Middle: or Right: (labels are for people only). Never mention people who are not there. Factual. Under 60 words.';
 const MAX_TOKENS = 100;
 
 const OPENAI_IN_PER_MTOKENS = Number.parseFloat(process.env.VISION_INPUT_COST_PER_MTOKENS || '0') || 0;
