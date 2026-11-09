@@ -24,6 +24,11 @@ describe('studio settings', () => {
       visionSource: 'off',
       prefix: 'tubs-',
       launch: 'chrome',
+      // Every switch on; the face windows off the screen, so nobody finds a pile of Tubs windows.
+      cameraOn: true,
+      micOn: true,
+      faceRecognition: true,
+      windows: 'offscreen',
     });
   });
 

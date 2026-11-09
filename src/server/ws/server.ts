@@ -33,6 +33,7 @@ import { isRendering, onRenderingChange } from '../tts/rendering.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { forgetViewer, frameDue, liveGone, liveRelay, noteWatch, pulseLeaseEndsAt, wantedWatch, watchOf } from '../studio/live.js';
 import { noteHeadSpeaking, studioPulse } from '../studio/pulse.js';
+import { forgetObservation, noteObservation } from '../studio/faces.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
@@ -152,6 +153,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
         if (![...studioPages.values()].includes(studioActor)) {
           notePageConnection(studioActor, false);
           if (studioActor === 'main') {
+            forgetObservation();
             sendToWatchers(liveGone(), 'live');
             failFaceCalls('the studio listener page went away');
           }
@@ -381,6 +383,12 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       }
       return;
     }
+    case 'face_observation':
+      // The browser producer: the studio listener page only (docs/face-service.md).
+      if (studioPages.get(socket) !== 'main' || message.observation.worker.kind !== 'browser') return;
+      noteObservation(message.observation);
+      sendToWatchers({ type: 'face_observation', observation: message.observation }, 'live');
+      return;
     case 'studio_watch':
       if (!liveViewers.has(socket)) return;
       noteWatch(socket, { live: message.live, video: message.video });
@@ -424,6 +432,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.mic ? { mic: message.mic } : {}),
         ...(message.cadence ? { cadence: message.cadence } : {}),
         ...(message.devices ? { devices: message.devices } : {}),
+        ...(message.faceWorker ? { faceWorker: message.faceWorker } : {}),
       });
       return;
     default:

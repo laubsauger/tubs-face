@@ -400,6 +400,33 @@ test('the listener sends its live state and camera only while watched, and runs 
   expect((await sentOf('studio_live')).length).toBe(reports);
 });
 
+// Face detection runs while recognition (names) or vision descriptions (a
+// detected face triggers them) is on. With both off the face worker never
+// loads: no model is fetched, nothing is checked. Descriptions back on, it
+// loads again to find the faces they need.
+test('face recognition and descriptions both off: no face model is loaded; descriptions on loads it', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  const models: string[] = [];
+  await page.context().route('**/*.onnx', async (route) => {
+    models.push(route.request().url());
+    await route.abort();
+  });
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/config`, { data: { visionDescriptions: false } });
+  await setStudio(request, { enabled: true, visionSource: 'snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg', switches: { faceRecognition: false } });
+  const workerState = async () => (await received(request)).ws.filter((m) => m.type === 'studio_status')
+    .map((m) => m.faceWorker as { state: string; detail?: string } | undefined).filter(Boolean).at(-1);
+  await expect.poll(workerState, { timeout: 8000 }).toMatchObject({ state: 'off', detail: 'face recognition and vision descriptions both switched off' });
+  await page.waitForTimeout(1500);
+  expect(models).toEqual([]);
+
+  // Descriptions on: faces are needed again, so the worker loads (recognition stays off: no names).
+  await request.post(`${MOCK}/config`, { data: { visionDescriptions: true } });
+  await setStudio(request, { switches: { faceRecognition: false, camera: true } });
+  await setStudio(request, { visionSource: 'snapshot:http://127.0.0.1:7001/api/snapshot/color.jpg' });
+  await expect.poll(() => models.length, { timeout: 10_000 }).toBeGreaterThan(0);
+});
+
 // A studio camera without a video (snapshot URL, site stream): each onboarding
 // pose is a fresh picture, not the last one the detector happened to take.
 test('onboarding through a snapshot camera takes a fresh picture per pose', async ({ page, request }) => {

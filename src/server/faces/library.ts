@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { EnrolledFace, FaceLibraryDocument } from '../../shared/contracts/faces.js';
 
@@ -19,6 +19,20 @@ export function readFaceLibrary(): FaceLibraryDocument {
     }
   }
   return { faces: [] };
+}
+
+let peopleCache: { mtimeMs: number; count: number } | null = null;
+
+/** How many people the library knows; read again only when the file changed (GET /studio asks often). */
+export function libraryPeopleCount(): number {
+  let mtimeMs = 0;
+  try {
+    mtimeMs = statSync(faceLibraryPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+  if (peopleCache?.mtimeMs !== mtimeMs) peopleCache = { mtimeMs, count: new Set(readFaceLibrary().faces.map((face) => face.name)).size };
+  return peopleCache.count;
 }
 
 export function writeFaceLibrary(document: FaceLibraryDocument): void {

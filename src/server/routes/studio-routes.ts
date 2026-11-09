@@ -12,7 +12,10 @@ import { notePulsePoll } from '../studio/live.js';
 import { studioPulse } from '../studio/pulse.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { syncStudioWatch } from '../ws/server.js';
-import { studioSettings, toStudioResponse } from '../studio/state.js';
+import { listenerFaceWorker, studioSettings, toStudioResponse } from '../studio/state.js';
+import { libraryPeopleCount } from '../faces/library.js';
+import { lastObservation } from '../studio/faces.js';
+import { relationshipsInEffect } from '../assistant/relationships.js';
 import { listPresets } from '../presets/presets.js';
 import { persistState } from '../state-file.js';
 import { parseVisionSource, type StudioPart, type StudioResponse, type StudioUiLinks } from '../../shared/contracts/studio.js';
@@ -87,6 +90,10 @@ function partsOf(studio: StudioResponse): StudioPart[] {
     fleetBase: visionService.fleetBase(),
     speechPort: SPEECH_SERVICE_PORT,
     mingUrl: process.env.MING_TTS_URL?.trim() || `http://127.0.0.1:${MING_PORT}`,
+    faceWorker: listenerFaceWorker(),
+    observation: lastObservation(),
+    libraryPeople: libraryPeopleCount(),
+    relationshipsInEffect: relationshipsInEffect(runtimeConfig.relationshipsEnabled).length,
   });
 }
 

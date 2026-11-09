@@ -1,13 +1,15 @@
 // The dashboard's side of the studio listener's live state. In studio mode the
 // dashboard has no mic or camera; the listener page has them, possibly on
-// another machine. The dashboard says what it shows (studio_watch: the live
-// state while it is on screen, the camera while the People or Studio tab or
-// the onboarding dialog is open), puts what comes back into the same app state
-// fields the face window would fill, so its own meters, detection lists and
-// face boxes show it, and runs onboarding on the listener's camera
-// (studio_face_call).
+// another machine; the operator face window has let go of its own. Such a
+// page says what it shows (studio_watch: the live state while it is on
+// screen, the camera while the People or Studio tab or the onboarding dialog
+// is open), keeps what comes back apart from its own device state (the panels
+// show it in its place, live-view.ts), and runs onboarding on the listener's
+// camera (studio_face_call).
 
 import type { StudioFaceMethod } from '../../shared/contracts/studio.js';
+import type { EnrollmentCapture } from '../face/enrollment.js';
+import type { AppShellControls } from '../ui/app-shell.js';
 import type { WsClientMessage, WsServerMessage } from '../../shared/contracts/ws.js';
 import type { AppState, AppStore } from '../state/app-state.js';
 
@@ -30,18 +32,6 @@ export function watchFor(state: WatchSlice): { live: boolean; video: boolean } {
   const tabShown = !state.dockFolded && !state.uiHidden && (state.dockTab === 'people' || state.dockTab === 'studio');
   return { live: true, video: state.faceEnrollOpen || tabShown };
 }
-
-/** The listener stopped (or never reported): nothing of it stays on screen. */
-const STOPPED: Partial<AppState> = {
-  studioLive: null,
-  studioFrame: null,
-  micReady: false,
-  micLevel: 0,
-  recording: false,
-  faceCameraActive: false,
-  faceLastFaces: [],
-  faceLastDetectedCount: 0,
-};
 
 export function createStudioWatch(store: AppStore, send: (message: WsClientMessage) => void): StudioWatch {
   let visible = typeof document === 'undefined' || document.visibilityState === 'visible';
@@ -75,13 +65,16 @@ export function createStudioWatch(store: AppStore, send: (message: WsClientMessa
   return {
     handle(message) {
       switch (message.type) {
-        case 'studio_live':
-          if (!message.status) {
-            store.setState((current) => ({ ...current, ...STOPPED }));
-          } else {
-            const status = message.status;
-            store.setState((current) => ({ ...current, ...status, studioLive: { speaking: message.speaking, at: Date.now() } }));
-          }
+        case 'studio_live': {
+          // Kept apart from this page's own mic and camera state; the panels show it in their place (live-view.ts).
+          const status = message.status;
+          store.setState((current) => (status
+            ? { ...current, studioLive: { status, speaking: message.speaking, faceWorker: message.faceWorker ?? null, at: Date.now() } }
+            : { ...current, studioLive: null, studioFrame: null, studioObservation: null }));
+          return true;
+        }
+        case 'face_observation':
+          store.setState((current) => ({ ...current, studioObservation: message.observation }));
           return true;
         case 'studio_frame':
           store.setState((current) => ({ ...current, studioFrame: { src: message.frame, width: message.width, height: message.height } }));
@@ -122,6 +115,55 @@ export function createStudioWatch(store: AppStore, send: (message: WsClientMessa
         call.reject(new Error('closed'));
       }
       calls.clear();
+    },
+  };
+}
+
+type FaceControls = NonNullable<AppShellControls['face']>;
+
+/** The studio listener's answer to a pose capture: one pose, or null when no single face was found. */
+export function enrollmentCaptureOf(value: unknown): EnrollmentCapture | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const { embedding, thumbnail, duplicate } = value as Partial<EnrollmentCapture>;
+  return Array.isArray(embedding) && embedding.every((n) => typeof n === 'number') && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/')
+    ? { embedding, thumbnail, duplicate: duplicate === true }
+    : null;
+}
+
+/**
+ * The same face controls, with onboarding run on the studio listener's
+ * camera while it reports (studio mode); this page's own otherwise.
+ */
+export function withStudioCamera(face: FaceControls, store: AppStore, watch: () => StudioWatch | null): FaceControls {
+  const studio = () => (store.getState().studioLive ? watch() : null);
+  return {
+    ...face,
+    toggleCamera: async () => {
+      if (studio()) store.appendLog('info', 'The studio camera is the vision source: choose it in the Studio tab');
+      else await face.toggleCamera();
+    },
+    getCameraStream: () => (studio() ? null : face.getCameraStream()),
+    beginEnrollment: () => {
+      const camera = studio();
+      if (camera) void camera.call('beginEnrollment').catch(() => {});
+      else face.beginEnrollment();
+    },
+    endEnrollment: () => {
+      const camera = studio();
+      if (camera) void camera.call('endEnrollment').catch(() => {});
+      else face.endEnrollment();
+    },
+    captureEnrollmentSample: async (previous) => {
+      const camera = studio();
+      if (!camera) return face.captureEnrollmentSample(previous);
+      return enrollmentCaptureOf(await camera.call('captureEnrollmentSample', { previous }));
+    },
+    saveEnrollment: async (name, samples) => {
+      const camera = studio();
+      if (!camera) return face.saveEnrollment(name, samples);
+      const saved = Number(await camera.call('saveEnrollment', { name, samples: samples.map(({ embedding, thumbnail }) => ({ embedding, thumbnail })) }));
+      await face.refreshLibrary();
+      return Number.isFinite(saved) ? saved : 0;
     },
   };
 }

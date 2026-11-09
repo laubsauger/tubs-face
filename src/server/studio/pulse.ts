@@ -2,11 +2,12 @@
 // the server already holds: the listener's last live report, which head is
 // talking (studio_state), the last line heard and the last vision check.
 
-import type { StudioListenState, StudioLiveFace, StudioLiveStatus, StudioPulse } from '../../shared/contracts/studio.js';
+import type { FaceObservationFace, StudioFaceWorkerStatus, StudioListenState, StudioLiveFace, StudioLiveStatus, StudioPulse } from '../../shared/contracts/studio.js';
 import { visionService } from '../assistant/vision.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { lastLiveStatus } from './live.js';
-import { studioSettings } from './state.js';
+import { listenerFaceWorker, studioSettings } from './state.js';
+import { OBSERVATION_FRESH_MS, lastObservation } from './faces.js';
 
 const speakingHeads = new Map<'main' | 'small', boolean>();
 let heard: { text: string; t: number } | null = null;
@@ -52,8 +53,21 @@ export function seenOf(face: StudioLiveFace, width: number, height: number): Stu
   };
 }
 
+/** A face as the pulse shows it, from a FaceObservation (docs/face-service.md). */
+export function seenOfObserved(face: FaceObservationFace): StudioPulse['seen'][number] {
+  const named = face.name ? face.candidates.find((candidate) => candidate.name === face.name) : undefined;
+  return {
+    name: face.name ?? null,
+    prob: round(unit(named?.sim ?? face.candidates[0]?.sim ?? 0)),
+    box: [round(face.box[0]), round(face.box[1]), round(face.box[2]), round(face.box[3])],
+  };
+}
+
 export function studioPulse(now = Date.now()): StudioPulse {
   const status = lastLiveStatus();
+  // Whichever producer runs (docs/face-service.md); an old observation says nothing about now.
+  const observed = lastObservation();
+  const observation = observed && now - observed.at <= OBSERVATION_FRESH_MS ? observed.observation : null;
   const speaking = speakingHeads.get('main') ? 'main' : speakingHeads.get('small') ? 'small' : null;
   const check = visionService.lastCheck();
   return {
@@ -65,9 +79,20 @@ export function studioPulse(now = Date.now()): StudioPulse {
     },
     speaking,
     heard,
-    seen: status?.faceCameraActive
-      ? status.faceLastFaces.map((face) => seenOf(face, status.faceFrameWidth ?? 0, status.faceFrameHeight ?? 0))
-      : [],
+    seen: observation
+      ? observation.faces.map(seenOfObserved)
+      : status?.faceCameraActive
+        ? status.faceLastFaces.map((face) => seenOf(face, status.faceFrameWidth ?? 0, status.faceFrameHeight ?? 0))
+        : [],
     vision: { provider: runtimeConfig.visionProvider, lastMs: check?.ms ?? null, at: check?.at ?? null },
+    faceWorker: observation
+      ? { state: observation.worker.state, checksPerSecond: observation.worker.fps, lastCheckAt: observation.t }
+      : faceWorkerOf(listenerFaceWorker()),
   };
+}
+
+function faceWorkerOf(worker: StudioFaceWorkerStatus | null): StudioPulse['faceWorker'] {
+  return worker
+    ? { state: worker.state, checksPerSecond: worker.checksPerSecond, lastCheckAt: worker.lastCheckAt }
+    : { state: 'gone', checksPerSecond: 0, lastCheckAt: null };
 }

@@ -72,7 +72,8 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
       if (!/^data:image\/[\w+.-]+;base64,/.test(frameDataUrl)) return null;
       const config = runtimeConfig;
       const admitted = budget.admit(kind, {
-        off: config.visionProvider === 'off',
+        // Descriptions switched off: no picture goes to any provider, whichever is chosen.
+        off: config.visionProvider === 'off' || !config.visionDescriptions,
         sleeping,
         whileAsleep: config.visionWhileAsleep,
         maxPerHour: config.visionMaxPerHour,

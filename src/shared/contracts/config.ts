@@ -224,4 +224,6 @@ export interface RuntimeConfig {
   visionWhileAsleep: boolean;
   /** Listed people (data/relationships.json) get their attitude line while recognised in view. */
   relationshipsEnabled: boolean;
+  /** Pictures go to the vision provider to be described; off, none does (the provider choice stays). */
+  visionDescriptions: boolean;
 }

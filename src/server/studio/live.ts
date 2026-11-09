@@ -35,6 +35,7 @@ function liveFace(face: StudioLiveFace): StudioLiveFace {
     ...(face.name !== undefined ? { name: face.name } : {}),
     ...(face.match ? { match: match(face.match) } : face.match === null ? { match: null } : {}),
     ...(face.matches ? { matches: face.matches.map(match) } : {}),
+    ...(face.decision ? { decision: face.decision } : {}),
   };
 }
 
@@ -50,7 +51,11 @@ function copyStatus(status: StudioLiveStatus): StudioLiveStatus {
     audioPlaying: status.audioPlaying,
     faceCameraActive: status.faceCameraActive,
     faceWorkerReady: status.faceWorkerReady,
+    faceWorkerBusy: status.faceWorkerBusy,
     faceStatus: status.faceStatus,
+    faceLastInferenceMs: status.faceLastInferenceMs,
+    faceLastEmbeddingsExtracted: status.faceLastEmbeddingsExtracted,
+    faceLastEmbeddingsReused: status.faceLastEmbeddingsReused,
     faceLastDetectedCount: status.faceLastDetectedCount,
     faceFrameWidth: status.faceFrameWidth,
     faceFrameHeight: status.faceFrameHeight,
@@ -63,7 +68,13 @@ export function liveRelay(message: WsStudioLiveClientMessage, now = Date.now()):
   if (message.status && now - lastRelayAt < RELAY_MIN_MS) return null;
   lastRelayAt = now;
   last = message.status ? copyStatus(message.status) : null;
-  return { type: 'studio_live', actor: message.actor, status: last, speaking: message.status ? message.speaking : false };
+  return {
+    type: 'studio_live',
+    actor: message.actor,
+    status: last,
+    speaking: message.status ? message.speaking : false,
+    ...(message.status && message.faceWorker ? { faceWorker: message.faceWorker } : {}),
+  };
 }
 
 /** Whether this frame goes out (at most one per FRAME_MIN_MS). */

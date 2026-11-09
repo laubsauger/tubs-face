@@ -6,7 +6,7 @@ import type { ConfigResponse, HealthResponse, StatsResponse } from '../../shared
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { TurnAction, TurnActor } from '../../shared/contracts/turn-script.js';
-import type { StudioPulse } from '../../shared/contracts/studio.js';
+import type { FaceObservation, StudioFaceWorkerStatus, StudioLiveStatus, StudioPulse } from '../../shared/contracts/studio.js';
 
 export type ScreenRecordingPhase = 'idle' | 'starting' | 'recording' | 'saving';
 
@@ -122,13 +122,15 @@ export interface AppState {
    * sees (studio_live), its camera and the pulse; null when it does not (studio
    * mode off, nobody watching, page gone).
    */
-  studioLive: { speaking: boolean; at: number } | null;
+  studioLive: { status: StudioLiveStatus; speaking: boolean; faceWorker: StudioFaceWorkerStatus | null; at: number } | null;
   studioFrame: { src: string; width: number; height: number } | null;
   studioPulse: StudioPulse | null;
   /** Where the dashboard reads the studio camera itself (a site stream over WHEP); null: relayed pictures only. */
   studioCameraUrl: string | null;
   /** The dashboard shows the studio camera now (studio_watch video). */
   studioVideoWanted: boolean;
+  /** The last face observation from whichever producer runs (docs/face-service.md). */
+  studioObservation: FaceObservation | null;
   controlSpeakText: string;
   chatComposerText: string;
   /** Perform mode (Z): status bar and dock hidden, the face gets the screen. */
@@ -307,7 +309,16 @@ export function syncStagePrefs(store: AppStore): () => void {
 }
 
 /** @param uiPrefsKey where this view's layout prefs live; omitted for views without a HUD. */
-export function createAppStore(uiPrefsKey?: string): AppStore {
+/**
+ * ?tab=<id>: the dock tab a link opens (the sentient panel's pulse bar opens
+ * &tab=people), if it is a tab this view has; null otherwise.
+ */
+export function tabFromUrl(search: string, allowed: readonly DockTab[]): DockTab | null {
+  const tab = new URLSearchParams(search).get('tab');
+  return isOneOf(DOCK_TABS, tab) && allowed.includes(tab) ? tab : null;
+}
+
+export function createAppStore(uiPrefsKey?: string, options: { tab?: DockTab | null } = {}): AppStore {
   const initialState: AppState = {
     connected: false,
     connectionLabel: 'Offline',
@@ -364,6 +375,7 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
     studioPulse: null,
     studioCameraUrl: null,
     studioVideoWanted: false,
+    studioObservation: null,
     faceDetectionDelayMs: 0,
     ttsRenderingSince: null,
     controlSpeakText: '',
@@ -405,6 +417,12 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
       stage: parseStagePrefs(readStorage(STAGE_PREFS_STORAGE_KEY)),
     });
     initialState.dockReturn = { tab: initialState.dockTab, folded: initialState.dockFolded, uiHidden: initialState.uiHidden };
+  }
+  // A tab asked for in the link wins over the stored one, with the dock open.
+  if (options.tab) {
+    initialState.dockTab = options.tab;
+    initialState.dockFolded = false;
+    initialState.dockReturn = { tab: options.tab, folded: false, uiHidden: initialState.uiHidden };
   }
   const store = createStore<AppState>()(subscribeWithSelector(() => initialState));
 

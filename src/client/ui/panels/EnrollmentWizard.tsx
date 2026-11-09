@@ -4,6 +4,7 @@ import type { AppStore } from '../../state/app-state.js';
 import type { AppShellControls } from '../app-shell.js';
 import { useAppSelector } from '../react-store.js';
 import { StudioCameraView } from './StudioCamera.js';
+import { deviceView } from '../../studio/live-view.js';
 
 type FaceControls = NonNullable<AppShellControls['face']>;
 type Mode = 'guided' | 'quick';
@@ -66,8 +67,9 @@ export function EnrollmentWizard({ store, controls }: { store: AppStore; control
 
 function WizardDialog({ store, controls }: { store: AppStore; controls: FaceControls }): JSX.Element {
   const camera = useAppSelector(store, (state) => ({
-    active: state.faceCameraActive,
-    workerReady: state.faceWorkerReady,
+    // In studio mode the studio listener's camera and face worker (live-view.ts).
+    active: deviceView(state).faceCameraActive,
+    workerReady: deviceView(state).faceWorkerReady,
     // The dashboard in studio mode: the studio listener's camera, its pictures relayed.
     studio: state.studioLive !== null,
   }));

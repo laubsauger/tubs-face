@@ -128,6 +128,7 @@ export const runtimeConfig: RuntimeConfig = {
   visionMaxPerHour: parseIntegerInRange(process.env.VISION_MAX_PER_HOUR, 120, 0, 100_000),
   visionWhileAsleep: parseBoolean(process.env.VISION_WHILE_ASLEEP, false),
   relationshipsEnabled: parseBoolean(process.env.RELATIONSHIPS_ENABLED, true),
+  visionDescriptions: parseBoolean(process.env.VISION_DESCRIPTIONS, true),
 };
 
 export const sessionStats: SessionStats = {
@@ -556,6 +557,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   }
   if (patch.visionWhileAsleep !== undefined) runtimeConfig.visionWhileAsleep = Boolean(patch.visionWhileAsleep);
   if (patch.relationshipsEnabled !== undefined) runtimeConfig.relationshipsEnabled = Boolean(patch.relationshipsEnabled);
+  if (patch.visionDescriptions !== undefined) runtimeConfig.visionDescriptions = Boolean(patch.visionDescriptions);
 
   sessionStats.model = runtimeConfig.model;
   sessionStats.lastActivity = Date.now();

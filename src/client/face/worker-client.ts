@@ -7,7 +7,7 @@ import type {
 } from '../../shared/contracts/worker.js';
 
 export interface FaceWorkerClientOptions {
-  onReady?: () => void;
+  onReady?: (info: { backend?: string; threads?: number; isolated?: boolean }) => void;
   onProgress?: (message: FaceWorkerProgressMessage) => void;
   onFaces?: (packet: FaceSnapshotPacket, message: FaceWorkerFacesMessage) => void;
   onError?: (message: string) => void;
@@ -35,7 +35,11 @@ export function createFaceWorkerClient(options: FaceWorkerClientOptions = {}): F
     switch (message.type) {
       case 'ready':
         ready = true;
-        options.onReady?.();
+        options.onReady?.({
+          ...(message.backend ? { backend: message.backend } : {}),
+          ...(message.threads !== undefined ? { threads: message.threads } : {}),
+          ...(message.isolated !== undefined ? { isolated: message.isolated } : {}),
+        });
         return;
       case 'progress':
         options.onProgress?.(message);

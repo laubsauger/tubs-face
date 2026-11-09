@@ -14,6 +14,12 @@ import { whepPicture } from '../transport/whip.js';
 import { formatVisionSource, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import { RENDER_PAUSE_POLL_MS, faceChecksPaused } from './render-pause.js';
 import { drawFaceBoxes } from './overlay.js';
+import { MATCH_MARGIN, MATCH_THRESHOLD } from './matching.js';
+import type { FaceObservation, StudioFaceWorkerStatus } from '../../shared/contracts/studio.js';
+import { observedFaces, type ObservationTracks } from './observation.js';
+
+/** Checks per second are counted over this window. */
+const CHECK_RATE_WINDOW_MS = 10_000;
 
 export interface FaceShellRuntime {
   init(): void;
@@ -29,6 +35,19 @@ export interface FaceShellRuntime {
   endEnrollment(): void;
   /** Grab one pose; null when no single face was found. */
   captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+  /**
+   * The studio switches. recognition: faces are matched against the library
+   * (names, relationships) and auto-onboarded. detection: the worker looks for
+   * faces at all, while recognition or vision descriptions (which a detected
+   * face triggers) is on.
+   */
+  setRecognition(recognition: boolean, detection: boolean): void;
+  /** The last check as a FaceObservation (docs/face-service.md): the same shape the face service sends. */
+  observation(now?: number): FaceObservation;
+  /** Called with each check's observation (the studio listener sends it on). */
+  onObservation(sink: ((observation: FaceObservation) => void) | null): void;
+  /** The face worker's state for the studio's operators (studio_status faceWorker): running or not, how fast, what it found. */
+  debugStatus(now?: number): StudioFaceWorkerStatus;
   /**
    * What the camera shows now, as a small JPEG, for a dashboard that watches
    * the studio listener; key changes only with the picture (a still camera's
@@ -93,9 +112,32 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   // server drops a recognised person it has not heard about for ~10 s).
   const PEOPLE_REFRESH_MS = 5000;
   let enrollmentActive = false;
+  // Studio switches: recognition names the faces (matching, auto-onboarding);
+  // detection runs while recognition or descriptions (faces trigger them) is on.
+  let recognition = true;
+  let detection = true;
+  let observationSink: ((observation: FaceObservation) => void) | null = null;
+  const tracks: ObservationTracks = { next: 1, last: [] };
+  // What the studio's operators see of this worker (debugStatus), never sent anywhere else.
+  const debug = {
+    initStarted: false,
+    info: null as { backend?: string; threads?: number; isolated?: boolean } | null,
+    error: null as { message: string; at: number } | null,
+    checks: [] as number[],
+    lastCheckAt: null as number | null,
+    lastFaceAt: null as number | null,
+    faces: 0,
+    best: null as { name: string | null; prob: number } | null,
+    source: 'off',
+    lastFrameAt: null as number | null,
+    visionSkip: null as Exclude<StudioFaceWorkerStatus['visionSkip'], undefined>,
+    checkSkip: null as Exclude<StudioFaceWorkerStatus['checkSkip'], undefined>,
+  };
 
   const worker = createFaceWorkerClient({
-    onReady: () => {
+    onReady: (info) => {
+      debug.info = info;
+      debug.error = null;
       store.setState((current) => ({
         ...current,
         faceWorkerReady: true,
@@ -120,7 +162,10 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
         return;
       }
       const wasEmpty = stableFaces.length === 0;
-      const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
+      // Recognition off: faces are found (descriptions need them), never named.
+      const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []));
+      noteCheck(faces, Date.now());
+      observationSink?.(observation());
       const recognizedNames = [...new Set(
         faces
           .map((face) => face.match?.name ?? face.name ?? null)
@@ -154,7 +199,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       const config = store.getState().config;
       const maxPx = config?.visionMaxPx ?? 512;
       // The server keeps the budget too; here no picture leaves for nothing.
-      const refreshAllowed = config?.visionProvider !== 'off' && (!store.getState().sleeping || config?.visionWhileAsleep === true);
+      const descriptions = config?.visionProvider !== 'off' && config?.visionDescriptions !== false;
+      const refreshAllowed = descriptions && (!store.getState().sleeping || config?.visionWhileAsleep === true);
       if (shouldSendAppearance && sender) {
         sender({
           type: 'appearance_frame',
@@ -165,11 +211,17 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
           ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
+        debug.visionSkip = null;
       } else if (refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
         // The server forgets a camera description after 60 s. While someone is
         // still in view, refresh it (vision only, no new greeting).
         sender({ type: 'camera_frame', frame: visionFrame(captureCanvas, maxPx) });
         lastVisionFrameAt = Date.now();
+        debug.visionSkip = null;
+      } else {
+        debug.visionSkip = faces.length === 0 ? 'nobody in view'
+          : !descriptions ? 'descriptions off'
+            : !refreshAllowed ? 'asleep' : 'not due';
       }
 
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
@@ -178,6 +230,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       }
     },
     onError: (message) => {
+      debug.error = { message: message.slice(0, 300), at: Date.now() };
       store.setState((current) => ({
         ...current,
         faceWorkerBusy: false,
@@ -209,6 +262,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
 
   return {
     init(): void {
+      debug.initStarted = true;
       worker.init();
       void refreshFaceLibraryState(store);
     },
@@ -252,6 +306,30 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
         return { imageData: captureCtx!.getImageData(0, 0, captureCanvas.width, captureCanvas.height) };
       } : undefined);
     },
+    debugStatus,
+    observation,
+    onObservation(sink) {
+      observationSink = sink;
+    },
+    setRecognition(nextRecognition, nextDetection) {
+      if (nextRecognition === recognition && nextDetection === detection) return;
+      const forget = (recognition && !nextRecognition) || (detection && !nextDetection);
+      recognition = nextRecognition;
+      detection = nextDetection;
+      store.appendLog('info', `Face recognition ${recognition ? 'on' : 'off'}, detection ${detection ? 'on' : 'off'}`);
+      if (forget) {
+        // Who was named (or seen) is no longer known: the server lets go of them.
+        stableFaces = [];
+        if (lastPeopleSignature) {
+          lastPeopleSignature = '';
+          sender?.({ type: 'people', people: [] });
+        }
+        store.setState((current) => ({ ...current, faceLastFaces: [], faceLastDetectedCount: 0, faceStatus: detection ? 'Detecting faces, not naming them' : 'Face detection off' }));
+        clearOverlay();
+      }
+      if (detection) scheduleLoop();
+      else clearLoop();
+    },
     previewFrame(maxPx) {
       const live = stream && videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
       const source: CanvasImageSource | null = live ? videoEl : still && captureCanvas.width > 0 ? captureCanvas : null;
@@ -286,6 +364,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     },
     async setPictureSource(source, site): Promise<void> {
       stopCamera(store);
+      debug.source = formatVisionSource(source);
+      debug.lastFrameAt = null;
       store.appendLog('info', `Camera source: ${formatVisionSource(source)}`);
       if (source.kind === 'off') return;
       if (source.kind === 'local') {
@@ -320,14 +400,20 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     stillGrab = grab;
     still = createStillPictures({
       grab,
-      ready: () => worker.ready && !worker.busy && !enrollmentActive,
+      ready: () => detection && worker.ready && !worker.busy && !enrollmentActive,
       onPicture: async (picture) => {
         if (!drawPicture(picture) || !captureCtx) return;
         stillCount += 1;
+        debug.lastFrameAt = Date.now();
+        debug.checkSkip = null;
         store.setState((current) => ({ ...current, faceWorkerBusy: true, faceStatus: 'Detecting from a remote camera' }));
         await worker.detectOnce(captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height));
       },
-      onError: (message) => store.appendLog('error', `Camera picture: ${message}`),
+      onError: (message) => {
+        debug.error = { message: `camera picture: ${message}`.slice(0, 300), at: Date.now() };
+        debug.checkSkip = 'no frame';
+        store.appendLog('error', `Camera picture: ${message}`);
+      },
     });
   }
 
@@ -417,7 +503,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
 
   function scheduleLoop(): void {
     clearLoop();
-    if (!stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
+    if (!detection || !stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
       return;
     }
     const manualDelay = store.getState().faceDetectionDelayMs;
@@ -435,10 +521,12 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       return;
     }
     if (videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
+      debug.checkSkip = 'no frame';
       scheduleLoop();
       return;
     }
     if (faceChecksPaused(store.getState().ttsRenderingSince, Date.now())) {
+      debug.checkSkip = 'voice rendering';
       clearLoop();
       loopTimer = window.setTimeout(() => {
         void runCameraDetection();
@@ -454,6 +542,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     captureCanvas.height = height;
     captureCtx.drawImage(videoEl, 0, 0, width, height);
     const imageData = captureCtx.getImageData(0, 0, width, height);
+    debug.lastFrameAt = Date.now();
+    debug.checkSkip = null;
     store.setState((current) => ({
       ...current,
       faceWorkerBusy: true,
@@ -482,6 +572,87 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       return;
     }
     drawFaceBoxes(overlayEl, faces, { width: captureCanvas.width, height: captureCanvas.height }, { mirror: true });
+  }
+
+  function noteCheck(faces: DetectedFace[], now: number): void {
+    debug.checks.push(now);
+    while (debug.checks.length > 0 && now - debug.checks[0]! > CHECK_RATE_WINDOW_MS) debug.checks.shift();
+    debug.lastCheckAt = now;
+    debug.faces = faces.length;
+    if (faces.length > 0) debug.lastFaceAt = now;
+    // The face the library is surest of; an unknown one by its best candidate's similarity.
+    const scored = faces.map((face) => ({ name: face.name ?? face.match?.name ?? null, prob: face.match?.score ?? face.matches?.[0]?.score ?? 0 }));
+    debug.best = scored.sort((a, b) => Number(Boolean(b.name)) - Number(Boolean(a.name)) || b.prob - a.prob)[0] ?? null;
+    if (debug.error && now - debug.error.at > CHECK_RATE_WINDOW_MS) debug.error = null;
+  }
+
+  function observation(now = Date.now()): FaceObservation {
+    const status = debugStatus(now);
+    const width = captureCanvas.width;
+    const height = captureCanvas.height;
+    const config = store.getState().config;
+    return {
+      t: debug.lastCheckAt ?? now,
+      source: debug.source,
+      frame: { w: width, h: height },
+      faces: detection && status.camera
+        ? observedFaces(store.getState().faceLastFaces, { width, height }, tracks, {
+          // Unknown and being onboarded: the dialog has the camera, or auto onboarding holds shots.
+          onboarding: enrollmentActive || (recognition && Boolean(config?.autoEnrollEnabled) && snapshots.size > 0),
+        })
+        : [],
+      worker: {
+        kind: 'browser',
+        state: status.state,
+        backend: debug.info?.backend ?? 'wasm',
+        ...(debug.info?.threads ? { threads: debug.info.threads } : {}),
+        inferMs: Math.max(0, store.getState().faceLastInferenceMs ?? 0),
+        fps: status.checksPerSecond,
+        ...(status.state === 'error' || status.state === 'loading' ? { error: (status.detail ?? status.error ?? status.state).slice(0, 300) } : {}),
+        where: 'the studio listener page',
+      },
+    };
+  }
+
+  function debugStatus(now = Date.now()): StudioFaceWorkerStatus {
+    const camera = Boolean(stream || still);
+    const recent = debug.checks.filter((at) => now - at <= CHECK_RATE_WINDOW_MS).length;
+    if (!detection) {
+      return {
+        state: 'off', detail: 'face recognition and vision descriptions both switched off', camera, checksPerSecond: 0, lastCheckAt: debug.lastCheckAt, lastFaceAt: debug.lastFaceAt,
+        faces: 0, best: null, source: debug.source, lastVisionFrameAt: lastVisionFrameAt || null, visionSkip: debug.visionSkip, lastFrameAt: debug.lastFrameAt,
+      };
+    }
+    const state: StudioFaceWorkerStatus['state'] = !camera ? 'off'
+      : worker.ready ? 'ready'
+        : debug.error ? 'error'
+          : 'loading';
+    return {
+      state,
+      ...(state === 'loading' ? { detail: debug.initStarted ? store.getState().faceStatus.slice(0, 300) : 'waiting to start' } : {}),
+      ...(state === 'ready' && !recognition ? { detail: 'recognition switched off: faces are detected for descriptions, not named' } : {}),
+      ...(state === 'error' && debug.error ? { detail: debug.error.message } : {}),
+      camera,
+      checksPerSecond: Math.round((recent / (CHECK_RATE_WINDOW_MS / 1000)) * 100) / 100,
+      lastCheckAt: debug.lastCheckAt,
+      lastFaceAt: debug.lastFaceAt,
+      faces: debug.faces,
+      best: debug.best,
+      ...(debug.error ? { error: debug.error.message } : {}),
+      ...(debug.info?.backend ? { backend: debug.info.backend } : {}),
+      ...(debug.info?.threads !== undefined ? { threads: debug.info.threads } : {}),
+      ...(debug.info?.isolated !== undefined ? { isolated: debug.info.isolated } : {}),
+      source: debug.source,
+      frameWidth: captureCanvas.width || null,
+      frameHeight: captureCanvas.height || null,
+      lastFrameAt: debug.lastFrameAt,
+      inferenceMs: store.getState().faceLastInferenceMs,
+      threshold: MATCH_THRESHOLD,
+      margin: MATCH_MARGIN,
+      lastVisionFrameAt: lastVisionFrameAt || null,
+      visionSkip: debug.visionSkip,
+      checkSkip: enrollmentActive ? 'onboarding' : debug.checkSkip,
+    };
   }
 
   function clearOverlay(): void {
@@ -513,7 +684,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
    */
   /** Tells the server who is in view when the group, positions or snapshot counts change. */
   function reportPeople(people: TrackedPerson[], now: number): void {
-    if (store.getState().config?.autoEnrollEnabled) {
+    if (recognition && store.getState().config?.autoEnrollEnabled) {
       for (const person of people) takeSnapshot(person, now);
     }
     const counts = people.map((person) => (person.names.length === 0 ? snapshots.get(person.id)?.length ?? 0 : 0));

@@ -27,10 +27,18 @@ export function liveStatusOf(state: AppState): StudioLiveStatus {
     audioPlaying: state.audioPlaying,
     faceCameraActive: state.faceCameraActive,
     faceWorkerReady: state.faceWorkerReady,
+    faceWorkerBusy: state.faceWorkerBusy,
     faceStatus: state.faceStatus.slice(0, 300),
+    faceLastInferenceMs: state.faceLastInferenceMs,
+    faceLastEmbeddingsExtracted: state.faceLastEmbeddingsExtracted,
+    faceLastEmbeddingsReused: state.faceLastEmbeddingsReused,
     faceLastDetectedCount: state.faceLastDetectedCount,
     faceFrameWidth: state.faceFrameWidth,
     faceFrameHeight: state.faceFrameHeight,
-    faceLastFaces: state.faceLastFaces.slice(0, 16).map(liveFaceOf),
+    faceLastFaces: state.faceLastFaces.slice(0, 16).map((face) => ({
+      ...liveFaceOf(face),
+      // Unknown and auto-onboarding on: its shots are being collected to learn it.
+      decision: (face.name ?? face.match?.name) ? 'match' : state.config?.autoEnrollEnabled ? 'onboarding' : 'unknown',
+    })),
   };
 }

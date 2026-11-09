@@ -4,9 +4,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import type { StudioLiveStatus, StudioPulse } from '../../shared/contracts/studio.js';
 import { handleStudioRoute } from '../routes/studio-routes.js';
+import { handleVisionRoute } from '../routes/vision-routes.js';
 import { initWebSocketServer } from '../ws/server.js';
 import { PULSE_LEASE_MS, resetLive } from './live.js';
 import { listenStateOf, noteHeard, resetPulse } from './pulse.js';
+import { forgetObservation } from './faces.js';
 import { resetStudioReports, studioSettings } from './state.js';
 
 // In studio mode the dashboard has no mic or camera: the studio listener page
@@ -21,7 +23,8 @@ const sockets: WebSocket[] = [];
 
 beforeAll(async () => {
   server = http.createServer((request, response) => {
-    void handleStudioRoute(request, response, new URL(request.url ?? '/', 'http://127.0.0.1'));
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    void handleVisionRoute(request, response, url).then((done) => done || handleStudioRoute(request, response, url));
   });
   initWebSocketServer(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -39,6 +42,7 @@ afterEach(async () => {
   resetStudioReports();
   resetLive();
   resetPulse();
+  forgetObservation();
 });
 
 interface Client {
@@ -77,7 +81,11 @@ const STATUS: StudioLiveStatus = {
   audioPlaying: false,
   faceCameraActive: true,
   faceWorkerReady: true,
+  faceWorkerBusy: false,
   faceStatus: 'Detected 1 face(s)',
+  faceLastInferenceMs: 180,
+  faceLastEmbeddingsExtracted: 1,
+  faceLastEmbeddingsReused: 0,
   faceLastDetectedCount: 1,
   faceFrameWidth: 960,
   faceFrameHeight: 540,
@@ -197,7 +205,8 @@ describe('GET /studio/pulse', () => {
       seen: [{ name: 'Flo', prob: 0.87, box: [0.5, 0.25, 0.2, 0.5] }],
       vision: { provider: expect.any(String) },
     });
-    expect(Object.keys(now).sort()).toEqual(['heard', 'mic', 'seen', 'speaking', 't', 'vision']);
+    // The shape the pulse bar builds on, plus faceWorker (additive): nobody in view is not the same as not looking.
+    expect(Object.keys(now).sort()).toEqual(['faceWorker', 'heard', 'mic', 'seen', 'speaking', 't', 'vision']);
     // The push carries the same shape.
     expect((dashboard.of('studio_pulse').at(-1) as { pulse: StudioPulse }).pulse.seen).toEqual(now.seen);
     studioSettings.micSource = 'local';
@@ -210,6 +219,44 @@ describe('GET /studio/pulse', () => {
     expect(listenStateOf({ ...STATUS, recording: true }, false)).toBe('hearing');
     expect(listenStateOf({ ...STATUS, listenState: 'Thinking...' }, false)).toBe('thinking');
     expect(listenStateOf({ ...STATUS, listenState: 'Thinking...' }, true)).toBe('speaking');
+  });
+});
+
+// One shape from either producer (docs/face-service.md): what the listener's
+// browser worker saw reaches the watching dashboards, GET /studio/faces and
+// the pulse; nobody else may put faces there.
+describe('face observations', () => {
+  const observation = {
+    t: 5_000, source: 'site:cam-test', frame: { w: 960, h: 540 },
+    faces: [{ track: 1, box: [0.5, 0.25, 0.2, 0.5], score: 0.82, candidates: [{ name: 'Flo', sim: 0.74 }, { name: 'Tihana', sim: 0.13 }], decision: 'match', name: 'Flo' }],
+    worker: { kind: 'browser', state: 'ready', backend: 'wasm', threads: 8, inferMs: 120, fps: 0.5, where: 'the studio listener page' },
+  };
+
+  it('go from the listener page to watching dashboards, GET /studio/faces and the pulse', async () => {
+    studioSettings.enabled = true;
+    const listener = await connect('?studio=main');
+    const dashboard = await connect('?role=spectator');
+    const other = await connect('?role=spectator');
+    dashboard.send({ type: 'studio_watch', live: true, video: false });
+    await settle();
+    listener.send({ type: 'face_observation', observation });
+    await settle();
+    expect(dashboard.of('face_observation')).toEqual([{ type: 'face_observation', observation }]);
+    expect(other.of('face_observation')).toEqual([]);
+    expect(await (await fetch(`http://127.0.0.1:${port}/studio/faces`)).json()).toEqual(observation);
+    const now = await pulse();
+    expect(now.seen).toEqual([{ name: 'Flo', prob: 0.74, box: [0.5, 0.25, 0.2, 0.5] }]);
+    expect(now.faceWorker).toMatchObject({ state: 'ready', checksPerSecond: 0.5, lastCheckAt: 5_000 });
+  });
+
+  it('are taken from the listener page only', async () => {
+    studioSettings.enabled = true;
+    const small = await connect('?studio=small');
+    const dashboard = await connect('?role=spectator');
+    small.send({ type: 'face_observation', observation });
+    dashboard.send({ type: 'face_observation', observation });
+    await settle();
+    expect((await fetch(`http://127.0.0.1:${port}/studio/faces`)).status).toBe(404);
   });
 });
 

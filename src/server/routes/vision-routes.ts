@@ -16,13 +16,14 @@ import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { lastLiveStatus } from '../studio/live.js';
-import { studioSettings } from '../studio/state.js';
+import { listenerFaceWorker, studioSettings } from '../studio/state.js';
 import { visionModels, visionServers } from '../vision/servers.js';
+import { lastObservation } from '../studio/faces.js';
 import { fromThisOrigin } from './route-helpers.js';
 
 const MAX_TEST_PICTURE_CHARS = 4 * 1024 * 1024;
 
-const PATHS = new Set(['/studio/vision', '/vision/servers', '/vision/models', '/vision/test']);
+const PATHS = new Set(['/studio/vision', '/studio/faces', '/vision/servers', '/vision/models', '/vision/test']);
 
 export async function handleVisionRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
   if (!PATHS.has(url.pathname)) return false;
@@ -46,7 +47,12 @@ export async function handleVisionRoute(request: IncomingMessage, response: Serv
     sendJson(response, 405, { error: 'GET only' } satisfies ErrorResponse);
     return true;
   }
-  if (url.pathname === '/studio/vision') {
+  if (url.pathname === '/studio/faces') {
+    // The last face observation (docs/face-service.md), or 404 before the first.
+    const last = lastObservation();
+    if (last) sendJson(response, 200, last.observation);
+    else sendJson(response, 404, { error: 'No face observation yet' } satisfies ErrorResponse);
+  } else if (url.pathname === '/studio/vision') {
     sendJson(response, 200, studioVision());
   } else if (url.pathname === '/vision/servers') {
     sendJson(response, 200, await visionServers(fleetHub()));
@@ -115,9 +121,11 @@ async function sendTest(request: IncomingMessage, response: ServerResponse): Pro
 
 export function studioVision(): StudioVisionResponse {
   const config = runtimeConfig;
+  const faces = studioSettings.enabled ? listenerFaceWorker() : null;
   return {
     camera: {
-      on: studioSettings.enabled ? Boolean(lastLiveStatus()?.faceCameraActive) : null,
+      // What the listener page says, whether or not anyone watches its live state.
+      on: faces ? faces.camera : studioSettings.enabled && lastLiveStatus() ? Boolean(lastLiveStatus()?.faceCameraActive) : null,
       source: studioSettings.visionSource,
     },
     vision: {
@@ -126,6 +134,8 @@ export function studioVision(): StudioVisionResponse {
       on: config.visionProvider !== 'off',
     },
     last: visionService.lastCheck(),
+    faces,
+    observation: lastObservation()?.observation ?? null,
     relationships: relationshipsInEffect(config.relationshipsEnabled).map(({ name, attitude }) => ({ name, attitude })),
   };
 }
