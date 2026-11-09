@@ -36,7 +36,12 @@ export interface ProactiveRuntime {
   dispose(): void;
 }
 
-export function createProactiveRuntime(store: AppStore): ProactiveRuntime {
+export interface ProactiveRuntimeOptions {
+  /** More talking than this page's own voice, e.g. the other studio head (the listener plays only main's). */
+  busy?: () => boolean;
+}
+
+export function createProactiveRuntime(store: AppStore, options: ProactiveRuntimeOptions = {}): ProactiveRuntime {
   let proactiveTimer: number | null = null;
   let lastProactiveAt = 0;
   let unanswered = 0;
@@ -117,7 +122,7 @@ export function createProactiveRuntime(store: AppStore): ProactiveRuntime {
   function tryProactiveChat(): void {
     const state = store.getState();
     // Not while someone is mid-onboarding in front of the camera.
-    if (state.sleeping || state.audioPlaying || state.faceLastDetectedCount === 0 || state.faceEnrollOpen) {
+    if (state.sleeping || state.audioPlaying || (options.busy?.() ?? false) || state.faceLastDetectedCount === 0 || state.faceEnrollOpen) {
       schedule();
       return;
     }

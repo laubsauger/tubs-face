@@ -183,3 +183,57 @@ describe('turns', () => {
     expect(appearancePrompt(['Anna'], false)).toContain('Greet them by name');
   });
 });
+
+// "Mini cuts off Main": a line Tubs starts on his own (a proactive line, an
+// appearance greeting) interrupted the turn still playing, whose generation
+// was over but whose audio was not, and cut its line off mid-word. Measured
+// on a test instance: the line playing when a proactive line came was cut
+// (1.19 s of 2.10 s heard), and the turn's last two lines never played. It
+// now waits for the heads to fall quiet; someone speaking still comes first.
+describe('a line Tubs starts on his own', () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    runtimeConfig.muted = false;
+    service.active = false;
+    service.runProactiveTurn.mockClear();
+    service.interruptAssistantTurns.mockClear();
+    const heads = await import('./heads.js');
+    heads.resetHeads();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('waits until both heads are quiet, never cutting a line still playing', async () => {
+    const heads = await import('./heads.js');
+    const { messages, broadcast } = collect();
+    vi.setSystemTime(100_000);
+    heads.noteHeadSpeaking('small', true);
+    startProactiveTurn('Someone new is nearby and has not spoken.', broadcast);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(messages.filter((m) => m.type === 'interrupt')).toEqual([]);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+    // Small's line ends; the other head's answer could still be on its way, so a breath more.
+    heads.noteHeadSpeaking('small', false);
+    await vi.advanceTimersByTimeAsync(heads.QUIET_AFTER_SPEECH_MS - 500);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(service.runProactiveTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for audio just sent that has not started yet, and gives way to someone speaking', async () => {
+    const heads = await import('./heads.js');
+    const { broadcast } = collect();
+    vi.setSystemTime(200_000);
+    heads.noteAudioSent();
+    startProactiveTurn('A stranger is standing there silently.', broadcast);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+    // A visitor speaks meanwhile: their turn, and the waiting line is dropped.
+    startUserTurn({ text: 'Hello there', source: 'text', broadcast });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+  });
+});

@@ -88,7 +88,10 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     ? createGlitchRuntime(store, messageMode, isStudio ? { studioCanvasPx: options.studio?.size ?? 1024 } : {})
     : null;
   let lastImpulseTurnId: string | undefined;
-  const proactiveRuntime = isController || isStudioListener ? createProactiveRuntime(store) : null;
+  const proactiveRuntime = isController || isStudioListener
+    // The studio listener plays only main's voice: Small talking is talking too.
+    ? createProactiveRuntime(store, isStudioListener ? { busy: () => voiceRuntime?.headsTalking() ?? false } : {})
+    : null;
   const sleepRuntime = isController || isStudioListener
     // The studio listener also stays awake while either head talks (it plays only main's voice).
     ? createSleepRuntime(store, isStudioListener ? { busy: () => voiceRuntime?.headsTalking() ?? false } : {})
