@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
 import { splitLeadingEmoji } from '../../chat/emoji.js';
+import { chatTailKey, nearBottom } from '../../chat/scroll.js';
 import { withFillerLeads } from '../../chat/filler-lead.js';
 import { sendChatComposer } from '../../chat/send.js';
 import { useAppSelector } from '../react-store.js';
@@ -18,12 +19,16 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
 
   const entries = withFillerLeads(state.chatEntries.filter((entry) => isChatEntryVisible(state.chatVerbosity, entry.type)));
 
-  useEffect(() => {
+  // Follow the newest line unless the reader scrolled up to read; keyed on the
+  // newest line itself, so replaced drafts and growing lines scroll too.
+  const stickRef = useRef(true);
+  const tailKey = chatTailKey(entries);
+  useLayoutEffect(() => {
     const list = listRef.current;
-    if (list) {
+    if (list && stickRef.current) {
       list.scrollTop = list.scrollHeight;
     }
-  }, [entries.length]);
+  }, [tailKey]);
 
   // Lines that arrive while the Chat tab is closed can't scroll a hidden list;
   // start at the newest line once the tab shows it again.
@@ -61,6 +66,10 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
         <ul
           id="chat-log-list"
           ref={listRef}
+          onScroll={(event) => {
+            const list = event.currentTarget;
+            stickRef.current = nearBottom(list.scrollHeight, list.scrollTop, list.clientHeight);
+          }}
           className="chat-panel-list flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 font-mono text-xs"
         >
           {entries.length === 0
