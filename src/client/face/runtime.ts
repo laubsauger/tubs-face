@@ -3,7 +3,7 @@ import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { loadFaceLibraryIntoStore } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
-import { createNameSettler } from './settle.js';
+import { createGreetingHold, createNameSettler } from './settle.js';
 import { type Snapshot, wantsSnapshot } from './auto-onboarding.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
 import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
@@ -133,6 +133,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   let observationSink: ((observation: FaceObservation) => void) | null = null;
   const tracks: ObservationTracks = { next: 1, last: [] };
   const nameSettler = createNameSettler();
+  const greetingHold = createGreetingHold<{ returning: boolean; awayMs?: number }>();
   // What the studio's operators see of this worker (debugStatus), never sent anywhere else.
   const debug = {
     initStarted: false,
@@ -184,7 +185,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       const wasEmpty = stableFaces.length === 0;
       // Recognition off: faces are found (descriptions need them), never named.
       // Names per track, not per frame: a face is named once its track matched that person on a few checks (settle.ts).
-      const faces = stabilizeFaces(nameSettler.settle(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []), Date.now()));
+      const settled = nameSettler.settle(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []), Date.now());
+      const faces = stabilizeFaces(settled);
       noteCheck(faces, Date.now());
       observationSink?.(observation());
       const recognizedNames = [...new Set(
@@ -215,7 +217,9 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       // Someone new joined people already in view. Not on recognition or
       // face-count flicker: each flicker used to send a fresh greeting.
       const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
-      const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && faces.length > 0 && (greeting || groupChanged));
+      // A known face's first check only starts its name: the greeting waits briefly for it (settle.ts).
+      const appearance = greetingHold.next({ faces: faces.length, trigger: Boolean(greeting || groupChanged), greeting, nameOnItsWay: settled.some((face) => face.pending), now });
+      const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && appearance.send);
 
       const config = store.getState().config;
       const maxPx = config?.visionMaxPx ?? 512;
@@ -229,11 +233,11 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
           // Names stick to a person once recognized, so a missed frame still greets by name.
           faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])],
           count: faces.length,
-          ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
+          ...(appearance.greeting?.returning ? { returning: true, awayMs: appearance.greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
         debug.visionSkip = null;
-      } else if (refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
+      } else if (!appearance.holding && refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
         // The server forgets a camera description after 60 s. While someone is
         // still in view, refresh it (vision only, no new greeting).
         sender({ type: 'camera_frame', frame: visionFrame(captureCanvas, maxPx) });
@@ -241,6 +245,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
         debug.visionSkip = null;
       } else {
         debug.visionSkip = faces.length === 0 ? 'nobody in view'
+          : appearance.holding ? 'waiting for a name to settle'
           : !descriptions ? 'descriptions off'
             : !refreshAllowed ? 'asleep' : 'not due';
       }

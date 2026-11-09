@@ -17,7 +17,7 @@ HTTP (stdlib ThreadingHTTPServer):
   GET  /frame.jpg?max=512   the newest frame, longest side at most max (404 without one)
   GET  /thumbnail?track=N   that track's face from the frame it was last seen in, as the library keeps it
   POST /capture       -> {faces: [{box, score, embedding, thumbnail}], frame: {w, h}} from the next frame checked
-  POST /detect        an image (PNG or JPEG body) -> {faces: [{box, score, landmarks, embedding}], frame: {w, h}}
+  POST /detect        an image (PNG or JPEG body) -> {faces: [{box, score, landmarks, embedding, thumbnail}], frame: {w, h}}
 Models: downloaded once into FACE_MODEL_DIR (default ~/.cache/tubs-face/models), from the URLs the
 browser worker uses. FACE_SERVICE_BACKEND: auto (CoreML on a Mac, CUDA if onnxruntime has it, else
 CPU), coreml, cuda or cpu. Never logs a camera URL's login.
@@ -579,7 +579,11 @@ class Handler(BaseHTTPRequestHandler):
         faces = pipeline.detect(rgb)
         for face in faces:
             face["embedding"] = pipeline.embed(rgb, face["landmarks"]) if face.get("landmarks") else None
-        self.send_json(200, {"frame": {"w": rgb.shape[1], "h": rgb.shape[0]}, "faces": [face_out(f) for f in faces]})
+        out = [face_out(f) for f in faces]
+        # With each face's thumbnail, as /capture: an upload for someone's samples (embedPicture) keeps it.
+        for item, face in zip(out, faces):
+            item["thumbnail"] = thumbnail(rgb, face["box"]) if face.get("embedding") is not None else None
+        self.send_json(200, {"frame": {"w": rgb.shape[1], "h": rgb.shape[0]}, "faces": out})
 
     def capture(self, body):
         """The faces of the next frame checked, each embedded afresh, with its thumbnail (onboarding)."""

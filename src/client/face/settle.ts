@@ -156,3 +156,42 @@ export function createNameSettler(options: Partial<SettleOptions> = {}): NameSet
     },
   };
 }
+
+/**
+ * An arrival's greeting waits at most this long for a name that is on its way
+ * (a track with a vote for someone, not yet settled), so a known face is still
+ * greeted by name; then it goes without.
+ */
+export const GREETING_NAME_WAIT_MS = 2500;
+
+export interface GreetingHold<G> {
+  /**
+   * One check. `trigger`: this check would send an appearance (an arrival's
+   * greeting, or someone joined). Returns whether to send it now and with which
+   * greeting (the one from the check that started the wait).
+   */
+  next(check: { faces: number; trigger: boolean; greeting: G | null; nameOnItsWay: boolean; now: number }): { send: boolean; holding: boolean; greeting: G | null };
+  reset(): void;
+}
+
+/** The appearance (and its greeting) held while a name settles; nobody in view drops it. */
+export function createGreetingHold<G>(waitMs = GREETING_NAME_WAIT_MS): GreetingHold<G> {
+  let held: { since: number; greeting: G | null } | null = null;
+  return {
+    next({ faces, trigger, greeting, nameOnItsWay, now }) {
+      if (faces === 0) {
+        held = null;
+        return { send: false, holding: false, greeting: null };
+      }
+      if (!trigger && !held) return { send: false, holding: false, greeting: null };
+      held ??= { since: now, greeting };
+      if (nameOnItsWay && now - held.since < waitMs) return { send: false, holding: true, greeting: null };
+      const sent = held.greeting;
+      held = null;
+      return { send: true, holding: false, greeting: sent };
+    },
+    reset() {
+      held = null;
+    },
+  };
+}

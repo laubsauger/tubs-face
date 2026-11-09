@@ -7,7 +7,7 @@
 // already plays main's voice and hears small's speech state from the server,
 // which is all the echo guard needs, and the studio needs no third page.
 
-import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioDevices, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
+import { NOT_A_STUDIO_PICTURE, formatVisionSource, isStudioPicture, parseMicSource, parseVisionSource, studioFaceBoxOf, type StudioActor, type StudioCadence, type StudioDevices, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import type { WsAudioChunkServerMessage, WsClientMessage, WsStudioConfigServerMessage, WsStudioFaceCallServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
 import { redirectSpeech } from '../audio/speech-level.js';
 import { readVoiceClock } from '../audio/voice-clock.js';
@@ -225,11 +225,10 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
           face.endEnrollment();
           break;
         case 'captureEnrollmentSample':
-          value = await face.captureEnrollmentSample(embeddingsOf(args.previous), boxOf(args.choose));
+          value = await face.captureEnrollmentSample(embeddingsOf(args.previous), studioFaceBoxOf(args.choose));
           break;
         case 'embedPicture': {
-          const image = typeof args.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(args.image) && args.image.length <= MAX_PICTURE_CHARS ? args.image : null;
-          value = image ? await face.embedPicture(await (await fetch(image)).blob()) : { ok: false, reason: 'not a JPEG, PNG or WebP picture (or too large)' };
+          value = isStudioPicture(args.image) ? await face.embedPicture(await (await fetch(args.image)).blob()) : { ok: false, reason: NOT_A_STUDIO_PICTURE };
           break;
         }
         case 'saveEnrollment':
@@ -599,15 +598,6 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
 }
 
 const MAX_SAMPLES = 10;
-/** A photo to take a sample from (embedPicture), as a data URL. */
-const MAX_PICTURE_CHARS = 12 * 1024 * 1024;
-
-/** Which of several people to take (captureEnrollmentSample choose): [x, y, w, h] in 0..1, or nothing. */
-export function boxOf(value: unknown): [number, number, number, number] | undefined {
-  return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= -0.5 && n <= 1.5)
-    ? [value[0], value[1], value[2], value[3]]
-    : undefined;
-}
 const MAX_EMBEDDING = 2048;
 const isEmbedding = (value: unknown): value is number[] => Array.isArray(value) && value.length > 0 && value.length <= MAX_EMBEDDING
   && value.every((n) => typeof n === 'number' && Number.isFinite(n));

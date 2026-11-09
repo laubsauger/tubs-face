@@ -116,7 +116,7 @@ const optFaceWorker = (v: unknown): boolean => v === undefined || (isRecord(v)
   && (v.visionSkip === undefined || v.visionSkip === null || VISION_SKIPS.includes(v.visionSkip as string))
   && (v.checkSkip === undefined || v.checkSkip === null || CHECK_SKIPS.includes(v.checkSkip as string)));
 const CHECK_SKIPS = ['voice rendering', 'no frame', 'onboarding'];
-const VISION_SKIPS = ['asleep', 'descriptions off', 'nobody in view', 'not due'];
+const VISION_SKIPS = ['asleep', 'descriptions off', 'nobody in view', 'not due', 'waiting for a name to settle'];
 const optDevices = (v: unknown): boolean => v === undefined || (isRecord(v) && labels(v.audio) && labels(v.video));
 const MAX_LIVE_FACES = 16;
 /** A preview JPEG (studio_frame): a few hundred pixels wide. */

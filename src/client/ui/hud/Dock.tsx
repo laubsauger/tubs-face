@@ -11,6 +11,7 @@ import { ConnectionPanel } from '../panels/ConnectionPanel.js';
 import { ControlsPanel } from '../panels/ControlsPanel.js';
 import { EventLogPanel } from '../panels/EventLogPanel.js';
 import { FacePanel } from '../panels/FacePanel.js';
+import { PeopleNotesPanel } from '../panels/FieldNotes.js';
 import { FxEditor } from '../panels/FxEditor.js';
 import { ManualPanel } from '../panels/ManualPanel.js';
 import { MemoryPanel } from '../panels/MemoryPanel.js';
@@ -125,7 +126,12 @@ function DockTabContent({ tab, store, controls }: { tab: DockTab; store: AppStor
     case 'mind':
       return <MindPanel store={store} />;
     case 'people':
-      return <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />;
+      return (
+        <>
+          <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />
+          <PeopleNotesPanel store={store} />
+        </>
+      );
     case 'memory':
       return <MemoryPanel store={store} />;
     case 'controls':

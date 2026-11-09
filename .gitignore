@@ -46,6 +46,9 @@ data/ming-voices/
 data/tubs-state.json
 # The studio site node's login (TUBS_STUDIO_SITE_AUTH)
 data/site-login.json
+# Tonight's field notes, quotes and snapshots of visitors (TUBS_TONIGHT_FILE)
+data/tonight.json
+data/tonight.json.*.tmp
 
 # Ad-hoc TTS test output
 /*.wav
