@@ -8,6 +8,22 @@ export interface HealthResponse {
   uptime?: number;
   service?: string;
   mode?: string;
+  /** Every needed part is up (server/health/readiness.ts); GET /healthz answers 200 only then. */
+  ready?: boolean;
+  parts?: HealthParts;
+}
+
+/** up; starting (running, still loading); down; off (not needed now). */
+export type PartState = 'up' | 'starting' | 'down' | 'off';
+
+export interface HealthParts {
+  node: { state: PartState };
+  /** The Python speech service: speech-to-text and the TTS stream (Ming voices go through it). */
+  speech: { state: PartState };
+  /** Ming, needed only when a head speaks with a ming: voice. */
+  ming: { state: PartState; needed: boolean };
+  /** Studio mode: both face pages publishing. */
+  studio: { state: PartState; actors?: Array<{ id: string; publishing: boolean; error?: string }> };
 }
 
 export interface StatsResponse extends SessionStats {

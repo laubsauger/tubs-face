@@ -17,6 +17,25 @@ pip install -r requirements.txt
 npm run setup-ming    # venv-ming for the cloned voices (Apple Silicon); the server starts Ming once it exists
 ```
 
+## Run on a studio Mac (a studio-manager service)
+
+Install once: Node 24, `npm ci`, the speech service's Python venv (`venv/`, `pip install -r requirements.txt`), `npm run setup-ming` (`venv-ming/`, Apple Silicon), Google Chrome (the face pages run in it). The site node (mediamtx) comes from studio-manager; its user `tubs` may only publish, on `~^tubs-`.
+
+Copy the private files, never in git: `.env` (`GEMINI_API_KEY`, `LLM_PROVIDER`, …), `data/face-library.json` (the people Tubs recognises), `data/ming-voices/` (the cloned voices' references) and the site login, `data/site-login.json`: `{"user": "tubs", "pass": "…"}` (`chmod 600`; also `user:pass` or two lines). `data/tubs-state.json` is created on the machine.
+
+```bash
+PORT=3100 TUBS_STUDIO=1 TUBS_STUDIO_SITE=http://127.0.0.1:8889 \
+TUBS_STUDIO_SITE_AUTH=data/site-login.json TUBS_STATE_FILE=data/tubs-state.json \
+TUBS_MIC_SOURCE=off TUBS_VISION_SOURCE=off \
+REALTIME_KOKORO_VOICE=ming:friend SECONDARY_VOICE=ming:friend-b DUAL_HEAD_ENABLED=true DUAL_HEAD_MODE=llm_directed \
+npx tsx src/server/index.ts
+```
+
+- Health check: `GET /healthz` is 200 once the speech service, Ming (for `ming:` voices) and, in studio mode, both face pages are up, else 503; `GET /health` shows each part.
+- The site login reaches only the face pages (an Authorization header for WHIP; `TUBS_STUDIO_SITE_READ_AUTH` for WHEP reads if the site needs one); never in env values, URLs, `GET /studio` or the log. A missing file or a refused login (401) shows as each head's error in `GET /studio`; a refused login is retried every 30 s.
+- `TUBS_STATE_FILE` keeps the operator's choices across restarts: the preset, the relationships toggle, the vision provider and model, the mic and vision sources (never a key).
+- Stop with SIGTERM. The Python speech service, Ming and the face pages' Chrome run in their own process groups under a guard (`processing/owned-process.ts`), so even a SIGKILLed server leaves nothing behind.
+
 ## Architecture
 
 Three-layer TypeScript system: **React frontend** → **Node.js server** → **Python STT/TTS microservice**.

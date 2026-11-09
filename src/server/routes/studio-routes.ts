@@ -7,6 +7,7 @@ import { sendJson } from '../http/response.js';
 import { updateStudio } from '../studio/control.js';
 import { studioSettings, toStudioResponse } from '../studio/state.js';
 import { listPresets } from '../presets/presets.js';
+import { persistState } from '../state-file.js';
 import { parseVisionSource, type StudioUiLinks } from '../../shared/contracts/studio.js';
 
 const SNAPSHOT_TIMEOUT_MS = 4000;
@@ -24,7 +25,9 @@ export async function handleStudioRoute(request: IncomingMessage, response: Serv
   }
   if (request.method !== 'POST') return false;
   try {
-    sendJson(response, 200, { ...await updateStudio(await readJsonBody<unknown>(request)), ui: uiLinks(request), presets: presetNames() });
+    const updated = await updateStudio(await readJsonBody<unknown>(request));
+    persistState();
+    sendJson(response, 200, { ...updated, ui: uiLinks(request), presets: presetNames() });
   } catch (error) {
     const badRequest = error instanceof SyntaxError || (error instanceof Error && error.name === 'BadRequestError');
     sendJson(response, badRequest ? 400 : 500, { error: error instanceof Error ? error.message : String(error) } satisfies ErrorResponse);

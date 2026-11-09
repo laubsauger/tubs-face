@@ -7,6 +7,7 @@ import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { PresetError, applyPreset, listPresets, savePreset } from '../presets/presets.js';
 import { broadcastConfig } from '../ws/server.js';
+import { persistState } from '../state-file.js';
 
 export async function handlePresetRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname === '/presets' && request.method === 'GET') {
@@ -24,6 +25,7 @@ export async function handlePresetRoute(request: IncomingMessage, response: Serv
       // The face pages and the dashboard take the new look and voices from here.
       broadcastConfig();
     }
+    persistState();
     sendJson(response, 200, listPresets());
   } catch (error) {
     const status = error instanceof PresetError ? error.status : error instanceof SyntaxError ? 400 : 500;

@@ -2,7 +2,8 @@
 // profile, and closes them again: on disable, on server shutdown, and (from
 // the profile's lock file) left over from a server that was killed.
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { signalOwned, spawnOwned } from '../processing/owned-process.js';
 import { existsSync, mkdirSync, readlinkSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -79,7 +80,7 @@ export function createStudioLauncher(options: StudioLauncherOptions): StudioLaun
   const killOnExit = () => {
     for (const page of pages.values()) {
       if (page.child?.pid && page.child.exitCode === null) {
-        try { process.kill(page.child.pid, 'SIGKILL'); } catch { /* gone */ }
+        signalOwned(page.child, 'SIGKILL');
       }
     }
   };
@@ -107,7 +108,8 @@ export function createStudioLauncher(options: StudioLauncherOptions): StudioLaun
     }
     if (page.child || page.restartTimer || !wanted) return;
     const url = options.pageUrl(actor);
-    const child = spawn(options.chromePath, chromeArgs({ url, profileDir: dir, slot: STUDIO_ACTORS.indexOf(actor) }), {
+    // Ends with the server, even a SIGKILLed one (processing/owned-process.ts).
+    const child = spawnOwned(options.chromePath, chromeArgs({ url, profileDir: dir, slot: STUDIO_ACTORS.indexOf(actor) }), {
       stdio: 'ignore',
     });
     page.child = child;
@@ -150,7 +152,7 @@ export function createStudioLauncher(options: StudioLauncherOptions): StudioLaun
     log(`${actor}: closing Chrome ${child.pid}`);
     await new Promise<void>((resolve) => {
       const timer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch { /* gone */ }
+        signalOwned(child, 'SIGKILL');
       }, QUIT_GRACE_MS);
       child.once('exit', () => {
         clearTimeout(timer);

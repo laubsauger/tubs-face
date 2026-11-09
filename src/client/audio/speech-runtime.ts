@@ -80,12 +80,16 @@ export interface SpeechRuntime {
   /** The context speech plays in, created now if needed (a studio page streams from it). */
   audioContext(): AudioContext;
   /**
-   * Studio: the first line of a turn waits for this before it plays (the face
-   * may be on its way to another window). Fillers and call-outs don't wait.
+   * Studio: asked once for each line (turn and beat) before it plays; a promise
+   * holds the line, and what follows it, until it resolves (the face on its way
+   * to another window, the other head still speaking). Fillers never wait.
    */
-  setLineGate(gate: (() => Promise<unknown>) | null): void;
+  setLineGate(gate: ((message: AudioChunkMessage) => Promise<unknown> | null) | null): void;
   dispose(): void;
 }
+
+type AudioChunkMessage = Extract<WsServerMessage, { type: 'audio_chunk' }>;
+type HeldMessage = AudioChunkMessage | Extract<WsServerMessage, { type: 'speak_end' }>;
 
 export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): SpeechRuntime {
   const queue: SpeakQueueItem[] = [];
@@ -127,9 +131,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   // Turns the user barged in on. Audio already in flight for them is dropped.
   const interruptedTurnIds = new Set<string>();
   // Studio: the line held until the face is in place, its chunks, and a speak_end that came meanwhile.
-  let lineGate: (() => Promise<unknown>) | null = null;
-  let holding: { turnKey: string; chunks: Array<Extract<WsServerMessage, { type: 'audio_chunk' }>>; endTurnId: string | undefined | null } | null = null;
-  let gatePassedTurn: string | null = null;
+  let lineGate: ((message: AudioChunkMessage) => Promise<unknown> | null) | null = null;
+  // A held line and everything for its turn that came after it, in order.
+  let holding: { turnKey: string; messages: HeldMessage[] } | null = null;
+  const gateAsked = new Set<string>();
 
   return {
     init(): void {
@@ -175,21 +180,26 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           if (lineGate) {
             const turnKey = message.turnId ?? '';
             if (holding && holding.turnKey === turnKey) {
-              holding.chunks.push(message);
+              holding.messages.push(message);
               return;
             }
-            // The turn's first real line waits for the face; fillers and call-outs cover the journey.
-            if (!message.filler && !message.callout && gatePassedTurn !== turnKey) {
-              holding = { turnKey, chunks: [message], endTurnId: null };
-              const held = holding;
-              void lineGate().then(() => {
-                if (holding !== held) return; // interrupted meanwhile
-                holding = null;
-                gatePassedTurn = turnKey;
-                for (const chunk of held.chunks) this.handleServerMessage(chunk, targetActor);
-                if (held.endTurnId !== null) scheduleStreamingEnd(held.endTurnId);
-              });
-              return;
+            // Each line is asked once; fillers cover the wait and never wait themselves.
+            // A line is its beat; without beat numbers (one head), its text.
+            const lineKey = `${turnKey}:${message.beatIndex ?? message.text ?? ''}`;
+            if (!message.filler && !gateAsked.has(lineKey)) {
+              gateAsked.add(lineKey);
+              if (gateAsked.size > 256) gateAsked.delete(gateAsked.values().next().value!);
+              const wait = lineGate(message);
+              if (wait) {
+                holding = { turnKey, messages: [message] };
+                const held = holding;
+                void wait.then(() => {
+                  if (holding !== held) return; // interrupted meanwhile
+                  holding = null;
+                  for (const next of held.messages) this.handleServerMessage(next, targetActor);
+                });
+                return;
+              }
             }
           }
           if (message.emotion?.expression) {
@@ -215,8 +225,8 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
             return;
           }
           if (holding && holding.turnKey === (message.turnId ?? '')) {
-            // Its audio is still held: end it once that has been played.
-            holding.endTurnId = message.turnId;
+            // Its audio is still held: end it in order, after that has played.
+            holding.messages.push(message);
             return;
           }
           scheduleStreamingEnd(message.turnId);
@@ -272,6 +282,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     setLineGate(gate): void {
       lineGate = gate;
       holding = null;
+      gateAsked.clear();
     },
     dispose(): void {
       disposed = true;

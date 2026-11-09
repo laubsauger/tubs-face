@@ -5,7 +5,7 @@ import { MOCK, resetMock } from './helpers.js';
 
 export const SITE = 'http://127.0.0.1:39011';
 
-export interface SiteRequest { method: string; path: string; body: string }
+export interface SiteRequest { method: string; path: string; body: string; authorization?: string }
 
 /** Answers WHIP/WHEP on the fake site node and records what the page asked for. */
 export async function fakeSiteNode(page: Page, answer: (request: SiteRequest) => { status: number } = () => ({ status: 201 })): Promise<SiteRequest[]> {
@@ -24,7 +24,8 @@ export async function fakeSiteNode(page: Page, answer: (request: SiteRequest) =>
       await route.fulfill({ status: 204, headers: cors });
       return;
     }
-    const entry = { method: request.method(), path, body: request.postData() ?? '' };
+    const authorization = request.headers().authorization;
+    const entry = { method: request.method(), path, body: request.postData() ?? '', ...(authorization ? { authorization } : {}) };
     requests.push(entry);
     if (request.method() === 'DELETE') {
       await route.fulfill({ status: 200, headers: cors, body: '' });

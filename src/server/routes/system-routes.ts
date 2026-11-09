@@ -12,16 +12,30 @@ import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { applyRuntimeConfigPatch, runtimeConfig, toConfigResponse, toHealthResponse, toStatsResponse } from '../config/runtime.js';
 import { broadcast, broadcastConfig, getClientCount, getSpectatorCount } from '../ws/server.js';
-import { restartSpeechService } from '../processing/speech-service.js';
+import { MING_PORT, SPEECH_SERVICE_PORT, restartSpeechService, speechServiceRunning } from '../processing/speech-service.js';
+import { createReadiness, probeJson } from '../health/readiness.js';
+import { toStudioResponse } from '../studio/state.js';
 import { visionService } from '../assistant/vision.js';
 import { personaOverride } from '../persona/index.js';
+import { persistState } from '../state-file.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
+const readiness = createReadiness({
+  probe: probeJson,
+  speechUrl: `http://127.0.0.1:${SPEECH_SERVICE_PORT}`,
+  mingUrl: (process.env.MING_TTS_URL?.trim() || `http://127.0.0.1:${MING_PORT}`).replace(/\/+$/, ''),
+  speechRunning: speechServiceRunning,
+  voices: () => [runtimeConfig.kokoroVoice, ...(runtimeConfig.dualHeadEnabled && runtimeConfig.dualHeadMode !== 'off' ? [runtimeConfig.secondaryVoice] : [])],
+  studio: () => toStudioResponse(),
+});
+
 export async function handleSystemRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
-  if (request.method === 'GET' && url.pathname === '/health') {
-    const payload: HealthResponse = toHealthResponse(getClientCount());
-    sendJson(response, 200, payload);
+  if (request.method === 'GET' && (url.pathname === '/health' || url.pathname === '/healthz')) {
+    const { ready, parts } = await readiness.check();
+    const payload: HealthResponse = { ...toHealthResponse(getClientCount()), ready, parts };
+    // /health always answers (it is for people); /healthz is "ready or not" for studio-manager.
+    sendJson(response, url.pathname === '/healthz' && !ready ? 503 : 200, payload);
     return true;
   }
 
@@ -52,6 +66,7 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
         await restartSpeechService(patch.sttModel, 'config patch');
       }
       broadcastConfig();
+      persistState();
       if (!wasMuted && runtimeConfig.muted) {
         // Mute means silence now: drop the turn in flight and stop client audio.
         interruptAssistantTurns();

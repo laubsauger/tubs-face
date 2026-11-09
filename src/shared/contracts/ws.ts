@@ -299,6 +299,12 @@ export interface WsAudioChunkServerMessage {
    * keeps one subtitle across them.
    */
   more?: boolean;
+  /**
+   * Two-head: the other head's line this one answers. In studio mode it is sent
+   * ahead, and the face page starts it a breath after that line's caption says
+   * it has played out.
+   */
+  after?: { actor: 'main' | 'small'; text: string };
 }
 
 export interface WsTurnStartServerMessage {
@@ -412,6 +418,8 @@ export interface WsStudioConfigServerMessage {
   visionSource: string;
   /** Site node path per actor, e.g. { main: "tubs-main", small: "tubs-small" }. */
   streams: Record<StudioActor, string>;
+  /** Studio face pages only: the Authorization headers for the site node (TUBS_STUDIO_SITE_AUTH). */
+  siteAuth?: { publish?: string; read?: string };
 }
 
 /** The director's stage, passed on to the studio face pages: is this head in place to speak? */

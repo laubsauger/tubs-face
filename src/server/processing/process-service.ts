@@ -1,6 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
-import { spawn, execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFileSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { signalOwned, spawnOwned } from './owned-process.js';
 import { runtimeConfig } from '../config/runtime.js';
 
 const RESTART_BASE_DELAY_MS = 1000;
@@ -19,6 +20,8 @@ export interface PythonServiceDefinition {
 
 export interface PythonServiceController {
   start(): void;
+  /** Our process for it is running (it may still be loading). */
+  running(): boolean;
   stop(timeoutMs?: number): Promise<boolean>;
   restart(): Promise<void>;
   proxyJson(pathname: string, body: string): Promise<{ statusCode: number; headers: http.IncomingHttpHeaders; body: Buffer }>;
@@ -57,14 +60,19 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
   }
 
   const controller: PythonServiceController = {
+    running(): boolean {
+      return processRef !== null;
+    },
     start(): void {
       if (processRef) return;
       stopRequested = false;
       startedAt = Date.now();
 
-      const child = spawn(pythonPath, ['-u', scriptPath], {
+      // Ends with the server, even a SIGKILLed one (owned-process.ts).
+      const child = spawnOwned(pythonPath, ['-u', scriptPath], {
         env: definition.envFactory(),
-      });
+        stdio: 'pipe',
+      }) as ChildProcessWithoutNullStreams;
       processRef = child;
 
       child.stdout.on('data', (data: Buffer) => {
@@ -114,7 +122,7 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
           if (process.platform === 'win32' && child.pid !== undefined) {
             try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F']); } catch { /* ignore */ }
           } else {
-            child.kill('SIGTERM');
+            signalOwned(child, 'SIGTERM');
           }
         } catch {
           finalize(false);
@@ -127,7 +135,7 @@ export function createPythonServiceController(definition: PythonServiceDefinitio
             if (process.platform === 'win32' && child.pid !== undefined) {
               try { execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F']); } catch { /* ignore */ }
             } else {
-              child.kill('SIGKILL');
+              signalOwned(child, 'SIGKILL');
             }
           } catch {
             // ignore
