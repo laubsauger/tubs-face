@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PROPS } from '../../shared/contracts/config.js';
 import { applyRuntimeConfigPatch, runtimeConfig } from './runtime.js';
 
 // POST /config feeds straight into applyRuntimeConfigPatch. A bad value must not
@@ -28,6 +29,23 @@ describe('applyRuntimeConfigPatch', () => {
     expect(runtimeConfig.interruptible).toBe(true);
     applyRuntimeConfigPatch({ interruptible: false });
     expect(runtimeConfig.interruptible).toBe(false);
+  });
+
+  // The director and the panel pick what each head wears by id. A head starts
+  // bare, and a typo must say which ids exist rather than quietly leave the
+  // old hat on.
+  it('takes a prop per head, starts with none, and rejects an unknown one naming the valid ids', () => {
+    expect(snapshot).toMatchObject({ propMain: 'none', propSmall: 'none' });
+    applyRuntimeConfigPatch({ propMain: 'top-hat', propSmall: 'propeller-cap' });
+    expect(runtimeConfig).toMatchObject({ propMain: 'top-hat', propSmall: 'propeller-cap' });
+    let error: unknown;
+    try {
+      applyRuntimeConfigPatch({ propSmall: 'sombrero' as never });
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toMatchObject({ name: 'BadRequestError', message: `propSmall must be one of: ${PROPS.join(', ')}` });
+    expect(runtimeConfig.propSmall).toBe('propeller-cap');
   });
 
   it('rejects an unknown enum value with a BadRequestError', () => {

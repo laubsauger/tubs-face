@@ -1,4 +1,4 @@
-import type { ExpressionProfileMap } from '../../shared/contracts/config.js';
+import type { ExpressionProfileMap, PropId } from '../../shared/contracts/config.js';
 import { DEFAULT_EXPRESSION_PROFILES } from '../../shared/contracts/config.js';
 
 export interface GlitchConfig {
@@ -35,6 +35,8 @@ export interface GlitchConfig {
     flickerSpeed: number;
     flickerDepth: number;
   };
+  /** What the head wears (props.ts). */
+  prop: PropId;
 }
 
 export const DEFAULT_CONFIG: GlitchConfig = {
@@ -62,6 +64,7 @@ export const DEFAULT_CONFIG: GlitchConfig = {
     scanlineThickness: 3, scanlineMove: true, scanlineSpeed: 26,
     pixelJitter: 0, flicker: true, flickerSpeed: 11, flickerDepth: 0.02,
   },
+  prop: 'none',
 };
 
 export let EXPRESSION_PROFILES: ExpressionProfileMap = structuredClone(DEFAULT_EXPRESSION_PROFILES);
@@ -160,4 +163,5 @@ export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.88;
 export const FEATURE_MOUTH_SCALE_X = 0.88;
 export const FEATURE_MOUTH_SCALE_Y = 0.88;
 
-export const GPU_UNIFORM_FLOATS = 64;
+// 12 shared vec4s, the eyes' and mouth's transforms, and a worn prop's two.
+export const GPU_UNIFORM_FLOATS = 68;

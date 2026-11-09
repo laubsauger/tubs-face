@@ -7,6 +7,11 @@ export const VAD_MODELS = ['rms', 'ten-vad'] as const;
 /** Who looks at the camera pictures (docs/vision.md): nobody, Gemini, or any OpenAI-compatible server. */
 export const VISION_PROVIDERS = ['off', 'gemini', 'openai'] as const;
 export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-only'] as const;
+/**
+ * What a head wears (client/glitch/props.ts draws them as part of the face).
+ * Fixed ids: the studio director and panel build against them.
+ */
+export const PROPS = ['none', 'party-hat', 'top-hat', 'witch-hat', 'crown', 'propeller-cap'] as const;
 export const EXPRESSIONS = [
   'idle',
   'idle-flat',
@@ -54,6 +59,7 @@ export type DualHeadTurnPolicy = (typeof DUAL_HEAD_TURN_POLICIES)[number];
 export type VadModel = (typeof VAD_MODELS)[number];
 export type VisionProvider = (typeof VISION_PROVIDERS)[number];
 export type ChatVerbosity = (typeof CHAT_VERBOSITIES)[number];
+export type PropId = (typeof PROPS)[number];
 export type ExpressionName = (typeof EXPRESSIONS)[number];
 export type EmotionCue = (typeof EMOTION_CUES)[number];
 export type KokoroVoice = (typeof KOKORO_VOICES)[number];
@@ -194,6 +200,9 @@ export interface RuntimeConfig {
   glitchSliceIntervalMs: number;
   glitchSliceBurstDurationMs: number;
   secondaryGlitchFxBaseColor: `#${string}`;
+  /** What each head wears, part of the look (PROPS). */
+  propMain: PropId;
+  propSmall: PropId;
   ttsStreamingEnabled: boolean;
   vadNoiseGate?: number;
   vadModel?: VadModel;
