@@ -10,6 +10,7 @@ import { initWebSocketServer } from './ws/server.js';
 import { shutdownLangfuse } from './observability/langfuse.js';
 import { startStudio, stopStudio } from './studio/control.js';
 import { restoreState } from './state-file.js';
+import { flushTonight, restoreTonight } from './memory/tonight-file.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -39,6 +40,8 @@ const server = http.createServer(async (request, response) => {
 
 // TUBS_STATE_FILE: the studio choices as they were before a restart.
 restoreState();
+// TUBS_TONIGHT_FILE: tonight's field notes, quotes and who was seen.
+restoreTonight();
 const wss = initWebSocketServer(server);
 void startProcessingStack();
 void prepareFillersAtStartup(runtimeConfig.kokoroVoice ?? 'af_heart');
@@ -51,6 +54,7 @@ server.listen(port, () => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
+    flushTonight();
     void Promise.allSettled([stopProcessingStack(), shutdownLangfuse(), stopStudio()]).finally(() => {
       server.close(() => {
         process.exit(0);

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
-  createTagFilter, endVisit, extractFieldNotes, fieldNotesSnapshot, hasNotesInView, memoryContext, NOTES_TTL_MS, peopleInView, pickGossip,
-  markNameAsked, nameAskCandidate, noteTurn, onEnrollRequest, recordFieldNotes, resetFieldNotes, setPeople,
+  createTagFilter, endVisit, extractFieldNotes, fieldNotesSnapshot, hasNotesInView, IN_VIEW_GRACE_MS, memoryContext, NOTES_TTL_MS, peopleInView, pickGossip,
+  markNameAsked, nameAskCandidate, noteTurn, onEnrollRequest, recordFieldNotes, resetFieldNotes, setPeople, tonightsPeople,
 } from './field-notes.js';
 
 // Tubs remembering things about people is the point; leaking a note into
@@ -81,6 +81,54 @@ describe('field notes', () => {
     recordFieldNotes('[[NOTE right: owns three phones]]', 1);
     expect(peopleInView()).toEqual([{ position: 'left', name: null, noteCount: 0 }, { position: 'right', name: null, noteCount: 1 }]);
     expect(hasNotesInView()).toBe(true);
+  });
+});
+
+// 9 Nov: Flo was recognised and addressed, talked for a while, and nothing
+// was written down. The two-head model almost never hid a [[NOTE]] in a
+// spoken line, the face page's list of who is in view empties whenever a
+// face is missed for a frame, and the page's ids are new after a restart.
+describe('a recognised speaker gets notes', () => {
+  const flo = { id: 's1-p1', names: ['Flo'], position: 'center' as const };
+  beforeEach(() => resetFieldNotes());
+
+  it('from the two-head reply\'s notes field, kept out of the spoken lines', () => {
+    setPeople([flo], 0);
+    const reply = JSON.stringify({
+      beats: [{ actor: 'main', action: 'speak', text: 'Testing again, Flo?' }],
+      notes: [{ kind: 'note', text: 'testing the mic, black hoodie' }, { kind: 'quote', text: 'I am trying to test some shit' }, { kind: 'name', text: 'Flo' }],
+    });
+    expect(recordFieldNotes(reply, 1)).toBe(true);
+    const [person] = tonightsPeople(2).people;
+    expect(person).toMatchObject({ id: 's1-p1', names: ['Flo'], notes: ['testing the mic', 'black hoodie'], quotes: ['I am trying to test some shit'] });
+    expect(extractFieldNotes('{"beats":[],"notes":[{"kind":"note","who":"left","text":"dentist"},{"kind":"bogus","text":"x"},{"kind":"note"}]}')).toEqual([{ kind: 'note', position: 'left', text: 'dentist' }]);
+  });
+
+  it('even when the camera lost their face a moment ago', () => {
+    setPeople([flo], 0);
+    setPeople([], 1000);
+    recordFieldNotes('Sure. [[NOTE: builds robots]]', 5000);
+    noteTurn(5000);
+    expect(tonightsPeople(6000).people[0]).toMatchObject({ id: 's1-p1', notes: ['builds robots'], turns: 1 });
+    // Gone for longer than that, or a new visit: nobody is being talked to.
+    recordFieldNotes('Sure. [[NOTE: likes jazz]]', 1000 + IN_VIEW_GRACE_MS + 1);
+    expect(tonightsPeople(IN_VIEW_GRACE_MS + 2000).people[0]!.notes).toEqual(['builds robots']);
+    setPeople([flo], 20_000);
+    setPeople([], 20_500);
+    endVisit();
+    recordFieldNotes('Sure. [[NOTE: hates techno]]', 21_000);
+    expect(tonightsPeople(22_000).people[0]!.notes).toEqual(['builds robots']);
+  });
+
+  it('and keeps them under a new id once recognised again (a face page reloaded or the server restarted)', () => {
+    setPeople([flo], 0);
+    recordFieldNotes('[[NOTE: builds robots]] [[QUOTE: robots need hats]]', 1);
+    setPeople([], 2);
+    setPeople([{ ...flo, id: 's2-p1' }], 10 * 60_000);
+    expect(tonightsPeople(10 * 60_000).people.map((person) => person.id)).toEqual(['s2-p1']);
+    expect(memoryContext(10 * 60_000)).toContain('builds robots');
+    expect(memoryContext(10 * 60_000)).toContain('You met them earlier tonight');
+    expect(tonightsPeople(10 * 60_000).people[0]!.quotes).toEqual(['robots need hats']);
   });
 });
 
