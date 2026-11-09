@@ -5,9 +5,8 @@ import { moodExpression } from '../../behavior/emotion-runtime.js';
 import { fetchJson, postJson } from '../../transport/http.js';
 import { useAppSelector } from '../react-store.js';
 import { formatAwakeElapsed } from '../utils/formatters.js';
+import { FieldNotesList } from './FieldNotes.js';
 import { PanelHeader } from './PanelHeader.js';
-
-const POSITION_LABELS = { left: 'Left', center: 'Middle', right: 'Right' } as const;
 
 // The idle face the mood leads to, said as a word an operator understands.
 const MOOD_WORDS: Record<string, string> = {
@@ -60,31 +59,7 @@ export function MindPanel({ store }: { store: AppStore }): JSX.Element {
           <dt className="text-slate-500">Awake</dt>
           <dd className="text-slate-300 font-bold">{state.sleeping ? 'asleep' : formatAwakeElapsed(state.awakeElapsedSec)}</dd>
         </dl>
-        <section id="mind-notes" className="flex flex-col gap-1 font-mono text-xs" aria-label="Field notes">
-          <div className="text-slate-500 uppercase tracking-wider text-[10px]">Field notes</div>
-          {notes.people.length === 0 && <p className="text-slate-500">Nobody in view.</p>}
-          {notes.people.map((person) => (
-            <div key={person.id} className="flex flex-col gap-0.5">
-              <div className="text-slate-400">
-                {notes.people.length > 1 ? `${POSITION_LABELS[person.position]} · ` : ''}
-                {person.names.length > 0 ? person.names.join(', ') : 'stranger'}
-                {person.returning ? ' · back again' : ''}
-              </div>
-              {person.notes.length === 0
-                ? <p className="text-slate-500 pl-2">nothing yet</p>
-                : <ul className="flex flex-col gap-0.5 text-slate-300 pl-2">{person.notes.map((note) => <li key={note}>· {note}</li>)}</ul>}
-            </div>
-          ))}
-          {notes.groupNotes.length > 0 && (
-            <div className="text-slate-400">The group: <span className="text-slate-300">{notes.groupNotes.join('; ')}</span></div>
-          )}
-          {notes.quotes.length > 0 && (
-            <>
-              <div className="text-slate-500 uppercase tracking-wider text-[10px] mt-1">Overheard tonight</div>
-              <ul id="mind-quotes" className="flex flex-col gap-0.5 text-slate-400 italic">{notes.quotes.slice(0, 4).map((quote) => <li key={quote}>"{quote}"</li>)}</ul>
-            </>
-          )}
-        </section>
+        <FieldNotesList notes={notes} idPrefix="mind" />
         <RunningBits active={state.active} />
       </div>
     </article>
