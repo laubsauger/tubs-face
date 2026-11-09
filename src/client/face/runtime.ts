@@ -3,6 +3,7 @@ import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { loadFaceLibraryIntoStore } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
+import { createNameSettler } from './settle.js';
 import { type Snapshot, wantsSnapshot } from './auto-onboarding.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
 import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
@@ -131,6 +132,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   let embedPending = false;
   let observationSink: ((observation: FaceObservation) => void) | null = null;
   const tracks: ObservationTracks = { next: 1, last: [] };
+  const nameSettler = createNameSettler();
   // What the studio's operators see of this worker (debugStatus), never sent anywhere else.
   const debug = {
     initStarted: false,
@@ -181,7 +183,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       }
       const wasEmpty = stableFaces.length === 0;
       // Recognition off: faces are found (descriptions need them), never named.
-      const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []));
+      // Names per track, not per frame: a face is named once its track matched that person on a few checks (settle.ts).
+      const faces = stabilizeFaces(nameSettler.settle(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []), Date.now()));
       noteCheck(faces, Date.now());
       observationSink?.(observation());
       const recognizedNames = [...new Set(
@@ -730,6 +733,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     const faces = await loadFaceLibraryIntoStore(appStore);
     if (faces) {
       faceLibrary = faces;
+      // Names settled against the old library (a sample since removed) go.
+      nameSettler.reset();
     }
   }
 

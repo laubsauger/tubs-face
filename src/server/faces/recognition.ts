@@ -13,6 +13,7 @@ import { uploadVerdict } from '../../client/face/person-match.js';
 import { createPeopleTracker, type TrackedPerson } from '../../client/face/people-tracker.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from '../../client/face/visitor-tracker.js';
 import { type Snapshot, wantsSnapshot } from '../../client/face/auto-onboarding.js';
+import { createNameSettler, type SettleOptions } from '../../client/face/settle.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import { NOT_A_STUDIO_PICTURE, isStudioPicture, studioFaceBoxOf, type FaceObservation, type FaceObservationFace, type FaceWorkerStatus, type StudioFaceMethod, type StudioLiveFace, type StudioLiveStatus } from '../../shared/contracts/studio.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
@@ -53,6 +54,8 @@ export interface RecognitionDeps {
   detect(picture: Buffer): Promise<ServiceCapture>;
   /** "mac:3004": where the service runs. */
   where(): string;
+  /** Tests: how names settle per track (client/face/settle.ts). */
+  settle?: Partial<SettleOptions>;
   now?: () => number;
   delay?: (ms: number) => Promise<void>;
   random?: () => number;
@@ -85,6 +88,12 @@ const ENROLLMENT_MAX_CAPTURE_ATTEMPTS = 5;
 const ENROLLMENT_DUPLICATE_THRESHOLD = 0.82;
 const ENROLLMENT_IDLE_MS = 60_000;
 const SNAPSHOT_KEEP_MS = 30 * 60_000;
+/**
+ * An arrival's greeting waits at most this long for a name that is on its way
+ * (a track with a vote for someone, not yet settled), so a known face is still
+ * greeted by name; then it goes without.
+ */
+export const GREETING_NAME_WAIT_MS = 2500;
 const MAX_SAMPLES = 10;
 const MAX_EMBEDDING = 2048;
 
@@ -130,6 +139,10 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
   const snapshotPending = new Set<string>();
   let latest: FaceObservation | null = null;
   let live: LiveFaceFields | null = null;
+  const nameSettler = createNameSettler(deps.settle);
+  let settledAgainst: EnrolledFace[] | null = null;
+  /** An arrival greeting waiting for a name to settle (GREETING_NAME_WAIT_MS). */
+  let heldGreeting: { since: number; greeting: { returning: boolean; awayMs?: number } | null } | null = null;
 
   function stabilize(next: TrackedFace[], at: number): TrackedFace[] {
     if (next.length > 0) {
@@ -302,23 +315,42 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
       const config = deps.config();
       // Recognition switched off: faces are still detected (presence, descriptions), never named.
       const library = config.faceRecognition ? deps.library() : [];
-      const detected: TrackedFace[] = line.faces.map((face) => ({ box: face.box, score: face.score, confidence: face.score, embedding: face.embedding, track: face.track }));
-      const annotated = annotateDetectedFaces(detected, library) as TrackedFace[];
+      // Names settled against another library (a sample removed since) go.
+      if (library !== settledAgainst) {
+        if (settledAgainst !== null) nameSettler.reset();
+        settledAgainst = library;
+      }
+      const detected: TrackedFace[] = line.faces.map((face) => ({
+        box: face.box,
+        score: face.score,
+        confidence: face.score,
+        embedding: face.embedding,
+        track: face.track,
+        // A reused embedding is not a new vote (settle.ts).
+        ...(face.fresh !== undefined ? { _trackedAge: face.fresh ? 0 : 1 } : {}),
+      }));
+      // This frame's verdict (matching.ts), then the track's settled name (settle.ts): only that one is used.
+      const settled = nameSettler.settle(annotateDetectedFaces(detected, library) as TrackedFace[], at);
       const wasEmpty = stableFaces.length === 0;
-      const faces = stabilize(annotated, at);
+      const faces = stabilize(settled, at);
       const recognizedNames = [...new Set(faces.map((face) => face.match?.name ?? face.name ?? null).filter((name): name is string => Boolean(name?.trim())).map((name) => name.trim()))];
 
       const people = peopleTracker.update(faces, line.frame.w, at);
       const greeting = handleVisitorEvents(visitorTracker.update(faces, at, deps.inConversation(at), people.map((person) => person.id)), faces.length);
       reportPeople(people, at, line.frame.h);
       const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
-      // Only faces trigger a picture: a new one appearing, or a refresh while they stay in view.
-      if (config.visionDescriptions && config.visionProvider !== 'off' && faces.length > 0) {
-        if (greeting || groupChanged) {
-          sendVision('appearance', { faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])], count: faces.length, greeting });
-        } else if (at - lastVisionFrameAt >= config.visionRefreshMs) {
-          sendVision('refresh', { faces: [], count: faces.length, greeting: null });
+      // Only faces trigger a picture: a new one appearing (it carries the greeting; the
+      // server's vision budget decides whether it is described), or a refresh while they stay.
+      if (faces.length === 0) heldGreeting = null;
+      else if (greeting || groupChanged || heldGreeting) {
+        heldGreeting ??= { since: at, greeting };
+        const nameOnItsWay = settled.some((face) => face.pending);
+        if (!nameOnItsWay || at - heldGreeting.since >= GREETING_NAME_WAIT_MS) {
+          sendVision('appearance', { faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])], count: faces.length, greeting: heldGreeting.greeting });
+          heldGreeting = null;
         }
+      } else if (config.visionDescriptions && config.visionProvider !== 'off' && at - lastVisionFrameAt >= config.visionRefreshMs) {
+        sendVision('refresh', { faces: [], count: faces.length, greeting: null });
       }
 
       const onboarding = new Set(people.filter((person) => person.names.length === 0 && (snapshots.get(person.id)?.length ?? 0) > 0).map((person) => (person.face as TrackedFace).track));
@@ -412,6 +444,8 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
     },
 
     reset() {
+      nameSettler.reset();
+      heldGreeting = null;
       peopleTracker = createPeopleTracker(deps.random);
       visitorTracker = createVisitorTracker(deps.random);
       stableFaces = [];

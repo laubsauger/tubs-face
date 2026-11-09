@@ -25,7 +25,8 @@ function line(faces: Array<Partial<ServiceFace> & { embedding: number[] | null }
     t,
     source: 'site:cam-1',
     frame: { w: 960, h: 540 },
-    faces: faces.map((face, index) => ({ track: face.track ?? index + 1, box: face.box ?? [100 + index * 300, 100, 260 + index * 300, 300], score: face.score ?? 0.9, embedding: face.embedding })),
+    // Each line a fresh embedding, as the service computes one a second.
+    faces: faces.map((face, index) => ({ track: face.track ?? index + 1, box: face.box ?? [100 + index * 300, 100, 260 + index * 300, 300], score: face.score ?? 0.9, embedding: face.embedding, fresh: face.fresh ?? true })),
     status,
   };
 }
@@ -65,14 +66,27 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
 
 const obamaLibrary: EnrolledFace[] = [{ id: 'o1', name: 'Obama', embedding: embeddingOf('obama-2012.jpg') }];
 
+/** The same faces on two fresh checks a second apart: what a name needs to settle (client/face/settle.ts). */
+function twoChecks(ctx: ReturnType<typeof setup>, faces: Parameters<typeof line>[0]): void {
+  ctx.recognition.handleLine(line(faces));
+  ctx.advance(1000);
+  ctx.recognition.handleLine(line(faces));
+}
+
 describe('recognition on the server', () => {
-  it('recognises an enrolled face from another photo, and leaves strangers unknown (real ArcFace embeddings, the browser thresholds)', () => {
-    const { recognition, published } = setup({ library: obamaLibrary });
-    recognition.handleLine(line([
+  it('recognises an enrolled face from another photo once its track settles, and leaves strangers unknown (real ArcFace embeddings)', () => {
+    const ctx = setup({ library: obamaLibrary });
+    const { published } = ctx;
+    const view = [
       { embedding: embeddingOf('obama-2009.jpg') },
       { embedding: embeddingOf('apollo-11-crew.jpg', 0) },
       { embedding: embeddingOf('biden-2021.jpg') },
-    ]));
+    ];
+    // One check is not enough for a 0.69 match: not yet named.
+    ctx.recognition.handleLine(line(view));
+    expect(published.at(-1)!.faces[0]).toMatchObject({ decision: 'unknown' });
+    ctx.advance(1000);
+    ctx.recognition.handleLine(line(view));
     const faces = published.at(-1)!.faces;
     expect(faces[0]).toMatchObject({ decision: 'match', name: 'Obama' });
     // Another photo of the same man: over the 0.65 threshold, but well below 1.
@@ -84,10 +98,12 @@ describe('recognition on the server', () => {
     expect(faces[2]!.candidates[0]!.sim).toBeLessThan(0.3);
   });
 
-  it('holds back a match that is not clear of the second name (the 0.01 margin)', () => {
+  it('holds back a match that is not clear of the second name, however often it comes', () => {
     const twin = embeddingOf('obama-2012.jpg').map((value, index) => value + (index % 7 === 0 ? 1e-4 : 0));
-    const { recognition, published } = setup({ library: [...obamaLibrary, { id: 'x', name: 'Double', embedding: twin }] });
-    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
+    const ctx = setup({ library: [...obamaLibrary, { id: 'x', name: 'Double', embedding: twin }] });
+    const { published } = ctx;
+    twoChecks(ctx, [{ embedding: embeddingOf('obama-2009.jpg') }]);
+    twoChecks(ctx, [{ embedding: embeddingOf('obama-2009.jpg') }]);
     expect(published.at(-1)!.faces[0]).toMatchObject({ decision: 'unknown' });
     expect(published.at(-1)!.faces[0]!.candidates.map((c) => c.name).sort()).toEqual(['Double', 'Obama']);
   });
@@ -102,20 +118,41 @@ describe('recognition on the server', () => {
     expect(JSON.stringify(observation)).not.toContain('embedding');
   });
 
-  it('tells the server who is in view and greets a first arrival with a picture, as the listener page did', async () => {
-    const { recognition, applied, frames, flush } = setup({ library: obamaLibrary });
+  it('greets a first arrival by name once the name settles, and tells the server who is in view', async () => {
+    const ctx = setup({ library: obamaLibrary });
+    const { recognition, applied, frames, flush } = ctx;
     recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
     await flush();
-    const people = applied.find((message) => message.type === 'people');
-    expect(people).toMatchObject({ type: 'people', people: [{ names: ['Obama'], position: 'left' }] });
+    // A name is on its way (one vote): the greeting waits for it rather than go out nameless.
+    expect(applied.some((message) => message.type === 'appearance_frame')).toBe(false);
+    expect(applied.find((message) => message.type === 'people')).toMatchObject({ people: [{ names: [], position: 'left' }] });
+    ctx.advance(1000);
+    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
+    await flush();
+    expect([...applied].reverse().find((message) => message.type === 'people')).toMatchObject({ type: 'people', people: [{ names: ['Obama'], position: 'left' }] });
     expect(frames).toEqual([512]);
-    expect(applied.find((message) => message.type === 'appearance_frame')).toMatchObject({ type: 'appearance_frame', faces: ['Obama'], count: 1, frame: 'data:image/jpeg;base64,AAAA' });
+    expect(applied.filter((message) => message.type === 'appearance_frame')).toEqual([{ type: 'appearance_frame', faces: ['Obama'], count: 1, frame: 'data:image/jpeg;base64,AAAA' }]);
+  });
+
+  it('does not keep a greeting waiting for a name that never settles', async () => {
+    const ctx = setup({ library: obamaLibrary });
+    const { recognition, applied, flush } = ctx;
+    const obama = { embedding: embeddingOf('obama-2009.jpg') };
+    recognition.handleLine(line([obama]));
+    // The same embedding again (not fresh): no second vote, so no name.
+    for (let waited = 0; waited < 2500; waited += 500) {
+      ctx.advance(500);
+      recognition.handleLine(line([{ ...obama, fresh: false }]));
+    }
+    await flush();
+    expect(applied.filter((message) => message.type === 'appearance_frame')).toMatchObject([{ faces: [], count: 1 }]);
   });
 
   it('refreshes the picture only while faces stay in view, after visionRefreshMs', async () => {
-    const { recognition, applied, advance, flush } = setup({ library: obamaLibrary });
+    const ctx = setup({ library: obamaLibrary });
+    const { recognition, applied, advance, flush } = ctx;
     const obama = { embedding: embeddingOf('obama-2009.jpg') };
-    recognition.handleLine(line([obama]));
+    twoChecks(ctx, [obama]);
     advance(10_000);
     recognition.handleLine(line([obama]));
     await flush();
@@ -145,21 +182,21 @@ describe('recognition on the server', () => {
     await expect(recognition.faceCall('beginEnrollment', {})).rejects.toThrow('face recognition is switched off');
   });
 
-  it('with descriptions switched off: recognised, but no picture leaves', async () => {
-    const { recognition, applied, published, frames, flush } = setup({ library: obamaLibrary, config: { visionDescriptions: false } });
-    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
-    await flush();
-    expect(published.at(-1)!.faces[0]!.name).toBe('Obama');
-    expect(frames).toEqual([]);
-    expect(applied.some((message) => message.type === 'appearance_frame' || message.type === 'camera_frame')).toBe(false);
-  });
-
-  it('sends no picture anywhere with vision off', async () => {
-    const { recognition, applied, frames, flush } = setup({ library: obamaLibrary, config: { visionProvider: 'off' } });
-    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
-    await flush();
-    expect(frames).toEqual([]);
-    expect(applied.some((message) => message.type === 'appearance_frame' || message.type === 'camera_frame')).toBe(false);
+  it('with descriptions switched off, or no vision provider: still greeted, never refreshed', async () => {
+    // The greeting rides on the appearance picture; the server's vision budget
+    // (assistant/vision.ts) sends no picture anywhere while descriptions are off.
+    for (const config of [{ visionDescriptions: false }, { visionProvider: 'off' }]) {
+      const ctx = setup({ library: obamaLibrary, config });
+      twoChecks(ctx, [{ embedding: embeddingOf('obama-2009.jpg') }]);
+      for (let stayed = 0; stayed < 40_000; stayed += 5000) {
+        ctx.advance(5000);
+        ctx.recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
+      }
+      await ctx.flush();
+      expect(ctx.published.at(-1)!.faces[0]!.name).toBe('Obama');
+      expect(ctx.applied.filter((message) => message.type === 'appearance_frame')).toHaveLength(1);
+      expect(ctx.applied.some((message) => message.type === 'camera_frame')).toBe(false);
+    }
   });
 
   it('lets go of everyone when the service goes away, and says why', () => {
@@ -173,9 +210,10 @@ describe('recognition on the server', () => {
   });
 
   it('marks unknown faces as onboarding while an onboarding dialog is open', async () => {
-    const { recognition, published } = setup({ library: obamaLibrary });
+    const ctx = setup({ library: obamaLibrary });
+    const { recognition, published } = ctx;
     await recognition.faceCall('beginEnrollment', {});
-    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }, { embedding: embeddingOf('biden-2021.jpg') }]));
+    twoChecks(ctx, [{ embedding: embeddingOf('obama-2009.jpg') }, { embedding: embeddingOf('biden-2021.jpg') }]);
     expect(published.at(-1)!.faces.map((face) => face.decision)).toEqual(['match', 'onboarding']);
     await recognition.faceCall('endEnrollment', {});
     recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }, { embedding: embeddingOf('biden-2021.jpg') }]));

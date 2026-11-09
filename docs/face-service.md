@@ -68,6 +68,33 @@ listener page starts no face worker and loads no models; it takes the server's
 `face_observation` messages into its state instead, so its sleep and proactive
 lines still follow who is in view.
 
+## Names settle per track (2026-11-09)
+
+Live, one frame put Rapha 0.715 just ahead of Flo 0.678; the margin was 0.01,
+so it named Flo "Rapha", Tubs greeted him so and the visit's notes went to
+Rapha. Now, for both producers (`client/face/settle.ts`, used by the listener
+page's runtime and by `server/faces/recognition.ts`):
+
+- a frame accepts a name only 0.12 ahead of the next person
+  (`MATCH_MARGIN`, `client/face/matching.ts`), calibrated on the library;
+- a track is named only once 2 of its last 3 fresh embeddings accepted that
+  person, or one accepted them very clearly (at least 0.75, and 0.3 ahead);
+- a reused embedding is not a new vote (the service re-embeds a track every
+  second; the worker reuses a tracked face's embedding for up to 8 checks);
+- the name sticks to the track: frames that name nobody keep it, and another
+  person needs as many votes to rename it;
+- everything downstream (who is in view, greetings, relationships, field
+  notes, the observation's `decision`) sees settled names only; a library
+  change drops what was settled against the old one;
+- the service path holds an arrival's greeting up to 2.5 s for a name on its
+  way, so a known face is still greeted by name.
+
+`src/scripts/face-library-audit.ts` audits the library (spread per person,
+closest people, samples of different people alike enough to name each other);
+`src/scripts/face-name-replay.ts` replays checks through the old and the new
+naming (the studio's three live checks, the library leave-one-session-out, and
+clips recorded with `tests/face-compat/record_lines.py`).
+
 ## The studio's switches
 
 The service follows the Studio tab's switches (`GET/POST /studio switches`)
