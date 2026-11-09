@@ -130,6 +130,19 @@ describe('studio faces through the face service', () => {
     listener.socket.close();
   });
 
+  it('lets go of the camera and of who was in view at once when the camera is switched off', async () => {
+    push([{ track: 1, box: [96, 54, 288, 324], embedding: embeddingOf('obama-2009.jpg') }]);
+    await expect.poll(async () => (await get<StudioPulse>('/studio/pulse')).body.seen.length).toBe(1);
+    studioSettings.cameraOn = false;
+    syncFaceService();
+    expect((await get<StudioPulse>('/studio/pulse')).body.seen).toEqual([]);
+    expect((await get<unknown>('/studio/faces')).status).toBe(404);
+    await expect.poll(() => sources.at(-1)).toEqual({ url: null });
+    studioSettings.cameraOn = true;
+    syncFaceService();
+    await expect.poll(() => sources.at(-1)).toMatchObject({ url: 'rtsp://127.0.0.1:8554/cam-facetest' });
+  });
+
   it('answers a dashboard\'s onboarding itself, with no listener page connected', async () => {
     const dashboard = await connect('?role=spectator');
     dashboard.send({ type: 'studio_face_call', id: 'b1', method: 'beginEnrollment' });

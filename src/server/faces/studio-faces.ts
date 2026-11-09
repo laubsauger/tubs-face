@@ -8,6 +8,7 @@ import { parseVisionSource } from '../../shared/contracts/studio.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { isInConversation } from '../assistant/turns.js';
 import { siteLogin } from '../studio/site-auth.js';
+import { forgetObservation } from '../studio/faces.js';
 import { recognizerOf, studioSettings, type StudioSettings } from '../studio/state.js';
 import { addFace, faceLibraryPath, readFaceLibrary } from './library.js';
 import { createRecognition, type LiveFaceFields, type ListenerEffect } from './recognition.js';
@@ -111,7 +112,11 @@ export function cameraFor(settings: Pick<StudioSettings, 'site' | 'visionSource'
 export function syncFaceService(): void {
   if (mode.kind === 'off') return;
   const owns = recognizer() === 'service';
-  if (recognizing && !owns) recognition.reset();
+  if (recognizing && !owns) {
+    // Switched off (camera, nothing to detect for, another source): nobody is in view, now.
+    recognition.reset();
+    forgetObservation();
+  }
   recognizing = owns;
   const camera = owns ? cameraFor(studioSettings, siteLogin().read) : null;
   client.setSource(camera ? { ...camera, fps: FPS } : null);
