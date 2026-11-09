@@ -268,7 +268,7 @@ export interface StudioPulse {
  * onboarding more of the right person, or renaming or removing samples in the
  * library (the server tells every page to reload it: faces_changed).
  */
-export const STUDIO_FACE_METHODS = ['beginEnrollment', 'endEnrollment', 'captureEnrollmentSample', 'saveEnrollment'] as const;
+export const STUDIO_FACE_METHODS = ['beginEnrollment', 'endEnrollment', 'captureEnrollmentSample', 'saveEnrollment', 'embedPicture'] as const;
 export type StudioFaceMethod = (typeof STUDIO_FACE_METHODS)[number];
 
 /** The last picture sent to the vision provider, and what came back. */

@@ -28,6 +28,8 @@ export async function captureEnrollmentSample(
   previousEmbeddings: number[][],
   /** A camera without a video (a studio snapshot or site stream): a fresh picture drawn into captureCanvas. */
   grabStill?: () => Promise<{ imageData: ImageData } | null>,
+  /** Several people in view: the one whose box this is ([x, y, w, h] in 0..1 of the picture). */
+  choose?: [number, number, number, number],
 ): Promise<EnrollmentCapture | null> {
   if (!worker.ready) {
     throw new Error('Face worker is still loading');
@@ -40,11 +42,11 @@ export async function captureEnrollmentSample(
     }
     const result = await worker.detectOnce(snapshot.imageData);
     const candidates = result.faces.filter((face) => Array.isArray(face.embedding));
-    if (candidates.length !== 1) {
+    const face = choose ? chosenFace(candidates, choose, captureCanvas.width, captureCanvas.height) : candidates.length === 1 ? candidates[0]! : null;
+    if (!face) {
       await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
       continue;
     }
-    const face = candidates[0]!;
     const embedding = face.embedding!;
     const thumbnail = captureFaceThumbnail(captureCanvas, face);
     if (!thumbnail) {
@@ -82,6 +84,29 @@ export async function saveEnrollment(
   }));
   store.appendLog('info', `Enrolled ${name} with ${saved} samples`);
   return saved;
+}
+
+/** A detector box (x1, y1, x2, y2 in pixels) as [x, y, w, h] in 0..1 of its picture. */
+export function normalizedBox(box: [number, number, number, number], width: number, height: number): [number, number, number, number] {
+  const [x1, y1, x2, y2] = box;
+  return [x1 / width, y1 / height, (x2 - x1) / width, (y2 - y1) / height];
+}
+
+/** The face overlapping the chosen box most (and at least a little): the person picked among several. */
+export function chosenFace(faces: DetectedFace[], choose: [number, number, number, number], width: number, height: number): DetectedFace | null {
+  const [cx, cy, cw, ch] = choose;
+  const box = [cx * width, cy * height, (cx + cw) * width, (cy + ch) * height];
+  let best: { face: DetectedFace; overlap: number } | null = null;
+  for (const face of faces) {
+    const [x1, y1, x2, y2] = face.box;
+    const ix = Math.max(0, Math.min(x2, box[2]!) - Math.max(x1, box[0]!));
+    const iy = Math.max(0, Math.min(y2, box[3]!) - Math.max(y1, box[1]!));
+    const inter = ix * iy;
+    const union = (x2 - x1) * (y2 - y1) + (box[2]! - box[0]!) * (box[3]! - box[1]!) - inter;
+    const overlap = union > 0 ? inter / union : 0;
+    if (overlap > 0.2 && (!best || overlap > best.overlap)) best = { face, overlap };
+  }
+  return best?.face ?? null;
 }
 
 function captureVideoFrame(videoEl: HTMLVideoElement | null, captureCanvas: HTMLCanvasElement): { imageData: ImageData } | null {

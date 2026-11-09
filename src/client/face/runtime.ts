@@ -8,6 +8,10 @@ import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } 
 import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
 import { type EnrollmentCapture, captureEnrollmentSample, captureFaceThumbnail, saveEnrollment } from './enrollment.js';
+import { uploadVerdict } from './person-match.js';
+
+/** A photo turned into a sample, or the reason it can't be (embedPicture). */
+export type EmbedResult = { ok: true; sample: EnrollmentCapture } | { ok: false; reason: string };
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
 import { createStillPictures, snapshotPicture, visionFrame, type StillPictures } from './pictures.js';
 import { whepPicture } from '../transport/whip.js';
@@ -18,6 +22,8 @@ import { MATCH_MARGIN, MATCH_THRESHOLD } from './matching.js';
 import type { FaceObservation, StudioFaceWorkerStatus } from '../../shared/contracts/studio.js';
 import { observedFaces, type ObservationTracks } from './observation.js';
 
+/** How long a photo waits for a check in progress to finish. */
+const EMBED_WAIT_MS = 5000;
 /** Checks per second are counted over this window. */
 const CHECK_RATE_WINDOW_MS = 10_000;
 
@@ -33,8 +39,14 @@ export interface FaceShellRuntime {
   /** Pause live detection while the wizard owns the camera. */
   beginEnrollment(): void;
   endEnrollment(): void;
-  /** Grab one pose; null when no single face was found. */
-  captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+  /** Grab one pose; null when no single face was found (or not the chosen one: box [x, y, w, h] in 0..1). */
+  captureEnrollmentSample(previousEmbeddings: number[][], choose?: [number, number, number, number]): Promise<EnrollmentCapture | null>;
+  /**
+   * A sample from a photo (an upload for someone's samples): detected, aligned
+   * and embedded like a camera pose; refused with the reason unless it holds
+   * exactly one face. It never counts as someone in view.
+   */
+  embedPicture(image: Blob): Promise<EmbedResult>;
   /**
    * The studio switches. recognition: faces are matched against the library
    * (names, relationships) and auto-onboarded. detection: the worker looks for
@@ -116,6 +128,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   // detection runs while recognition or descriptions (faces trigger them) is on.
   let recognition = true;
   let detection = true;
+  let embedPending = false;
   let observationSink: ((observation: FaceObservation) => void) | null = null;
   const tracks: ObservationTracks = { next: 1, last: [] };
   // What the studio's operators see of this worker (debugStatus), never sent anywhere else.
@@ -155,6 +168,11 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       }));
     },
     onFaces: (packet) => {
+      // A photo being turned into a sample (embedPicture) is nobody in view.
+      if (embedPending) {
+        store.setState((current) => ({ ...current, faceWorkerBusy: false }));
+        return;
+      }
       // A detection still in flight when the camera was turned off would
       // refill the faces, and with the loop stopped they stayed "present"
       // forever (no sleep, proactive lines to an empty room).
@@ -295,7 +313,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       enrollmentActive = false;
       scheduleLoop();
     },
-    captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null> {
+    captureEnrollmentSample(previousEmbeddings: number[][], choose?: [number, number, number, number]): Promise<EnrollmentCapture | null> {
       // A studio camera without a video: each pose is a fresh picture.
       const grab = !stream && still && stillGrab ? stillGrab : null;
       return captureEnrollmentSample(worker, captureCanvas, videoEl, previousEmbeddings, grab ? async () => {
@@ -304,7 +322,45 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
         // The preview shows the pose that was taken.
         stillCount += 1;
         return { imageData: captureCtx!.getImageData(0, 0, captureCanvas.width, captureCanvas.height) };
-      } : undefined);
+      } : undefined, choose);
+    },
+    async embedPicture(image) {
+      if (!worker.ready) return { ok: false, reason: 'the face worker is not ready yet' };
+      let bitmap: ImageBitmap;
+      try {
+        bitmap = await createImageBitmap(image);
+      } catch {
+        return { ok: false, reason: 'not an image this browser can read' };
+      }
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return { ok: false, reason: 'no canvas' };
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      // The live checks wait meanwhile, and this photo's faces never count as people in view.
+      const wasEnrolling = enrollmentActive;
+      enrollmentActive = true;
+      clearLoop();
+      embedPending = true;
+      try {
+        for (let waited = 0; worker.busy && waited < EMBED_WAIT_MS; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
+        const result = await worker.detectOnce(context.getImageData(0, 0, canvas.width, canvas.height));
+        const faces = result.faces.filter((face) => Array.isArray(face.embedding));
+        const verdict = uploadVerdict(faces.length);
+        if (!verdict.ok) return verdict;
+        const thumbnail = captureFaceThumbnail(canvas, faces[0]!);
+        if (!thumbnail) return { ok: false, reason: 'the face could not be cut out' };
+        return { ok: true, sample: { embedding: faces[0]!.embedding!, thumbnail, duplicate: false } };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      } finally {
+        embedPending = false;
+        enrollmentActive = wasEnrolling;
+        if (!wasEnrolling) scheduleLoop();
+      }
     },
     debugStatus,
     observation,

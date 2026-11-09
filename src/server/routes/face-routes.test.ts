@@ -65,3 +65,22 @@ describe('face library changes', () => {
     }
   });
 });
+
+// "Add photos to Flo" and picking Flo in the onboarding picker add samples to
+// Flo. However the name arrives ("flo", " Flo "), they must land under Flo,
+// never as a second Flo beside the first.
+describe('adding samples to someone already in the library', () => {
+  it('never makes a second person with the same name', async () => {
+    const post = (name: string, embedding: number[]) => fetch(`${base}/faces`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, embedding }) });
+    await post('Rosa', [0.1]);
+    const lower = (await (await post('rosa', [0.2])).json()) as { face: { name: string } };
+    const spaced = (await (await post('  ROSA ', [0.3])).json()) as { face: { name: string } };
+    expect([lower.face.name, spaced.face.name]).toEqual(['Rosa', 'Rosa']);
+    const library = (await (await fetch(`${base}/faces`)).json()) as { faces: Array<{ id: string; name: string }> };
+    expect(new Set(library.faces.filter((face) => face.name.toLowerCase().trim() === 'rosa').map((face) => face.name))).toEqual(new Set(['Rosa']));
+    // Renaming a sample to someone who is there joins them too.
+    const other = (await (await post('Unknown visitor', [0.4])).json()) as { face: { id: string } };
+    const renamed = (await (await fetch(`${base}/faces`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: other.face.id, name: 'rosa' }) })).json()) as { face: { name: string } };
+    expect(renamed.face.name).toBe('Rosa');
+  });
+});

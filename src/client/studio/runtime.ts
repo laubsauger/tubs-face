@@ -224,13 +224,18 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
           face.endEnrollment();
           break;
         case 'captureEnrollmentSample':
-          value = await face.captureEnrollmentSample(embeddingsOf(args.previous));
+          value = await face.captureEnrollmentSample(embeddingsOf(args.previous), boxOf(args.choose));
           break;
+        case 'embedPicture': {
+          const image = typeof args.image === 'string' && /^data:image\/(?:jpeg|png|webp);base64,/.test(args.image) && args.image.length <= MAX_PICTURE_CHARS ? args.image : null;
+          value = image ? await face.embedPicture(await (await fetch(image)).blob()) : { ok: false, reason: 'not a JPEG, PNG or WebP picture (or too large)' };
+          break;
+        }
         case 'saveEnrollment':
           value = await face.saveEnrollment(typeof args.name === 'string' ? args.name : '', samplesOf(args.samples));
           break;
       }
-      if (message.method !== 'endEnrollment' && message.method !== 'saveEnrollment') {
+      if (message.method === 'beginEnrollment' || message.method === 'captureEnrollmentSample') {
         // A dashboard that goes away mid-onboarding must not leave detection paused.
         enrollIdleTimer = window.setTimeout(() => face.endEnrollment(), ENROLLMENT_IDLE_MS);
       }
@@ -587,6 +592,15 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
 }
 
 const MAX_SAMPLES = 10;
+/** A photo to take a sample from (embedPicture), as a data URL. */
+const MAX_PICTURE_CHARS = 12 * 1024 * 1024;
+
+/** Which of several people to take (captureEnrollmentSample choose): [x, y, w, h] in 0..1, or nothing. */
+export function boxOf(value: unknown): [number, number, number, number] | undefined {
+  return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= -0.5 && n <= 1.5)
+    ? [value[0], value[1], value[2], value[3]]
+    : undefined;
+}
 const MAX_EMBEDDING = 2048;
 const isEmbedding = (value: unknown): value is number[] => Array.isArray(value) && value.length > 0 && value.length <= MAX_EMBEDDING
   && value.every((n) => typeof n === 'number' && Number.isFinite(n));
