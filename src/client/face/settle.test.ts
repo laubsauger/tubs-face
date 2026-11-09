@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DetectedFace, FaceBox } from '../../shared/contracts/faces.js';
 import { acceptedMatch } from './matching.js';
-import { createNameSettler } from './settle.js';
+import { GREETING_NAME_WAIT_MS, createGreetingHold, createNameSettler } from './settle.js';
 
 // Live, 2026-11-09: Flo (59 samples) in front of the camera, one check every
 // ~5 s: "match Rapha [Rapha 0.715, Flo 0.678, Anderson 0.644]", then "unknown
@@ -115,5 +115,30 @@ describe('names settled per track', () => {
     expect(frame(2000, { Flo: 0.73, Rapha: 0.2 }, { Rapha: 0.74, Flo: 0.2 })).toEqual(['Flo', 'Rapha']);
     settler.reset();
     expect(frame(3000, { Flo: 0.72, Rapha: 0.21 }, { Rapha: 0.73, Flo: 0.2 })).toEqual([null, null]);
+  });
+});
+
+// A known face's first check only starts its name (a vote, not settled), and
+// the arrival greeting used to go out on that check: Tubs greeted someone he
+// knows as a stranger. The greeting waits for the name, briefly, as the face
+// service's does (server/faces/recognition.ts).
+describe('the arrival greeting', () => {
+  it('waits for a name on its way, then goes with the greeting it was started with', () => {
+    const hold = createGreetingHold<{ returning: boolean }>();
+    expect(hold.next({ faces: 1, trigger: true, greeting: { returning: false }, nameOnItsWay: true, now: 0 })).toEqual({ send: false, holding: true, greeting: null });
+    expect(hold.next({ faces: 1, trigger: false, greeting: null, nameOnItsWay: true, now: 1000 })).toMatchObject({ send: false, holding: true });
+    expect(hold.next({ faces: 1, trigger: false, greeting: null, nameOnItsWay: false, now: 1500 })).toEqual({ send: true, holding: false, greeting: { returning: false } });
+    // Sent once.
+    expect(hold.next({ faces: 1, trigger: false, greeting: null, nameOnItsWay: false, now: 2000 }).send).toBe(false);
+  });
+
+  it('goes without the name after the wait, at once when no name is on its way, and not at all once nobody is in view', () => {
+    const hold = createGreetingHold<{ returning: boolean }>();
+    hold.next({ faces: 1, trigger: true, greeting: { returning: true }, nameOnItsWay: true, now: 0 });
+    expect(hold.next({ faces: 1, trigger: false, greeting: null, nameOnItsWay: true, now: GREETING_NAME_WAIT_MS })).toEqual({ send: true, holding: false, greeting: { returning: true } });
+    expect(hold.next({ faces: 1, trigger: true, greeting: { returning: false }, nameOnItsWay: false, now: 10_000 })).toEqual({ send: true, holding: false, greeting: { returning: false } });
+    hold.next({ faces: 1, trigger: true, greeting: { returning: false }, nameOnItsWay: true, now: 20_000 });
+    expect(hold.next({ faces: 0, trigger: false, greeting: null, nameOnItsWay: false, now: 20_500 }).send).toBe(false);
+    expect(hold.next({ faces: 1, trigger: false, greeting: null, nameOnItsWay: false, now: 21_000 }).send).toBe(false);
   });
 });

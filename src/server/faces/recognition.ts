@@ -13,7 +13,7 @@ import { uploadVerdict } from '../../client/face/person-match.js';
 import { createPeopleTracker, type TrackedPerson } from '../../client/face/people-tracker.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from '../../client/face/visitor-tracker.js';
 import { type Snapshot, wantsSnapshot } from '../../client/face/auto-onboarding.js';
-import { createNameSettler, type SettleOptions } from '../../client/face/settle.js';
+import { GREETING_NAME_WAIT_MS, createNameSettler, type SettleOptions } from '../../client/face/settle.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import { NOT_A_STUDIO_PICTURE, isStudioPicture, studioFaceBoxOf, type FaceObservation, type FaceObservationFace, type FaceWorkerStatus, type StudioFaceMethod, type StudioLiveFace, type StudioLiveStatus } from '../../shared/contracts/studio.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
@@ -88,12 +88,8 @@ const ENROLLMENT_MAX_CAPTURE_ATTEMPTS = 5;
 const ENROLLMENT_DUPLICATE_THRESHOLD = 0.82;
 const ENROLLMENT_IDLE_MS = 60_000;
 const SNAPSHOT_KEEP_MS = 30 * 60_000;
-/**
- * An arrival's greeting waits at most this long for a name that is on its way
- * (a track with a vote for someone, not yet settled), so a known face is still
- * greeted by name; then it goes without.
- */
-export const GREETING_NAME_WAIT_MS = 2500;
+// An arrival's greeting waits at most GREETING_NAME_WAIT_MS for a name on its way (settle.ts, the listener page's too).
+export { GREETING_NAME_WAIT_MS };
 const MAX_SAMPLES = 10;
 const MAX_EMBEDDING = 2048;
 

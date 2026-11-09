@@ -341,7 +341,7 @@ export interface StudioFaceWorkerStatus {
   margin?: number;
   /** Pictures for vision descriptions: when the last one went, and why the last chance was skipped. */
   lastVisionFrameAt?: number | null;
-  visionSkip?: 'asleep' | 'descriptions off' | 'nobody in view' | 'not due' | null;
+  visionSkip?: 'asleep' | 'descriptions off' | 'nobody in view' | 'not due' | 'waiting for a name to settle' | null;
   /** Why the last chance to check a picture was passed over: a voice was rendering (Ming comes first), no picture yet, onboarding has the camera. */
   checkSkip?: 'voice rendering' | 'no frame' | 'onboarding' | null;
 }
