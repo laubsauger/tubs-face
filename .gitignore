@@ -53,3 +53,7 @@ data/site-login.json
 # Playwright
 /test-results/
 /playwright-report/
+
+# The face library's backups and edit log, next to it (server/faces/library.ts)
+data/face-library.backups/
+data/face-library.log

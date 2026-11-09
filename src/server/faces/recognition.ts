@@ -40,7 +40,8 @@ export interface RecognitionDeps {
   /** Each frame's observation, for the listener page and the dashboards. */
   publish(observation: FaceObservation): void;
   library(): EnrolledFace[];
-  addFace(face: { name: string; embedding: number[]; thumbnail?: string }): void;
+  /** Origin: who asked, for the library's edit log. */
+  addFace(face: { name: string; embedding: number[]; thumbnail?: string }, origin: string): void;
   /** The library changed: every page reloads it (faces_changed). */
   facesChanged(): void;
   inConversation(now: number): boolean;
@@ -65,7 +66,7 @@ export interface Recognition {
   /** The service went away (or its camera stopped): nobody is in view any more. */
   lost(reason: string): void;
   /** A dashboard's onboarding call (studio_face_call), answered as the listener page answers it. */
-  faceCall(method: StudioFaceMethod, args: Record<string, unknown>): Promise<unknown>;
+  faceCall(method: StudioFaceMethod, args: Record<string, unknown>, origin?: string): Promise<unknown>;
   /** Someone told Tubs their name: enrol them from the snapshots taken while they were in view. */
   autoEnroll(personId: string, name: string): Promise<void>;
   /** The last observation; null before the first or after a loss. */
@@ -366,7 +367,7 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
 
     lost,
 
-    async faceCall(method, args) {
+    async faceCall(method, args, origin = 'face service onboarding') {
       if (!deps.config().faceRecognition && method !== 'endEnrollment') throw new Error('face recognition is switched off');
       switch (method) {
         case 'beginEnrollment':
@@ -398,7 +399,7 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
           const name = typeof args.name === 'string' ? args.name.trim() : '';
           if (!name) throw new Error('Enter a name before saving');
           const samples = samplesOf(args.samples);
-          for (const sample of samples) deps.addFace({ name, embedding: sample.embedding, thumbnail: sample.thumbnail });
+          for (const sample of samples) deps.addFace({ name, embedding: sample.embedding, thumbnail: sample.thumbnail }, origin);
           if (samples.length > 0) deps.facesChanged();
           log(`enrolled ${name} with ${samples.length} samples from the face service's camera`);
           return samples.length;
@@ -413,7 +414,7 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
         log(`auto onboarding: no face snapshots for ${name}`);
         return;
       }
-      for (const { embedding, thumbnail } of samples) deps.addFace({ name, embedding, thumbnail });
+      for (const { embedding, thumbnail } of samples) deps.addFace({ name, embedding, thumbnail }, 'auto onboarding (face service)');
       deps.facesChanged();
       snapshots.delete(personId);
       log(`auto onboarding: remembered ${name} (${samples.length} photo${samples.length === 1 ? '' : 's'})`);

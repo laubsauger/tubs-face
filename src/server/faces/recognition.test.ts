@@ -35,6 +35,7 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
   const applied: ListenerEffect[] = [];
   const published: FaceObservation[] = [];
   const added: Array<{ name: string; embedding: number[]; thumbnail?: string }> = [];
+  const origins: string[] = [];
   let changed = 0;
   let clock = 1_000_000;
   const frames: number[] = [];
@@ -42,7 +43,7 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
     apply: (message) => applied.push(message),
     publish: (observation) => published.push(observation),
     library: () => options.library ?? [],
-    addFace: (face) => added.push(face),
+    addFace: (face, origin) => { added.push(face); origins.push(origin); },
     facesChanged: () => { changed += 1; },
     inConversation: () => false,
     config: () => ({ autoEnrollEnabled: false, visionProvider: 'openai', visionMaxPx: 512, visionRefreshMs: 30_000, faceRecognition: true, visionDescriptions: true, ...options.config }),
@@ -56,7 +57,7 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
     log: () => undefined,
   });
   return {
-    recognition, applied, published, added, frames,
+    recognition, applied, published, added, frames, origins,
     changed: () => changed,
     advance: (ms: number) => { clock += ms; },
     flush: () => new Promise((resolve) => setTimeout(resolve, 0)),
