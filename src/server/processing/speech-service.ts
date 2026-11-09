@@ -10,7 +10,7 @@ import type { TranscriptionResult, TtsProxyTarget } from './types.js';
  * supervised by the server, restarted with backoff if it dies.
  */
 
-const SPEECH_SERVICE_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
+export const SPEECH_SERVICE_PORT = Number.parseInt(process.env.REALTIME_PROCESSING_PORT || '3002', 10) || 3002;
 
 const service = createPythonServiceController({
   scriptName: 'realtime-processing-service.py',
@@ -25,7 +25,7 @@ const service = createPythonServiceController({
  * speech-to-text, so it runs from its own venv (npm run setup-ming). Without
  * Ming those voices fail with an error; they never switch to another voice.
  */
-const MING_PORT = Number.parseInt(process.env.MING_PORT || '3003', 10) || 3003;
+export const MING_PORT = Number.parseInt(process.env.MING_PORT || '3003', 10) || 3003;
 const MING_VENV = 'venv-ming';
 
 const mingService = createPythonServiceController({
@@ -58,6 +58,11 @@ async function startMingService(): Promise<void> {
     return;
   }
   mingService.start();
+}
+
+/** Our speech service process is running (it may still be loading its models). */
+export function speechServiceRunning(): boolean {
+  return service.running();
 }
 
 export function startProcessingStack(): void {
