@@ -1627,6 +1627,11 @@ a {
   transform: scaleX(-1);
 }
 
+/* The studio camera's preview is shown as taken (its boxes are drawn unmirrored). */
+.camera-video.studio-camera-picture {
+  transform: none;
+}
+
 .camera-placeholder {
   display: grid;
   place-items: center;
@@ -2567,6 +2572,12 @@ a {
   transform: scaleX(-1);
 }
 
+/* The studio listener's camera (dashboard in studio mode): its pictures as taken, boxes on top. */
+.enroll-video.enroll-studio-camera {
+  position: relative;
+  transform: none;
+}
+
 .enroll-flash {
   position: absolute;
   inset: 0;
@@ -3028,6 +3039,35 @@ html.is-studio body {
 
 .studio-dot-down {
   background: #f87171;
+}
+
+.studio-parts {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.studio-part {
+  display: grid;
+  grid-template-columns: 8px 6.5rem minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+
+.studio-part-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-part-detail {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
 }
 
 .studio-relationship {

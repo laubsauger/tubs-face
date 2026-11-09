@@ -26,12 +26,14 @@ export async function captureEnrollmentSample(
   captureCanvas: HTMLCanvasElement,
   videoEl: HTMLVideoElement | null,
   previousEmbeddings: number[][],
+  /** A camera without a video (a studio snapshot or site stream): a fresh picture drawn into captureCanvas. */
+  grabStill?: () => Promise<{ imageData: ImageData } | null>,
 ): Promise<EnrollmentCapture | null> {
   if (!worker.ready) {
     throw new Error('Face worker is still loading');
   }
   for (let attempt = 0; attempt < ENROLLMENT_MAX_CAPTURE_ATTEMPTS; attempt += 1) {
-    const snapshot = captureVideoFrame(videoEl, captureCanvas);
+    const snapshot = grabStill ? await grabStill().catch(() => null) : captureVideoFrame(videoEl, captureCanvas);
     if (!snapshot) {
       await delay(ENROLLMENT_CAPTURE_RETRY_DELAY_MS);
       continue;

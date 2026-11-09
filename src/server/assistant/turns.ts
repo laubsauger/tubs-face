@@ -7,6 +7,7 @@ import { noteReplyEmoji, noteReplyText } from './variety.js';
 import { forgetConversation } from './context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
+import { noteHeard } from '../studio/pulse.js';
 
 /**
  * Every way a turn can start (typed chat over HTTP or WS, a voice clip, a
@@ -99,6 +100,7 @@ export interface StartUserTurnArgs {
  */
 export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnResult> | null {
   const { text, source, broadcast } = args;
+  if (source === 'voice') noteHeard(text);
   cancelAppearanceGreeting();
   if (runtimeConfig.muted) {
     broadcast({ type: 'expression', expression: 'idle' });

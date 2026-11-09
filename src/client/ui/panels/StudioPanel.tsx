@@ -7,13 +7,15 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { VISION_PROVIDERS, type VisionProvider } from '../../../shared/contracts/config.js';
 import type { PresetsResponse } from '../../../shared/contracts/presets.js';
-import type { StudioResponse, StudioSource, StudioSourcesResponse } from '../../../shared/contracts/studio.js';
+import type { StudioListenState, StudioPart, StudioPulse, StudioResponse, StudioSource, StudioSourcesResponse, StudioVisionResponse } from '../../../shared/contracts/studio.js';
 import { patchConfig } from '../../fx/runtime.js';
 import type { AppStore } from '../../state/app-state.js';
 import { fetchJson, postJson } from '../../transport/http.js';
 import { useAppSelector } from '../react-store.js';
 import { ControlGroup, SelectControl, ToggleControl } from './controls.js';
 import { PanelHeader } from './PanelHeader.js';
+import { MicMeter } from '../hud/StatusBar.js';
+import { StudioCameraView } from './StudioCamera.js';
 
 export const STUDIO_REFRESH_MS = 2000;
 /** The pick lists' sources (GET /studio/sources) ask the site node and the hub, so less often. */
@@ -36,6 +38,7 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
   const [studio, setStudio] = useState<StudioResponse | null>(null);
   const [presets, setPresets] = useState<PresetsResponse | null>(null);
   const [sources, setSources] = useState<StudioSourcesResponse | null>(null);
+  const [vision, setVision] = useState<StudioVisionResponse | null>(null);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
 
@@ -45,6 +48,8 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
       setStudio(nextStudio);
       setPresets(nextPresets);
       setError('');
+      // What Tubs last made of a picture; local network only, so it may be refused.
+      setVision(await fetchJson<StudioVisionResponse>('/studio/vision').catch(() => null));
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
@@ -91,6 +96,8 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
         {error && <p role="alert" className="text-rose-300">{error}</p>}
         {note && !error && <p role="status" className="text-emerald-300">{note}</p>}
 
+        {studio?.parts && <PartsCard parts={studio.parts} />}
+
         <ControlGroup title="Studio mode">
           <ToggleControl
             label="Studio mode"
@@ -121,6 +128,8 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
             </p>
           )}
         </ControlGroup>
+
+        {studio?.enabled && <LiveSection store={store} vision={vision} />}
 
         {studio && (
           <ControlGroup title="Sources">
@@ -175,6 +184,115 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
         </ControlGroup>
       </div>
     </article>
+  );
+}
+
+/** What runs where, at a glance: one line per part, its machine, a dot and the detail. */
+function PartsCard({ parts }: { parts: StudioPart[] }): JSX.Element {
+  return (
+    <ul className="studio-parts" aria-label="What runs where">
+      {parts.map((part) => {
+        const state = part.ok === null ? 'unknown' : part.ok ? 'ready' : 'down';
+        return (
+          <li key={part.id} className="studio-part" data-part={part.id} data-ok={String(part.ok)}>
+            <span className={`studio-dot studio-dot-${state}`} role="img" aria-label={`${part.label} ${part.ok === null ? 'not in use or not known' : part.ok ? 'ok' : 'not ok'}`} />
+            <span className="text-slate-300">{part.label}</span>
+            <span className="text-slate-200 studio-part-where">{part.where}</span>
+            {part.detail && <span className="text-slate-500 studio-part-detail">{part.detail}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** The status bar meter's colours, by what the studio mic is doing. */
+const METER_MODE: Record<StudioListenState, string> = {
+  off: 'idle',
+  listening: 'always-on',
+  hearing: 'recording',
+  thinking: 'transcribing',
+  speaking: 'conversation',
+};
+
+const HEAD_NAME = { main: 'Tubs', small: 'Small' } as const;
+
+function ago(t: number | null | undefined, now: number): string {
+  if (!t) return '';
+  const seconds = Math.max(0, Math.round((now - t) / 1000));
+  return seconds < 60 ? `${seconds} s ago` : `${Math.round(seconds / 60)} min ago`;
+}
+
+/**
+ * What the studio listener hears and sees, as the face window shows it in
+ * normal mode: the mic, the last line heard, its camera with the face boxes,
+ * who is in view (with the relationship in effect) and the last vision check.
+ */
+function LiveSection({ store, vision }: { store: AppStore; vision: StudioVisionResponse | null }): JSX.Element {
+  const live = useAppSelector(store, (current) => ({
+    pulse: current.studioPulse,
+    reporting: current.studioLive !== null,
+    frame: current.studioFrame !== null,
+  }));
+  const pulse: StudioPulse | null = live.reporting ? live.pulse : null;
+  const now = Date.now();
+  const attitude = (name: string | null) => (name ? vision?.relationships.find((entry) => entry.name.toLowerCase() === name.toLowerCase())?.attitude : undefined);
+  const check = vision?.last ?? null;
+  return (
+    <ControlGroup title="Live">
+      {!pulse ? (
+        <p className="text-slate-400" id="studio-live-off">The studio listener is not reporting: its page is not connected yet.</p>
+      ) : (
+        <div className="flex flex-col gap-2" aria-label="Pulse">
+          <p className="studio-row" id="studio-live-mic">
+            <MicMeter level={pulse.mic.level} mode={METER_MODE[pulse.mic.state]} />
+            <span className="text-slate-200" data-state={pulse.mic.state}>
+              {pulse.mic.state === 'speaking' && pulse.speaking ? `${HEAD_NAME[pulse.speaking]} speaking` : pulse.mic.state}
+            </span>
+            <span className="text-slate-500">{pulse.mic.source}</span>
+          </p>
+          <p className="text-slate-300" id="studio-live-heard">
+            {pulse.heard ? <>Heard “{pulse.heard.text}” <span className="text-slate-500">{ago(pulse.heard.t, now)}</span></> : <span className="text-slate-500">Nothing heard yet.</span>}
+          </p>
+        </div>
+      )}
+
+      {vision?.camera.on === false ? (
+        <p className="text-amber-300" id="studio-live-camera-off">Camera off (vision source: {vision.camera.source}). Nobody is seen or recognised.</p>
+      ) : (
+        <div className="camera-shell">
+          <div className="camera-stage">
+            <StudioCameraView store={store} />
+            {!live.frame && <div className="camera-placeholder">Waiting for the studio camera</div>}
+          </div>
+        </div>
+      )}
+      {pulse && pulse.seen.length > 0 && (
+        <ul className="flex flex-col gap-1" aria-label="In view">
+          {pulse.seen.map((person, index) => (
+            <li key={`${person.name ?? 'unknown'}-${index}`} className="flex flex-wrap gap-x-2">
+              <span className={person.name ? 'text-emerald-300' : 'text-amber-300'}>{person.name ?? 'unknown'}</span>
+              <span className="text-slate-400">{Math.round(person.prob * 100)}%</span>
+              {attitude(person.name) && <span className="text-slate-500">→ {attitude(person.name)}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div>
+        <button type="button" className="button button-compact button-secondary" disabled={!live.reporting} onClick={() => store.setState((current) => ({ ...current, faceEnrollOpen: true }))}>Onboard someone</button>
+      </div>
+
+      {vision && !vision.vision.on ? (
+        <p className="text-amber-300" id="studio-live-vision-off">Vision off: no picture leaves this Mac, Tubs only knows faces.</p>
+      ) : check ? (
+        <p className="text-slate-400" id="studio-live-vision">
+          {check.provider} {check.model} at {check.where ?? '?'} · {check.ok === null ? 'looking…' : check.ok ? `${check.ms} ms` : `failed: ${check.error ?? 'no answer'}`} · {ago(check.at, now)}
+          {check.text && <span className="block text-slate-300">{check.text}</span>}
+        </p>
+      ) : vision ? (
+        <p className="text-slate-500">No picture sent to vision yet.</p>
+      ) : null}
+    </ControlGroup>
   );
 }
 

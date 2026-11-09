@@ -8,6 +8,21 @@ import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { addFace, deleteFace, readFaceLibrary, updateFace } from '../faces/library.js';
 import { badRequest } from './route-helpers.js';
+import { broadcast } from '../ws/server.js';
+
+/** After the library changes (an onboarding saves several samples), every page reloads its copy once. */
+const FACES_CHANGED_DEBOUNCE_MS = 300;
+let facesChangedTimer: NodeJS.Timeout | null = null;
+function facesChanged(): void {
+  if (facesChangedTimer) clearTimeout(facesChangedTimer);
+  // The studio listener matches faces against its own copy: a correction made
+  // in a dashboard on another machine reaches it only this way.
+  facesChangedTimer = setTimeout(() => {
+    facesChangedTimer = null;
+    broadcast({ type: 'faces_changed' });
+  }, FACES_CHANGED_DEBOUNCE_MS);
+  facesChangedTimer.unref();
+}
 
 const shapesDir = resolve(process.cwd(), 'src/shapes');
 
@@ -33,6 +48,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
         embedding: payload.embedding,
         ...(payload.thumbnail ? { thumbnail: payload.thumbnail } : {}),
       });
+      facesChanged();
       sendJson(response, 200, {
         ok: true,
         face,
@@ -60,6 +76,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
         } satisfies ErrorResponse);
         return true;
       }
+      facesChanged();
       sendJson(response, 200, {
         ok: true,
         face,
@@ -80,6 +97,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
       return true;
     }
     const removed = deleteFace(id);
+    if (removed) facesChanged();
     sendJson(response, 200, {
       ok: true,
       removed,

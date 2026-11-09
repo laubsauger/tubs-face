@@ -259,3 +259,39 @@ export async function whepPicture(url: string, timeoutMs = 8000): Promise<ImageB
     endSession(resource);
   }
 }
+
+export interface WhepVideo {
+  stream: MediaStream;
+  close(): void;
+}
+
+/** A site node stream's video, kept open until close() (the dashboard's studio camera preview). */
+export async function whepVideo(url: string, timeoutMs = 8000): Promise<WhepVideo> {
+  const pc = new RTCPeerConnection();
+  const stream = new MediaStream();
+  let resource: string | null = null;
+  const close = () => {
+    for (const track of stream.getTracks()) track.stop();
+    pc.close();
+    endSession(resource);
+    resource = null;
+  };
+  try {
+    pc.addTransceiver('video', { direction: 'recvonly' });
+    const gotTrack = new Promise<void>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error(`no video from ${url}`)), timeoutMs);
+      pc.ontrack = (event) => {
+        if (event.track.kind !== 'video') return;
+        stream.addTrack(event.track);
+        window.clearTimeout(timer);
+        resolve();
+      };
+    });
+    resource = await negotiate(pc, url, 'read');
+    await gotTrack;
+    return { stream, close };
+  } catch (error) {
+    close();
+    throw error;
+  }
+}

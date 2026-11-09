@@ -5,6 +5,7 @@
 // Gemini, or any OpenAI-compatible server, under an hourly cap.
 
 import type { VisionStats } from '../../shared/contracts/http.js';
+import type { StudioVisionCheck } from '../../shared/contracts/studio.js';
 import { updateVisualContext } from './context.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { estimateCostUsd } from './text.js';
@@ -28,11 +29,31 @@ const OPENAI_OUT_PER_MTOKENS = Number.parseFloat(process.env.VISION_OUTPUT_COST_
 export interface VisionService {
   /** Describe this picture if the budget allows; the description, or null (skipped, failed, timed out). */
   look(frameDataUrl: string, kind: VisionPictureKind): Promise<string | null>;
+  /** The last picture sent to the provider and what came back, or null. */
+  lastCheck(): StudioVisionCheck | null;
+  /** fleet:vision: the box picked now (its .../v1 base), without asking the hub; null when none yet. */
+  fleetBase(): string | null;
+  /** fleet:vision resolved now (asks the hub when it has to); null when no box is found. */
+  resolveFleet(): Promise<string | null>;
+  /**
+   * The Studio tab's Test: one picture to this provider, model and server
+   * (not necessarily the ones in use), outside the hourly cap and the stats.
+   */
+  test(options: { provider: 'gemini' | 'openai'; model: string; baseUrl: string; dataUrl: string }): Promise<VisionTestResult>;
   /** Tubs fell asleep or woke up (refreshes pause while asleep). */
   noteSleeping(sleeping: boolean): void;
   /** VISION_API_KEY, set live through POST /config (never sent back). */
   setApiKey(key: string): void;
   stats(): VisionStats;
+}
+
+export interface VisionTestResult {
+  ok: boolean;
+  ms: number;
+  /** host:port that answered (fleet:vision resolved), or "Gemini API". */
+  where: string | null;
+  text: string | null;
+  error?: string;
 }
 
 export interface VisionServiceOptions {
@@ -52,6 +73,7 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
   const counters = createVisionStats();
   let apiKey = process.env.VISION_API_KEY?.trim() ?? '';
   let sleeping = false;
+  let last: StudioVisionCheck | null = null;
 
   return {
     async look(frameDataUrl, kind) {
@@ -78,6 +100,17 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
       };
       const started = now();
       let base: string | null = null;
+      const check: StudioVisionCheck = {
+        at: started,
+        kind,
+        ok: null,
+        ms: null,
+        provider,
+        model: ask.model,
+        where: provider === 'gemini' ? 'Gemini API' : null,
+        text: null,
+      };
+      last = check;
       try {
         let answer;
         if (provider === 'openai') {
@@ -92,6 +125,7 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
           ? estimateCostUsd(answer.tokensIn, answer.tokensOut)
           : (answer.tokensIn / 1e6) * OPENAI_IN_PER_MTOKENS + (answer.tokensOut / 1e6) * OPENAI_OUT_PER_MTOKENS;
         counters.call(provider, { ok: Boolean(answer.text), ms, tokensIn: answer.tokensIn, tokensOut: answer.tokensOut, costUsd, base, at: now() });
+        Object.assign(check, { ok: Boolean(answer.text), ms: Math.round(ms), where: base ? hostOf(base) : check.where, text: answer.text || null, ...(answer.text ? {} : { error: 'answered with no text' }) });
         if (!answer.text) {
           // qwen3-vl:4b (the thinking variant) spends every token thinking and says nothing.
           log(`${provider} ${ask.model} answered with no text (${kind})${provider === 'openai' ? '; a thinking model does that: use an -instruct one' : ''}; keeping the last description`);
@@ -106,8 +140,41 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
         // The fleet's next box gets the next picture; the last description stays.
         if (base && config.visionBaseUrl === 'fleet:vision') fleet.fail(base);
         const reason = error instanceof Error ? (error.name === 'TimeoutError' || error.name === 'AbortError' ? `timed out after ${config.visionTimeoutMs} ms` : error.message) : String(error);
+        Object.assign(check, { ok: false, ms: Math.round(ms), where: base ? hostOf(base) : check.where, error: reason.slice(0, 300) });
         log(`${provider} failed (${kind}): ${reason}; keeping the last description`);
         return null;
+      }
+    },
+    lastCheck() {
+      return last;
+    },
+    fleetBase() {
+      return fleet.current();
+    },
+    resolveFleet() {
+      return fleet.resolve();
+    },
+    async test({ provider, model, baseUrl, dataUrl }) {
+      const started = now();
+      let base: string | null = null;
+      try {
+        if (!/^data:image\/(?:jpeg|png);base64,/.test(dataUrl)) throw new Error('the test picture is not a JPEG or PNG');
+        const ask = { dataUrl, system: VISION_SYSTEM, prompt: VISION_PROMPT, model: model || (provider === 'gemini' ? runtimeConfig.llmModel : ''), timeoutMs: runtimeConfig.visionTimeoutMs, maxTokens: MAX_TOKENS };
+        let answer;
+        if (provider === 'openai') {
+          base = baseUrl === 'fleet:vision' ? await fleet.resolve() : baseUrl;
+          if (!base) throw new Error(baseUrl === 'fleet:vision' ? 'fleet:vision: the hub lists no vision box (or does not answer)' : 'no server URL');
+          answer = await askOpenAiCompatible({ ...ask, base, apiKey }, deps);
+        } else {
+          answer = await askGemini(ask, deps);
+        }
+        const ms = Math.round(now() - started);
+        const where = provider === 'gemini' ? 'Gemini API' : hostOf(base!);
+        if (!answer.text) return { ok: false, ms, where, text: null, error: `${ask.model} answered with no text${provider === 'openai' ? ' (a thinking model does that: use an -instruct one)' : ''}` };
+        return { ok: true, ms, where, text: answer.text };
+      } catch (error) {
+        const reason = error instanceof Error ? (error.name === 'TimeoutError' || error.name === 'AbortError' ? `timed out after ${runtimeConfig.visionTimeoutMs} ms` : error.message) : String(error);
+        return { ok: false, ms: Math.round(now() - started), where: provider === 'gemini' ? 'Gemini API' : base ? hostOf(base) : null, text: null, error: reason.slice(0, 300) };
       }
     },
     noteSleeping(next) {
@@ -131,4 +198,13 @@ export const visionService = createVisionService();
 
 export function processVisualContext(frameDataUrl: string, kind: VisionPictureKind = 'refresh'): Promise<string | null> {
   return visionService.look(frameDataUrl, kind);
+}
+
+/** host:port of a base URL (never a login in it); the URL itself if it does not parse. */
+export function hostOf(base: string): string {
+  try {
+    return new URL(base).host;
+  } catch {
+    return base;
+  }
 }

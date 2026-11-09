@@ -13,6 +13,7 @@ import { createStillPictures, snapshotPicture, visionFrame, type StillPictures }
 import { whepPicture } from '../transport/whip.js';
 import { formatVisionSource, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import { RENDER_PAUSE_POLL_MS, faceChecksPaused } from './render-pause.js';
+import { drawFaceBoxes } from './overlay.js';
 
 export interface FaceShellRuntime {
   init(): void;
@@ -28,6 +29,12 @@ export interface FaceShellRuntime {
   endEnrollment(): void;
   /** Grab one pose; null when no single face was found. */
   captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+  /**
+   * What the camera shows now, as a small JPEG, for a dashboard that watches
+   * the studio listener; key changes only with the picture (a still camera's
+   * picture is sent once). null without a camera.
+   */
+  previewFrame(maxPx: number): { frame: string; width: number; height: number; key: number } | null;
   saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number>;
   /** Enroll a person from the snapshots taken while they were in view (auto onboarding). */
   autoEnroll(personId: string, name: string): Promise<void>;
@@ -54,6 +61,10 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   let lastVisionFrameAt = 0;
   // A snapshot URL or a site node stream: pictures taken one at a time.
   let still: StillPictures | null = null;
+  let stillGrab: (() => Promise<ImageBitmap>) | null = null;
+  // Counts the still pictures, so a preview sends each one once.
+  let stillCount = 0;
+  const previewCanvas = document.createElement('canvas');
   const MAX_EMPTY_FRAMES = 2;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
@@ -231,7 +242,27 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       scheduleLoop();
     },
     captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null> {
-      return captureEnrollmentSample(worker, captureCanvas, videoEl, previousEmbeddings);
+      // A studio camera without a video: each pose is a fresh picture.
+      const grab = !stream && still && stillGrab ? stillGrab : null;
+      return captureEnrollmentSample(worker, captureCanvas, videoEl, previousEmbeddings, grab ? async () => {
+        const picture = await grab();
+        if (!drawPicture(picture)) return null;
+        // The preview shows the pose that was taken.
+        stillCount += 1;
+        return { imageData: captureCtx!.getImageData(0, 0, captureCanvas.width, captureCanvas.height) };
+      } : undefined);
+    },
+    previewFrame(maxPx) {
+      const live = stream && videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+      const source: CanvasImageSource | null = live ? videoEl : still && captureCanvas.width > 0 ? captureCanvas : null;
+      if (!source) return null;
+      const width = live ? videoEl!.videoWidth : captureCanvas.width;
+      const height = live ? videoEl!.videoHeight : captureCanvas.height;
+      const scale = Math.min(1, maxPx / Math.max(width, height));
+      previewCanvas.width = Math.max(1, Math.round(width * scale));
+      previewCanvas.height = Math.max(1, Math.round(height * scale));
+      previewCanvas.getContext('2d')?.drawImage(source, 0, 0, previewCanvas.width, previewCanvas.height);
+      return { frame: previewCanvas.toDataURL('image/jpeg', 0.6), width: previewCanvas.width, height: previewCanvas.height, key: live ? Date.now() : stillCount };
     },
     saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number> {
       return saveEnrollment(store, refreshFaceLibraryState, name, samples);
@@ -270,18 +301,29 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   };
 
   /** Pictures from a snapshot URL or a site stream, through the same detection as the camera's. */
+  /** A still picture into captureCanvas (at most 960 wide), as the detector takes it. */
+  function drawPicture(picture: ImageBitmap): boolean {
+    if (!captureCtx) {
+      picture.close();
+      return false;
+    }
+    const scale = Math.min(1, 960 / picture.width);
+    captureCanvas.width = Math.round(picture.width * scale);
+    captureCanvas.height = Math.round(picture.height * scale);
+    captureCtx.drawImage(picture, 0, 0, captureCanvas.width, captureCanvas.height);
+    picture.close();
+    return true;
+  }
+
   function startStill(grab: () => Promise<ImageBitmap>): void {
     store.setState((current) => ({ ...current, faceCameraActive: true, faceStatus: 'Pictures from a remote camera' }));
+    stillGrab = grab;
     still = createStillPictures({
       grab,
       ready: () => worker.ready && !worker.busy && !enrollmentActive,
       onPicture: async (picture) => {
-        if (!captureCtx) return;
-        const scale = Math.min(1, 960 / picture.width);
-        captureCanvas.width = Math.round(picture.width * scale);
-        captureCanvas.height = Math.round(picture.height * scale);
-        captureCtx.drawImage(picture, 0, 0, captureCanvas.width, captureCanvas.height);
-        picture.close();
+        if (!drawPicture(picture) || !captureCtx) return;
+        stillCount += 1;
         store.setState((current) => ({ ...current, faceWorkerBusy: true, faceStatus: 'Detecting from a remote camera' }));
         await worker.detectOnce(captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height));
       },
@@ -341,6 +383,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     clearLoop();
     still?.stop();
     still = null;
+    stillGrab = null;
     // No camera, nobody recognised: the server lets go of who was in view at once.
     if (lastPeopleSignature) {
       lastPeopleSignature = '';
@@ -438,51 +481,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     if (!overlayEl) {
       return;
     }
-    const context = overlayEl.getContext('2d');
-    if (!context) {
-      return;
-    }
-    context.clearRect(0, 0, overlayEl.width, overlayEl.height);
-    const scaleX = overlayEl.width / Math.max(1, captureCanvas.width || overlayEl.width);
-    const scaleY = overlayEl.height / Math.max(1, captureCanvas.height || overlayEl.height);
-
-    // Main's styling: green for a recognised face, orange for an unknown one,
-    // glowing box with corner accents and a label pill.
-    for (const face of faces) {
-      const [x1, y1, x2, y2] = face.box;
-      const width = (x2 - x1) * scaleX;
-      const height = (y2 - y1) * scaleY;
-      const left = overlayEl.width - (x2 * scaleX);
-      const top = y1 * scaleY;
-      const name = face.name ?? face.match?.name ?? null;
-      const color = name ? '#34d399' : '#fb923c';
-
-      context.shadowColor = color;
-      context.shadowBlur = 8;
-      context.lineWidth = 3;
-      context.strokeStyle = color;
-      context.strokeRect(left, top, width, height);
-      context.shadowBlur = 0;
-
-      const corner = Math.min(12, width * 0.2, height * 0.2);
-      context.lineWidth = 4;
-      context.beginPath();
-      context.moveTo(left, top + corner); context.lineTo(left, top); context.lineTo(left + corner, top);
-      context.moveTo(left + width - corner, top); context.lineTo(left + width, top); context.lineTo(left + width, top + corner);
-      context.moveTo(left, top + height - corner); context.lineTo(left, top + height); context.lineTo(left + corner, top + height);
-      context.moveTo(left + width - corner, top + height); context.lineTo(left + width, top + height); context.lineTo(left + width, top + height - corner);
-      context.stroke();
-
-      const score = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
-      const label = name ? `${name} ${score}%` : `${score}%`;
-      context.font = 'bold 12px Outfit, system-ui, sans-serif';
-      const labelWidth = context.measureText(label).width + 10;
-      const labelTop = Math.max(0, top - 20);
-      context.fillStyle = name ? 'rgba(52, 211, 153, 0.85)' : 'rgba(251, 146, 60, 0.8)';
-      context.fillRect(left, labelTop, labelWidth, 20);
-      context.fillStyle = '#04121c';
-      context.fillText(label, left + 5, labelTop + 15);
-    }
+    drawFaceBoxes(overlayEl, faces, { width: captureCanvas.width, height: captureCanvas.height }, { mirror: true });
   }
 
   function clearOverlay(): void {

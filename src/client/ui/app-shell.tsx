@@ -109,6 +109,8 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
  */
 function DashboardAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls | undefined }): JSX.Element {
   useOperatorHotkeys(store, controls, 'dashboard');
+  // Onboarding needs a camera: in studio mode the studio listener's, shown here.
+  const studioCamera = useAppSelector(store, (current) => current.studioLive !== null);
   return (
     <main className="shell shell-main shell-dashboard">
       <StatusBar store={store} view="dashboard" controls={controls} />
@@ -116,6 +118,7 @@ function DashboardAppShell({ store, controls }: { store: AppStore; controls?: Ap
         <ChatPanel store={store} />
       </div>
       <Dock store={store} controls={controls} view="dashboard" defaultWidth={560} />
+      {studioCamera ? <EnrollmentWizard store={store} {...(controls?.face ? { controls: controls.face } : {})} /> : null}
     </main>
   );
 }

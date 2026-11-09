@@ -1,4 +1,5 @@
 import type { WsClientMessage, WsServerMessage, WsStudioServerMessage } from '../contracts/ws.js';
+import { STUDIO_FACE_METHODS } from '../contracts/studio.js';
 
 const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'ping',
@@ -20,6 +21,11 @@ const WS_CLIENT_TYPES = new Set<WsClientMessage['type']>([
   'studio_caption',
   'studio_context',
   'studio_stage',
+  'studio_live',
+  'studio_watch',
+  'studio_frame',
+  'studio_face_call',
+  'studio_face_result',
 ]);
 
 const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
@@ -55,9 +61,15 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'studio_caption',
   'studio_stage',
   'tts_rendering',
+  'studio_live',
+  'studio_watch',
+  'studio_frame',
+  'studio_pulse',
+  'studio_face_call',
+  'studio_face_result',
 ]);
 
-const WS_STUDIO_SERVER_TYPES = new Set<WsStudioServerMessage['type']>(['studio_config', 'studio_look', 'studio_presence', 'studio_state', 'studio_caption', 'studio_stage']);
+const WS_STUDIO_SERVER_TYPES = new Set<WsStudioServerMessage['type']>(['studio_config', 'studio_look', 'studio_presence', 'studio_state', 'studio_caption', 'studio_stage', 'studio_watch', 'studio_face_call']);
 
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -90,6 +102,28 @@ const optMic = (v: unknown): boolean => v === undefined
   || (isRecord(v) && text(v.source, 300) && typeof v.listening === 'boolean' && optString(v.error, 300));
 const labels = (v: unknown): boolean => Array.isArray(v) && v.length <= 32 && v.every((label) => typeof label === 'string' && label.length > 0 && label.length <= 200);
 const optDevices = (v: unknown): boolean => v === undefined || (isRecord(v) && labels(v.audio) && labels(v.video));
+const MAX_LIVE_FACES = 16;
+/** A preview JPEG (studio_frame): a few hundred pixels wide. */
+const MAX_PREVIEW_CHARS = 200_000;
+const liveFace = (v: unknown): boolean => isRecord(v)
+  && Array.isArray(v.box) && v.box.length === 4 && v.box.every(isFiniteNumber)
+  && isFiniteNumber(v.score) && (v.confidence === undefined || isFiniteNumber(v.confidence))
+  && (v.matches === undefined || (Array.isArray(v.matches) && v.matches.length <= 3 && v.matches.every((match) => isRecord(match) && isFiniteNumber(match.score)
+    && (match.name === undefined || (typeof match.name === 'string' && match.name.length <= 80)))))
+  && (v.name === undefined || v.name === null || (typeof v.name === 'string' && v.name.length <= 80))
+  && (v.match === undefined || v.match === null || (isRecord(v.match) && isFiniteNumber(v.match.score)
+    && (v.match.name === undefined || (typeof v.match.name === 'string' && v.match.name.length <= 80))));
+const liveFaces = (v: unknown): boolean => Array.isArray(v) && v.length <= MAX_LIVE_FACES && v.every(liveFace);
+const optFrameSide = (v: unknown): boolean => v === null || (isFiniteNumber(v) && (v as number) >= 0 && (v as number) <= 10_000);
+/** Shown as is in the dashboards: the fields it names and nothing large. */
+function isLiveStatus(v: unknown): boolean {
+  return isRecord(v)
+    && typeof v.micReady === 'boolean' && typeof v.micDenied === 'boolean' && isFiniteNumber(v.micLevel) && (v.micLevel as number) >= 0 && (v.micLevel as number) <= 1
+    && typeof v.recording === 'boolean' && shortText(v.listenState) && typeof v.voiceLastTranscript === 'string' && v.voiceLastTranscript.length <= MAX_TEXT_CHARS
+    && typeof v.audioPlaying === 'boolean' && typeof v.faceCameraActive === 'boolean' && typeof v.faceWorkerReady === 'boolean' && shortText(v.faceStatus)
+    && isFiniteNumber(v.faceLastDetectedCount) && optFrameSide(v.faceFrameWidth) && optFrameSide(v.faceFrameHeight)
+    && liveFaces(v.faceLastFaces);
+}
 const optNames = (v: unknown): boolean => v === undefined
   || (Array.isArray(v) && v.length <= 20 && v.every((name) => typeof name === 'string' && name.length <= 80));
 
@@ -145,6 +179,19 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case 'studio_status':
       return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic) && optCadence(m.cadence)
         && optDevices(m.devices);
+    case 'studio_live':
+      return isActor(m.actor) && typeof m.speaking === 'boolean' && (m.status === null || isLiveStatus(m.status));
+    case 'studio_watch':
+      return typeof m.live === 'boolean' && typeof m.video === 'boolean';
+    case 'studio_frame':
+      return isActor(m.actor) && typeof m.frame === 'string' && m.frame.length <= MAX_PREVIEW_CHARS && /^data:image\/jpeg;base64,/.test(m.frame)
+        && isFiniteNumber(m.width) && isFiniteNumber(m.height) && (m.width as number) > 0 && (m.height as number) > 0;
+    case 'studio_face_call':
+      return typeof m.id === 'string' && m.id.length > 0 && m.id.length <= MAX_ID_CHARS
+        && (STUDIO_FACE_METHODS as readonly unknown[]).includes(m.method)
+        && (m.args === undefined || isRecord(m.args));
+    case 'studio_face_result':
+      return typeof m.id === 'string' && m.id.length > 0 && m.id.length <= MAX_ID_CHARS && typeof m.ok === 'boolean' && optString(m.error, 300);
     case 'studio_context':
       return isStudioContext(m);
     case 'studio_stage':

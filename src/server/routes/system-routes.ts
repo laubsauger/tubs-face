@@ -21,7 +21,7 @@ import { persistState } from '../state-file.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
-const readiness = createReadiness({
+export const readiness = createReadiness({
   probe: probeJson,
   speechUrl: `http://127.0.0.1:${SPEECH_SERVICE_PORT}`,
   mingUrl: (process.env.MING_TTS_URL?.trim() || `http://127.0.0.1:${MING_PORT}`).replace(/\/+$/, ''),

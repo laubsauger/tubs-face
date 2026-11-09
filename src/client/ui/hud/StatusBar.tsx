@@ -38,6 +38,7 @@ export function StatusBar({ store, view, controls }: {
     dualOn: Boolean(current.config?.dualHeadEnabled && current.config.dualHeadMode !== 'off'),
     miniWindowOpen: current.peers.mini,
     faceWindowOpen: current.peers.face,
+    studioListener: current.studioLive !== null,
     facePerform: current.facePerform,
     fullscreenActive: current.fullscreenActive,
     screenRecording: current.screenRecording,
@@ -45,8 +46,8 @@ export function StatusBar({ store, view, controls }: {
     screenRecordingFile: current.screenRecordingFile,
   }));
   const open = (tab: DockTab) => store.setState((current) => openDockTab(current, tab));
-  // The dashboard only knows mic and camera from the face window.
-  const deviceKnown = view === 'face' || state.faceWindowOpen;
+  // The dashboard only knows mic and camera from the face window, or in studio mode the studio listener.
+  const deviceKnown = view === 'face' || state.faceWindowOpen || state.studioListener;
   const listenMode = resolveListenMode(state);
 
   return (
@@ -205,7 +206,7 @@ function Chip(props: {
   );
 }
 
-function MicMeter({ level, mode }: { level: number; mode: string }): JSX.Element {
+export function MicMeter({ level, mode }: { level: number; mode: string }): JSX.Element {
   return (
     <span className={`status-meter listen-${mode}`} aria-hidden="true">
       <span style={{ transform: `scaleX(${Math.max(0.04, Math.min(1, level))})` }} />

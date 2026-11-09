@@ -4,7 +4,7 @@ import type {
   SessionStats,
 } from './config.js';
 import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
-import type { StudioActor, StudioCadence, StudioDevices, StudioGaze, StudioMicStatus, StudioMood } from './studio.js';
+import type { StudioActor, StudioCadence, StudioDevices, StudioFaceMethod, StudioGaze, StudioLiveStatus, StudioMicStatus, StudioMood, StudioPulse } from './studio.js';
 
 export interface TokenUsage {
   in: number;
@@ -208,6 +208,50 @@ export interface WsStudioStatusClientMessage {
   devices?: StudioDevices;
 }
 
+/**
+ * Studio listener page: what it hears and sees, at most ~10 Hz; the server
+ * relays it to the dashboards (studio_live). speaking: either head is talking.
+ */
+export interface WsStudioLiveClientMessage {
+  type: 'studio_live';
+  actor: StudioActor;
+  status: StudioLiveStatus | null;
+  speaking: boolean;
+}
+
+/** Dashboard: it shows the studio listener's live state (live) and its camera (video); both false when it stops. */
+export interface WsStudioWatchClientMessage {
+  type: 'studio_watch';
+  live: boolean;
+  video: boolean;
+}
+
+/** Studio listener: a small JPEG of its camera, a few a second, only while a dashboard watches the video. */
+export interface WsStudioFrameClientMessage {
+  type: 'studio_frame';
+  actor: StudioActor;
+  frame: string;
+  width: number;
+  height: number;
+}
+
+/** Dashboard: run this on the studio listener's face runtime (onboarding with its camera); answered by studio_face_result. */
+export interface WsStudioFaceCallClientMessage {
+  type: 'studio_face_call';
+  id: string;
+  method: StudioFaceMethod;
+  args?: Record<string, unknown>;
+}
+
+/** Studio listener: the answer to a studio_face_call. */
+export interface WsStudioFaceResultClientMessage {
+  type: 'studio_face_result';
+  id: string;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
+
 export type WsClientMessage =
   | WsPingClientMessage
   | WsIncomingClientMessage
@@ -225,6 +269,11 @@ export type WsClientMessage =
   | WsStudioPresenceClientMessage
   | WsStudioStateClientMessage
   | WsStudioStatusClientMessage
+  | WsStudioLiveClientMessage
+  | WsStudioWatchClientMessage
+  | WsStudioFrameClientMessage
+  | WsStudioFaceCallClientMessage
+  | WsStudioFaceResultClientMessage
   | WsStudioCaptionClientMessage
   | WsStudioContextClientMessage
   | WsStudioStageClientMessage;
@@ -471,7 +520,56 @@ export type WsStudioServerMessage =
   | WsStudioCaptionServerMessage
   | WsStudioLookServerMessage
   | WsStudioPresenceServerMessage
-  | WsStudioStateServerMessage;
+  | WsStudioStateServerMessage
+  | WsStudioWatchServerMessage
+  | WsStudioFaceCallServerMessage;
+
+/** The studio listener's live state, relayed to dashboards on the local network while studio mode is on. */
+export interface WsStudioLiveServerMessage {
+  type: 'studio_live';
+  actor: StudioActor;
+  status: StudioLiveStatus | null;
+  speaking: boolean;
+}
+
+/** To the studio listener: whether anyone watches its live state and its camera (it sends nothing otherwise). */
+export interface WsStudioWatchServerMessage {
+  type: 'studio_watch';
+  live: boolean;
+  video: boolean;
+}
+
+/** The studio listener's camera, to the dashboards that watch it. */
+export interface WsStudioFrameServerMessage {
+  type: 'studio_frame';
+  actor: StudioActor;
+  frame: string;
+  width: number;
+  height: number;
+}
+
+/** GET /studio/pulse, pushed to the dashboards that watch. */
+export interface WsStudioPulseServerMessage {
+  type: 'studio_pulse';
+  pulse: StudioPulse;
+}
+
+/** A dashboard's studio_face_call, forwarded to the studio listener. */
+export interface WsStudioFaceCallServerMessage {
+  type: 'studio_face_call';
+  id: string;
+  method: StudioFaceMethod;
+  args?: Record<string, unknown>;
+}
+
+/** The listener's answer, back to the dashboard that asked. */
+export interface WsStudioFaceResultServerMessage {
+  type: 'studio_face_result';
+  id: string;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
 
 /** A voice is rendering (Ming or Kokoro): the face window holds its checks meanwhile. */
 export interface WsTtsRenderingServerMessage {
@@ -506,4 +604,10 @@ export type WsServerMessage =
   | WsFaceBlinkServerMessage
   | WsHeadSpeechStateServerMessage
   | WsStudioServerMessage
-  | WsTtsRenderingServerMessage;
+  | WsTtsRenderingServerMessage
+  | WsStudioLiveServerMessage
+  | WsStudioWatchServerMessage
+  | WsStudioFrameServerMessage
+  | WsStudioPulseServerMessage
+  | WsStudioFaceCallServerMessage
+  | WsStudioFaceResultServerMessage;

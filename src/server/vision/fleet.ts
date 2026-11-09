@@ -18,6 +18,8 @@ export interface FleetResolver {
   resolve(): Promise<string | null>;
   /** A call to this base failed or timed out: leave it behind and take the next one. */
   fail(base: string): void;
+  /** The base in use now, without asking the hub; null when none was found yet. */
+  current(): string | null;
 }
 
 export function createFleetResolver(options: {
@@ -95,6 +97,9 @@ export function createFleetResolver(options: {
     },
     fail(base) {
       failed.add(base);
+    },
+    current() {
+      return current;
     },
   };
 }

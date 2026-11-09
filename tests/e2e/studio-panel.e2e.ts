@@ -18,6 +18,15 @@ const STUDIO = {
   launch: 'chrome',
   ui: { dashboard: 'http://localhost:39190/?view=dashboard', memory: 'http://localhost:39190/?view=memory' },
   presets: { names: ['Pirate', 'Tubs'], active: 'Tubs' },
+  parts: [
+    { id: 'brain', label: 'Brain', where: 'generativelanguage.googleapis.com', ok: true, detail: 'gemini-3-flash · 840 ms' },
+    { id: 'voices', label: 'Voices', where: 'studio-mac:3003', ok: true, detail: 'ming:friend, ming:friend-b' },
+    { id: 'realtime', label: 'Speech service', where: 'studio-mac:3102', ok: true },
+    { id: 'vision', label: 'Vision', where: 'fleet:vision (no box found yet)', ok: false, detail: 'qwen3-vl:4b-instruct' },
+    { id: 'mic', label: 'Mic', where: 'off', ok: null },
+    { id: 'faces', label: 'Face pages', where: 'Chrome @ studio-mac', ok: false, detail: 'main 30 fps · small not publishing' },
+    { id: 'site', label: 'Site node', where: 'studio-mac:8889', ok: false, detail: 'face page not connected' },
+  ],
 };
 
 // GET /studio/sources as the server builds it (studio/sources.ts).
@@ -85,6 +94,13 @@ test('from inside a cross-origin iframe the Studio panel shows the heads and run
   await expect(panel.getByRole('list', { name: 'Heads' })).toContainText('tubs-main');
   await expect(panel.getByRole('list', { name: 'Heads' })).toContainText('face page not connected');
   await expect(panel.getByRole('link', { name: 'Memory view' })).toHaveAttribute('href', STUDIO.ui.memory);
+  // What runs where, at the top: each part's machine, and a dot that says whether it works.
+  const parts = panel.getByRole('list', { name: 'What runs where' });
+  await expect(parts.getByRole('listitem')).toHaveCount(7);
+  await expect(parts.locator('[data-part="vision"]')).toContainText('fleet:vision (no box found yet)');
+  await expect(parts.getByRole('img', { name: 'Vision not ok' })).toBeVisible();
+  await expect(parts.getByRole('img', { name: 'Voices ok' })).toBeVisible();
+  await expect(parts.getByRole('img', { name: 'Mic not in use or not known' })).toBeVisible();
 
   await panel.getByRole('switch', { name: 'Studio mode' }).click();
   await expect.poll(() => posts.find((post) => post.path === '/studio')?.body).toEqual({ enabled: false });

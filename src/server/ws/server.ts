@@ -30,11 +30,25 @@ import { siteLogin } from '../studio/site-auth.js';
 import { noteStudioContext } from '../studio/context.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 import { isRendering, onRenderingChange } from '../tts/rendering.js';
+import { isLocalNetworkAddress } from '../memory/view.js';
+import { forgetViewer, frameDue, liveGone, liveRelay, noteWatch, pulseLeaseEndsAt, wantedWatch, watchOf } from '../studio/live.js';
+import { noteHeadSpeaking, studioPulse } from '../studio/pulse.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
 /** Studio face pages (/ws?studio=main|small) and the actor each one shows. */
 const studioPages = new Map<WebSocket, StudioActor>();
+/** Pages that may watch the studio listener (studio_watch): the other pages on the local network. */
+const liveViewers = new Set<WebSocket>();
+/** What the listener was last told to send. */
+let watchSent = { live: false, video: false };
+let watchLeaseTimer: NodeJS.Timeout | null = null;
+let lastPulsePushAt = 0;
+const PULSE_PUSH_MIN_MS = 250;
+/** Dashboards' studio_face_calls waiting for the listener's answer, by the id the listener sees. */
+const faceCalls = new Map<string, { caller: WebSocket; id: string; at: number }>();
+let faceCallSeq = 0;
+const FACE_CALL_TIMEOUT_MS = 30_000;
 /** The page whose camera last reported who is in view; its going away clears recognition. */
 let recognitionSocket: WebSocket | null = null;
 const WS_PATH = '/ws';
@@ -74,6 +88,9 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     if (studioActor) {
       studioPages.set(socket, studioActor);
       notePageConnection(studioActor, true);
+    } else if (isLocalNetworkAddress(request.socket.remoteAddress)) {
+      // The dashboard connects as a spectator.
+      liveViewers.add(socket);
     }
 
     send(socket, {
@@ -92,6 +109,11 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     if (studioActor || studioSettings.enabled) {
       send(socket, studioActor ? withSiteLogin(studioConfigMessage()) : studioConfigMessage());
     }
+    // The listener sends only what someone watches; it starts out watched by nobody.
+    if (studioActor === 'main') {
+      const wanted = wantedWatch();
+      if (wanted.live || wanted.video) send(socket, wanted);
+    }
     if (isRendering()) send(socket, { type: 'tts_rendering', rendering: true });
 
     socket.on('message', (raw: RawData) => {
@@ -103,8 +125,8 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
           return;
         }
 
-        // Spectators can only send pings
-        if (isSpectator && parsed.type !== 'ping') {
+        // Spectators (the dashboard among them) can only send pings, and say what of the studio listener they watch
+        if (isSpectator && parsed.type !== 'ping' && parsed.type !== 'studio_watch' && parsed.type !== 'studio_face_call') {
           return;
         }
 
@@ -117,13 +139,23 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     socket.on('close', () => {
       clients.delete(socket);
       spectators.delete(socket);
+      if (liveViewers.delete(socket)) {
+        forgetViewer(socket);
+        syncStudioWatch();
+      }
       if (socket === recognitionSocket) {
         recognitionSocket = null;
         forgetRecognised();
       }
       if (studioActor) {
         studioPages.delete(socket);
-        if (![...studioPages.values()].includes(studioActor)) notePageConnection(studioActor, false);
+        if (![...studioPages.values()].includes(studioActor)) {
+          notePageConnection(studioActor, false);
+          if (studioActor === 'main') {
+            sendToWatchers(liveGone(), 'live');
+            failFaceCalls('the studio listener page went away');
+          }
+        }
       }
     });
   });
@@ -161,6 +193,46 @@ function sendToStudioPages(message: WsStudioServerMessage): void {
   const payload = JSON.stringify(message);
   for (const page of studioPages.keys()) {
     if (page.readyState === page.OPEN) page.send(payload);
+  }
+}
+
+/** To the dashboards that watch the listener's live state, or its camera. */
+function sendToWatchers(message: WsServerMessage, what: 'live' | 'video'): void {
+  const payload = JSON.stringify(message);
+  for (const viewer of liveViewers) {
+    if (watchOf(viewer)?.[what] && viewer.readyState === viewer.OPEN) viewer.send(payload);
+  }
+}
+
+function listenerPages(): WebSocket[] {
+  return [...studioPages.entries()].filter(([, actor]) => actor === 'main').map(([page]) => page);
+}
+
+/**
+ * Tells the listener page what to send when that changes: its live state while
+ * a dashboard watches or someone polls GET /studio/pulse, its camera while a
+ * dashboard shows it. Called on every watch change and pulse poll.
+ */
+export function syncStudioWatch(now = Date.now()): void {
+  const wanted = wantedWatch(now);
+  if (wanted.live !== watchSent.live || wanted.video !== watchSent.video) {
+    watchSent = { live: wanted.live, video: wanted.video };
+    for (const page of listenerPages()) send(page, wanted);
+  }
+  // A pulse poll's lease runs out without anyone saying so: look again then.
+  if (watchLeaseTimer) clearTimeout(watchLeaseTimer);
+  watchLeaseTimer = null;
+  const leaseLeft = pulseLeaseEndsAt() - now;
+  if (leaseLeft > 0) {
+    watchLeaseTimer = setTimeout(() => syncStudioWatch(), leaseLeft + 10);
+    watchLeaseTimer.unref();
+  }
+}
+
+function failFaceCalls(error: string): void {
+  for (const [key, call] of faceCalls) {
+    send(call.caller, { type: 'studio_face_result', id: call.id, ok: false, error });
+    faceCalls.delete(key);
   }
 }
 
@@ -261,6 +333,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'studio_state':
       if (!studioSettings.enabled || !studioPages.has(socket)) return;
+      if (studioPages.get(socket) === message.actor) noteHeadSpeaking(message.actor, message.speaking);
       broadcast({ type: 'studio_state', actor: message.actor, speaking: message.speaking, expr: message.expr, mood: message.mood, ts: message.ts });
       return;
     case 'studio_stage':
@@ -293,6 +366,56 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ts: message.ts,
       });
       return;
+    case 'studio_live': {
+      // The listener (main) only; a stop goes through even after studio mode went off.
+      if (message.actor !== 'main' || studioPages.get(socket) !== 'main') return;
+      if (!studioSettings.enabled && message.status !== null) return;
+      const relay = liveRelay(message);
+      if (!relay) return;
+      sendToWatchers(relay, 'live');
+      const now = Date.now();
+      const watching = [...liveViewers].some((viewer) => watchOf(viewer)?.live);
+      if (watching && (now - lastPulsePushAt >= PULSE_PUSH_MIN_MS || !message.status)) {
+        lastPulsePushAt = now;
+        sendToWatchers({ type: 'studio_pulse', pulse: studioPulse(now) }, 'live');
+      }
+      return;
+    }
+    case 'studio_watch':
+      if (!liveViewers.has(socket)) return;
+      noteWatch(socket, { live: message.live, video: message.video });
+      syncStudioWatch();
+      return;
+    case 'studio_frame':
+      if (message.actor !== 'main' || studioPages.get(socket) !== 'main' || !studioSettings.enabled) return;
+      if (frameDue()) sendToWatchers({ type: 'studio_frame', actor: 'main', frame: message.frame, width: message.width, height: message.height }, 'video');
+      return;
+    case 'studio_face_call': {
+      // A dashboard on the local network asks the listener's face runtime (onboarding with its camera).
+      if (!liveViewers.has(socket)) return;
+      const listener = listenerPages()[0];
+      if (!studioSettings.enabled || !listener) {
+        send(socket, { type: 'studio_face_result', id: message.id, ok: false, error: 'the studio listener page is not connected' });
+        return;
+      }
+      const now = Date.now();
+      for (const [key, call] of faceCalls) {
+        if (now - call.at > FACE_CALL_TIMEOUT_MS) faceCalls.delete(key);
+      }
+      faceCallSeq += 1;
+      const key = `c${faceCallSeq}`;
+      faceCalls.set(key, { caller: socket, id: message.id, at: now });
+      send(listener, { type: 'studio_face_call', id: key, method: message.method, ...(message.args ? { args: message.args } : {}) });
+      return;
+    }
+    case 'studio_face_result': {
+      if (studioPages.get(socket) !== 'main') return;
+      const call = faceCalls.get(message.id);
+      if (!call) return;
+      faceCalls.delete(message.id);
+      send(call.caller, { type: 'studio_face_result', id: call.id, ok: message.ok, ...(message.value !== undefined ? { value: message.value } : {}), ...(message.error ? { error: message.error } : {}) });
+      return;
+    }
     case 'studio_status':
       if (studioPages.get(socket) !== message.actor) return;
       notePageStatus(message.actor, {

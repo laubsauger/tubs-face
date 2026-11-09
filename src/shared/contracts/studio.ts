@@ -101,6 +101,22 @@ export interface StudioResponse {
   ui?: StudioUiLinks;
   /** Character presets: their names and the active one (GET /presets). */
   presets?: { names: string[]; active: string | null };
+  /** What runs where (the Studio tab's card, the sentient panel). Keep this shape. */
+  parts?: StudioPart[];
+}
+
+/**
+ * One part of the studio's Tubs: where the work happens (host or host:port,
+ * fleet:vision resolved to its box, the mic's device or site path, the face
+ * pages' machine), whether it works (null: not in use, or not known yet) and a
+ * short detail (model, latency, voices, fps).
+ */
+export interface StudioPart {
+  id: 'brain' | 'voices' | 'realtime' | 'vision' | 'mic' | 'faces' | 'site';
+  label: string;
+  where: string;
+  ok: boolean | null;
+  detail?: string;
 }
 
 export interface StudioUiLinks {
@@ -151,6 +167,100 @@ export interface StudioMicStatus {
 }
 
 export type StudioLaunchMode = 'chrome' | 'external';
+
+/** A face the listener page sees, as its detector reports it, without the embedding. */
+export interface StudioLiveFace {
+  /** x1, y1, x2, y2 in the picture's pixels (faceFrameWidth x faceFrameHeight). */
+  box: [number, number, number, number];
+  score: number;
+  confidence?: number;
+  name?: string | null;
+  /** The face library's best match and how sure it is (0..1). */
+  match?: { name?: string; score: number } | null;
+  /** The top candidates, best first (at most 3). */
+  matches?: Array<{ name?: string; score: number }>;
+}
+
+/**
+ * What the studio listener page hears and sees, for the dashboards (the
+ * studio_live relay, about 10 Hz): the same app state fields the face window
+ * shares with a dashboard in the same browser, so the dashboard's own meters
+ * and detection lists show it. null: the listener stopped (studio mode off).
+ */
+export interface StudioLiveStatus {
+  micReady: boolean;
+  micDenied: boolean;
+  /** 0..1 */
+  micLevel: number;
+  recording: boolean;
+  listenState: string;
+  voiceLastTranscript: string;
+  /** Main's voice is playing on the listener page. */
+  audioPlaying: boolean;
+  faceCameraActive: boolean;
+  faceWorkerReady: boolean;
+  faceStatus: string;
+  faceLastDetectedCount: number;
+  faceFrameWidth: number | null;
+  faceFrameHeight: number | null;
+  faceLastFaces: StudioLiveFace[];
+}
+
+/** What the mic is doing: off, waiting for speech, taking someone's speech, waiting for the reply, a head talking. */
+export type StudioListenState = 'off' | 'listening' | 'hearing' | 'thinking' | 'speaking';
+
+/**
+ * GET /studio/pulse (and the studio_pulse push): the studio at a glance, for
+ * the dashboard and the sentient panel's pulse bar; poll about 4 Hz. Keep
+ * this shape: the panel builds on it.
+ */
+export interface StudioPulse {
+  /** When this was put together (ms since epoch). */
+  t: number;
+  /** level 0..1; source as micSource. */
+  mic: { source: string; level: number; state: StudioListenState };
+  speaking: 'main' | 'small' | null;
+  /** The last line the mic heard. */
+  heard: { text: string; t: number } | null;
+  /** Who is in view now: the library's best match (null: unknown), how sure (0..1), box [x, y, w, h] in 0..1 of the picture. */
+  seen: Array<{ name: string | null; prob: number; box: [number, number, number, number] }>;
+  /** The last vision check: how long the provider took and when. */
+  vision: { provider: string; lastMs: number | null; at: number | null };
+}
+
+/**
+ * What a dashboard may ask the studio listener's face runtime to do
+ * (studio_face_call): onboarding with its camera. A wrong match is fixed by
+ * onboarding more of the right person, or renaming or removing samples in the
+ * library (the server tells every page to reload it: faces_changed).
+ */
+export const STUDIO_FACE_METHODS = ['beginEnrollment', 'endEnrollment', 'captureEnrollmentSample', 'saveEnrollment'] as const;
+export type StudioFaceMethod = (typeof STUDIO_FACE_METHODS)[number];
+
+/** The last picture sent to the vision provider, and what came back. */
+export interface StudioVisionCheck {
+  at: number;
+  kind: 'appearance' | 'refresh';
+  /** null while the provider is still answering. */
+  ok: boolean | null;
+  ms: number | null;
+  provider: 'gemini' | 'openai';
+  model: string;
+  /** host or host:port that answered (fleet:vision resolved to the box); "Gemini API" for gemini. */
+  where: string | null;
+  text: string | null;
+  error?: string;
+}
+
+/** GET /studio/vision (local network only): what Tubs last made of a picture, for the Studio tab. */
+export interface StudioVisionResponse {
+  /** The studio camera: on while the listener page has a picture source; null when studio mode is off. */
+  camera: { on: boolean | null; source: string };
+  vision: { provider: string; model: string; on: boolean };
+  last: StudioVisionCheck | null;
+  /** Listed people recognised in view now, whose attitude the next turn carries. */
+  relationships: Array<{ name: string; attitude: string }>;
+}
 
 /** The listener page's input devices, by label as Chrome names them (its studio_status). */
 export interface StudioDevices {

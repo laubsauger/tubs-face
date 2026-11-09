@@ -6,6 +6,7 @@ import type { ConfigResponse, HealthResponse, StatsResponse } from '../../shared
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
 import type { DetectedFace, EnrolledFace } from '../../shared/contracts/faces.js';
 import type { TurnAction, TurnActor } from '../../shared/contracts/turn-script.js';
+import type { StudioPulse } from '../../shared/contracts/studio.js';
 
 export type ScreenRecordingPhase = 'idle' | 'starting' | 'recording' | 'saving';
 
@@ -116,6 +117,18 @@ export interface AppState {
   ttsRenderingSince: number | null;
   /** Face onboarding wizard is open (F key or the Onboard button). */
   faceEnrollOpen: boolean;
+  /**
+   * Dashboard in studio mode: the studio listener reports what it hears and
+   * sees (studio_live), its camera and the pulse; null when it does not (studio
+   * mode off, nobody watching, page gone).
+   */
+  studioLive: { speaking: boolean; at: number } | null;
+  studioFrame: { src: string; width: number; height: number } | null;
+  studioPulse: StudioPulse | null;
+  /** Where the dashboard reads the studio camera itself (a site stream over WHEP); null: relayed pictures only. */
+  studioCameraUrl: string | null;
+  /** The dashboard shows the studio camera now (studio_watch video). */
+  studioVideoWanted: boolean;
   controlSpeakText: string;
   chatComposerText: string;
   /** Perform mode (Z): status bar and dock hidden, the face gets the screen. */
@@ -346,6 +359,11 @@ export function createAppStore(uiPrefsKey?: string): AppStore {
     faceLibraryPeople: 0,
     faceDraftName: '',
     faceEnrollOpen: false,
+    studioLive: null,
+    studioFrame: null,
+    studioPulse: null,
+    studioCameraUrl: null,
+    studioVideoWanted: false,
     faceDetectionDelayMs: 0,
     ttsRenderingSince: null,
     controlSpeakText: '',

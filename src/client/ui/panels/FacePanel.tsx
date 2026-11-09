@@ -4,6 +4,7 @@ import type { AppStore } from '../../state/app-state.js';
 import type { DetectedFace, EnrolledFace } from '../../../shared/contracts/faces.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
+import { StudioCameraView } from './StudioCamera.js';
 import type { AppShellControls } from '../app-shell.js';
 
 export function FacePanel({
@@ -30,6 +31,8 @@ export function FacePanel({
     faceFrameWidth: current.faceFrameWidth,
     faceFrameHeight: current.faceFrameHeight,
     debugOverlayActive: current.debugOverlayActive,
+    // Studio mode, in the dashboard: the studio listener's camera instead of one here.
+    studioCamera: current.studioFrame !== null || (current.studioLive !== null && current.studioCameraUrl !== null),
   }));
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const [libraryManagerOpen, setLibraryManagerOpen] = useState(false);
@@ -262,12 +265,13 @@ export function FacePanel({
 
           <div className={`camera-shell ${state.faceCameraActive ? '' : 'is-inactive-shell'}`}>
             <div className="camera-stage" style={{ aspectRatio: cameraAspectRatio }}>
-              <video id="face-camera-video" className={`camera-video ${state.faceCameraActive ? '' : 'is-hidden'}`} autoPlay muted playsInline />
+              <video id="face-camera-video" className={`camera-video ${state.faceCameraActive && !state.studioCamera ? '' : 'is-hidden'}`} autoPlay muted playsInline />
               <canvas
                 id="face-camera-overlay"
-                className={`camera-overlay ${state.faceCameraActive && (state.debugOverlayActive || state.faceLastDetectedCount > 0) ? '' : 'is-hidden'}`}
+                className={`camera-overlay ${state.faceCameraActive && !state.studioCamera && (state.debugOverlayActive || state.faceLastDetectedCount > 0) ? '' : 'is-hidden'}`}
               />
-              <div className={`camera-placeholder ${state.faceCameraActive ? 'is-hidden' : ''}`}>Camera inactive</div>
+              <StudioCameraView store={store} />
+              <div className={`camera-placeholder ${state.faceCameraActive || state.studioCamera ? 'is-hidden' : ''}`}>Camera inactive</div>
             </div>
           </div>
 

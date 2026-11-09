@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { AppStore } from '../../state/app-state.js';
 import type { AppShellControls } from '../app-shell.js';
 import { useAppSelector } from '../react-store.js';
+import { StudioCameraView } from './StudioCamera.js';
 
 type FaceControls = NonNullable<AppShellControls['face']>;
 type Mode = 'guided' | 'quick';
@@ -67,6 +68,8 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
   const camera = useAppSelector(store, (state) => ({
     active: state.faceCameraActive,
     workerReady: state.faceWorkerReady,
+    // The dashboard in studio mode: the studio listener's camera, its pictures relayed.
+    studio: state.studioLive !== null,
   }));
   const [name, setName] = useState(() => initialName(store));
   const [mode, setMode] = useState<Mode>('guided');
@@ -289,13 +292,16 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
         </div>
 
         <div className="enroll-stage">
-          <video ref={videoRef} className="enroll-video" autoPlay muted playsInline />
+          <video ref={videoRef} className={`enroll-video ${camera.studio ? 'is-hidden' : ''}`} autoPlay muted playsInline />
+          {camera.studio ? <div className="enroll-video enroll-studio-camera"><StudioCameraView store={store} /></div> : null}
           {flashKey > 0 ? <div key={flashKey} className="enroll-flash" aria-hidden="true" /> : null}
 
           {!camera.active ? (
             <div className="enroll-camera-off">
               <p>The camera is off.</p>
-              <button type="button" className="enroll-btn enroll-btn-primary" onClick={() => void controls.toggleCamera()}>Start camera</button>
+              {camera.studio
+                ? <p>The studio camera is the vision source: choose one in the Studio tab.</p>
+                : <button type="button" className="enroll-btn enroll-btn-primary" onClick={() => void controls.toggleCamera()}>Start camera</button>}
             </div>
           ) : null}
 

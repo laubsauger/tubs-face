@@ -367,6 +367,89 @@ test('the listener page reports this Mac\'s input devices by label', async ({ pa
   expect(await page.evaluate(() => (window as unknown as { __openCameras?: number }).__openCameras ?? 0)).toBe(0);
 });
 
+// In studio mode the dashboard shows what the listener hears and sees, and
+// onboards people with its camera. The listener sends that only while a
+// dashboard watches (the server says so with studio_watch): ten reports and a
+// few pictures a second for nobody would load the studio Mac for nothing.
+test('the listener sends its live state and camera only while watched, and runs onboarding calls', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true, visionSource: 'local' });
+  const sentOf = async (type: string) => (await received(request)).ws.filter((m) => m.type === type);
+  await page.waitForTimeout(1200);
+  expect([...await sentOf('studio_live'), ...await sentOf('studio_frame')]).toEqual([]);
+
+  await send(request, { type: 'studio_watch', live: true, video: true });
+  await expect.poll(async () => (await sentOf('studio_live')).at(-1)?.status, { timeout: 8000 }).toMatchObject({ micReady: expect.any(Boolean), faceCameraActive: true });
+  await expect.poll(async () => (await sentOf('studio_frame')).length, { timeout: 8000 }).toBeGreaterThan(1);
+  const frame = (await sentOf('studio_frame')).at(-1)!;
+  expect(String(frame.frame)).toMatch(/^data:image\/jpeg;base64,/);
+  expect(Math.max(Number(frame.width), Number(frame.height))).toBeLessThanOrEqual(320);
+  // Never the face worker's embeddings.
+  expect(JSON.stringify(await sentOf('studio_live'))).not.toContain('embedding');
+
+  await send(request, { type: 'studio_face_call', id: 'c1', method: 'beginEnrollment' }, { type: 'studio_face_call', id: 'c2', method: 'endEnrollment' });
+  await expect.poll(async () => (await sentOf('studio_face_result')).map((m) => [m.id, m.ok])).toEqual([['c1', true], ['c2', true]]);
+
+  await send(request, { type: 'studio_watch', live: false, video: false });
+  await expect.poll(async () => (await sentOf('studio_live')).at(-1)?.status, { timeout: 4000 }).toBeNull();
+  const frames = (await sentOf('studio_frame')).length;
+  const reports = (await sentOf('studio_live')).length;
+  await page.waitForTimeout(1200);
+  expect((await sentOf('studio_frame')).length).toBe(frames);
+  expect((await sentOf('studio_live')).length).toBe(reports);
+});
+
+// A studio camera without a video (snapshot URL, site stream): each onboarding
+// pose is a fresh picture, not the last one the detector happened to take.
+test('onboarding through a snapshot camera takes a fresh picture per pose', async ({ page, request }) => {
+  // The face model loads before the first pose can be taken.
+  test.setTimeout(90_000);
+  await fakeSiteNode(page);
+  let snapshots = 0;
+  await page.route('**/studio/snapshot', async (route) => {
+    snapshots += 1;
+    const body = Buffer.from(await page.evaluate(async () => {
+      const canvas = new OffscreenCanvas(320, 240);
+      const g = canvas.getContext('2d')!;
+      g.fillStyle = '#556677';
+      g.fillRect(0, 0, 320, 240);
+      const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg' })).arrayBuffer());
+      return btoa(String.fromCharCode(...bytes));
+    }), 'base64');
+    await route.fulfill({ status: 200, contentType: 'image/jpeg', body });
+  });
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true, visionSource: 'snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg' });
+  let calls = 0;
+  const faceCall = async (method: string, args?: Record<string, unknown>) => {
+    calls += 1;
+    const id = `call${calls}`;
+    await send(request, { type: 'studio_face_call', id, method, ...(args ? { args } : {}) });
+    let answer: Record<string, unknown> | undefined;
+    await expect.poll(async () => {
+      answer = (await received(request)).ws.find((m) => m.type === 'studio_face_result' && m.id === id);
+      return Boolean(answer);
+    }, { timeout: 15_000 }).toBe(true);
+    return answer!;
+  };
+  // Onboarding holds the detector's own pictures: what is fetched from here on is the poses'.
+  expect((await faceCall('beginEnrollment')).ok).toBe(true);
+  // The face model loads first; until then the call says so.
+  let capture = await faceCall('captureEnrollmentSample', { previous: [] });
+  const loadedBy = Date.now() + 45_000;
+  while (!capture.ok && Date.now() < loadedBy) {
+    await page.waitForTimeout(1000);
+    capture = await faceCall('captureEnrollmentSample', { previous: [] });
+  }
+  const before = snapshots;
+  capture = await faceCall('captureEnrollmentSample', { previous: [] });
+  // Nobody in an empty picture: no pose, after a fresh picture per attempt.
+  expect(capture).toMatchObject({ ok: true, value: null });
+  expect(snapshots - before).toBeGreaterThanOrEqual(2);
+  await send(request, { type: 'studio_face_call', id: 'end', method: 'endEnrollment' });
+});
+
 // Captions (contract section 8): each head's line under its face in the
 // windows, the heard part lit, so it reads with the sound turned down. The
 // face page that plays the voice sends them, on its playback clock.
