@@ -9,6 +9,10 @@
 // the person's n-th sample in time order (1-based), as the library dialog
 // lists them oldest first within a person; the time says which.
 //
+// The flagged samples are the memory view's (server/faces/audit.ts): a sample at
+// or over the match threshold against someone else's, or one none of its
+// owner's other samples resembles.
+//
 // Leave-one-session-out probes: each sample is matched, as a live frame would
 // be, against the library without its own capture session (samples less than
 // 5 minutes apart, client/face/library-sessions.ts), so a pose is not matched
@@ -19,6 +23,7 @@ import { readFaceLibrary } from '../server/faces/library.js';
 import { cosineSimilarity } from '../client/face/matching.js';
 import { groupLibrary } from '../client/face/library-sessions.js';
 import type { EnrolledFace } from '../shared/contracts/faces.js';
+import { auditSamples, UNLIKE_OWN_BELOW } from '../server/faces/audit.js';
 
 interface Sample { face: EnrolledFace; person: string; index: number; session: string }
 
@@ -100,31 +105,16 @@ confusable.sort((x, y) => y.sim - x.sim);
 const involvement = new Map<string, number>();
 for (const pair of confusable) for (const side of [pair.a, pair.b]) involvement.set(side, (involvement.get(side) ?? 0) + 1);
 
-// 3. Samples that look like someone else.
-const outliers = samples.flatMap((sample) => {
-  const own = byPerson.get(sample.person)!.filter((other) => other !== sample);
-  if (own.length === 0) return [];
-  const ownCentroid = cosineSimilarity(sample.face.embedding, centroid(own));
-  const ownNearest = Math.max(...own.map((other) => sim(sample, other)));
-  let other = { name: '', centroid: -1, nearest: -1, nearestLabel: '' };
-  for (const name of names) {
-    if (name === sample.person) continue;
-    const toCentroid = cosineSimilarity(sample.face.embedding, centroids.get(name)!);
-    if (toCentroid > other.centroid) other = { ...other, name, centroid: toCentroid };
-  }
-  let nearestOther = { value: -1, label: '' };
-  for (const candidate of samples) {
-    if (candidate.person === sample.person) continue;
-    const value = sim(sample, candidate);
-    if (value > nearestOther.value) nearestOther = { value, label: `${candidate.person} #${candidate.index}` };
-  }
-  const reasons = [
-    other.centroid >= ownCentroid ? `nearer ${other.name}'s centroid (${round(other.centroid)}) than its own (${round(ownCentroid)})` : '',
-    nearestOther.value >= ownNearest ? `its nearest sample is ${nearestOther.label} (${round(nearestOther.value)}), not one of its own (${round(ownNearest)})` : '',
-    ownCentroid < 0.45 ? `far from its own centroid (${round(ownCentroid)})` : '',
-  ].filter(Boolean);
-  return reasons.length ? [{ person: sample.person, sample: sample.index, at: when(sample.face), ownCentroid: round(ownCentroid), nearestOther: round(nearestOther.value), reasons }] : [];
-});
+// 3. Samples that look like someone else: the memory view's flags (server/faces/audit.ts), so both say the same.
+const audit = auditSamples(faces);
+const flagged = audit.filter((sample) => sample.flags.looksLike || sample.flags.unlikeOwn).map((sample) => ({
+  id: sample.id,
+  person: sample.name,
+  sample: sample.index,
+  at: sample.at ? new Date(sample.at).toISOString().replace('T', ' ').slice(0, 19) : 'undated',
+  nearestOwn: sample.nearestOwn,
+  flags: sample.flags,
+}));
 
 // 4. Leave-one-session-out probes, matched as the browser matches (best sample per name).
 interface Probe { person: string; sample: number; truthInLibrary: boolean; top: string; topSim: number; second: string | null; secondSim: number; ownSim: number | null }
@@ -162,7 +152,7 @@ const wrongTop = probes.filter((probe) => probe.top !== probe.person && probe.to
   .map((probe) => ({ person: probe.person, sample: probe.sample, namedAs: probe.top, sim: round(probe.topSim), runnerUp: probe.second, runnerUpSim: round(probe.secondSim), own: probe.ownSim === null ? null : round(probe.ownSim), lead: round(probe.topSim - probe.secondSim) }));
 const rightLeads = probes.filter((probe) => probe.top === probe.person && probe.topSim >= 0.65).map((probe) => probe.topSim - probe.secondSim);
 
-const report = { samples: samples.length, people: names.length, spread, closestPairs: pairsOfPeople.slice(0, 8), confusable, outliers, probes: { grid, wrongTop, rightLeads: stats(rightLeads) } };
+const report = { samples: samples.length, people: names.length, spread, closestPairs: pairsOfPeople.slice(0, 8), confusable, flagged, probes: { grid, wrongTop, rightLeads: stats(rightLeads) } };
 
 console.log(`${samples.length} samples, ${names.length} people\n`);
 console.log('Per person (similarity of each sample to the centroid of the others; all pairs):');
@@ -176,7 +166,13 @@ console.table(confusable);
 console.log('Samples in the most such pairs:');
 console.table([...involvement.entries()].sort((x, y) => y[1] - x[1]).slice(0, 12).map(([sample, pairs]) => ({ sample, pairs })));
 console.log('Samples that look like someone else:');
-console.table(outliers.map((row) => ({ person: row.person, sample: row.sample, taken: row.at, 'to own': row.ownCentroid, why: row.reasons.join('; ') })));
+console.table(flagged.map((row) => ({
+  person: row.person,
+  sample: row.sample,
+  taken: row.at,
+  'looks like': row.flags.looksLike ? `${row.flags.looksLike.name} ${Math.round(row.flags.looksLike.sim * 100)}%` : '',
+  [`unlike their others (< ${UNLIKE_OWN_BELOW})`]: row.flags.unlikeOwn ? `nearest own ${row.nearestOwn}` : '',
+})));
 console.log('Leave-one-session-out probes: what threshold 0.65 and a margin would name');
 console.table(grid);
 console.log('Probes whose best match was someone else (at 0.60 or more):');

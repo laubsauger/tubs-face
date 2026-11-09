@@ -24,6 +24,11 @@ function facesChanged(): void {
   facesChangedTimer.unref();
 }
 
+/** Who changed the library, for its edit log: the route and the caller's address. */
+export function originOf(request: IncomingMessage, route: string): string {
+  return `${route} from ${request.socket.remoteAddress ?? 'unknown address'}`;
+}
+
 const shapesDir = resolve(process.cwd(), 'src/shapes');
 
 const inputFacesDir = resolve(process.cwd(), 'input_faces');
@@ -47,7 +52,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
         name: payload.name.trim(),
         embedding: payload.embedding,
         ...(payload.thumbnail ? { thumbnail: payload.thumbnail } : {}),
-      });
+      }, originOf(request, 'POST /faces'));
       facesChanged();
       sendJson(response, 200, {
         ok: true,
@@ -69,7 +74,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
       }
       const face = updateFace(payload.id.trim(), {
         name: payload.name.trim(),
-      });
+      }, originOf(request, 'PATCH /faces'));
       if (!face) {
         sendJson(response, 404, {
           error: 'Face not found',
@@ -96,7 +101,7 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
       sendJson(response, 400, { error: 'Missing id parameter' } satisfies ErrorResponse);
       return true;
     }
-    const removed = deleteFace(id);
+    const removed = deleteFace(id, originOf(request, 'DELETE /faces'));
     if (removed) facesChanged();
     sendJson(response, 200, {
       ok: true,

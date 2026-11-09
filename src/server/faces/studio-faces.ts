@@ -68,8 +68,8 @@ const recognition = createRecognition({
     hooks.publish(observation);
   },
   library,
-  addFace: (face) => {
-    addFace(face);
+  addFace: (face, origin) => {
+    addFace(face, origin);
     libraryCache = null;
   },
   facesChanged: () => hooks.facesChanged(),
@@ -176,7 +176,7 @@ export function serviceLiveFaces(): LiveFaceFields | null {
 }
 
 export function serviceFaceCall(method: StudioFaceMethod, args: Record<string, unknown>): Promise<unknown> {
-  return recognition.faceCall(method, args);
+  return recognition.faceCall(method, args, 'face service onboarding (a dashboard\'s studio_face_call)');
 }
 
 export function serviceAutoEnroll(personId: string, name: string): Promise<void> {

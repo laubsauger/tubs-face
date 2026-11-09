@@ -9,8 +9,11 @@ import type { EnrolledFace } from '../../shared/contracts/faces.js';
 import type { MemoryCard, MemoryResponse } from '../../shared/contracts/memory.js';
 import type { PersonMemory } from '../assistant/field-notes.js';
 import type { Relationship } from '../assistant/relationships.js';
+import type { SampleAudit } from '../faces/audit.js';
 
 export interface MemorySources {
+  /** The library audit by sample id (server/faces/audit.ts); none: no flags. */
+  audit?: ReadonlyMap<string, SampleAudit>;
   people: PersonMemory[];
   groupNotes: string[];
   unattributedNotes: string[];
@@ -56,7 +59,17 @@ export function buildMemory(sources: MemorySources): MemoryResponse {
   for (const card of cards.values()) {
     const faces = card.name ? libraryByName.get(keyOf(card.name)) ?? [] : [];
     card.enrolled = faces.length > 0;
-    card.library = faces.map((face) => ({ id: face.id, createdAt: face.createdAt ?? null, photo: face.thumbnail ? photoUrl(face.id) : null }));
+    card.library = faces.map((face, position) => {
+      const audit = sources.audit?.get(face.id);
+      const flagged = audit && (audit.flags.looksLike || audit.flags.unlikeOwn);
+      return {
+        id: face.id,
+        createdAt: face.createdAt ?? null,
+        photo: face.thumbnail ? photoUrl(face.id) : null,
+        index: audit?.index ?? position + 1,
+        flag: flagged ? { looksLike: audit.flags.looksLike, unlikeOwn: audit.flags.unlikeOwn, like: audit.like } : null,
+      };
+    }).sort((a, b) => a.index - b.index);
     // Library samples first: they are the clear, front-on ones.
     card.photos = [
       ...faces.filter((face) => face.thumbnail).map((face) => ({ url: photoUrl(face.id), source: 'library' as const, at: face.createdAt ?? null })),
