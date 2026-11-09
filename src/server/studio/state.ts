@@ -6,6 +6,7 @@ import {
   STUDIO_ACTORS,
   parseMicSource,
   parseVisionSource,
+  type FaceRecognizer,
   type StudioActor,
   type StudioCadence,
   type StudioDevices,
@@ -31,6 +32,8 @@ export interface StudioSettings {
   /** Stream path prefix: "tubs-" gives tubs-main and tubs-small. */
   prefix: string;
   launch: StudioLaunchMode;
+  /** FACE_SERVICE is set (not off): the face service recognises what the server can read (docs/face-service.md). */
+  faceService?: boolean;
   /** Switches (StudioSwitches) kept here; descriptions and relationships are runtime config. */
   cameraOn: boolean;
   micOn: boolean;
@@ -57,11 +60,25 @@ export function studioSettingsFromEnv(env: NodeJS.ProcessEnv): StudioSettings {
     visionSource,
     prefix,
     launch: env.TUBS_STUDIO_LAUNCH?.trim() === 'external' ? 'external' : 'chrome',
+    faceService: Boolean(env.FACE_SERVICE?.trim()) && env.FACE_SERVICE?.trim() !== 'off',
     cameraOn: true,
     micOn: true,
     faceRecognition: !/^(0|false|no|off)$/i.test(env.TUBS_FACE_RECOGNITION?.trim() ?? ''),
     windows: env.TUBS_STUDIO_WINDOWS?.trim() === 'visible' ? 'visible' : 'offscreen',
   };
+}
+
+/**
+ * Who recognises the studio camera's faces: the face service for a camera the
+ * server can read (a site stream, a snapshot URL), the listener page's browser
+ * worker for a local camera or without FACE_SERVICE, nobody without a camera.
+ */
+export function recognizerOf(settings: StudioSettings = studioSettings, descriptions = runtimeConfig.visionDescriptions): FaceRecognizer {
+  const source = parseVisionSource(settings.visionSource);
+  if (!settings.enabled || !settings.cameraOn || !source || source.kind === 'off') return 'off';
+  // Faces are detected while recognition or descriptions (which need a face in view) is on.
+  if (!settings.faceRecognition && !descriptions) return 'off';
+  return settings.faceService && (source.kind === 'site' || source.kind === 'snapshot') ? 'service' : 'browser';
 }
 
 export const studioSettings: StudioSettings = studioSettingsFromEnv(process.env);
@@ -79,6 +96,8 @@ export function studioConfigMessage(settings: StudioSettings = studioSettings): 
     micSource: settings.micSource,
     visionSource: settings.visionSource,
     streams: { main: streamName('main', settings), small: streamName('small', settings) },
+    // Absent: the browser worker, as before.
+    ...(recognizerOf(settings) === 'service' ? { faces: 'service' as const } : {}),
     switches: { camera: settings.cameraOn, faceRecognition: settings.faceRecognition, mic: settings.micOn },
   };
 }

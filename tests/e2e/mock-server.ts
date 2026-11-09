@@ -122,6 +122,13 @@ const server = http.createServer(async (request, response) => {
     json(response, 200, { ok: true });
     return;
   }
+  if (path === '/__test/face-service' && method === 'POST') {
+    // FACE_SERVICE on or off, as the real server reads it at startup (docs/face-service.md).
+    studio.faceService = Boolean((await readBody(request) as { on?: boolean } | null)?.on);
+    broadcast(studioConfig());
+    json(response, 200, { ok: true });
+    return;
+  }
   if (path === '/__test/reset' && method === 'POST') {
     wsReceived = [];
     httpReceived = [];

@@ -10,6 +10,7 @@ import { initWebSocketServer } from './ws/server.js';
 import { shutdownLangfuse } from './observability/langfuse.js';
 import { startStudio, stopStudio } from './studio/control.js';
 import { restoreState } from './state-file.js';
+import { startFaceService, stopFaceService } from './faces/studio-faces.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -41,6 +42,8 @@ const server = http.createServer(async (request, response) => {
 restoreState();
 const wss = initWebSocketServer(server);
 void startProcessingStack();
+// FACE_SERVICE: recognition on the server (docs/face-service.md); after restoreState, for the vision source.
+startFaceService();
 void prepareFillersAtStartup(runtimeConfig.kokoroVoice ?? 'af_heart');
 
 server.listen(port, () => {
@@ -51,7 +54,7 @@ server.listen(port, () => {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    void Promise.allSettled([stopProcessingStack(), shutdownLangfuse(), stopStudio()]).finally(() => {
+    void Promise.allSettled([stopProcessingStack(), shutdownLangfuse(), stopStudio(), stopFaceService()]).finally(() => {
       server.close(() => {
         process.exit(0);
       });

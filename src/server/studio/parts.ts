@@ -9,6 +9,15 @@ import { parseMicSource, type FaceObservation, type StudioFaceWorkerStatus, type
 import type { StudioVisionCheck } from '../../shared/contracts/studio.js';
 import type { LastLlmCall } from '../llm/last-call.js';
 import type { RuntimeConfig } from '../../shared/contracts/config.js';
+import type { FaceRecognizer } from '../../shared/contracts/studio.js';
+import type { FaceServiceStatus } from '../faces/service.js';
+
+/** Who recognises faces (docs/face-service.md), and the face service's status when it is set up. */
+export interface RecognitionSource {
+  recognizer: FaceRecognizer;
+  /** FACE_SERVICE's status; null when FACE_SERVICE is off. */
+  service: FaceServiceStatus | null;
+}
 
 export interface PartsSources {
   config: Pick<RuntimeConfig, 'llmModel' | 'kokoroVoice' | 'secondaryVoice' | 'dualHeadEnabled' | 'dualHeadMode' | 'visionProvider' | 'visionModel' | 'visionBaseUrl' | 'visionDescriptions' | 'relationshipsEnabled'>;
@@ -34,6 +43,8 @@ export interface PartsSources {
   /** Listed people recognised in view now (relationships in effect). */
   relationshipsInEffect?: number;
   now?: number;
+  /** Who recognises (FACE_SERVICE, docs/face-service.md) and the face service's own status. */
+  recognition?: RecognitionSource;
 }
 
 /** A check this recent means the face worker is looking. */
@@ -202,7 +213,10 @@ export function studioParts(sources: PartsSources): StudioPart[] {
       }
       : null;
   const checking = view?.state === 'ready' && view.lastCheckAt !== null && now - view.lastCheckAt < CHECKING_MS;
-  parts.push({
+  if (!recognitionOff && sources.recognition?.recognizer === 'service') {
+    // The face service (FACE_SERVICE): its own status, even before (or without) a frame.
+    parts.push(servicePart(sources.recognition.service, sources.libraryPeople));
+  } else parts.push({
     id: 'recognition',
     label: 'Face recognition',
     where: recognitionOff ? 'off' : view?.where ?? (studio.launch === 'chrome' ? `Chrome @ ${here}` : 'the listener page'),
@@ -232,4 +246,41 @@ export function studioParts(sources: PartsSources): StudioPart[] {
   });
 
   return parts;
+}
+
+/**
+ * The recognition part while the face service recognises (docs/face-service.md):
+ * the service's host, ok while it checks camera frames, not ok with the reason
+ * when it is down, failing or gets no frames; the model download while it loads.
+ * From its last status line: never waits on the network.
+ */
+export function servicePart(service: FaceServiceStatus | null, libraryPeople: number | undefined): StudioPart {
+  const label = 'Face recognition';
+  const people = libraryPeople === undefined ? '' : `${libraryPeople} ${libraryPeople === 1 ? 'person' : 'people'}`;
+  const where = service?.where ?? (service?.mode === 'fleet' ? 'fleet:faces (no box found yet)' : 'face service');
+  const health = service?.health ?? null;
+  if (!health) {
+    return { id: 'recognition', label, where, ok: false, detail: `face service not answering${service?.error ? `: ${service.error}` : ''}` };
+  }
+  if (health.state === 'loading') {
+    const download = health.download;
+    return { id: 'recognition', label, where, ok: null, detail: download ? `downloading ${download.file} ${download.pct ?? '?'}% (${download.mb} MB)` : 'loading models' };
+  }
+  if (health.state === 'error' || health.error) {
+    return { id: 'recognition', label, where, ok: false, detail: health.error ?? 'error' };
+  }
+  const receiving = health.camera === 'ok';
+  return {
+    id: 'recognition',
+    label,
+    where,
+    ok: receiving,
+    detail: [
+      'SCRFD+ArcFace',
+      health.backend,
+      receiving ? `${Math.round(health.inferMs)} ms` : 'no frames from the camera',
+      receiving ? `${Math.round(health.fps * 10) / 10} fps` : '',
+      people,
+    ].filter(Boolean).join(' · '),
+  };
 }

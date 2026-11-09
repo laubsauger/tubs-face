@@ -3,7 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { describe, expect, it } from 'vitest';
 import type { HealthParts } from '../../shared/contracts/http.js';
 import type { StudioResponse } from '../../shared/contracts/studio.js';
-import { studioParts, type PartsSources } from './parts.js';
+import { studioParts, type PartsSources, type RecognitionSource } from './parts.js';
 
 // The operator (and the sentient panel) read GET /studio parts to see what
 // runs where when something is off: which box the fleet picked for vision,
@@ -108,6 +108,47 @@ describe('studioParts', () => {
   it('marks what is not in use as such, not as broken', () => {
     const off = { ...base, config: { ...base.config, visionProvider: 'off' as const }, studio: { ...STUDIO, enabled: false } };
     for (const id of ['vision', 'mic', 'faces', 'site']) expect(part(off, id).ok).toBeNull();
+  });
+});
+
+describe('the recognition part with the face service', () => {
+  // Face recognition used to fail silently inside a Chrome page ("LOADING
+  // WORKER" for ever). With FACE_SERVICE the card says where the service runs
+  // and what is wrong with it, even before its first frame.
+  const READY = { state: 'ready' as const, backend: 'CoreML', fps: 5, inferMs: 40.4, frames: 99, source: 'site:cam-flo-mac', camera: 'ok', where: 'studio-mac' };
+  const up = { mode: 'local' as const, where: 'studio-mac:3004', health: READY, error: null };
+  const withService = (service: RecognitionSource['service'], recognizer: RecognitionSource['recognizer'] = 'service'): PartsSources =>
+    ({ ...base, libraryPeople: 10, recognition: { recognizer, service } });
+
+  it('shows the service host and its numbers, in the place the card has for recognition', () => {
+    expect(studioParts(withService(up)).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site', 'camera', 'recognition', 'relationships']);
+    expect(part(withService(up), 'recognition')).toEqual({
+      id: 'recognition', label: 'Face recognition', where: 'studio-mac:3004', ok: true, detail: 'SCRFD+ArcFace · CoreML · 40 ms · 5 fps · 10 people',
+    });
+  });
+
+  it('is not ok, with the reason, when the service is down, failing or gets no frames', () => {
+    expect(part(withService({ ...up, health: null, error: 'connection refused (not running?)' }), 'recognition'))
+      .toMatchObject({ where: 'studio-mac:3004', ok: false, detail: 'face service not answering: connection refused (not running?)' });
+    expect(part(withService({ ...up, health: { ...READY, state: 'error', error: 'could not download the face models from huggingface.co (HTTP Error 503); retrying in 30 s' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'could not download the face models from huggingface.co (HTTP Error 503); retrying in 30 s' });
+    expect(part(withService({ ...up, health: { ...READY, camera: 'no frames', error: 'method DESCRIBE failed: 404 Not Found' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'method DESCRIBE failed: 404 Not Found' });
+    expect(part(withService({ ...up, health: { ...READY, camera: 'no frames' } }), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'SCRFD+ArcFace · CoreML · no frames from the camera · 10 people' });
+    expect(part(withService({ mode: 'fleet', where: null, health: null, error: 'fleet:faces: the hub lists no face service box (or does not answer)' }), 'recognition'))
+      .toMatchObject({ where: 'fleet:faces (no box found yet)', ok: false });
+  });
+
+  it('shows the model download while loading, as not known yet rather than broken', () => {
+    expect(part(withService({ ...up, health: { ...READY, state: 'loading', download: { file: 'w600k_r50.onnx', pct: 45, mb: 78.5, totalMb: 174.4 } } }), 'recognition'))
+      .toMatchObject({ ok: null, detail: 'downloading w600k_r50.onnx 45% (78.5 MB)' });
+  });
+
+  it('follows the switches: off with the camera or recognition switched off, whatever the service says', () => {
+    const studio = { ...STUDIO, switches: { camera: true, faceRecognition: false, visionDescriptions: false, relationships: true, mic: true } };
+    expect(part({ ...withService(up), studio }, 'recognition')).toMatchObject({ where: 'off', ok: null });
+    expect(part({ ...withService(up), studio: { ...STUDIO, switches: { ...studio.switches, faceRecognition: true, camera: false } } }, 'recognition')).toMatchObject({ where: 'off', ok: null });
   });
 });
 

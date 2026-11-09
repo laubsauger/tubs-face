@@ -9,6 +9,7 @@ import { runtimeConfig } from '../config/runtime.js';
 import { windowsModeFrom } from './chrome-window.js';
 import { DEFAULT_CHROME_PATH, createStudioLauncher, defaultProfileRoot, type StudioLauncher } from './launcher.js';
 import { anyPagePublishing, applyStudioPatch, noteLauncherError, streamName, studioConfigMessage, studioSettings, studioSwitchesPatch, toStudioResponse } from './state.js';
+import { syncFaceService } from '../faces/studio-faces.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 const FACE_SIZE = Number.parseInt(process.env.TUBS_STUDIO_SIZE ?? '1024', 10) || 1024;
@@ -80,6 +81,8 @@ export async function updateStudio(patch: unknown): Promise<StudioResponse> {
     console.log(`[studio] ${changed.map((key) => `${key}=${String(studioSettings[key])}`).join(' ')}`);
     // Pages follow site, sources and switches live; only enabled starts or stops them.
     broadcast(studioConfigMessage());
+    // The face service reads the vision source when it recognises (docs/face-service.md).
+    syncFaceService();
     if (changed.includes('enabled')) await syncPages();
     if (changed.includes('windows')) await launcher?.setWindows(windowsModeFrom(studioSettings.windows));
   }
@@ -101,6 +104,8 @@ export async function updateStudio(patch: unknown): Promise<StudioResponse> {
       broadcastConfig();
       // The listener page detects faces while recognition or descriptions is on: it looks again (after the config).
       broadcast(studioConfigMessage());
+      // So does the face service (docs/face-service.md).
+      syncFaceService();
     }
   }
   return toStudioResponse();

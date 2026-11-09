@@ -30,6 +30,7 @@ import { createStudioPresence } from './presence.js';
 import { createFacePublisher, type PublisherStatus } from './publisher.js';
 import { DEFAULT_GLYPH, drawSleepZs, layoutSleepZs, measureGlyph, type GlyphMetrics, type SleepZLayout, type SleepingFace } from './sleep-zs.js';
 import { STUDIO_STATE_HEARTBEAT_MS, studioStateChanged, studioStateOf, type StudioStateSnapshot } from './state-report.js';
+import { browserRecognizes, faceStateOf } from './face-service.js';
 
 const CAPTURE_FPS = 30;
 /** How often a face page says how steadily it renders and publishes (GET /studio actors[].cadence). */
@@ -436,14 +437,16 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       }
     }
     if (options.face) {
+      // While the face service recognises, this page opens no camera and starts no worker (docs/face-service.md).
+      const service = !browserRecognizes(next);
       // Detection runs for recognition or for descriptions (a detected face triggers them).
-      const detection = switches.faceRecognition || store.getState().config?.visionDescriptions !== false;
+      const detection = !service && (switches.faceRecognition || store.getState().config?.visionDescriptions !== false);
       options.face.setRecognition(switches.faceRecognition, detection);
-      const source: VisionSourceSpec | null = next.enabled && switches.camera ? parseVisionSource(next.visionSource) : { kind: 'off' };
+      const source: VisionSourceSpec | null = next.enabled && switches.camera && !service ? parseVisionSource(next.visionSource) : { kind: 'off' };
       if (!source) {
         store.appendLog('error', `Studio: unknown vision source ${next.visionSource}`);
       } else {
-        const key = `${formatVisionSource(source)}@${source.kind === 'site' ? next.site : ''}`;
+        const key = service ? 'service' : `${formatVisionSource(source)}@${source.kind === 'site' ? next.site : ''}`;
         // The models load only with a camera to look through and something to detect faces for.
         if (source.kind !== 'off' && detection && !faceStarted) {
           faceStarted = true;
@@ -566,6 +569,10 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
           return;
         case 'studio_face_call':
           void runFaceCall(message);
+          return;
+        case 'face_observation':
+          // The face service's frames, in place of this page's own detections.
+          if (listener && pictureSource === 'service') store.setState((current) => ({ ...current, ...faceStateOf(message.observation) }));
           return;
       }
     },

@@ -4,6 +4,7 @@ import {
   notePageConnection,
   notePageStatus,
   noteLauncherError,
+  recognizerOf,
   resetStudioReports,
   studioConfigMessage,
   studioSettingsFromEnv,
@@ -24,6 +25,8 @@ describe('studio settings', () => {
       visionSource: 'off',
       prefix: 'tubs-',
       launch: 'chrome',
+      // Faces are recognised in the browser unless FACE_SERVICE says otherwise (docs/face-service.md).
+      faceService: false,
       // Every switch on; the face windows off the screen, so nobody finds a pile of Tubs windows.
       cameraOn: true,
       micOn: true,
@@ -120,5 +123,45 @@ describe('GET /studio', () => {
   it('tells the pages each head\'s stream path', () => {
     const settings = studioSettingsFromEnv({ TUBS_STUDIO_PREFIX: 'show-' });
     expect(studioConfigMessage(settings).streams).toEqual({ main: 'show-main', small: 'show-small' });
+  });
+});
+
+// The listener page's browser worker is what broke unseen ("LOADING WORKER");
+// with FACE_SERVICE set it must not run at all for a camera the server reads,
+// or every face would be greeted twice and the models downloaded for nothing.
+describe('who recognises faces', () => {
+  const on = (env: Record<string, string>) => studioSettingsFromEnv({ TUBS_STUDIO: '1', ...env });
+
+  it('is the face service for a site stream or a snapshot URL once FACE_SERVICE is set, and the pages are told', () => {
+    for (const source of ['site:cam-flo-mac', 'snapshot:http://10.0.0.7/api/snapshot/color.jpg']) {
+      const settings = on({ FACE_SERVICE: 'local', TUBS_VISION_SOURCE: source });
+      expect(recognizerOf(settings)).toBe('service');
+      expect(studioConfigMessage(settings).faces).toBe('service');
+    }
+    expect(on({ FACE_SERVICE: 'http://10.0.0.5:3004', TUBS_VISION_SOURCE: 'site:cam-1' }).faceService).toBe(true);
+  });
+
+  it('stays the browser worker for this Mac\'s camera, and without FACE_SERVICE (the message unchanged)', () => {
+    const local = on({ FACE_SERVICE: 'local', TUBS_VISION_SOURCE: 'local:FaceTime HD Camera' });
+    expect(recognizerOf(local)).toBe('browser');
+    expect('faces' in studioConfigMessage(local)).toBe(false);
+    for (const value of ['', 'off']) {
+      const settings = on({ FACE_SERVICE: value, TUBS_VISION_SOURCE: 'site:cam-1' });
+      expect(recognizerOf(settings)).toBe('browser');
+      expect('faces' in studioConfigMessage(settings)).toBe(false);
+    }
+  });
+
+  it('is nobody without a camera or with studio mode off', () => {
+    expect(recognizerOf(on({ FACE_SERVICE: 'local', TUBS_VISION_SOURCE: 'off' }))).toBe('off');
+    expect(recognizerOf(studioSettingsFromEnv({ FACE_SERVICE: 'local', TUBS_VISION_SOURCE: 'site:cam-1' }))).toBe('off');
+  });
+
+  it('follows a vision source changed live', () => {
+    const settings = on({ FACE_SERVICE: 'local', TUBS_VISION_SOURCE: 'site:cam-1' });
+    applyStudioPatch({ visionSource: 'local' }, settings);
+    expect(studioConfigMessage(settings).faces).toBeUndefined();
+    applyStudioPatch({ visionSource: 'site:cam-2' }, settings);
+    expect(studioConfigMessage(settings).faces).toBe('service');
   });
 });

@@ -17,6 +17,7 @@ import { sendJson } from '../http/response.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { lastLiveStatus } from '../studio/live.js';
 import { listenerFaceWorker, studioSettings } from '../studio/state.js';
+import { serviceFaceWorker } from '../faces/studio-faces.js';
 import { visionModels, visionServers } from '../vision/servers.js';
 import { lastObservation } from '../studio/faces.js';
 import { fromThisOrigin } from './route-helpers.js';
@@ -121,7 +122,8 @@ async function sendTest(request: IncomingMessage, response: ServerResponse): Pro
 
 export function studioVision(): StudioVisionResponse {
   const config = runtimeConfig;
-  const faces = studioSettings.enabled ? listenerFaceWorker() : null;
+  // While the face service recognises, its view stands in for the listener page's worker.
+  const faces = studioSettings.enabled ? serviceFaceWorker() ?? listenerFaceWorker() : null;
   return {
     camera: {
       // What the listener page says, whether or not anyone watches its live state.
