@@ -61,7 +61,7 @@ describe('Chrome flags for a face page', () => {
   // the far corner (macOS keeps a corner on screen); never minimised, which
   // stops the drawing. Moved over a pipe, with no network port unless asked.
   it('put the window off screen by default and control it over a pipe, not a port', () => {
-    expect(args).toEqual(expect.arrayContaining(['--remote-debugging-pipe', '--window-size=240,180', '--window-position=100000,100000']));
+    expect(args).toEqual(expect.arrayContaining(['--remote-debugging-pipe', '--window-size=560,600', '--window-position=100000,100000']));
     expect(args.some((arg) => arg.startsWith('--remote-debugging-port'))).toBe(false);
     const visible = chromeArgs({ url: 'http://x/', profileDir: '/tmp/p/small', slot: 1, windows: 'visible' });
     expect(visible).toEqual(expect.arrayContaining(['--window-size=560,600', '--window-position=620,60']));
@@ -184,5 +184,16 @@ describe('studio launcher', () => {
     });
     await launcher.sync(true);
     expect(errors).toEqual([expect.stringContaining('Chrome not found'), expect.stringContaining('Chrome not found')]);
+  });
+});
+
+// The face's pixel grid is sized from its window: an off-screen window smaller
+// than the on-screen one drew a coarse face (four-pixel eyes) into the stream.
+describe('off-screen face windows', () => {
+  it('are as large as on-screen ones, so the face renders the same', async () => {
+    const { windowBounds } = await import('./chrome-window.js');
+    const off = windowBounds('offscreen', 0);
+    const on = windowBounds('visible', 0);
+    expect({ width: off.width, height: off.height }).toEqual({ width: on.width, height: on.height });
   });
 });
