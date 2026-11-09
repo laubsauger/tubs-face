@@ -2,6 +2,7 @@ import { recentModelReplies, wasLastReplyCutOff } from './context.js';
 import { hasNotesInView, markNameAsked, nameAskCandidate, peopleInView, pickGossip, type Position } from './field-notes.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { BIT_MAX_SENTENCES, MAX_OUTPUT_SENTENCES } from './text.js';
+import { bitWordStems, bitsToStayOff, lineWords, noteBitLines, offerBit, stem, type Head, type SpokenLine } from './bits.js';
 
 // Now and then Tubs brings up what an earlier visitor said, so separate
 // visitors feel like one audience he is keeping track of.
@@ -94,48 +95,81 @@ const MOVE_CHANCE = 0.55;
 // Recent replies across visitors. The conversation history resets for every
 // new visitor, so without this nothing noticed Tubs coming back to the same
 // motif (Wi-Fi drops, oat milk) over and over.
-const recentReplies: string[] = [];
+// Kept by time as well as by count: on a busy studio night the last ten
+// replies are a few minutes, and a motif could come back every quarter of an
+// hour without ever being three of the last ten.
+interface NotedReply { at: number; lines: SpokenLine[] }
+const recentReplies: NotedReply[] = [];
 const MOTIF_MEMORY = 10;
+const MOTIF_WINDOW_MS = 30 * 60_000;
+const MOTIF_KEPT_MAX = 150;
 const MOTIF_REPEATS = 3;
 const MOTIF_STOPWORDS = new Set(('about after again also always another anyone anything around because been before being better could does doing done dont even every everyone from going have here into just know like look made make maybe more most much never nothing only other over people really right said same says should since some something still than that thats their them then there these they thing things think this those through time very want what when where which while will with would your youre youve '
   + 'the and for you are but not all can was one has his her its our out who why how get got let way too off any did yes now see say two '
   // Numbers ("two-oh-four" is the studio's name) and the swearing the persona asks for are not motifs.
   + 'three four five seven eight nine hundred thousand someone fuck fucking fuckin shit shitty damn').split(' '));
 
-// The body joke comes back in different words every time (tubs, garbage cans,
-// buckets, nylon straps, plastic casing), so word counts never caught it. All
-// of those count as one motif, and two of the last replies are already enough.
-const BODY_MOTIF = 'your own body (tubs, plastic, straps)';
-const BODY_WORDS = new Set(('tub plastic bucket buckets bin bins garbage trash container containers casing shell lunchbox '
-  + 'strap straps strapped ratchet nylon legs legless').split(' '));
-const BODY_REPEATS = 2;
+// The body joke (tubs, garbage cans, nylon straps, plastic casing) and the
+// studio lore are running bits now (bits.ts): one bit for all their words,
+// with a cooldown. The count here is for everything else the heads fall into.
 
-export function noteReplyText(text: string): void {
-  if (!text.trim()) return;
-  recentReplies.push(text);
-  if (recentReplies.length > MOTIF_MEMORY) recentReplies.shift();
+/**
+ * What the heads said in a reply that was heard, both heads' lines: the
+ * worn-motif memory and the running bits learn from it.
+ */
+export function noteReplyLines(lines: readonly SpokenLine[], now = Date.now()): void {
+  const spoken = lines.filter((line) => line.text.trim()).map((line) => ({ head: line.head, text: line.text }));
+  if (spoken.length === 0) return;
+  recentReplies.push({ at: now, lines: spoken });
+  if (recentReplies.length > MOTIF_KEPT_MAX) recentReplies.shift();
+  noteBitLines(spoken, now);
 }
 
-/** Words and two-word phrases that keep coming back across recent replies, phrases first. */
-export function wornMotifs(replies: readonly string[] = recentReplies, max = 3): string[] {
+/** The last ten, or everything from the last half hour when that is more. */
+function motifWindow<T extends { at: number }>(items: readonly T[], now: number): T[] {
+  return items.filter((item, index) => index >= items.length - MOTIF_MEMORY || now - item.at <= MOTIF_WINDOW_MS);
+}
+
+/** Recent replies, both heads' lines as one text each. */
+export function recentReplyTexts(now = Date.now()): string[] {
+  return motifWindow(recentReplies, now).map((reply) => reply.lines.map((line) => line.text).join(' '));
+}
+
+/** One head's recent lines, by its own count: Small speaks on fewer turns, so its last ten lines reach further back. */
+function recentHeadLines(head: Head, now: number): string[] {
+  const lines = recentReplies.flatMap((reply) => reply.lines.filter((line) => line.head === head).map((line) => ({ at: reply.at, text: line.text })));
+  return motifWindow(lines, now).map((line) => line.text);
+}
+
+/**
+ * Words and two-word phrases that keep coming back across recent replies,
+ * phrases first. Plurals count as the word ("remote", "remotes"), and words a
+ * running bit owns are left to the bit.
+ */
+export function wornMotifs(replies: readonly string[] = recentReplyTexts(), max = 3, owned: ReadonlySet<string> = bitWordStems()): string[] {
   const counts = new Map<string, number>();
+  // As first said, for the stage direction; counted by stem.
+  const said = new Map<string, string>();
   for (const reply of replies) {
-    const words = reply.toLowerCase().replace(/wi-?fi/g, 'wifi').replace(/['’]/g, '').match(/[a-z]+/g) ?? [];
+    const words = lineWords(reply);
     const terms = new Set<string>();
     words.forEach((word, index) => {
-      if (BODY_WORDS.has(word)) {
-        terms.add(BODY_MOTIF);
-        return;
-      }
       if (word.length < 4 || MOTIF_STOPWORDS.has(word)) return;
-      terms.add(word);
+      const key = stem(word);
+      if (owned.has(key)) return;
+      terms.add(key);
+      if (!said.has(key)) said.set(key, word);
       const next = words[index + 1];
-      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next) && !BODY_WORDS.has(next)) terms.add(`${word} ${next}`);
+      if (next && next.length >= 3 && !MOTIF_STOPWORDS.has(next) && !owned.has(stem(next))) {
+        const phrase = `${key} ${stem(next)}`;
+        terms.add(phrase);
+        if (!said.has(phrase)) said.set(phrase, `${word} ${next}`);
+      }
     });
     for (const term of terms) counts.set(term, (counts.get(term) ?? 0) + 1);
   }
   const worn = [...counts]
-    .filter(([term, count]) => count >= (term === BODY_MOTIF ? BODY_REPEATS : MOTIF_REPEATS))
+    .filter(([, count]) => count >= MOTIF_REPEATS)
     .sort((a, b) => b[1] - a[1] || b[0].split(' ').length - a[0].split(' ').length);
   const picked: string[] = [];
   for (const [term] of worn) {
@@ -143,7 +177,41 @@ export function wornMotifs(replies: readonly string[] = recentReplies, max = 3):
     picked.push(term);
     if (picked.length >= max) break;
   }
-  return picked;
+  return picked.map((term) => said.get(term) ?? term);
+}
+
+/**
+ * What the next stage direction tells the heads to stay off: running bits used
+ * just now, worn words across both heads, and each head's own. Per head
+ * because a tic of Small's ("I can smell your ...") sat among Main's lines in
+ * the combined count and was seen in Mini's lines first.
+ */
+export function stayOffMotifs(now = Date.now()): { all: string[]; main: string[]; small: string[] } {
+  const all = [...bitsToStayOff(now), ...wornMotifs(recentReplyTexts(now))];
+  const key = (term: string) => lineWords(term).map(stem).join(' ');
+  const listed = new Set(all.map(key));
+  const own = (head: Head) => wornMotifs(recentHeadLines(head, now), 2).filter((term) => !listed.has(key(term)));
+  return { all, main: own('main'), small: own('small') };
+}
+
+const HEAD_NAMES: Record<Head, string> = { main: 'Main', small: 'Small' };
+
+function stayOffLines(motifs: { all: string[]; main: string[]; small: string[] }, mode: 'single' | 'dual' | 'proactive'): string[] {
+  const quoted = (terms: string[]) => terms.map((term) => `"${term}"`).join(', ');
+  const lines: string[] = [];
+  if (motifs.all.length > 0) lines.push(`Fresh material: you keep coming back to ${quoted(motifs.all)}. Stay off them this time.`);
+  // Tubs alone has only Main's lines, and those are the combined count.
+  if (mode !== 'single') {
+    for (const head of ['main', 'small'] as const) {
+      if (motifs[head].length > 0) lines.push(`${HEAD_NAMES[head]} keeps coming back to ${quoted(motifs[head])}. ${HEAD_NAMES[head]} stays off ${motifs[head].length > 1 ? 'them' : 'it'} this time.`);
+    }
+  }
+  return lines;
+}
+
+/** Test helper: no replies noted. */
+export function resetMotifMemory(): void {
+  recentReplies.length = 0;
 }
 
 export function lengthOf(text: string): LengthKey {
@@ -227,9 +295,15 @@ export function buildTurnDirection(
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
 
-  // Proactive turns set their own length and want a reaction, so only the opener ban applies.
+  // Proactive turns set their own length and want a reaction, so only the
+  // opener ban and the stay-off list apply: "say what is on your mind" is
+  // where a running bit comes back on its own.
   if (mode === 'proactive') {
-    return openers.length > 0 ? `${HEADER}\n- Do not start with: ${openers.map((value) => `"${value}"`).join(', ')}.` : '';
+    const proactive = [
+      ...(openers.length > 0 ? [`Do not start with: ${openers.map((value) => `"${value}"`).join(', ')}.`] : []),
+      ...stayOffLines(stayOffMotifs(), mode),
+    ];
+    return proactive.length > 0 ? `${HEADER}\n${proactive.map((line) => `- ${line}`).join('\n')}` : '';
   }
 
   let length: LengthKey | null = null;
@@ -296,13 +370,18 @@ export function buildTurnDirection(
     lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
   }
 
-  const worn = wornMotifs();
-  if (worn.length > 0) {
-    lines.push(`Fresh material: you keep coming back to ${worn.map((term) => `"${term}"`).join(', ')}. Stay off them this time.`);
-  }
+  lines.push(...stayOffLines(stayOffMotifs(), mode));
 
   if (random() < SWEAR_CHANCE) {
     lines.push('Let a swear word land in this one (fuck, shit), where it fits naturally.');
+  }
+
+  // A running bit on few turns only, off cooldown (bits.ts). The offer is the
+  // only way a bit reaches the model; nothing checks or redoes the reply.
+  const bit = offerBit(mode, random);
+  if (bit) {
+    const who = mode === 'single' ? 'you' : bit.head === 'main' ? 'Main' : bit.head === 'small' ? 'Small' : 'either head';
+    lines.push(`If it fits, ${who} may use this: ${bit.text}`);
   }
 
   return `${HEADER}\n${lines.map((line) => `- ${line}`).join('\n')}`;

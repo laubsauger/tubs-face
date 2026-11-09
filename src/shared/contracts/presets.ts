@@ -2,6 +2,7 @@
 
 import type { GreetingsConfig } from './faces.js';
 import type { KokoroVoice, RuntimeConfig } from './config.js';
+import type { RunningBit } from './bits.js';
 
 export interface PresetFile {
   name: string;
@@ -16,6 +17,8 @@ export interface PresetFile {
   };
   /** Canned lines (src/persona/greetings.json's shape). Absent: the built-in ones. */
   lines?: GreetingsConfig;
+  /** Running gags and traits, offered on few turns (contracts/bits.ts). Absent: the built-in ones, tubs.json's. */
+  bits?: RunningBit[];
   /** Ming or Kokoro voice names. */
   voices?: { main?: KokoroVoice; small?: KokoroVoice };
   /** glitch* settings and secondaryGlitchFxBaseColor. */

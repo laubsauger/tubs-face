@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { applyCors, sendNoContent } from '../http/response.js';
+import { handleBitsRoute } from './bits-routes.js';
 import { handleFaceRoute } from './face-routes.js';
 import { handleMemoryRoute } from './memory-routes.js';
 import { handlePresetRoute } from './preset-routes.js';
@@ -29,5 +30,6 @@ export async function handleApiRequest(request: IncomingMessage, response: Serve
     || await handleRecordingRoute(request, response, url)
     || await handleStudioRoute(request, response, url)
     || await handleRelationshipRoute(request, response, url)
-    || await handlePresetRoute(request, response, url);
+    || await handlePresetRoute(request, response, url)
+    || await handleBitsRoute(request, response, url);
 }
