@@ -3,7 +3,8 @@ import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { logConversation, logTubsReply } from '../observability/conversation-log.js';
 import { captureTurnTrace } from '../observability/langfuse.js';
-import { noteReplyEmoji, noteReplyText } from './variety.js';
+import { noteReplyEmoji, noteReplyLines } from './variety.js';
+import type { SpokenLine } from './bits.js';
 import { forgetConversation } from './context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
@@ -210,9 +211,17 @@ function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, resul
   if (!result.superseded) {
     void logTubsReply(result.reply.text, result.beats);
     noteReplyEmoji(result.reply.emotion?.emoji);
-    noteReplyText(result.reply.text);
+    noteReplyLines(spokenLines(result));
   }
   captureTurnTrace({ source, userText: input, result, startedAt, ...(turnTimer ? { turnTimer } : {}) });
+}
+
+/** Who said what: each head's speak beats in a two-head turn, else Tubs alone. */
+function spokenLines(result: Pick<AssistantTurnResult, 'reply' | 'beats'>): SpokenLine[] {
+  if (!result.beats) return [{ head: 'main', text: result.reply.text }];
+  return result.beats
+    .filter((beat) => beat.action === 'speak' && beat.text?.trim())
+    .map((beat) => ({ head: beat.actor === 'small' ? 'small' : 'main', text: beat.text ?? '' }));
 }
 
 /**

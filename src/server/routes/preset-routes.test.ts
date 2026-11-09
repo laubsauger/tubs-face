@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
+import type { BitsResponse } from '../../shared/contracts/bits.js';
 
 // A night may be a different character: applying a preset must change who
 // they are, how they sound and how they look, live, mid-show, without a
@@ -29,6 +30,7 @@ const { initWebSocketServer } = await import('../ws/server.js');
 const { runtimeConfig } = await import('../config/runtime.js');
 const { buildDualHeadSystemInstruction } = await import('../assistant/prompt.js');
 const { resetPresets } = await import('../presets/presets.js');
+const { resetBits } = await import('../assistant/bits.js');
 
 let server: http.Server;
 let base = '';
@@ -53,6 +55,7 @@ afterAll(() => new Promise<void>((resolve) => server.close(() => resolve())));
 beforeEach(() => {
   Object.assign(runtimeConfig, structuredClone(original));
   resetPresets();
+  resetBits();
   writeFileSync(path.join(presets, 'pirate.json'), JSON.stringify(PIRATE));
 });
 
@@ -106,6 +109,29 @@ describe('applying a character preset', () => {
     expect(buildDualHeadSystemInstruction()).toBe(prompt);
   });
 
+  // A different character has different running gags; the operator sees them
+  // and can switch one off for the night in the Mind tab.
+  it('brings its own running bits, and broken bits change nothing', async () => {
+    const PARROT = { id: 'the-parrot', text: 'Your parrot owes you money.', match: ['parrot'], cooldownMin: 20 };
+    writeFileSync(path.join(presets, 'pirate.json'), JSON.stringify({ ...PIRATE, bits: [PARROT] }));
+    expect((await post('/presets/apply', { name: 'Pirate' })).status).toBe(200);
+    const bits = async () => (await (await fetch(`${base}/bits`)).json()) as BitsResponse;
+    expect((await bits()).bits.map((bit) => [bit.id, bit.enabled])).toEqual([['the-parrot', true]]);
+
+    expect((await post('/bits', { id: 'the-parrot', enabled: false })).status).toBe(200);
+    expect((await bits()).bits[0]).toMatchObject({ id: 'the-parrot', enabled: false, uses: 0, cooldownLeftMs: 0 });
+    expect((await post('/bits', { id: 'no-such-bit', enabled: false })).status).toBe(404);
+    expect((await post('/bits', { id: 'the-parrot' })).status).toBe(400);
+
+    writeFileSync(path.join(presets, 'broken.json'), JSON.stringify({ ...PIRATE, name: 'Broken', look: { glitchFxBaseColor: '#000000' }, bits: [{ ...PARROT, id: 'other', match: ['/(/'] }] }));
+    const before = structuredClone(runtimeConfig);
+    const response = await post('/presets/apply', { name: 'Broken' });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toMatch(/other/);
+    expect(runtimeConfig).toEqual(before);
+    expect((await bits()).bits.map((bit) => bit.id)).toEqual(['the-parrot']);
+  });
+
   it('can take its persona from a markdown file next to it, never from elsewhere', async () => {
     writeFileSync(path.join(presets, 'witch.md'), 'You are Tubs the swamp witch.\n\n{{OUTPUT_FORMAT_INSTRUCTIONS}}');
     writeFileSync(path.join(presets, 'witch.json'), JSON.stringify({ name: 'Witch', persona: { systemPromptFile: 'witch.md' } }));
@@ -136,6 +162,16 @@ describe('saving a character preset', () => {
     expect((await post('/presets/apply', { name: 'night two' })).status).toBe(200);
     expect(sameProfiles(runtimeConfig)).toEqual(sameProfiles(saved));
     expect(buildDualHeadSystemInstruction()).toBe(savedPrompt);
+  });
+
+  // The built-in bits live in tubs.json, and the operator saves over "Tubs"
+  // from the dashboard: that must not drop them.
+  it('keeps the running bits when saving over the built-in character', async () => {
+    const WIFI = { id: 'studio-wifi', text: 'The Wi-Fi drops.', match: ['wifi'], cooldownMin: 30 };
+    writeFileSync(path.join(presets, 'tubs.json'), JSON.stringify({ name: 'Tubs', bits: [WIFI] }));
+    expect((await post('/presets', { name: 'Tubs' })).status).toBe(200);
+    const file = JSON.parse(readFileSync(path.join(presets, 'tubs.json'), 'utf8')) as { bits: unknown };
+    expect(file.bits).toEqual([WIFI]);
   });
 
   it('saves the built-in persona by reference, not as a copy', async () => {
