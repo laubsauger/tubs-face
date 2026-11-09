@@ -1,6 +1,6 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -172,6 +172,61 @@ describe('admin actions in the memory view', () => {
     for (const address of ['8.8.8.8', '172.32.0.1', '192.169.0.1', '2001:db8::1', '::ffff:1.2.3.4', undefined]) {
       expect(isLocalNetworkAddress(address), String(address)).toBe(false);
     }
+  });
+});
+
+// Curating the library by photo (the memory view's cards): a misfiled photo is
+// moved to its owner ("save it") or removed, alone or several at once; each
+// change says what it did, tells the face pages, lands in the edit log with who
+// asked, and can be undone for a minute; a backup can be put back.
+describe('curating the face library from the memory view', () => {
+  const library = async () => ((await (await fetch(`${base}/faces`)).json()) as { faces: Array<{ id: string; name: string; embedding: number[] }> }).faces;
+  const pageMessages = async () => {
+    const page = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+    const received: string[] = [];
+    page.on('message', (raw) => received.push((JSON.parse(String(raw)) as { type: string }).type));
+    await new Promise<void>((resolve) => page.once('open', () => resolve()));
+    return { received, close: () => page.close() };
+  };
+
+  it('moves a photo to another person: same sample, new owner, the pages told, undo for a minute', async () => {
+    const page = await pageMessages();
+    const before = (await library()).find((face) => face.id === 'dimi1')!;
+    const response = await post('/memory/library/samples/move', { ids: ['dimi1'], to: 'flo' });
+    expect(response.status).toBe(200);
+    const change = await response.json() as { summary: string; moved: number; undo: string };
+    expect(change).toMatchObject({ moved: 1, summary: 'Moved 1 photo from Dimi to Flo.' });
+    expect((await library()).find((face) => face.id === 'dimi1')).toEqual({ ...before, name: 'Flo' });
+    expect(card(await memory(), 'name:flo').library.map((entry) => entry.id)).toEqual(['flo1', 'flo2', 'dimi1']);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(page.received).toContain('faces_changed');
+
+    expect((await post('/memory/library/undo', { undo: change.undo })).status).toBe(200);
+    expect((await library()).find((face) => face.id === 'dimi1')!.name).toBe('Dimi');
+    expect((await post('/memory/library/undo', { undo: change.undo })).status).toBe(409);
+    // Only to someone the library knows.
+    expect((await post('/memory/library/samples/move', { ids: ['dimi1'], to: 'Nobody' })).status).toBe(400);
+    page.close();
+  });
+
+  it('removes the photos it names and no others, logged with who asked', async () => {
+    const response = await post('/memory/library/samples/remove', { ids: ['flo2', 'dimi1', 'not-there'] });
+    expect(await response.json()).toMatchObject({ removed: 2, summary: 'Removed 2 photos of Flo, Dimi.' });
+    expect((await library()).map((face) => face.id)).toEqual(['flo1']);
+    const log = readFileSync(path.join(dir, 'face-library.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(log.at(-1)).toMatchObject({ action: 'remove sample', names: ['Flo', 'Dimi'], count: 2, origin: 'POST /memory/library/samples/remove from 127.0.0.1' });
+    expect((await post('/memory/library/samples/remove', { ids: ['flo1'] }, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+  });
+
+  it('lists backups with who was in them, and restores one exactly', async () => {
+    expect((await post('/memory/library/remove', { name: 'Dimi' })).status).toBe(200);
+    const listed = (await (await fetch(`${base}/memory/library/backups`)).json()) as { backups: Array<{ id: string; samples: number; people: Array<{ name: string; samples: number }>; restores: { back: Array<{ name: string; samples: number }>; unchanged: string[] } }> };
+    const before = listed.backups[0]!;
+    expect(before).toMatchObject({ samples: 3, restores: { back: [{ name: 'Dimi', samples: 1 }], unchanged: ['Flo'] } });
+    expect(JSON.stringify(listed)).not.toContain('embedding');
+    expect((await post('/memory/library/restore', { backup: before.id })).status).toBe(200);
+    expect((await library()).map((face) => face.id)).toEqual(['flo1', 'flo2', 'dimi1']);
+    expect((await post('/memory/library/restore', { backup: '../face-library.json' })).status).toBe(404);
   });
 });
 

@@ -14,6 +14,22 @@ export interface MemoryLibraryEntry {
   id: string;
   createdAt: number | null;
   photo: string | null;
+  /** Its place among the person's samples, oldest first (1-based): "Rapha #3". */
+  index: number;
+  /** What the face library audit says about it (server/faces/audit.ts); null when nothing. */
+  flag: MemorySampleFlag | null;
+}
+
+/**
+ * A sample that may not be its owner's: it reaches the match threshold against
+ * someone else's sample (it can name their face as its owner), or none of its
+ * owner's other samples resembles it.
+ */
+export interface MemorySampleFlag {
+  looksLike: { name: string; sim: number } | null;
+  unlikeOwn: boolean;
+  /** The person it resembles most (also below the threshold): the Move picker's first choice. */
+  like: { name: string; sim: number } | null;
 }
 
 export interface MemoryCard {
@@ -63,4 +79,31 @@ export interface MemoryForgetRequest {
 /** POST /memory/library/remove: delete all face library samples of this name (privacy). */
 export interface MemoryLibraryRemoveRequest {
   name: string;
+}
+
+/** POST /memory/library/samples/remove: delete these face library samples (and their photos). */
+export interface MemorySamplesRemoveRequest {
+  ids: string[];
+}
+
+/** POST /memory/library/samples/move: these samples are someone else's (embedding, photo and time stay). */
+export interface MemorySamplesMoveRequest {
+  ids: string[];
+  to: string;
+}
+
+/** POST /memory/library/undo: take the last library change back (within a minute). */
+export interface MemoryLibraryUndoRequest {
+  undo: string;
+}
+
+/** The answer to a library change: what happened, and how to undo it until `until`. */
+export interface MemoryLibraryChangeResponse {
+  ok: true;
+  /** What happened, in a sentence for the undo bar: "Removed 1 photo of Rapha." */
+  summary: string;
+  removed?: number;
+  moved?: number;
+  undo: string;
+  until: number;
 }
