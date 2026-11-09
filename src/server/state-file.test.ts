@@ -6,9 +6,9 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // On a studio Mac studio-manager restarts tubs-face when it must. The night's
-// character, the relationships toggle, the vision provider and the mic and
-// picture sources come back as the operator left them, from a local file
-// that never holds a key.
+// character, the relationships toggle, the vision provider, the mic and
+// picture sources and what each head wears come back as the operator left
+// them, from a local file that never holds a key.
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'tubs-state-'));
 const file = path.join(dir, 'tubs-state.json');
@@ -32,7 +32,7 @@ const post = (route: string, body: unknown) => fetch(`${base}${route}`, { method
 describe('the studio state file', () => {
   it('keeps the operator\'s choices as they change, and never the vision key', async () => {
     expect((await post('/presets/apply', { name: 'Pirate' })).status).toBe(200);
-    expect((await post('/config', { relationshipsEnabled: false, visionProvider: 'openai', visionModel: 'qwen3-vl:4b-instruct', visionBaseUrl: 'http://127.0.0.1:11434/v1', visionApiKey: 'secret-key-123' })).status).toBe(200);
+    expect((await post('/config', { relationshipsEnabled: false, visionProvider: 'openai', visionModel: 'qwen3-vl:4b-instruct', visionBaseUrl: 'http://127.0.0.1:11434/v1', visionApiKey: 'secret-key-123', propSmall: 'crown' })).status).toBe(200);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ preset: 'Pirate', visionProvider: 'openai', relationshipsEnabled: false });
     expect((await post('/studio', { micSource: 'site:mic-1', visionSource: 'snapshot:http://127.0.0.1:7000/color.jpg' })).status).toBe(200);
     const saved = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
@@ -44,6 +44,8 @@ describe('the studio state file', () => {
       visionBaseUrl: 'http://127.0.0.1:11434/v1',
       micSource: 'site:mic-1',
       visionSource: 'snapshot:http://127.0.0.1:7000/color.jpg',
+      propMain: 'none',
+      propSmall: 'crown',
     });
     expect(readFileSync(file, 'utf8')).not.toContain('secret-key-123');
   });
@@ -56,8 +58,8 @@ describe('the studio state file', () => {
     const { listPresets } = await import('./presets/presets.js');
     // A fresh start: defaults and env only.
     expect(runtimeConfig.relationshipsEnabled).toBe(true);
-    expect(restoreState()).toEqual(expect.arrayContaining(['preset Pirate', 'relationshipsEnabled', 'visionProvider', 'micSource', 'visionSource']));
-    expect(runtimeConfig).toMatchObject({ relationshipsEnabled: false, visionProvider: 'openai', visionModel: 'qwen3-vl:4b-instruct', glitchFxBaseColor: '#ff3300' });
+    expect(restoreState()).toEqual(expect.arrayContaining(['preset Pirate', 'relationshipsEnabled', 'visionProvider', 'micSource', 'visionSource', 'propSmall']));
+    expect(runtimeConfig).toMatchObject({ relationshipsEnabled: false, visionProvider: 'openai', visionModel: 'qwen3-vl:4b-instruct', glitchFxBaseColor: '#ff3300', propSmall: 'crown' });
     expect(studioSettings).toMatchObject({ micSource: 'site:mic-1', visionSource: 'snapshot:http://127.0.0.1:7000/color.jpg' });
     expect(listPresets().active).toBe('Pirate');
   });

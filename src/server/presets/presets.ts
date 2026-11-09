@@ -2,7 +2,7 @@
 // personality. A preset is a named snapshot of who the characters are
 // (persona template, extra instruction, canned lines, running bits), how they
 // sound (a voice per head), how they look (glitch colours, shapes, FX,
-// expression profiles) and how they behave (sleep timing, interruptible,
+// expression profiles, props) and how they behave (sleep timing, interruptible,
 // two-head mode). Stored as readable JSON in config/presets/<name>.json
 // (TUBS_CONFIG_DIR), so presets can live in git. Applying one is safe
 // mid-show: it changes the live config and the persona in place, all or
@@ -23,9 +23,10 @@ import { personaOverride, setPersonaOverride } from '../persona/index.js';
 /** Behaviour: what the characters do, as opposed to how they look or sound. */
 export const PRESET_BEHAVIOUR_KEYS = ['sleepTimeout', 'interruptible', 'dualHeadEnabled', 'dualHeadMode', 'dualHeadTurnPolicy'] as const satisfies ReadonlyArray<keyof RuntimeConfig>;
 
-/** Look: every glitch setting (colours, shapes, FX, expression profiles) and Small's colour. */
+/** Look: every glitch setting (colours, shapes, FX, expression profiles), Small's colour and what each head wears. */
 export function lookKeys(): Array<keyof RuntimeConfig> {
-  return (Object.keys(runtimeConfig) as Array<keyof RuntimeConfig>).filter((key) => key.startsWith('glitch') || key === 'secondaryGlitchFxBaseColor');
+  const extra = new Set<string>(['secondaryGlitchFxBaseColor', 'propMain', 'propSmall']);
+  return (Object.keys(runtimeConfig) as Array<keyof RuntimeConfig>).filter((key) => key.startsWith('glitch') || extra.has(key));
 }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/;

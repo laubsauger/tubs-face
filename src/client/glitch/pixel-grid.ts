@@ -9,13 +9,15 @@ import {
   FEATURE_BOX_GLOBAL_SCALE_Y,
   FEATURE_MOUTH_SCALE_X,
   FEATURE_MOUTH_SCALE_Y,
+  GAZE_EYE_RANGE_Y,
 } from './constants.js';
+import { PROP_GAP, PROP_TONES, propHeadroom, rasterizeProp, type PropBase } from './props.js';
 import { hexToHSL, testShapeHit } from './utils.js';
 
 export interface PixelGridPoint {
   x: number;
   y: number;
-  /** Shape the pixel belongs to: 0 left eye, 1 right eye, 2 mouth, 3+ tears. */
+  /** Shape the pixel belongs to: 0 left eye, 1 right eye, 2 mouth, 3-4 tears, 5+ a worn prop (props.ts). */
   group: number;
   /** Size factor. Below 1 only while the pixel grows in or shrinks away in a morph. */
   scale: number;
@@ -36,6 +38,8 @@ export interface ShapeCenter {
 export interface PixelGridBuildResult {
   pixelGrid: PixelGridPoint[];
   shapeCenters: ShapeCenter[];
+  /** Where a worn prop sits at rest; null without one. */
+  propBase: PropBase | null;
 }
 
 /** How the face sits in its box: the share of the box it may fill, and where it sits vertically. */
@@ -66,9 +70,38 @@ export const SCREEN_LAYOUT: FaceLayout = { safeX: FACE_SAFE_AREA_X, safeY: FACE_
  */
 export const STUDIO_LAYOUT: FaceLayout = { safeX: 0.74, safeY: 1, top: 0.5, anchor: 'shapes' };
 
-/** Scale that fits the face's viewBox into the safe area of a width x height box. */
-export function featureFitScale(width: number, height: number, viewBox: { w: number; h: number }, layout: FaceLayout = SCREEN_LAYOUT): number {
-  return Math.min((width * layout.safeX) / viewBox.w, (height * layout.safeY) / viewBox.h);
+/**
+ * Highest a worn prop reaches at rest in a studio frame, as a share of the
+ * frame's height from its top: the prop goes up with the eyes when they look
+ * all the way up, and with surprised eyes opening taller, popping and turning
+ * with the gaze (up to about 0.035 of the frame, props.test.ts), plus a
+ * little to spare. Window renderers show the frame and nothing past it
+ * (sentient-studio window/faces.wgsl pads around the frame, it never draws
+ * outside it), so a hat above this would be cut off.
+ */
+export const STUDIO_PROP_TOP = GAZE_EYE_RANGE_Y + 0.045;
+
+/**
+ * Scale that fits the face's viewBox into the safe area of a width x height
+ * box. A worn prop is fitted with the face: on a screen the two share the
+ * safe area; in a studio frame the face keeps its size unless face and prop
+ * don't fit between STUDIO_PROP_TOP and the same margin at the bottom.
+ */
+export function featureFitScale(width: number, height: number, config: GlitchConfig, layout: FaceLayout = SCREEN_LAYOUT): number {
+  const vb = config.svg.viewBox;
+  const headroom = propHeadroom(config.prop);
+  const onScreen = layout.anchor === 'viewBox' ? headroom : 0;
+  const fit = Math.min((width * layout.safeX) / vb.w, (height * layout.safeY) / (vb.h + onScreen));
+  if (layout.anchor !== 'shapes' || headroom === 0 || config.svg.shapes.length === 0) return fit;
+  const { top, bottom } = restingSpanY(config);
+  const room = height * (1 - 2 * STUDIO_PROP_TOP);
+  return Math.min(fit, room / ((bottom - top + headroom) * FEATURE_BOX_GLOBAL_SCALE_Y));
+}
+
+/** Top and bottom of the face's resting shapes, in viewBox units. */
+function restingSpanY(config: GlitchConfig): { top: number; bottom: number } {
+  const rest = config.svg.shapes;
+  return { top: Math.min(...rest.map((shape) => shape.y)), bottom: Math.max(...rest.map((shape) => shape.y + shape.h)) };
 }
 
 /** Where the face's viewBox is drawn in a width x height box. */
@@ -81,17 +114,22 @@ export interface FaceBox {
 
 export function faceBox(config: GlitchConfig, width: number, height: number, layout: FaceLayout = SCREEN_LAYOUT): FaceBox {
   const vb = config.svg.viewBox;
-  const fitScale = featureFitScale(width, height, vb, layout);
+  const fitScale = featureFitScale(width, height, config, layout);
   const w = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
   const h = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
+  // A worn prop sits above the face: on a screen the two are placed together.
+  const headroom = propHeadroom(config.prop) * (h / vb.h);
   let x = (width - w) * 0.5;
-  let y = (height - h) * layout.top;
+  let y = (height - h - headroom) * layout.top + headroom;
   if (layout.anchor === 'shapes' && config.svg.shapes.length > 0) {
     const rest = config.svg.shapes;
     const centreX = (Math.min(...rest.map((shape) => shape.x)) + Math.max(...rest.map((shape) => shape.x + shape.w))) / 2;
-    const centreY = (Math.min(...rest.map((shape) => shape.y)) + Math.max(...rest.map((shape) => shape.y + shape.h))) / 2;
+    const { top, bottom } = restingSpanY(config);
     x = width * 0.5 - centreX * (w / vb.w);
-    y = height * layout.top - centreY * (h / vb.h);
+    y = height * layout.top - ((top + bottom) / 2) * (h / vb.h);
+    // A studio frame stays centred on the face; only a prop that would rise
+    // past STUDIO_PROP_TOP moves the face down, as far as it needs.
+    if (headroom > 0) y += Math.max(0, height * STUDIO_PROP_TOP - (y + top * (h / vb.h) - headroom));
   }
   return { x, y, w, h };
 }
@@ -196,9 +234,36 @@ export function buildPixelGrid(
     }
   }
 
+  // A worn prop is laid out on the resting eyes, the same in every
+  // expression, so an expression change never re-lays it; the shader moves
+  // it onto the eyes as drawn (props.ts packPropTransform).
+  let propBase: PropBase | null = null;
+  const eyes = config.svg.shapes.slice(0, 2);
+  if (config.prop !== 'none' && eyes.length === 2) {
+    const left = Math.min(...eyes.map((eye) => eye.x));
+    const right = Math.max(...eyes.map((eye) => eye.x + eye.w));
+    const top = Math.min(...eyes.map((eye) => eye.y));
+    const eyeTop = offsetY + top * mapScaleY;
+    propBase = { x: offsetX + ((left + right) / 2) * mapScaleX, y: eyeTop - PROP_GAP * mapScaleY, eyeTop };
+    for (const pixel of rasterizeProp(config.prop, propBase.x, propBase.y, mapScaleX, mapScaleY, sz, gap)) {
+      const tone = PROP_TONES[pixel.tone];
+      pixelGrid.push({
+        x: pixel.x,
+        y: pixel.y,
+        group: pixel.group,
+        scale: 1,
+        hueOff: tone.hue + (Math.random() - 0.5) * 2 * hueVar,
+        brightOff: tone.light + (Math.random() - 0.5) * 2 * brightVar,
+        overrideH: -1,
+        overrideS: 0,
+      });
+    }
+  }
+
   return {
     pixelGrid,
     shapeCenters,
+    propBase,
   };
 }
 

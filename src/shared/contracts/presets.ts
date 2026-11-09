@@ -21,7 +21,7 @@ export interface PresetFile {
   bits?: RunningBit[];
   /** Ming or Kokoro voice names. */
   voices?: { main?: KokoroVoice; small?: KokoroVoice };
-  /** glitch* settings and secondaryGlitchFxBaseColor. */
+  /** glitch* settings, secondaryGlitchFxBaseColor, propMain and propSmall. */
   look?: Partial<RuntimeConfig>;
   /** sleepTimeout, interruptible, dualHeadEnabled, dualHeadMode, dualHeadTurnPolicy. */
   behaviour?: Partial<RuntimeConfig>;

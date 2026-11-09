@@ -7,6 +7,7 @@ import { DUAL_HEAD_TURN_POLICIES, KOKORO_VOICES, RENDER_QUALITIES } from '../../
 import { patchConfig, patchConfigLive } from '../../fx/runtime.js';
 import { openDockTab } from '../hud/dock-state.js';
 import { ButtonControl, ColorControl, ControlGroup, RangeControl, SelectControl, ToggleControl } from './controls.js';
+import { PropPicker } from './PropPicker.js';
 
 export function ConnectionPanel({ store }: { store: AppStore }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
@@ -61,6 +62,11 @@ function RuntimeControls({ store, config }: { store: AppStore; config: Config })
         <ToggleControl label="Glitch FX" checked={config.glitchFxEnabled} onChange={(glitchFxEnabled) => void patchConfig(store, { glitchFxEnabled })} />
         <ColorControl label="Glitch Color" value={config.glitchFxBaseColor} onChange={(glitchFxBaseColor) => patchConfigLive(store, { glitchFxBaseColor })} />
         <ButtonControl label="FX Editor (E)" text="Edit" onClick={() => store.setState((current) => openDockTab(current, 'fx'))} />
+      </ControlGroup>
+
+      <ControlGroup title="Props">
+        <PropPicker label="Tubs wears" value={config.propMain} color={config.glitchFxBaseColor} onChange={(propMain) => void patchConfig(store, { propMain })} />
+        <PropPicker label="Small wears" value={config.propSmall} color={config.secondaryGlitchFxBaseColor} onChange={(propSmall) => void patchConfig(store, { propSmall })} />
       </ControlGroup>
 
       <ControlGroup title="Brain">

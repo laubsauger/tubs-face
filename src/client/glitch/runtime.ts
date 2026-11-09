@@ -18,6 +18,7 @@ import { SHAPE_TRANSFORM_FLOATS, createExpressionMotion, createFaceMotion, packS
 import { computeFrameState, renderFrameWebGpu } from './frame.js';
 import { INSTANCE_FLOATS, createMorphPlan, easeOutCubic, packPixels, planMorph, snapshotMorph, writeMorphFrame } from './morph.js';
 import { SCREEN_LAYOUT, STUDIO_LAYOUT, buildPixelGrid, faceBox, featureFitScale, type FaceBox, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
+import { PROP_TRANSFORM_FLOATS, packPropTransform, propOf, type PropBase } from './props.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, writeGpuInstances, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';
@@ -86,6 +87,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
   // faceMotion plus the sleeping twitches, for this frame only.
   const sleepMotion = createFaceMotion();
   const shapeTransforms = new Float32Array(SHAPE_TRANSFORM_FLOATS * 3);
+  // A worn prop: where its base is in the grid, and how it moves this frame.
+  let propBase: PropBase | null = null;
+  const propTransform = new Float32Array(PROP_TRANSFORM_FLOATS);
   const morph = createMorphPlan();
   let morphing = false;
   let morphStart = 0;
@@ -204,6 +208,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     rendererConfig.color.base = mode === 'mini'
       ? (config?.secondaryGlitchFxBaseColor ?? config?.glitchFxBaseColor ?? state.fxBaseColorDraft)
       : (config?.glitchFxBaseColor ?? state.fxBaseColorDraft);
+    // Each head wears its own; a change rebuilds the grid like any look change.
+    rendererConfig.prop = propOf(mode === 'mini' ? config?.propSmall : config?.propMain);
     rendererConfig.pixel.size = config?.glitchPixelSize ?? DEFAULT_CONFIG.pixel.size;
     rendererConfig.pixel.gap = config?.glitchPixelGap ?? DEFAULT_CONFIG.pixel.gap;
     rendererConfig.color.hueVariation = config?.glitchColorHueVariation ?? DEFAULT_CONFIG.color.hueVariation;
@@ -378,7 +384,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     // width: in a wide, short window the face fits the height and full-size
     // pixels would leave it a handful of chunky blocks.
     const vb = rendererConfig.svg.viewBox;
-    const featureBoxWidth = vb.w * featureFitScale(rect.width, rect.height, vb, layout);
+    const featureBoxWidth = vb.w * featureFitScale(rect.width, rect.height, rendererConfig, layout);
     const scale = Math.max(0.16, Math.min(1.0, featureBoxWidth / 1400));
     effectivePixelSize = Math.max(2, rendererConfig.pixel.size * scale);
     effectivePixelGap = Math.max(0, rendererConfig.pixel.gap * scale);
@@ -391,6 +397,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     morphing = false;
     pixelGrid = next.pixelGrid;
     shapeCenters = next.shapeCenters;
+    propBase = next.propBase;
     copyCenters(shapeCenters, drawnCenters);
     gridDirty = false;
     uploadPixels(pixelGrid);
@@ -408,6 +415,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     morphStart = now;
     pixelGrid = next.pixelGrid;
     shapeCenters = next.shapeCenters;
+    propBase = next.propBase;
     ensureInstanceData(morph.count);
   }
 
@@ -523,6 +531,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     // Asleep it still breathes and twitches now and then (face/sleep-life.ts).
     const sleepPose = state.sleeping && !state.fxEditorOpen ? sleepLife.sample(now) : null;
     packShapeTransforms(sleepPose ? applySleepPose(faceMotion, sleepPose, sleepMotion) : faceMotion, drawnCenters, containerCssH, shapeTransforms);
+    packPropTransform(propBase, shapeTransforms, drawnCenters, propTransform);
 
     // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
     const tint = state.sleeping || state.fxEditorOpen
@@ -577,6 +586,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
       faceH: faceEl.getBoundingClientRect().height,
       shapeCenters: drawnCenters,
       shapeTransforms,
+      propTransform,
       baseHSL: moodHSL,
       glitchBurstSeed,
       sleeping: state.sleeping,

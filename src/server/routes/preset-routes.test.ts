@@ -21,7 +21,7 @@ const PIRATE = {
   name: 'Pirate',
   persona: { systemPrompt: 'You are Captain Tubs, a pirate ghost in a jar.\n\n{{OUTPUT_FORMAT_INSTRUCTIONS}}', instruction: 'Talk about the sea.' },
   voices: { main: 'ming:friend-b', small: 'ming:friend' },
-  look: { glitchFxBaseColor: '#ff3300', secondaryGlitchFxBaseColor: '#00ff66', glitchPixelSize: 9 },
+  look: { glitchFxBaseColor: '#ff3300', secondaryGlitchFxBaseColor: '#00ff66', glitchPixelSize: 9, propMain: 'witch-hat' },
   behaviour: { sleepTimeout: 20000, interruptible: true },
 };
 
@@ -82,9 +82,9 @@ describe('applying a character preset', () => {
     expect(prompt).toContain('You are Captain Tubs, a pirate ghost in a jar.');
     expect(prompt).toContain('Talk about the sea.');
     expect(prompt).toContain('Dual-head mode is active.');
-    expect(runtimeConfig).toMatchObject({ kokoroVoice: 'ming:friend-b', secondaryVoice: 'ming:friend', glitchFxBaseColor: '#ff3300', glitchPixelSize: 9, sleepTimeout: 20000, interruptible: true });
+    expect(runtimeConfig).toMatchObject({ kokoroVoice: 'ming:friend-b', secondaryVoice: 'ming:friend', glitchFxBaseColor: '#ff3300', glitchPixelSize: 9, propMain: 'witch-hat', sleepTimeout: 20000, interruptible: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(configs.at(-1)).toMatchObject({ glitchFxBaseColor: '#ff3300', kokoroVoice: 'ming:friend-b' });
+    expect(configs.at(-1)).toMatchObject({ glitchFxBaseColor: '#ff3300', kokoroVoice: 'ming:friend-b', propMain: 'witch-hat' });
     const studio = (await (await fetch(`${base}/studio`)).json()) as { presets: { names: string[]; active: string } };
     expect(studio.presets).toEqual({ names: ['Pirate'], active: 'Pirate' });
     page.close();
@@ -147,12 +147,13 @@ describe('applying a character preset', () => {
 describe('saving a character preset', () => {
   it('round-trips: what is saved comes back exactly when applied', async () => {
     expect((await post('/presets/apply', { name: 'Pirate' })).status).toBe(200);
-    Object.assign(runtimeConfig, { glitchFxBaseColor: '#123456', glitchScanlines: false, interruptible: false, secondaryVoice: 'ming:friend-b-alt' });
+    // What each head wears is part of the look: a character's hats come back with it.
+    Object.assign(runtimeConfig, { glitchFxBaseColor: '#123456', glitchScanlines: false, interruptible: false, secondaryVoice: 'ming:friend-b-alt', propMain: 'crown', propSmall: 'party-hat' });
     const saved = structuredClone(runtimeConfig);
     const savedPrompt = buildDualHeadSystemInstruction();
     expect((await post('/presets', { name: 'Night Two' })).status).toBe(200);
     const file = JSON.parse(readFileSync(path.join(presets, 'night-two.json'), 'utf8')) as { name: string; voices: unknown };
-    expect(file).toMatchObject({ name: 'Night Two', voices: { main: 'ming:friend-b', small: 'ming:friend-b-alt' } });
+    expect(file).toMatchObject({ name: 'Night Two', voices: { main: 'ming:friend-b', small: 'ming:friend-b-alt' }, look: { propMain: 'crown', propSmall: 'party-hat' } });
 
     // Something else in between: the built-in persona, other colours.
     resetPresets();
