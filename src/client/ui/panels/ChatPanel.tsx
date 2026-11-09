@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
 import { splitLeadingEmoji, splitLineEmojis } from '../../chat/emoji.js';
 import { chatTailKey, nearBottom } from '../../chat/scroll.js';
@@ -94,21 +94,37 @@ export function ChatPanel({ store }: { store: AppStore }): JSX.Element {
                     {entry.filler ? <span className="text-slate-500">filler</span> : null}
                     <span className="text-slate-600">{formatTimestamp(entry.ts)}</span>
                   </div>
-                  <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
-                    {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
-                    {perLine
-                      ? (
-                        <div className="chat-entry-lines grid grid-cols-[1.4em_1fr] gap-x-1">
-                          {lines.map((line, index) => (
-                            <div key={index} className="contents">
-                              <span className="chat-entry-line-emoji text-[10px] opacity-50 select-none" aria-label="reaction">{line.emoji || (index === 0 ? emoji : '')}</span>
-                              <span>{line.text}</span>
-                            </div>
-                          ))}
-                        </div>
-                      )
-                      : body}
-                  </div>
+                  {perLine
+                    ? (
+                      // The bubble holds clean text; each sentence's mood sits outside it, level with its line.
+                      <div className="chat-entry-moods grid grid-cols-[1.6em_minmax(0,auto)] max-w-[90%]">
+                        <div className="chat-entry-card rounded-xl rounded-tl-sm" style={{ gridColumn: 2, gridRow: `1 / span ${lines.length}` }} />
+                        {lines.map((line, index) => (
+                          <Fragment key={index}>
+                            <span
+                              className={`chat-entry-line-emoji text-[11px] opacity-60 select-none text-right pr-1 ${index === 0 ? 'pt-2' : ''}`}
+                              style={{ gridColumn: 1, gridRow: index + 1 }}
+                              aria-label="mood"
+                            >
+                              {line.emoji || (index === 0 ? emoji : '')}
+                            </span>
+                            <span
+                              className={`px-3 whitespace-pre-wrap break-words ${index === 0 ? 'pt-2' : ''} ${index === lines.length - 1 ? 'pb-2' : ''}`}
+                              style={{ gridColumn: 2, gridRow: index + 1 }}
+                            >
+                              {index === 0 && entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
+                              {line.text}
+                            </span>
+                          </Fragment>
+                        ))}
+                      </div>
+                    )
+                    : (
+                      <div className={`chat-entry-card px-3 py-2 rounded-xl max-w-[90%] whitespace-pre-wrap break-words ${isAssistant ? 'rounded-tl-sm' : isSystem ? 'text-center italic text-[11px]' : 'rounded-tr-sm'}`}>
+                        {entry.lead ? <span className="chat-entry-lead">{entry.lead} </span> : null}
+                        {body}
+                      </div>
+                    )}
                 </li>
               );
             })}
