@@ -332,6 +332,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         ...current,
         connected: false,
         connectionLabel: 'Reconnecting',
+        // Its "rendering stopped" may never come; the face checks must not wait on it.
+        ttsRenderingSince: null,
       }));
       store.appendLog('error', 'WebSocket disconnected');
     },

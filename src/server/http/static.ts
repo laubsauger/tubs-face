@@ -58,6 +58,9 @@ export async function serveStatic(request: IncomingMessage, response: ServerResp
       'Content-Type': MIME_TYPES[ext] ?? 'application/octet-stream',
       'Content-Length': info.size,
       'Cache-Control': cacheControl,
+      // Cross-origin isolated, so the face worker can use several threads (see vite.config.ts).
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
     });
     if (request.method === 'HEAD') {
       response.end();

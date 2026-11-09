@@ -27,6 +27,7 @@ import { openTtsStream } from '../tts/stream.js';
 import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings } from '../studio/state.js';
 import { noteStudioContext } from '../studio/context.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
+import { isRendering, onRenderingChange } from '../tts/rendering.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
@@ -40,6 +41,7 @@ const WS_PATH = '/ws';
 export function initWebSocketServer(server: HttpServer): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   onFieldNotesChange(() => broadcast({ type: 'field_notes', ...fieldNotesSnapshot() }));
+  onRenderingChange((rendering) => broadcast({ type: 'tts_rendering', rendering }));
   onEnrollRequest((personId, name) => {
     if (!runtimeConfig.autoEnrollEnabled) return;
     console.log(`[faces] auto onboarding: enrolling ${name}`);
@@ -88,6 +90,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     if (studioActor || studioSettings.enabled) {
       send(socket, studioConfigMessage());
     }
+    if (isRendering()) send(socket, { type: 'tts_rendering', rendering: true });
 
     socket.on('message', (raw: RawData) => {
       try {

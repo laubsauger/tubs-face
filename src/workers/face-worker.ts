@@ -1,4 +1,5 @@
 import * as ort from 'onnxruntime-web';
+import { wasmThreadsFor } from './wasm-threads.js';
 import type { DetectedFace, FaceBox, FaceEmbedding, FaceLandmarks } from '../shared/contracts/faces.js';
 import type {
   FaceWorkerFacesMessage,
@@ -41,7 +42,8 @@ let busy = false;
 let frameCount = 0;
 let prevTracked: TrackedFace[] = [];
 
-ort.env.wasm.numThreads = 1;
+const WASM_THREADS = wasmThreadsFor(self.crossOriginIsolated, navigator.hardwareConcurrency || 1);
+ort.env.wasm.numThreads = WASM_THREADS;
 ort.env.logLevel = 'error';
 
 const anchors = generateAnchors();
@@ -155,7 +157,7 @@ async function initModels(): Promise<void> {
   });
   postProgress(
     'init',
-    `Det model: in=[${detSession.inputNames.join(',')}] out=[${detSession.outputNames.length} tensors]`,
+    `Det model: in=[${detSession.inputNames.join(',')}] out=[${detSession.outputNames.length} tensors], ${WASM_THREADS} thread(s)`,
   );
 
   postProgress('init', 'Loading recognition model...');

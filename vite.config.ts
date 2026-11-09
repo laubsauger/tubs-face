@@ -7,12 +7,20 @@ import tailwindcss from '@tailwindcss/vite';
 const rootDir = fileURLToPath(new URL('.', import.meta.url));
 // Where /api, /config, /ws etc. are proxied. The browser tests point it at a mock server.
 const apiPort = Number(process.env.TUBS_API_PORT || 3000);
+// Cross-origin isolation, so the face worker can run its models on several
+// threads (SharedArrayBuffer). "credentialless" lets cross-origin requests that
+// opt into nothing (the Google Fonts stylesheet) load without credentials.
+const isolationHeaders = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'credentialless',
+};
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   appType: 'mpa',
   publicDir: path.resolve(rootDir, 'public'),
   server: {
+    headers: isolationHeaders,
     proxy: {
       '^/(health|stats|config|speak|incoming|voice|tts|wake|sleep|faces|api|checkout|donations|webhooks|shapes|ingest|turn-script|relationships|memory|presets)': {
         target: `http://127.0.0.1:${apiPort}`,
@@ -29,6 +37,9 @@ export default defineConfig({
         ws: true,
       },
     },
+  },
+  preview: {
+    headers: isolationHeaders,
   },
   optimizeDeps: {
     exclude: ['onnxruntime-web'],

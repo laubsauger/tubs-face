@@ -5,7 +5,7 @@ import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { appendChatDraft, appendChatEntry, clearChatDraft, commitChatDraft, reconcileIncomingChat, upsertChatDraft } from '../chat/state.js';
 import { hasRecentOutgoingAssistantEntry } from '../chat/dedupe.js';
 
-const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config']);
+const NON_ACTIVITY_TYPES = new Set<WsServerMessage['type']>(['ping', 'stats', 'config', 'tts_rendering']);
 
 let activeTurnScriptId: string | null = null;
 
@@ -111,6 +111,12 @@ export function applyServerMessage(store: AppStore, message: WsServerMessage, mo
         conversationUntil: message.active ? Date.now() + (message.expiresIn ?? 45_000) : 0,
       }));
       store.appendLog('info', message.active ? 'Conversation mode active' : 'Conversation mode cleared');
+      return;
+    case 'tts_rendering':
+      store.setState((current) => ({
+        ...current,
+        ttsRenderingSince: message.rendering ? (current.ttsRenderingSince ?? Date.now()) : null,
+      }));
       return;
     case 'thinking':
       store.setState((current) => ({

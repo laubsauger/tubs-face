@@ -54,6 +54,7 @@ const WS_SERVER_TYPES = new Set<WsServerMessage['type']>([
   'studio_state',
   'studio_caption',
   'studio_stage',
+  'tts_rendering',
 ]);
 
 const WS_STUDIO_SERVER_TYPES = new Set<WsStudioServerMessage['type']>(['studio_config', 'studio_look', 'studio_presence', 'studio_state', 'studio_caption', 'studio_stage']);

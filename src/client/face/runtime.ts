@@ -12,6 +12,7 @@ import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace 
 import { createStillPictures, snapshotPicture, visionFrame, type StillPictures } from './pictures.js';
 import { whepPicture } from '../transport/whip.js';
 import { formatVisionSource, type VisionSourceSpec } from '../../shared/contracts/studio.js';
+import { RENDER_PAUSE_POLL_MS, faceChecksPaused } from './render-pause.js';
 
 export interface FaceShellRuntime {
   init(): void;
@@ -392,6 +393,13 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     }
     if (videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
       scheduleLoop();
+      return;
+    }
+    if (faceChecksPaused(store.getState().ttsRenderingSince, Date.now())) {
+      clearLoop();
+      loopTimer = window.setTimeout(() => {
+        void runCameraDetection();
+      }, RENDER_PAUSE_POLL_MS);
       return;
     }
 
