@@ -115,7 +115,8 @@ export const runtimeConfig: RuntimeConfig = {
   glitchSliceBurstDurationMs: parseIntegerInRange(process.env.GLITCH_SLICE_BURST_DURATION_MS, 1800, 200, 8000),
   secondaryGlitchFxBaseColor: normalizeHexColor(process.env.SECONDARY_GLITCH_FX_BASE_COLOR, '#22d3ee'),
   propMain: 'none',
-  propSmall: 'none',
+  // Small's look: the user picked the propeller cap as its default (2026-11-09).
+  propSmall: 'propeller-cap',
   ttsStreamingEnabled: parseBoolean(process.env.TTS_STREAMING_ENABLED, true),
   vadNoiseGate: parseFloatInRange(process.env.VAD_NOISE_GATE, 0.008, 0, 0.06),
   vadModel: pickOne(VAD_MODELS, process.env.VAD_MODEL, 'ten-vad'),
