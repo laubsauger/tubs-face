@@ -333,6 +333,40 @@ test('a face page publishes H.264 video with its voice, and tries again when the
   expect(statuses.some((m) => m.publishing === false && typeof m.error === 'string')).toBe(true);
 });
 
+// GET /studio/sources lists this Mac's devices from the listener page, by the
+// labels local:<label> takes; only the listener has the mic and the camera.
+test('the listener page reports this Mac\'s input devices by label', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __openCameras: number };
+    w.__openCameras = 0;
+    const real = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (constraints) => {
+      const stream = await real(constraints);
+      for (const track of stream.getVideoTracks()) {
+        w.__openCameras += 1;
+        const stop = track.stop.bind(track);
+        track.stop = () => {
+          w.__openCameras -= 1;
+          stop();
+        };
+      }
+      return stream;
+    };
+  });
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  const devices = async () => (await received(request)).ws.filter((m) => m.type === 'studio_status' && m.devices).map((m) => m.devices as { audio: string[]; video: string[] });
+  await expect.poll(async () => (await devices()).length, { timeout: 8000 }).toBeGreaterThan(0);
+  const listed = (await devices()).at(-1)!;
+  // Chrome's fake devices; "default" is an alias of one of them, so not listed twice.
+  expect(listed.audio.length).toBeGreaterThan(0);
+  expect(listed.video.length).toBeGreaterThan(0);
+  expect([...listed.audio, ...listed.video].every((label) => label.length > 0 && !/^Default\b|^Fake Default/.test(label))).toBe(true);
+  // The short open that unlocked the labels is closed again: no camera left running.
+  expect(await page.evaluate(() => (window as unknown as { __openCameras?: number }).__openCameras ?? 0)).toBe(0);
+});
+
 // Captions (contract section 8): each head's line under its face in the
 // windows, the heard part lit, so it reads with the sound turned down. The
 // face page that plays the voice sends them, on its playback clock.

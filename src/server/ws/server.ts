@@ -300,6 +300,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.error ? { error: message.error } : {}),
         ...(message.mic ? { mic: message.mic } : {}),
         ...(message.cadence ? { cadence: message.cadence } : {}),
+        ...(message.devices ? { devices: message.devices } : {}),
       });
       return;
     default:

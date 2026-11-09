@@ -20,13 +20,38 @@ const STUDIO = {
   presets: { names: ['Pirate', 'Tubs'], active: 'Tubs' },
 };
 
-async function fakeStudioServer(page: Page): Promise<Array<{ path: string; body: unknown }>> {
+// GET /studio/sources as the server builds it (studio/sources.ts).
+const SNAPSHOT = 'snapshot:http://204-eeg.tail:8090/api/snapshot/color.jpg';
+const SOURCES = {
+  micSource: 'off',
+  visionSource: 'off',
+  mic: [
+    { value: 'off', label: 'Off', kind: 'off', ready: true },
+    { value: 'local', label: 'Default input', kind: 'local', ready: true },
+    { value: 'local:Scarlett 2i2 USB', label: 'Scarlett 2i2 USB', kind: 'local', ready: true },
+    { value: 'site:cam-flo-mac', label: 'cam-flo-mac', kind: 'site', ready: true, tracks: ['H264', 'Opus'] },
+  ],
+  vision: [
+    { value: 'off', label: 'Off', kind: 'off', ready: true },
+    { value: 'local', label: 'Default camera', kind: 'local', ready: true },
+    { value: 'site:cam-c920', label: 'cam-c920', kind: 'site', ready: true, tracks: ['H264'] },
+    { value: 'site:cam-flo-mac', label: 'cam-flo-mac', kind: 'site', ready: true, tracks: ['H264', 'Opus'] },
+    { value: SNAPSHOT, label: 'RealSense · 204-eeg', kind: 'snapshot', ready: false },
+  ],
+  suggested: { mic: { value: 'site:cam-flo-mac', label: 'cam-flo-mac', kind: 'site', ready: true, tracks: ['H264', 'Opus'] } },
+  problems: [],
+};
+
+async function fakeStudioServer(page: Page, studio: Record<string, unknown> = STUDIO): Promise<Array<{ path: string; body: unknown }>> {
   const posts: Array<{ path: string; body: unknown }> = [];
-  await page.route(/\/(studio|presets(\/apply)?|relationships)(\?.*)?$/, async (route) => {
+  await page.route(/\/(studio(\/sources)?|presets(\/apply)?|relationships)(\?.*)?$/, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === 'POST') posts.push({ path, body: request.postDataJSON() as unknown });
-    if (path === '/studio') await route.fulfill({ json: STUDIO });
+    if (request.method() === 'GET' && path === '/studio/sources') {
+      posts.push({ path, body: null });
+      await route.fulfill({ json: SOURCES });
+    } else if (path === '/studio') await route.fulfill({ json: studio });
     else if (path.startsWith('/presets')) await route.fulfill({ json: { presets: [{ name: 'Pirate', savedAt: null }, { name: 'Tubs', savedAt: null }], active: 'Tubs' } });
     else if (request.method() === 'POST') await route.fulfill({ json: request.postDataJSON() as unknown });
     else await route.fulfill({ json: { relationships: [{ name: 'Flo', attitude: 'He is the boss.' }] } });
@@ -64,10 +89,15 @@ test('from inside a cross-origin iframe the Studio panel shows the heads and run
   await panel.getByRole('switch', { name: 'Studio mode' }).click();
   await expect.poll(() => posts.find((post) => post.path === '/studio')?.body).toEqual({ enabled: false });
 
-  await panel.getByLabel('Mic source').fill('site:mic-1');
-  await panel.getByLabel('Vision source').fill('snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg');
-  await panel.getByRole('button', { name: 'Apply sources' }).click();
-  await expect.poll(() => posts.filter((post) => post.path === '/studio').at(-1)?.body).toEqual({ micSource: 'site:mic-1', visionSource: 'snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg' });
+  // A source nobody listed is typed: the override next to each pick list.
+  const mic = panel.getByRole('group', { name: 'Mic source' });
+  const vision = panel.getByRole('group', { name: 'Vision source' });
+  await mic.getByLabel('Mic source, typed').fill('site:mic-1');
+  await mic.getByRole('button', { name: 'Set' }).click();
+  await expect.poll(() => posts.filter((post) => post.path === '/studio').at(-1)?.body).toEqual({ micSource: 'site:mic-1' });
+  await vision.getByLabel('Vision source, typed').fill('snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg');
+  await vision.getByRole('button', { name: 'Set' }).click();
+  await expect.poll(() => posts.filter((post) => post.path === '/studio').at(-1)?.body).toEqual({ visionSource: 'snapshot:http://127.0.0.1:7000/api/snapshot/color.jpg' });
 
   await panel.getByRole('combobox', { name: 'Provider' }).selectOption('openai');
   await panel.getByLabel('Model').fill('qwen3-vl:4b-instruct');
@@ -82,6 +112,43 @@ test('from inside a cross-origin iframe the Studio panel shows the heads and run
   expect(await frame.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   const box = await panel.boundingBox();
   expect(box!.x + box!.width).toBeLessThanOrEqual(1280);
+});
+
+// Nobody has to remember a path: what the server found is a pick list (this
+// Mac's devices, site streams, snapshots), choosing posts it at once, the one
+// obvious pick is one click, and the list keeps up while the tab is open.
+test('sources: pick lists from GET /studio/sources, posted on choosing, refreshed while open', async ({ page }) => {
+  const calls = await fakeStudioServer(page, { ...STUDIO, visionSource: SNAPSHOT });
+  const frame = await embeddedDashboard(page);
+  const panel = frame.locator('#dock-panel-studio');
+  const mic = panel.getByRole('group', { name: 'Mic source' });
+  const vision = panel.getByRole('group', { name: 'Vision source' });
+  const studioPosts = () => calls.filter((call) => call.path === '/studio').map((call) => call.body);
+  // Asked when the tab opens, then every 5 s while it is open (nothing touched meanwhile).
+  const asked = () => calls.filter((call) => call.path === '/studio/sources').length;
+  await expect.poll(asked).toBeGreaterThan(0);
+  const opened = asked();
+  await expect.poll(asked, { timeout: 8000 }).toBeGreaterThan(opened);
+
+  const micList = mic.getByRole('combobox', { name: 'Mic source' });
+  await expect(micList.locator('optgroup')).toHaveCount(2);
+  expect(await micList.locator('optgroup').evaluateAll((groups) => groups.map((group) => (group as HTMLOptGroupElement).label))).toEqual(["This Mac's devices", 'Site streams']);
+  await expect(micList.locator('option', { hasText: 'cam-flo-mac · H264 Opus' })).toHaveCount(1);
+  await expect(micList).toHaveValue('off');
+  // The current vision source is selected; its camera is not answering (red dot).
+  await expect(vision.getByRole('combobox', { name: 'Vision source' })).toHaveValue(SNAPSHOT);
+  await expect(vision.getByRole('img', { name: 'Vision source down' })).toBeVisible();
+  expect(await vision.locator('optgroup').evaluateAll((groups) => groups.map((group) => (group as HTMLOptGroupElement).label))).toEqual(["This Mac's devices", 'Site streams', 'Snapshots']);
+
+  await micList.selectOption('local:Scarlett 2i2 USB');
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ micSource: 'local:Scarlett 2i2 USB' });
+  await vision.getByRole('combobox', { name: 'Vision source' }).selectOption('site:cam-c920');
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ visionSource: 'site:cam-c920' });
+  await mic.getByRole('button', { name: 'Use cam-flo-mac' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ micSource: 'site:cam-flo-mac' });
+  // The other field has no obvious pick, so no button.
+  await expect(vision.getByRole('button', { name: /^Use / })).toHaveCount(0);
+
 });
 
 test('presets: apply one and save the current character, from the panel', async ({ page }) => {

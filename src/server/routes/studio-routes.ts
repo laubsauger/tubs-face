@@ -1,10 +1,12 @@
-// Studio mode (sentient-studio contract section 6): GET /studio, POST /studio.
+// Studio mode (sentient-studio contract section 6): GET /studio, POST /studio,
+// and GET /studio/sources (what the mic and vision source can be set to).
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ErrorResponse } from '../../shared/contracts/http.js';
 import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { updateStudio } from '../studio/control.js';
+import { listStudioSources } from '../studio/sources.js';
 import { studioSettings, toStudioResponse } from '../studio/state.js';
 import { listPresets } from '../presets/presets.js';
 import { persistState } from '../state-file.js';
@@ -16,6 +18,10 @@ const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 export async function handleStudioRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
   if (url.pathname === '/studio/snapshot' && request.method === 'GET') {
     await sendSnapshot(response);
+    return true;
+  }
+  if (url.pathname === '/studio/sources' && request.method === 'GET') {
+    sendJson(response, 200, await listStudioSources());
     return true;
   }
   if (url.pathname !== '/studio') return false;

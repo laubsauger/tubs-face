@@ -25,6 +25,17 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ ...caption, done: 'yes' })).toBe(false);
   });
 
+  // GET /studio/sources lists these as local:<label>, so each must be a label local:<label> takes.
+  it('takes the listener page\'s devices only as short lists of labels', () => {
+    const status = (devices: unknown) => ({ type: 'studio_status', actor: 'main', publishing: true, devices });
+    expect(isWsClientMessage(status({ audio: ['MacBook Pro Microphone'], video: [] }))).toBe(true);
+    expect(isWsClientMessage({ type: 'studio_status', actor: 'main', publishing: true })).toBe(true);
+    expect(isWsClientMessage(status({ audio: ['MacBook Pro Microphone'] }))).toBe(false);
+    expect(isWsClientMessage(status({ audio: [''], video: [] }))).toBe(false);
+    expect(isWsClientMessage(status({ audio: ['x'.repeat(201)], video: [] }))).toBe(false);
+    expect(isWsClientMessage(status({ audio: Array.from({ length: 33 }, (_, i) => `mic ${i}`), video: [] }))).toBe(false);
+  });
+
   // The memory view shows it as an <img>: only a small JPEG data URL, nothing else.
   it('takes a visitor snapshot in the people report only as a small JPEG', () => {
     const people = (thumbnail: unknown) => ({ type: 'people', people: [{ id: 'v1', names: [], position: 'center', snapshots: 1, thumbnail }] });

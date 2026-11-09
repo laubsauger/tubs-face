@@ -152,6 +152,48 @@ export interface StudioMicStatus {
 
 export type StudioLaunchMode = 'chrome' | 'external';
 
+/** The listener page's input devices, by label as Chrome names them (its studio_status). */
+export interface StudioDevices {
+  audio: string[];
+  video: string[];
+}
+
+export type StudioSourceKind = 'off' | 'local' | 'site' | 'snapshot';
+
+/** One thing micSource or visionSource can be set to (GET /studio/sources). */
+export interface StudioSource {
+  /** What POST /studio takes, e.g. "site:cam-flo-mac". */
+  value: string;
+  label: string;
+  kind: StudioSourceKind;
+  /**
+   * Usable now: local, the listener page is connected and has the device;
+   * site, the path is publishing; snapshot, the depth camera's service is healthy.
+   */
+  ready: boolean;
+  /** site only: the stream's tracks as the site node names them, e.g. ["H264", "Opus"]. */
+  tracks?: string[];
+}
+
+/**
+ * GET /studio/sources (sentient-studio contract section 6, additive): everything
+ * the mic and the vision source can be set to that this server can find, so
+ * nobody has to remember path names. Typed values stay allowed in POST /studio.
+ */
+export interface StudioSourcesResponse {
+  /** The current values, as in GET /studio. */
+  micSource: string;
+  visionSource: string;
+  /** off, then this box's devices (local), then site streams with audio. */
+  mic: StudioSource[];
+  /** off, then this box's cameras (local), site streams with video, depth camera snapshots. */
+  vision: StudioSource[];
+  /** The one obvious pick, when there is exactly one ready remote source and the current one is not ready. */
+  suggested: { mic?: StudioSource; vision?: StudioSource };
+  /** Why something may be missing, e.g. the site node's API did not answer. Never a secret. */
+  problems: string[];
+}
+
 /** POST /studio */
 export interface StudioPatch {
   enabled?: boolean;

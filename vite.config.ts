@@ -27,7 +27,7 @@ export default defineConfig({
         changeOrigin: true,
       },
       // Studio mode control; not the face page, studio-face.html.
-      '^/studio(?:/snapshot)?(?:\\?.*)?$': {
+      '^/studio(?:/snapshot|/sources)?(?:\\?.*)?$': {
         target: `http://127.0.0.1:${apiPort}`,
         changeOrigin: true,
       },

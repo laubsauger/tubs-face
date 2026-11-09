@@ -8,6 +8,7 @@ import {
   parseVisionSource,
   type StudioActor,
   type StudioCadence,
+  type StudioDevices,
   type StudioLaunchMode,
   type StudioMicStatus,
   type StudioPatch,
@@ -103,6 +104,7 @@ interface PageReport {
   error?: string;
   mic?: StudioMicStatus;
   cadence?: StudioCadence;
+  devices?: StudioDevices;
   /** Set while the page's socket is open. */
   connected: boolean;
 }
@@ -117,10 +119,17 @@ export function notePageConnection(actor: StudioActor, connected: boolean): void
     pages.set(actor, { ...(report ?? { publishing: false }), connected: true });
     return;
   }
-  if (report) pages.set(actor, { publishing: false, connected: false, ...(report.mic ? { mic: { ...report.mic, listening: false } } : {}) });
+  if (report) {
+    pages.set(actor, {
+      publishing: false,
+      connected: false,
+      ...(report.mic ? { mic: { ...report.mic, listening: false } } : {}),
+      ...(report.devices ? { devices: report.devices } : {}),
+    });
+  }
 }
 
-export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus; cadence?: StudioCadence }): void {
+export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus; cadence?: StudioCadence; devices?: StudioDevices }): void {
   const before = pages.get(actor);
   pages.set(actor, {
     connected: true,
@@ -128,7 +137,14 @@ export function notePageStatus(actor: StudioActor, status: { publishing: boolean
     ...(status.error ? { error: status.error } : {}),
     ...(status.mic ? { mic: status.mic } : (before?.mic ? { mic: before.mic } : {})),
     ...(status.cadence ? { cadence: status.cadence } : (before?.cadence ? { cadence: before.cadence } : {})),
+    ...(status.devices ? { devices: status.devices } : (before?.devices ? { devices: before.devices } : {})),
   });
+}
+
+/** The input devices the listener page (main) last reported, and whether it is still connected. */
+export function listenerDevices(): { devices: StudioDevices; connected: boolean } | null {
+  const report = pages.get('main');
+  return report?.devices ? { devices: report.devices, connected: report.connected } : null;
 }
 
 /** Any face page still says its stream is up. */

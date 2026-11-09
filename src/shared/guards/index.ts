@@ -88,6 +88,8 @@ const gaze = (v: unknown): boolean => Array.isArray(v) && v.length === 2 && v.ev
 const mood = (v: unknown): boolean => isRecord(v) && unitRange(v.pos) && unitRange(v.neg) && unitRange(v.arousal);
 const optMic = (v: unknown): boolean => v === undefined
   || (isRecord(v) && text(v.source, 300) && typeof v.listening === 'boolean' && optString(v.error, 300));
+const labels = (v: unknown): boolean => Array.isArray(v) && v.length <= 32 && v.every((label) => typeof label === 'string' && label.length > 0 && label.length <= 200);
+const optDevices = (v: unknown): boolean => v === undefined || (isRecord(v) && labels(v.audio) && labels(v.video));
 const optNames = (v: unknown): boolean => v === undefined
   || (Array.isArray(v) && v.length <= 20 && v.every((name) => typeof name === 'string' && name.length <= 80));
 
@@ -141,7 +143,8 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
     case 'studio_state':
       return isActor(m.actor) && typeof m.speaking === 'boolean' && text(m.expr, MAX_ID_CHARS) && mood(m.mood) && isFiniteNumber(m.ts);
     case 'studio_status':
-      return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic) && optCadence(m.cadence);
+      return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic) && optCadence(m.cadence)
+        && optDevices(m.devices);
     case 'studio_context':
       return isStudioContext(m);
     case 'studio_stage':

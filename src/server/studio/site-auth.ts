@@ -1,6 +1,7 @@
 // Logins for the studio site node (mediamtx): TUBS_STUDIO_SITE_AUTH names a
 // local file with the user and password the face pages publish with (WHIP);
-// TUBS_STUDIO_SITE_READ_AUTH one for reading (WHEP), if the site needs it.
+// TUBS_STUDIO_SITE_READ_AUTH one for reading (WHEP), if the site needs it;
+// TUBS_STUDIO_SITE_API_AUTH one for its API (studio/sources.ts; the read login if unset).
 // The file holds them, never the env, a URL or a log: the server turns them
 // into an Authorization header that only the studio face pages receive (in
 // their studio_config). A file that is missing or unreadable is an error
@@ -45,7 +46,7 @@ function parseLogin(text: string): { user: string; pass: string } | null {
 }
 
 /** The header for one env var's file: null when unset, or a problem that never includes the secret. */
-export function loginHeader(envName: 'TUBS_STUDIO_SITE_AUTH' | 'TUBS_STUDIO_SITE_READ_AUTH'): { header: string } | { problem: string } | null {
+export function loginHeader(envName: 'TUBS_STUDIO_SITE_AUTH' | 'TUBS_STUDIO_SITE_READ_AUTH' | 'TUBS_STUDIO_SITE_API_AUTH'): { header: string } | { problem: string } | null {
   const configured = process.env[envName]?.trim();
   if (!configured) return null;
   const file = path.resolve(configured);

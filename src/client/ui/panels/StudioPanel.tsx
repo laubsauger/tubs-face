@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useState, type JSX } from 'react';
 import { VISION_PROVIDERS, type VisionProvider } from '../../../shared/contracts/config.js';
 import type { PresetsResponse } from '../../../shared/contracts/presets.js';
-import type { StudioResponse } from '../../../shared/contracts/studio.js';
+import type { StudioResponse, StudioSource, StudioSourcesResponse } from '../../../shared/contracts/studio.js';
 import { patchConfig } from '../../fx/runtime.js';
 import type { AppStore } from '../../state/app-state.js';
 import { fetchJson, postJson } from '../../transport/http.js';
@@ -16,6 +16,8 @@ import { ControlGroup, SelectControl, ToggleControl } from './controls.js';
 import { PanelHeader } from './PanelHeader.js';
 
 export const STUDIO_REFRESH_MS = 2000;
+/** The pick lists' sources (GET /studio/sources) ask the site node and the hub, so less often. */
+export const SOURCES_REFRESH_MS = 5000;
 
 interface Relationship {
   name: string;
@@ -33,6 +35,7 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
   }));
   const [studio, setStudio] = useState<StudioResponse | null>(null);
   const [presets, setPresets] = useState<PresetsResponse | null>(null);
+  const [sources, setSources] = useState<StudioSourcesResponse | null>(null);
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
 
@@ -47,12 +50,24 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
     }
   }, []);
 
+  const loadSources = useCallback(async () => {
+    // A server without the route still has the typed fields.
+    setSources(await fetchJson<StudioSourcesResponse>('/studio/sources').catch(() => null));
+  }, []);
+
   useEffect(() => {
     if (!active) return undefined;
     void load();
     const timer = window.setInterval(() => void load(), STUDIO_REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [active, load]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    void loadSources();
+    const timer = window.setInterval(() => void loadSources(), SOURCES_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [active, loadSources]);
 
   async function run(action: () => Promise<unknown>, done?: string): Promise<void> {
     try {
@@ -107,7 +122,29 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
           )}
         </ControlGroup>
 
-        {studio && <SourcesForm key={`${studio.micSource}|${studio.visionSource}`} mic={studio.micSource} vision={studio.visionSource} onApply={(patch) => void run(() => postJson('/studio', patch), 'Sources applied')} />}
+        {studio && (
+          <ControlGroup title="Sources">
+            <SourcePicker
+              key={`mic|${studio.micSource}`}
+              label="Mic source"
+              current={studio.micSource}
+              sources={sources?.mic ?? []}
+              suggested={sources?.suggested.mic}
+              hint="local:<device> · site:<path>"
+              onPick={(micSource) => void run(async () => { await postJson('/studio', { micSource }); await loadSources(); }, `Mic: ${micSource}`)}
+            />
+            <SourcePicker
+              key={`vision|${studio.visionSource}`}
+              label="Vision source"
+              current={studio.visionSource}
+              sources={sources?.vision ?? []}
+              suggested={sources?.suggested.vision}
+              hint="local:<camera> · site:<path> · snapshot:<url>"
+              onPick={(visionSource) => void run(async () => { await postJson('/studio', { visionSource }); await loadSources(); }, `Vision: ${visionSource}`)}
+            />
+            {sources?.problems.map((problem) => <p key={problem} className="text-amber-300">{problem}</p>)}
+          </ControlGroup>
+        )}
 
         <ControlGroup title="Vision">
           <SelectControl<VisionProvider>
@@ -141,21 +178,57 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
   );
 }
 
-const MIC_SOURCES = ['off', 'local', 'local:', 'site:'];
-const VISION_SOURCES = ['off', 'local', 'local:', 'snapshot:', 'site:'];
+const SOURCE_GROUPS: Array<{ label: string; kind: StudioSource['kind'] }> = [
+  { label: "This Mac's devices", kind: 'local' },
+  { label: 'Site streams', kind: 'site' },
+  { label: 'Snapshots', kind: 'snapshot' },
+];
 
-function SourcesForm({ mic, vision, onApply }: { mic: string; vision: string; onApply(patch: { micSource: string; visionSource: string }): void }): JSX.Element {
-  const [micSource, setMic] = useState(mic);
-  const [visionSource, setVision] = useState(vision);
-  const changed = micSource !== mic || visionSource !== vision;
+/**
+ * One source: a pick list of what the server found (choosing posts it at once),
+ * the one obvious pick as a button, and a typed value as the override.
+ */
+function SourcePicker({ label, current, sources, suggested, hint, onPick }: {
+  label: string;
+  current: string;
+  sources: StudioSource[];
+  suggested?: StudioSource | undefined;
+  hint: string;
+  onPick(value: string): void;
+}): JSX.Element {
+  const [typed, setTyped] = useState(current);
+  const known = sources.find((source) => source.value === current);
+  const state = !known ? 'unknown' : known.ready ? 'ready' : 'down';
+  const optionText = (source: StudioSource) => `${source.ready ? '●' : '○'} ${source.label}${source.tracks?.length ? ` · ${source.tracks.join(' ')}` : ''}`;
   return (
-    <ControlGroup title="Sources">
-      <TextRow label="Mic source" value={micSource} onChange={setMic} options={MIC_SOURCES} hint="off · local · local:<device> · site:<path>" />
-      <TextRow label="Vision source" value={visionSource} onChange={setVision} options={VISION_SOURCES} hint="off · local · local:<camera> · snapshot:<url> · site:<path>" />
-      <div>
-        <button type="button" className="button button-compact button-secondary" disabled={!changed} onClick={() => onApply({ micSource: micSource.trim(), visionSource: visionSource.trim() })}>Apply sources</button>
+    <div className="flex flex-col gap-1" role="group" aria-label={label}>
+      <span className="text-slate-400">{label}</span>
+      <div className="studio-row">
+        <span className={`studio-dot studio-dot-${state}`} data-state={state} title={state === 'unknown' ? 'not in the list' : state} aria-label={`${label} ${state}`} role="img" />
+        <select className="mini-select" aria-label={label} value={current} onChange={(event) => onPick(event.currentTarget.value)}>
+          {!sources.some((source) => source.kind === 'off') && <option value="off">Off</option>}
+          {sources.filter((source) => source.kind === 'off').map((source) => <option key={source.value} value={source.value}>{source.label}</option>)}
+          {!known && current !== 'off' && <optgroup label="Typed"><option value={current}>{current}</option></optgroup>}
+          {SOURCE_GROUPS.map((group) => {
+            const members = sources.filter((source) => source.kind === group.kind);
+            return members.length === 0 ? null : (
+              <optgroup key={group.kind} label={group.label}>
+                {members.map((source) => <option key={source.value} value={source.value}>{optionText(source)}</option>)}
+              </optgroup>
+            );
+          })}
+        </select>
       </div>
-    </ControlGroup>
+      {suggested && suggested.value !== current && (
+        <div>
+          <button type="button" className="button button-compact" onClick={() => onPick(suggested.value)}>Use {suggested.label}</button>
+        </div>
+      )}
+      <div className="studio-row">
+        <input className="face-name-input" aria-label={`${label}, typed`} placeholder={hint} value={typed} onChange={(event) => setTyped(event.currentTarget.value)} spellCheck={false} />
+        <button type="button" className="button button-compact button-secondary" disabled={!typed.trim() || typed.trim() === current} onClick={() => onPick(typed.trim())}>Set</button>
+      </div>
+    </div>
   );
 }
 

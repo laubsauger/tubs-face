@@ -7,7 +7,7 @@
 // already plays main's voice and hears small's speech state from the server,
 // which is all the echo guard needs, and the studio needs no third page.
 
-import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
+import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioDevices, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import type { WsAudioChunkServerMessage, WsClientMessage, WsStudioConfigServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
 import { redirectSpeech } from '../audio/speech-level.js';
 import { readVoiceClock } from '../audio/voice-clock.js';
@@ -22,6 +22,7 @@ import { createStageGate } from './stage.js';
 import { createHandoverGate } from './handover.js';
 import { setSiteLogin } from '../transport/whip.js';
 import { createCadenceMeter } from './cadence.js';
+import { readInputDevices } from './devices.js';
 import { takeStreamingAudioStats } from '../audio/streaming-session.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
 import { createStudioPresence } from './presence.js';
@@ -80,6 +81,9 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   // The published frame itself went black (see black-frame.ts).
   let frameBlack = false;
   let micStatus: StudioMicStatus | null = null;
+  // The listener's input devices (GET /studio/sources); labels unlocked at most once per page.
+  let devices: StudioDevices | null = null;
+  let devicesProbed = false;
   let lastState: StudioStateSnapshot | null = null;
   let heartbeat = 0;
   let captionTimer = 0;
@@ -123,8 +127,25 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       ...(error && !publishing ? { error: error.slice(0, 300) } : {}),
       ...(micStatus ? { mic: { ...micStatus, ...(micStatus.error ? { error: micStatus.error.slice(0, 300) } : {}) } } : {}),
       ...(withCadence ? { cadence: withCadence } : {}),
+      ...(devices ? { devices } : {}),
     });
   }
+
+  async function reportDevices(): Promise<void> {
+    const media = navigator.mediaDevices;
+    if (!listener || !config?.enabled || !media?.enumerateDevices) return;
+    const probe = !devicesProbed;
+    devicesProbed = true;
+    try {
+      const next = await readInputDevices(media, probe);
+      if (JSON.stringify(next) === JSON.stringify(devices)) return;
+      devices = next;
+      reportStatus();
+    } catch {
+      // No device list here: the pick list offers the default only.
+    }
+  }
+  const onDeviceChange = () => void reportDevices();
 
   /**
    * What a line waits for before it plays: the turn's first line, for the face
@@ -332,6 +353,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       }
     }
     options.speech.setLineGate(next.enabled ? lineGate : null);
+    if (next.enabled && !devices) void reportDevices();
     if (next.enabled) startStateReports();
     else stopStateReports();
     // Also after a reconnect: the server forgot this page's status when its socket closed.
@@ -388,6 +410,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       routeVoice();
       setBadge();
       window.addEventListener('pagehide', onPageHide);
+      if (listener) navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
     },
     handle(message) {
       switch (message.type) {
@@ -431,6 +454,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       handover.dispose();
       options.speech.setLineGate(null);
       window.removeEventListener('pagehide', onPageHide);
+      navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
       stopStateReports();
       publisher.dispose();
       for (const track of stream?.getVideoTracks() ?? []) track.stop();
