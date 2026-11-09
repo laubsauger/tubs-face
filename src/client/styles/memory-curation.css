@@ -1,0 +1,167 @@
+/* Curating the face library in the memory view (ui/panels/MemoryPanel.tsx):
+   flags on photos, the photo grid with Move and Remove, the undo bar, backups. */
+.memory-photo-frame {
+  position: relative;
+  display: inline-flex;
+}
+
+.memory-photo-frame.is-flagged .memory-photo {
+  outline: 2px solid rgba(251, 146, 60, 0.85);
+  outline-offset: 1px;
+}
+
+.memory-photo-flag {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #fb923c;
+  color: #1c0d02;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.memory-badge-flag {
+  border-color: rgba(251, 146, 60, 0.6);
+  color: #fdba74;
+}
+
+.memory-curate {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(148, 163, 184, 0.15);
+}
+
+.memory-curate-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.memory-curate-all,
+.memory-move-to {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #cbd5e1;
+}
+
+.memory-move-to select {
+  background: rgba(2, 6, 23, 0.9);
+  color: #e5eefc;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.memory-samples {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-sample {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  background: rgba(2, 6, 23, 0.55);
+  min-width: 0;
+}
+
+.memory-sample.is-flagged {
+  border-color: rgba(251, 146, 60, 0.6);
+}
+
+.memory-sample.is-selected {
+  border-color: rgba(103, 232, 249, 0.75);
+  background: rgba(8, 47, 73, 0.55);
+}
+
+.memory-sample-pick {
+  position: relative;
+  display: block;
+  cursor: pointer;
+}
+
+.memory-sample-pick input {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+}
+
+.memory-sample-photo {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(30, 41, 59, 0.8);
+}
+
+.memory-sample-when {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.memory-sample-flag {
+  color: #fdba74;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.memory-sample-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.memory-undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(6, 78, 59, 0.45);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  color: #a7f3d0;
+}
+
+.memory-restore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-backups {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.memory-backup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
