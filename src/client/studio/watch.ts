@@ -9,6 +9,7 @@
 
 import type { StudioFaceMethod } from '../../shared/contracts/studio.js';
 import type { EnrollmentCapture } from '../face/enrollment.js';
+import type { EmbedResult } from '../face/runtime.js';
 import type { AppShellControls } from '../ui/app-shell.js';
 import type { WsClientMessage, WsServerMessage } from '../../shared/contracts/ws.js';
 import type { AppState, AppStore } from '../state/app-state.js';
@@ -121,6 +122,33 @@ export function createStudioWatch(store: AppStore, send: (message: WsClientMessa
 
 type FaceControls = NonNullable<AppShellControls['face']>;
 
+/** A photo as a JPEG data URL, at most PICTURE_MAX_PX on its longest side. */
+const PICTURE_MAX_PX = 1280;
+async function pictureDataUrl(image: Blob): Promise<string> {
+  const bitmap = await createImageBitmap(image);
+  const scale = Math.min(1, PICTURE_MAX_PX / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d')?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  return canvas.toDataURL('image/jpeg', 0.9);
+}
+
+/** The listener's answer to embedPicture: a sample, or the reason the photo can't be used. */
+export function embedResultOf(value: unknown): EmbedResult {
+  if (typeof value === 'object' && value !== null) {
+    const result = value as { ok?: unknown; sample?: unknown; reason?: unknown };
+    if (result.ok === true) {
+      const sample = enrollmentCaptureOf(result.sample);
+      if (sample) return { ok: true, sample };
+    } else if (typeof result.reason === 'string') {
+      return { ok: false, reason: result.reason.slice(0, 200) };
+    }
+  }
+  return { ok: false, reason: 'the studio listener sent no usable answer' };
+}
+
 /** The studio listener's answer to a pose capture: one pose, or null when no single face was found. */
 export function enrollmentCaptureOf(value: unknown): EnrollmentCapture | null {
   if (typeof value !== 'object' || value === null) return null;
@@ -153,10 +181,18 @@ export function withStudioCamera(face: FaceControls, store: AppStore, watch: () 
       if (camera) void camera.call('endEnrollment').catch(() => {});
       else face.endEnrollment();
     },
-    captureEnrollmentSample: async (previous) => {
+    captureEnrollmentSample: async (previous, choose) => {
       const camera = studio();
-      if (!camera) return face.captureEnrollmentSample(previous);
-      return enrollmentCaptureOf(await camera.call('captureEnrollmentSample', { previous }));
+      if (!camera) return face.captureEnrollmentSample(previous, choose);
+      return enrollmentCaptureOf(await camera.call('captureEnrollmentSample', { previous, ...(choose ? { choose } : {}) }));
+    },
+    embedPicture: async (image) => {
+      const camera = studio();
+      if (!camera) return face.embedPicture(image);
+      // Smaller first: a phone photo is megabytes, the worker looks at 960 px anyway.
+      const picture = await pictureDataUrl(image).catch(() => null);
+      if (!picture) return { ok: false, reason: 'not an image this browser can read' };
+      return embedResultOf(await camera.call('embedPicture', { image: picture }).catch((error: unknown) => ({ ok: false, reason: error instanceof Error ? error.message : String(error) })));
     },
     saveEnrollment: async (name, samples) => {
       const camera = studio();

@@ -2648,6 +2648,93 @@ a {
   outline-offset: 1px;
 }
 
+/* The name field's suggestions: people the library knows, one row each. */
+.enroll-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  background: rgba(2, 6, 23, 0.85);
+}
+
+.enroll-suggestions button {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f8fafc;
+  font: 600 15px/1.2 var(--font-sans);
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.enroll-suggestions button:hover,
+.enroll-suggestions button:focus-visible {
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.enroll-suggestions img,
+.enroll-suggestion-blank {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.enroll-suggestions button span {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.enroll-new-person {
+  color: rgba(125, 211, 252, 0.8);
+}
+
+.enroll-choose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.enroll-choose span {
+  width: 100%;
+}
+
+.enroll-choose button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.8);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.enroll-choose button.is-selected {
+  border-color: #7dd3fc;
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.enroll-similarity.is-far {
+  color: #fbbf24;
+}
+
 .enroll-modes {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2720,6 +2807,7 @@ a {
 }
 
 .is-review .enroll-strip,
+.is-confirm .enroll-strip,
 .is-error .enroll-strip {
   bottom: 76px;
 }

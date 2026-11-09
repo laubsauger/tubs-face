@@ -40,11 +40,21 @@ export function writeFaceLibrary(document: FaceLibraryDocument): void {
   writeFileSync(faceLibraryPath, JSON.stringify(document, null, 2));
 }
 
+/**
+ * The name a person already has in the library, if this one is theirs
+ * ("flo", " Flo " are Flo): samples added to someone land under their name,
+ * never as a second person beside them.
+ */
+export function canonicalPersonName(faces: readonly EnrolledFace[], name: string): string {
+  const key = name.trim().toLowerCase();
+  return faces.find((face) => face.name.trim().toLowerCase() === key)?.name.trim() ?? name.trim();
+}
+
 export function addFace(input: { name: string; embedding: number[]; thumbnail?: string }): EnrolledFace {
   const library = readFaceLibrary();
   const face: EnrolledFace = {
     id: createFaceId(),
-    name: input.name,
+    name: canonicalPersonName(library.faces, input.name),
     embedding: input.embedding,
     createdAt: Date.now(),
     ...(input.thumbnail ? { thumbnail: input.thumbnail } : {}),
@@ -79,7 +89,8 @@ export function updateFace(id: string, patch: { name?: string }): EnrolledFace |
     return null;
   }
   if (typeof patch.name === 'string' && patch.name.trim()) {
-    target.name = patch.name.trim();
+    // Renamed to someone who is already there: they become one person.
+    target.name = canonicalPersonName(library.faces.filter((face) => face.id !== id), patch.name);
   }
   writeFaceLibrary(library);
   return target;

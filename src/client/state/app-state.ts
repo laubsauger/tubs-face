@@ -117,6 +117,8 @@ export interface AppState {
   ttsRenderingSince: number | null;
   /** Face onboarding wizard is open (F key or the Onboard button). */
   faceEnrollOpen: boolean;
+  /** The onboarding dialog adds to this person (someone in the library), or onboards someone new (null). */
+  faceEnrollTarget: string | null;
   /**
    * Dashboard in studio mode: the studio listener reports what it hears and
    * sees (studio_live), its camera and the pulse; null when it does not (studio
@@ -370,6 +372,7 @@ export function createAppStore(uiPrefsKey?: string, options: { tab?: DockTab | n
     faceLibraryPeople: 0,
     faceDraftName: '',
     faceEnrollOpen: false,
+    faceEnrollTarget: null,
     studioLive: null,
     studioFrame: null,
     studioPulse: null,

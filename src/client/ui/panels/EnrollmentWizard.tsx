@@ -4,11 +4,13 @@ import type { AppStore } from '../../state/app-state.js';
 import type { AppShellControls } from '../app-shell.js';
 import { useAppSelector } from '../react-store.js';
 import { StudioCameraView } from './StudioCamera.js';
+import { existingPerson, libraryPeople, similarityQuestion, similarityToPerson, suggestPeople, type LibraryPersonSummary, type PersonSimilarity } from '../../face/person-match.js';
+import { normalizedBox } from '../../face/enrollment.js';
 import { deviceView } from '../../studio/live-view.js';
 
 type FaceControls = NonNullable<AppShellControls['face']>;
 type Mode = 'guided' | 'quick';
-type Phase = 'setup' | 'capture' | 'review' | 'saving' | 'done' | 'error';
+type Phase = 'setup' | 'capture' | 'review' | 'confirm' | 'saving' | 'done' | 'error';
 
 interface Pose {
   text: string;
@@ -72,8 +74,17 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
     workerReady: deviceView(state).faceWorkerReady,
     // The dashboard in studio mode: the studio listener's camera, its pictures relayed.
     studio: state.studioLive !== null,
+    inView: deviceView(state).faceLastFaces,
+    frameWidth: deviceView(state).faceFrameWidth,
+    frameHeight: deviceView(state).faceFrameHeight,
   }));
-  const [name, setName] = useState(() => initialName(store));
+  const library = useAppSelector(store, (state) => ({ faces: state.faceLibraryFaces })).faces;
+  const people = libraryPeople(library);
+  const [name, setName] = useState(() => store.getState().faceEnrollTarget ?? initialName(store));
+  // Several people in view: which one the poses are of (their box when the dialog opened, 0..1).
+  const [chosen, setChosen] = useState<number | null>(null);
+  const [similarity, setSimilarity] = useState<PersonSimilarity | null>(null);
+  const target = existingPerson(people, name);
   const [mode, setMode] = useState<Mode>('guided');
   const [phase, setPhase] = useState<Phase>('setup');
   const [banner, setBanner] = useState<Banner>(INTRO_BANNER);
@@ -99,7 +110,7 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
       enrollingRef.current = false;
       controls.endEnrollment();
     }
-    store.setState((current) => ({ ...current, faceEnrollOpen: false }));
+    store.setState((current) => ({ ...current, faceEnrollOpen: false, faceEnrollTarget: null }));
   }, [controls, store]);
 
   // Show the same camera stream the face worker uses.
@@ -133,7 +144,7 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
     }
   }, [controls]);
 
-  const save = useCallback(async (current: Sample[]) => {
+  const save = useCallback(async (current: Sample[], confirmed = false) => {
     const keep = current.filter((sample) => !sample.discarded);
     if (keep.length === 0) {
       sounds.fail();
@@ -141,21 +152,32 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
       show({ kind: 'error', icon: '🗑️', text: 'All shots discarded', hint: 'Nothing was saved. Try again?' });
       return;
     }
+    // Into someone already known: under their name, and only if the shots look like them (or the operator says so).
+    const person = existingPerson(libraryPeople(store.getState().faceLibraryFaces), name);
+    const saveAs = person?.name ?? name.trim();
+    const alike = person ? similarityToPerson(keep, store.getState().faceLibraryFaces, person.name) : null;
+    if (alike?.ask && !confirmed) {
+      setSimilarity(alike);
+      setPhase('confirm');
+      sounds.fail();
+      show({ kind: 'warn', icon: '🤔', text: similarityQuestion(alike, person!.name) ?? '', hint: `${person!.name}'s samples match at ${Math.round(alike.threshold * 100)}% or more. Add them to ${person!.name} anyway?` });
+      return;
+    }
     setPhase('saving');
-    show({ kind: 'saving', icon: '💾', text: 'Saving…', hint: `${keep.length} shot${keep.length === 1 ? '' : 's'} of ${name.trim()}` });
+    show({ kind: 'saving', icon: '💾', text: 'Saving…', hint: `${keep.length} shot${keep.length === 1 ? '' : 's'} ${person ? 'added to' : 'of'} ${saveAs}` });
     try {
-      const saved = await controls.saveEnrollment(name, keep);
+      const saved = await controls.saveEnrollment(saveAs, keep);
       sounds.success();
       setPhase('done');
-      show({ kind: 'done', icon: '🎉', text: `Got it, ${name.trim()}!`, hint: `${saved} shot${saved === 1 ? '' : 's'} saved. Tubs knows your face now.` });
-      window.dispatchEvent(new CustomEvent('tubs:face-enrolled', { detail: { name: name.trim() } }));
+      show({ kind: 'done', icon: '🎉', text: `Got it, ${saveAs}!`, hint: `${saved} shot${saved === 1 ? '' : 's'} saved. Tubs knows your face now.` });
+      window.dispatchEvent(new CustomEvent('tubs:face-enrolled', { detail: { name: saveAs } }));
       closeTimerRef.current = window.setTimeout(close, 2400);
     } catch (error) {
       sounds.fail();
       setPhase('error');
       show({ kind: 'error', icon: '⚠️', text: 'Saving failed', hint: error instanceof Error ? error.message : String(error) });
     }
-  }, [close, controls, name, show]);
+  }, [close, controls, name, show, store]);
 
   // Review: auto-save after a countdown; clicking a shot restarts it.
   useEffect(() => {
@@ -175,6 +197,9 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
       window.setTimeout(() => (token.cancelled ? reject(new Cancelled()) : resolve()), ms);
     });
     const poses = mode === 'guided' ? GUIDED_POSES : QUICK_POSES;
+    // Several people in view: the poses are of the one picked, found again by their box in each shot.
+    const pick = chosen !== null ? camera.inView[chosen] : undefined;
+    const chooseBox = pick && camera.frameWidth && camera.frameHeight ? normalizedBox(pick.box, camera.frameWidth, camera.frameHeight) : undefined;
     const collected: Sample[] = [];
     setSamples([]);
     setPhase('capture');
@@ -199,7 +224,7 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
           show({ kind: 'snap', icon: current.icon, text: 'SNAP!' });
 
           const keepEmbeddings = collected.filter((sample) => !sample.discarded).map((sample) => sample.embedding);
-          const capture = await controls.captureEnrollmentSample(keepEmbeddings);
+          const capture = await controls.captureEnrollmentSample(keepEmbeddings, chooseBox);
           if (token.cancelled) throw new Cancelled();
 
           if (!capture) {
@@ -255,9 +280,12 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
     setSecondsLeft(AUTO_SAVE_SECONDS);
     setPhase('review');
     show({ kind: 'review', icon: '✅', text: 'Check the shots', hint: 'Click a bad one to drop it' });
-  }, [controls, mode, show]);
+  }, [controls, mode, show, chosen, camera.inView, camera.frameWidth, camera.frameHeight]);
 
-  const canStart = Boolean(name.trim()) && camera.active && camera.workerReady;
+  const several = camera.inView.length > 1;
+  // Adding to someone: how much the kept shots look like their samples, shown before saving.
+  const reviewSimilarity = target ? similarityToPerson(samples.filter((sample) => !sample.discarded), library, target.name) : null;
+  const canStart = Boolean(name.trim()) && camera.active && camera.workerReady && (!several || chosen !== null);
   const start = () => {
     if (!canStart) return;
     store.setState((current) => ({ ...current, faceDraftName: name.trim() }));
@@ -290,6 +318,12 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
         <div className="enroll-status" aria-live="polite">
           {phase === 'capture' && pose ? `Pose ${pose.index + 1} of ${pose.count}` : null}
           {phase === 'review' ? <>Auto-saving in <strong>{secondsLeft}s</strong>, click bad shots to discard</> : null}
+          {phase === 'review' && reviewSimilarity ? (
+            <span className={reviewSimilarity.ask ? 'enroll-similarity is-far' : 'enroll-similarity'} id="enroll-similarity">
+              {' '}· these shots match {target!.name} at {Math.round(reviewSimilarity.score * 100)}%
+              {reviewSimilarity.likelier ? `, ${reviewSimilarity.likelier.name} at ${Math.round(reviewSimilarity.likelier.score * 100)}%` : ''}
+            </span>
+          ) : null}
           {phase === 'setup' ? (camera.active ? (camera.workerReady ? 'Camera ready' : 'Loading face model…') : 'Camera is off') : null}
         </div>
 
@@ -315,17 +349,17 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
                 start();
               }}
             >
-              <label className="enroll-name">
-                <span>Who's this?</span>
-                <input
-                  autoFocus
-                  type="text"
-                  value={name}
-                  placeholder="Name"
-                  maxLength={48}
-                  onChange={(event) => setName(event.currentTarget.value)}
-                />
-              </label>
+              <PersonPicker people={people} value={name} onChange={setName} target={target} />
+              {several ? (
+                <div className="enroll-choose" role="radiogroup" aria-label="Which face">
+                  <span>{camera.inView.length} people in view: whose photos?</span>
+                  {camera.inView.map((face, index) => (
+                    <button key={index} type="button" role="radio" aria-checked={chosen === index} className={chosen === index ? 'is-selected' : ''} onClick={() => setChosen(index)}>
+                      Face {index + 1}{face.name ?? face.match?.name ? ` (${face.name ?? face.match?.name})` : ''}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
               <div className="enroll-modes" role="radiogroup" aria-label="Capture mode">
                 <button type="button" role="radio" aria-checked={mode === 'guided'} className={mode === 'guided' ? 'is-selected' : ''} onClick={() => setMode('guided')}>
                   <strong>Guided</strong>
@@ -336,7 +370,7 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
                   <span>1 photo</span>
                 </button>
               </div>
-              <button type="submit" className="enroll-btn enroll-btn-primary" disabled={!canStart}>Start</button>
+              <button type="submit" className="enroll-btn enroll-btn-primary" disabled={!canStart}>{target ? `Add photos to ${target.name}` : 'Start'}</button>
             </form>
           ) : null}
 
@@ -365,6 +399,13 @@ function WizardDialog({ store, controls }: { store: AppStore; controls: FaceCont
             </div>
           ) : null}
 
+          {phase === 'confirm' && similarity ? (
+            <div className="enroll-actions" role="group" aria-label="Save into this person anyway?">
+              <button type="button" className="enroll-btn" onClick={close}>Discard</button>
+              <button type="button" className="enroll-btn enroll-btn-primary" onClick={() => void save(samples, true)}>Add anyway ({Math.round(similarity.score * 100)}%)</button>
+            </div>
+          ) : null}
+
           {phase === 'error' ? (
             <div className="enroll-actions">
               <button type="button" className="enroll-btn" onClick={close}>Close</button>
@@ -383,6 +424,55 @@ const INTRO_BANNER: Banner = {
   text: 'Teach Tubs a face',
   hint: 'Pick a name and a mode, then follow the prompts',
 };
+
+/**
+ * Who the photos are of: typing suggests the people the library knows (photo
+ * and sample count); picking one adds to them, a new name onboards someone new.
+ */
+function PersonPicker({ people, value, onChange, target }: {
+  people: LibraryPersonSummary[];
+  value: string;
+  onChange(name: string): void;
+  target: LibraryPersonSummary | null;
+}): JSX.Element {
+  const [open, setOpen] = useState(!target);
+  const suggestions = suggestPeople(people, value).filter((person) => person.name !== target?.name || !target);
+  return (
+    <div className="enroll-name enroll-picker">
+      <span>{target ? `Adding photos to ${target.name} (${target.samples} sample${target.samples === 1 ? '' : 's'})` : "Who's this?"}</span>
+      <input
+        autoFocus
+        type="text"
+        role="combobox"
+        aria-label="Who's this?"
+        aria-expanded={open && suggestions.length > 0}
+        aria-controls="enroll-suggestions"
+        value={value}
+        placeholder="Name, or pick someone"
+        maxLength={48}
+        onFocus={() => setOpen(true)}
+        onChange={(event) => {
+          onChange(event.currentTarget.value);
+          setOpen(true);
+        }}
+      />
+      {open && suggestions.length > 0 ? (
+        <ul className="enroll-suggestions" id="enroll-suggestions" aria-label="People in the library">
+          {suggestions.map((person) => (
+            <li key={person.name}>
+              <button type="button" aria-label={`${person.name}, ${person.samples} sample${person.samples === 1 ? '' : 's'}`} onClick={() => { onChange(person.name); setOpen(false); }}>
+                {person.thumbnail ? <img src={person.thumbnail} alt="" /> : <span className="enroll-suggestion-blank" aria-hidden="true" />}
+                <strong>{person.name}</strong>
+                <span>{person.samples} sample{person.samples === 1 ? '' : 's'}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {value.trim() && !target ? <span className="enroll-new-person">New person: {value.trim()}</span> : null}
+    </div>
+  );
+}
 
 function initialName(store: AppStore): string {
   const state = store.getState();

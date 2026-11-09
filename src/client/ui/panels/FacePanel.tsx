@@ -8,6 +8,17 @@ import { StudioCameraView } from './StudioCamera.js';
 import { deviceView } from '../../studio/live-view.js';
 import { FaceDebug, FaceDebugToggle, faceDebugOn } from './FaceDebug.js';
 import { SESSION_GAP_MS, groupLibrary } from '../../face/library-sessions.js';
+import { similarityQuestion, similarityToPerson, type PersonSimilarity } from '../../face/person-match.js';
+
+/** Adding photos to one person from the library dialog: choose how, then the photos' fate. */
+interface AddingPhotos {
+  name: string;
+  step: 'menu' | 'working' | 'confirm' | 'done';
+  samples: Array<{ embedding: number[]; thumbnail: string }>;
+  rejected: Array<{ file: string; reason: string }>;
+  similarity: PersonSimilarity | null;
+  saved: number;
+}
 import type { StudioLiveFace } from '../../../shared/contracts/studio.js';
 import type { AppShellControls } from '../app-shell.js';
 
@@ -41,6 +52,8 @@ export function FacePanel({
     // Studio mode: the studio listener's camera instead of one here.
     studioCamera: device.studio,
     faceDebug: device.studio && faceDebugOn(current, Date.now()),
+    // Someone the library knows in view: their name, for "Add photos to …".
+    recognisedName: device.faceLastFaces.find((face) => face.name ?? face.match?.name)?.name ?? device.faceLastFaces.find((face) => face.match?.name)?.match?.name ?? null,
     threshold: current.studioLive?.faceWorker?.threshold,
     };
   });
@@ -105,7 +118,16 @@ export function FacePanel({
               </div>
             </div>
             <div className="face-library-dialog-body">
-              <LibraryPeople faces={state.faceLibraryFaces} controls={controls} />
+              <LibraryPeople
+                faces={state.faceLibraryFaces}
+                controls={controls}
+                facesInView={state.faceLastDetectedCount}
+                onCapture={(name) => {
+                  // The camera's onboarding dialog, adding to this person.
+                  setLibraryManagerOpen(false);
+                  store.setState((current) => ({ ...current, faceEnrollTarget: name, faceEnrollOpen: true }));
+                }}
+              />
             </div>
           </div>
         </div>,
@@ -164,16 +186,37 @@ export function FacePanel({
                 >
                   {state.faceCameraActive ? 'Stop Cam' : 'Start Cam'}
                 </button>
-                <button
-                  className="button button-compact"
-                  type="button"
-                  title="Teach Tubs a new face (F)"
-                  onClick={() => {
-                    store.setState((current) => ({ ...current, faceEnrollOpen: true }));
-                  }}
-                >
-                  Onboard
-                </button>
+                {state.recognisedName ? (
+                  <>
+                    <button
+                      className="button button-compact"
+                      type="button"
+                      title={`More samples of ${state.recognisedName}, from the camera`}
+                      onClick={() => store.setState((current) => ({ ...current, faceEnrollTarget: state.recognisedName, faceEnrollOpen: true }))}
+                    >
+                      Add photos to {state.recognisedName}
+                    </button>
+                    <button
+                      className="button button-secondary button-compact"
+                      type="button"
+                      title="Onboard someone new, or add to someone else"
+                      onClick={() => store.setState((current) => ({ ...current, faceEnrollTarget: null, faceEnrollOpen: true }))}
+                    >
+                      Someone else…
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    className="button button-compact"
+                    type="button"
+                    title="Teach Tubs a new face, or add photos to someone (F)"
+                    onClick={() => {
+                      store.setState((current) => ({ ...current, faceEnrollTarget: null, faceEnrollOpen: true }));
+                    }}
+                  >
+                    Onboard
+                  </button>
+                )}
               </div>
               <div className="face-panel-toolbar-utility">
                 <button
@@ -363,10 +406,40 @@ function formatPercent(score: number | null | undefined): string {
  * read from their times, face/library-sessions.ts). Rename or remove a
  * person, remove a session, or remove one sample on hover.
  */
-function LibraryPeople({ faces, controls }: { faces: EnrolledFace[]; controls: AppShellControls['face'] }): JSX.Element {
+function LibraryPeople({ faces, controls, facesInView, onCapture }: {
+  faces: EnrolledFace[];
+  controls: AppShellControls['face'];
+  facesInView: number;
+  onCapture(name: string): void;
+}): JSX.Element {
   const people = groupLibrary(faces);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<{ key: string; name: string } | null>(null);
+  const [adding, setAdding] = useState<AddingPhotos | null>(null);
+  const uploadRef = useRef<HTMLInputElement | null>(null);
+
+  /** Uploaded photos for a person: each through the face worker, then (if they look like someone else) a question, then saved. */
+  async function upload(name: string, files: File[]): Promise<void> {
+    setAdding({ name, step: 'working', samples: [], rejected: [], similarity: null, saved: 0 });
+    const samples: Array<{ embedding: number[]; thumbnail: string }> = [];
+    const rejected: Array<{ file: string; reason: string }> = [];
+    for (const file of files) {
+      const result = controls ? await controls.embedPicture(file) : { ok: false as const, reason: 'no face worker here' };
+      if (result.ok) samples.push({ embedding: result.sample.embedding, thumbnail: result.sample.thumbnail });
+      else rejected.push({ file: file.name, reason: result.reason });
+    }
+    const similarity = similarityToPerson(samples, faces, name);
+    if (samples.length > 0 && similarity?.ask) {
+      setAdding({ name, step: 'confirm', samples, rejected, similarity, saved: 0 });
+      return;
+    }
+    await saveAdded(name, samples, rejected, similarity);
+  }
+
+  async function saveAdded(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>, rejected: Array<{ file: string; reason: string }>, similarity: PersonSimilarity | null): Promise<void> {
+    const saved = samples.length > 0 && controls ? await controls.saveEnrollment(name, samples) : 0;
+    setAdding({ name, step: 'done', samples, rejected, similarity, saved });
+  }
   const removeAll = async (list: EnrolledFace[]) => {
     for (const face of list) await controls?.deleteFace(face.id);
   };
@@ -405,6 +478,7 @@ function LibraryPeople({ faces, controls }: { faces: EnrolledFace[]; controls: A
                   )}
                 </div>
                 <div className="face-library-actions face-library-hover-actions">
+                  <button type="button" className="button button-compact" onClick={() => setAdding(adding?.name === person.name && adding.step === 'menu' ? null : { name: person.name, step: 'menu', samples: [], rejected: [], similarity: null, saved: 0 })}>Add photos</button>
                   <button type="button" className="button button-secondary button-compact" onClick={() => setRenaming({ key: person.key, name: person.name })}>Rename</button>
                   <button type="button" className="button button-danger button-compact" onClick={async () => {
                     if (!window.confirm(`Delete all ${person.samples} samples of "${person.name}"?`)) return;
@@ -412,6 +486,48 @@ function LibraryPeople({ faces, controls }: { faces: EnrolledFace[]; controls: A
                   }}>Remove</button>
                 </div>
               </div>
+              {adding?.name === person.name && (
+                <div className="face-library-adding" role="group" aria-label={`Add photos to ${person.name}`}>
+                  {adding.step === 'menu' && (
+                    <div className="studio-row">
+                      <button type="button" className="button button-compact" disabled={facesInView === 0} title={facesInView === 0 ? 'Nobody is in front of the camera' : undefined} onClick={() => onCapture(person.name)}>
+                        Capture from the camera{facesInView > 1 ? ` (pick of ${facesInView})` : ''}
+                      </button>
+                      <button type="button" className="button button-secondary button-compact" onClick={() => uploadRef.current?.click()}>Upload photos…</button>
+                      <input
+                        ref={uploadRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        hidden
+                        aria-label={`Photos of ${person.name}`}
+                        onChange={(event) => {
+                          const files = [...(event.currentTarget.files ?? [])];
+                          event.currentTarget.value = '';
+                          if (files.length > 0) void upload(person.name, files);
+                        }}
+                      />
+                    </div>
+                  )}
+                  {adding.step === 'working' && <p className="text-slate-400">Looking for one face in each photo…</p>}
+                  {adding.step === 'confirm' && adding.similarity && (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-amber-300">{similarityQuestion(adding.similarity, person.name)} (a match is {Math.round(adding.similarity.threshold * 100)}% or more).</p>
+                      <div className="studio-row">
+                        <button type="button" className="button button-compact button-danger" onClick={() => void saveAdded(person.name, adding.samples, adding.rejected, adding.similarity)}>Add to {person.name} anyway</button>
+                        <button type="button" className="button button-secondary button-compact" onClick={() => setAdding(null)}>Discard</button>
+                      </div>
+                    </div>
+                  )}
+                  {adding.step === 'done' && (
+                    <p className="text-slate-300" role="status">
+                      {adding.saved} photo{adding.saved === 1 ? '' : 's'} added to {person.name}
+                      {adding.similarity ? ` (they match at ${Math.round(adding.similarity.score * 100)}%)` : ''}
+                      {adding.rejected.length > 0 ? `; not used: ${adding.rejected.map((entry) => `${entry.file} (${entry.reason})`).join(', ')}` : ''}
+                    </p>
+                  )}
+                </div>
+              )}
               {expanded && (
                 <ul className="face-library-sessions">
                   {person.sessions.map((session) => (
