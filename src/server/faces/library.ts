@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import type { EnrolledFace, FaceLibraryDocument } from '../../shared/contracts/faces.js';
 
-const faceLibraryPath = resolve(process.cwd(), 'data/face-library.json');
+// Private, never in git: data/ (TUBS_FACE_LIBRARY points elsewhere, e.g. for tests).
+const faceLibraryPath = resolve(process.env.TUBS_FACE_LIBRARY?.trim() || resolve(process.cwd(), 'data/face-library.json'));
 
 export function readFaceLibrary(): FaceLibraryDocument {
   try {
@@ -45,6 +46,16 @@ export function deleteFace(id: string): boolean {
   library.faces = library.faces.filter((face) => face.id !== id);
   writeFaceLibrary(library);
   return before !== library.faces.length;
+}
+
+/** Removes every sample of this name (samples hold their thumbnails, so those go too). */
+export function deleteFacesByName(name: string): number {
+  const library = readFaceLibrary();
+  const key = name.trim().toLowerCase();
+  const kept = library.faces.filter((face) => face.name.trim().toLowerCase() !== key);
+  const removed = library.faces.length - kept.length;
+  if (removed > 0) writeFaceLibrary({ faces: kept });
+  return removed;
 }
 
 export function updateFace(id: string, patch: { name?: string }): EnrolledFace | null {

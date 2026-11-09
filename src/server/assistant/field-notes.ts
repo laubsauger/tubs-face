@@ -19,6 +19,8 @@ export interface PersonInView {
   awayMs?: number;
   /** Face snapshots the face page holds for auto-onboarding. */
   snapshots?: number;
+  /** The first of those snapshots (a small JPEG data URL), for the memory view. */
+  thumbnail?: string;
 }
 
 const TAG_RE = /\[\[\s*(NOTE|QUOTE|NAME)(?:\s+(left|center|centre|middle|right))?\s*:\s*([^\]]*?)\s*\]\]/gi;
@@ -39,6 +41,7 @@ const GROUP = '#group';
 interface PersonRecord {
   notes: string[];
   names: string[];
+  firstSeenAt: number;
   lastSeenAt: number;
   returning: boolean;
   /** In the face library (recognised by name, or just auto-enrolled). */
@@ -46,6 +49,8 @@ interface PersonRecord {
   snapshots: number;
   turns: number;
   askedName: boolean;
+  /** Their face when first snapshotted tonight (memory only, like the notes). */
+  thumbnail: string | null;
 }
 
 interface QuoteRecord {
@@ -102,7 +107,7 @@ function prune(now: number): void {
 function recordFor(id: string, now: number): PersonRecord {
   let record = records.get(id);
   if (!record) {
-    record = { notes: [], names: [], lastSeenAt: now, returning: false, enrolled: false, snapshots: 0, turns: 0, askedName: false };
+    record = { notes: [], names: [], firstSeenAt: now, lastSeenAt: now, returning: false, enrolled: false, snapshots: 0, turns: 0, askedName: false, thumbnail: null };
     records.set(id, record);
     if (records.size > MAX_PEOPLE) {
       const oldest = [...records.entries()].sort((a, b) => a[1].lastSeenAt - b[1].lastSeenAt)[0];
@@ -122,6 +127,7 @@ export function setPeople(people: PersonInView[], now = Date.now()): void {
     if (back) record.returning = true;
     record.lastSeenAt = now;
     record.snapshots = person.snapshots ?? 0;
+    if (person.thumbnail && !record.thumbnail) record.thumbnail = person.thumbnail;
     // Names from the tracker come from the face library.
     if (person.names.length > 0) record.enrolled = true;
     for (const name of person.names) if (!record.names.includes(name)) record.names.push(name);
@@ -298,6 +304,61 @@ export function fieldNotesSnapshot(now = Date.now()): FieldNotesSnapshot {
     groupNotes: records.get(GROUP)?.notes ?? [],
     quotes: quotes.slice(-8).map((quote) => quote.text).reverse(),
   };
+}
+
+export interface PersonMemory {
+  id: string;
+  names: string[];
+  firstSeenAt: number;
+  lastSeenAt: number;
+  returning: boolean;
+  turns: number;
+  notes: string[];
+  quotes: string[];
+  thumbnail: string | null;
+  /** Where they are, while in view. */
+  position: Position | null;
+}
+
+/** Everyone noted tonight, in view or not, for the memory view. */
+export function tonightsPeople(now = Date.now()): { people: PersonMemory[]; groupNotes: string[]; unattributedNotes: string[] } {
+  prune(now);
+  const people: PersonMemory[] = [];
+  for (const [id, record] of records) {
+    if (id === ANONYMOUS || id === GROUP) continue;
+    people.push({
+      id,
+      names: [...record.names],
+      firstSeenAt: record.firstSeenAt,
+      lastSeenAt: record.lastSeenAt,
+      returning: record.returning,
+      turns: record.turns,
+      notes: [...record.notes],
+      quotes: quotes.filter((quote) => quote.personId === id).map((quote) => quote.text),
+      thumbnail: record.thumbnail,
+      position: inView.find((person) => person.id === id)?.position ?? null,
+    });
+  }
+  return { people, groupNotes: [...(records.get(GROUP)?.notes ?? [])], unattributedNotes: [...(records.get(ANONYMOUS)?.notes ?? [])] };
+}
+
+/** The operator forgets these people for tonight: their notes, quotes and snapshot. */
+export function forgetPeople(ids: readonly string[]): number {
+  let forgotten = 0;
+  for (const id of ids) {
+    if (id === ANONYMOUS || id === GROUP) continue;
+    if (records.delete(id)) forgotten += 1;
+    for (let i = quotes.length - 1; i >= 0; i -= 1) if (quotes[i]!.personId === id) quotes.splice(i, 1);
+  }
+  if (forgotten > 0) changeListener?.();
+  return forgotten;
+}
+
+/** The operator clears tonight's notes: everything Tubs noted, about anyone. */
+export function clearTonight(): void {
+  records.clear();
+  quotes.length = 0;
+  changeListener?.();
 }
 
 /** Test helper. */

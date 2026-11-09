@@ -7,9 +7,11 @@ type DockSlice = Pick<AppState, 'dockTab' | 'dockFolded' | 'dockReturn' | 'uiHid
 
 export const DOCK_TAB_LABELS: Record<DockTab, string> = {
   chat: 'Chat',
+  studio: 'Studio',
   voice: 'Voice',
   mind: 'Mind',
   people: 'People',
+  memory: 'Memory',
   controls: 'Controls',
   stats: 'Stats',
   log: 'Log',

@@ -1,0 +1,169 @@
+{
+  "name": "Tubs",
+  "savedAt": "2026-11-09T00:09:42.684Z",
+  "persona": {
+    "instruction": "Default personality"
+  },
+  "voices": {
+    "main": "ming:friend",
+    "small": "ming:friend-b"
+  },
+  "look": {
+    "glitchFxEnabled": true,
+    "glitchFxBaseColor": "#a855f7",
+    "glitchExpressionProfiles": {
+      "idle": null,
+      "idle-flat": {
+        "mouthH": 0.65
+      },
+      "listening": {
+        "eyeH": 1.09,
+        "eyeW": 1.07
+      },
+      "thinking": {
+        "eyeH": 0.5,
+        "eyeW": 1.15,
+        "eyeDy": 5,
+        "mouthW": 0.56,
+        "mouthH": 1.4,
+        "mouthRound": true
+      },
+      "smile": {
+        "eyeH": 0.85,
+        "eyeDy": 2,
+        "mouthW": 0.85,
+        "mouthH": 1.8
+      },
+      "smug": {
+        "eyeH": 0.55,
+        "eyeDy": 4,
+        "eyeW": 1.08,
+        "mouthW": 0.62,
+        "mouthH": 1.3,
+        "mouthShape": "smile-arc"
+      },
+      "happy": {
+        "eyeH": 0.7,
+        "eyeDy": 2,
+        "mouthW": 0.95,
+        "mouthH": 2.1,
+        "mouthShape": "smile-arc"
+      },
+      "love": {
+        "eyeH": 0.85,
+        "eyeDy": 1,
+        "mouthW": 0.9,
+        "mouthH": 1.5,
+        "eyeShape": "heart",
+        "colorHex": "#ff4da1",
+        "mouthShape": "smile-arc"
+      },
+      "sad": {
+        "eyeH": 0.3,
+        "eyeDy": 7,
+        "eyeW": 1.15,
+        "mouthW": 0.56,
+        "mouthH": 0.7,
+        "mouthShape": "frown"
+      },
+      "crying": {
+        "eyeH": 0.3,
+        "eyeDy": 7,
+        "eyeW": 1.15,
+        "mouthW": 0.56,
+        "mouthH": 0.7,
+        "mouthShape": "frown",
+        "tears": true,
+        "tearColorHex": "#57bfff"
+      },
+      "speaking": null,
+      "sleep": {
+        "eyeH": 0.12,
+        "eyeDy": 8,
+        "mouthW": 0.8,
+        "mouthH": 0.5
+      },
+      "angry": {
+        "eyeH": 0.45,
+        "eyeW": 1.2,
+        "eyeDy": 4,
+        "eyeSkew": -0.15
+      },
+      "surprised": {
+        "eyeH": 1.15,
+        "eyeW": 1.1,
+        "mouthW": 0.56,
+        "mouthH": 2.2,
+        "mouthRound": true,
+        "mouthShape": "round"
+      }
+    },
+    "glitchPixelSize": 21,
+    "glitchPixelGap": 7,
+    "glitchScanlines": true,
+    "glitchScanlineIntensity": 0.41,
+    "glitchScanlineSpacing": 5,
+    "glitchScanlineThickness": 3,
+    "glitchScanlineSpeed": 26,
+    "glitchPixelJitter": 0,
+    "glitchFlicker": true,
+    "glitchFlickerSpeed": 11,
+    "glitchFlickerDepth": 0.02,
+    "glitchGlowStrength": 14,
+    "glitchColorHueVariation": 8,
+    "glitchColorBrightnessVariation": 8,
+    "glitchColorOpacityMin": 0.5,
+    "glitchShapeLeftEyeX": 0,
+    "glitchShapeLeftEyeY": 0,
+    "glitchShapeLeftEyeW": 14.59,
+    "glitchShapeLeftEyeH": 22.47,
+    "glitchShapeLeftEyeRx": 5.94,
+    "glitchShapeLeftEyeRy": 5.94,
+    "glitchShapeRightEyeX": 40.85,
+    "glitchShapeRightEyeY": 0,
+    "glitchShapeRightEyeW": 14.59,
+    "glitchShapeRightEyeH": 22.47,
+    "glitchShapeRightEyeRx": 5.94,
+    "glitchShapeRightEyeRy": 5.94,
+    "glitchShapeMouthX": 20.53,
+    "glitchShapeMouthY": 23.86,
+    "glitchShapeMouthW": 14.38,
+    "glitchShapeMouthH": 6.44,
+    "glitchShapeMouthRx": 1.95,
+    "glitchShapeMouthRy": 1.95,
+    "glitchBrightnessPulseEnabled": true,
+    "glitchBrightnessPulseDim": 0.88,
+    "glitchBrightnessPulseBright": 1,
+    "glitchBrightnessPulseSpeed": 3,
+    "glitchScanBeamEnabled": true,
+    "glitchScanBeamSpeed": 10,
+    "glitchScanBeamLineWidth": 7,
+    "glitchScanBeamBrightness": 0.65,
+    "glitchScanBeamGlowStrength": 26,
+    "glitchScanBeamJitter": 1,
+    "glitchScanBeamColor": "#a600ff",
+    "glitchChromaticEnabled": true,
+    "glitchChromaticOffsetX": 0,
+    "glitchChromaticOffsetY": 4.5,
+    "glitchChromaticIntensity": 0.65,
+    "glitchChromaticAnimate": true,
+    "glitchChromaticAnimateSpeed": 7,
+    "glitchSliceEnabled": true,
+    "glitchSliceCount": 24,
+    "glitchSliceMaxOffset": 5,
+    "glitchSliceSpeed": 28,
+    "glitchSliceIntensity": 0.53,
+    "glitchSliceColorShift": 0.03,
+    "glitchSliceGapChance": 0.07,
+    "glitchSliceIntervalMs": 18000,
+    "glitchSliceBurstDurationMs": 1800,
+    "secondaryGlitchFxBaseColor": "#22d3ee"
+  },
+  "behaviour": {
+    "sleepTimeout": 10000,
+    "interruptible": false,
+    "dualHeadEnabled": true,
+    "dualHeadMode": "llm_directed",
+    "dualHeadTurnPolicy": "llm_order"
+  }
+}

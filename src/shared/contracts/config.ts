@@ -4,6 +4,8 @@ export const STT_BACKENDS = ['mlx', 'faster-whisper'] as const;
 export const DUAL_HEAD_MODES = ['off', 'llm_directed'] as const;
 export const DUAL_HEAD_TURN_POLICIES = ['llm_order', 'main_first', 'small_first'] as const;
 export const VAD_MODELS = ['rms', 'ten-vad'] as const;
+/** Who looks at the camera pictures (docs/vision.md): nobody, Gemini, or any OpenAI-compatible server. */
+export const VISION_PROVIDERS = ['off', 'gemini', 'openai'] as const;
 export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-only'] as const;
 export const EXPRESSIONS = [
   'idle',
@@ -50,6 +52,7 @@ export type SttBackend = (typeof STT_BACKENDS)[number];
 export type DualHeadMode = (typeof DUAL_HEAD_MODES)[number];
 export type DualHeadTurnPolicy = (typeof DUAL_HEAD_TURN_POLICIES)[number];
 export type VadModel = (typeof VAD_MODELS)[number];
+export type VisionProvider = (typeof VISION_PROVIDERS)[number];
 export type ChatVerbosity = (typeof CHAT_VERBOSITIES)[number];
 export type ExpressionName = (typeof EXPRESSIONS)[number];
 export type EmotionCue = (typeof EMOTION_CUES)[number];
@@ -120,6 +123,11 @@ export interface RuntimeConfig {
   secondaryAudioGain: number;
   dualHeadTurnPolicy: DualHeadTurnPolicy;
   muted: boolean;
+  /**
+   * Talking over Tubs or Mini cuts them off, hands-free too. Off, the mic
+   * ignores speech while either head talks (with speakers it hears them).
+   */
+  interruptible: boolean;
   /** Quietly take face snapshots of unnamed people and enroll them when they tell Tubs their name. */
   autoEnrollEnabled: boolean;
   ambientAudioEnabled: boolean;
@@ -189,4 +197,22 @@ export interface RuntimeConfig {
   ttsStreamingEnabled: boolean;
   vadNoiseGate?: number;
   vadModel?: VadModel;
+  /** docs/vision.md. `off` sends no picture anywhere. */
+  visionProvider: VisionProvider;
+  /** The provider's model; empty: the chat model (gemini). Required for openai. */
+  visionModel: string;
+  /** openai: an OpenAI-compatible base URL (".../v1"), or "fleet:vision" (the studio-manager hub picks the box). */
+  visionBaseUrl: string;
+  /** Longest side of a picture sent, in px. */
+  visionMaxPx: number;
+  /** Give up on a description after this long and keep the last one. */
+  visionTimeoutMs: number;
+  /** Refresh while someone is in view (a new visitor is looked at at once). */
+  visionRefreshMs: number;
+  /** Hard cap on pictures sent per hour, whatever the provider. */
+  visionMaxPerHour: number;
+  /** Refresh while Tubs sleeps. */
+  visionWhileAsleep: boolean;
+  /** Listed people (data/relationships.json) get their attitude line while recognised in view. */
+  relationshipsEnabled: boolean;
 }

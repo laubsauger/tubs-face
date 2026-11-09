@@ -6,6 +6,9 @@
  *   POST /__test/reset      clear that record
  *   GET  /__test/clients    how many pages are connected
  * tts_request messages are answered with tone audio, like the Python TTS would.
+ * GET/POST /studio use the real studio settings code; studio face pages
+ * (/ws?studio=) get studio_config on connect and on every change. The site
+ * node is never reached: tests intercept it in the page (MOCK_SITE).
  */
 import { mkdtempSync } from 'node:fs';
 import http from 'node:http';
@@ -14,6 +17,7 @@ import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { toConfigResponse } from '../../src/server/config/runtime.js';
 import { handleRecordingRoute } from '../../src/server/routes/recording-routes.js';
+import { applyStudioPatch, studioConfigMessage, studioSettingsFromEnv } from '../../src/server/studio/state.js';
 
 // Recordings go through the real route into a scratch folder, never ~/Movies.
 process.env.TUBS_RECORDINGS_DIR = mkdtempSync(join(os.tmpdir(), 'tubs-e2e-recordings-'));
@@ -30,6 +34,10 @@ const config: Record<string, unknown> = {
 };
 
 const defaultConfig = structuredClone(config);
+// Nothing listens there; studio tests answer its WHIP/WHEP requests with page.route.
+const MOCK_SITE = 'http://127.0.0.1:39011';
+const studio = studioSettingsFromEnv({ TUBS_STUDIO_SITE: MOCK_SITE });
+const defaultStudio = structuredClone(studio);
 const clients = new Set<WebSocket>();
 let wsReceived: unknown[] = [];
 let httpReceived: Array<{ method: string; path: string; body: unknown }> = [];
@@ -114,6 +122,10 @@ const server = http.createServer(async (request, response) => {
       Object.assign(config, structuredClone(defaultConfig));
       broadcast({ type: 'config', ...config });
     }
+    if (JSON.stringify(studio) !== JSON.stringify(defaultStudio)) {
+      Object.assign(studio, structuredClone(defaultStudio));
+      broadcast(studioConfigMessage(studio));
+    }
     json(response, 200, { ok: true });
     return;
   }
@@ -147,6 +159,10 @@ const server = http.createServer(async (request, response) => {
     json(response, 200, { messagesIn: 0, messagesOut: 0, tokensIn: 0, tokensOut: 0, costUsd: 0, uptime: Date.now(), lastActivity: Date.now(), model: 'mock' });
     return;
   }
+  if (method === 'GET' && path === '/studio') {
+    json(response, 200, { ...studio, actors: [] });
+    return;
+  }
   if (method === 'GET' && path === '/faces') {
     json(response, 200, { faces: [] });
     return;
@@ -159,6 +175,15 @@ const server = http.createServer(async (request, response) => {
     Object.assign(config, body as Record<string, unknown>);
     broadcast({ type: 'config', ...config });
     json(response, 200, config);
+    return;
+  }
+  if (method === 'POST' && path === '/studio') {
+    try {
+      if (applyStudioPatch(body, studio).length > 0) broadcast(studioConfigMessage(studio));
+      json(response, 200, { ...studio, actors: [] });
+    } catch (error) {
+      json(response, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
     return;
   }
   if (method === 'POST' && path === '/voice') {
@@ -187,6 +212,10 @@ server.on('upgrade', (request, socket, head) => {
     clients.add(ws);
     ws.send(JSON.stringify({ type: 'config', ...config }));
     ws.send(JSON.stringify({ type: 'system', text: 'Connected to mock server' }));
+    // As the real server: face pages always, other pages only while studio mode is on.
+    if (new URL(request.url, 'http://localhost').searchParams.has('studio') || studio.enabled) {
+      ws.send(JSON.stringify(studioConfigMessage(studio)));
+    }
     ws.on('message', (raw) => {
       let message: { type?: string; text?: string; turnId?: string } | null = null;
       try {

@@ -1,4 +1,6 @@
 import { runtimeConfig } from '../config/runtime.js';
+import { studioSettings } from '../studio/state.js';
+import { STUDIO_PERSONA_LINE, studioContextLines } from '../studio/context.js';
 import { loadSystemPrompt } from '../persona/index.js';
 import { memoryContext } from './field-notes.js';
 
@@ -125,8 +127,19 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string, canSe
     .trim();
 }
 
+/**
+ * Studio mode: where the heads are in the venue and who is around (the
+ * director's studio_context), in places, next to the visual context.
+ */
+function studioContextBlock(): string {
+  if (!studioSettings.enabled) return '';
+  const lines = studioContextLines();
+  return `\n\n[System Info] IN THE STUDIO:\n${STUDIO_PERSONA_LINE}${lines.length ? `\n${lines.join('\n')}` : ''}`;
+}
+
 export function buildAssistantSystemInstruction(visualContextText?: string): string {
   let prompt = renderPersonaPrompt('single', `- ${OUTPUT_PROTOCOL.join('\n- ')}`, Boolean(visualContextText));
+  prompt += studioContextBlock();
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;
   }
@@ -135,6 +148,7 @@ export function buildAssistantSystemInstruction(visualContextText?: string): str
 
 export function buildDualHeadSystemInstruction(visualContextText?: string): string {
   let prompt = renderPersonaPrompt('dual', DUAL_HEAD_OUTPUT_RULES.join('\n'), Boolean(visualContextText));
+  prompt += studioContextBlock();
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;
   }

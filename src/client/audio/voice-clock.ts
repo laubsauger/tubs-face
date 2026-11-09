@@ -16,6 +16,23 @@ export interface SpokenItem {
   seconds: number;
   /** More audio for it is still coming (Ming streams a reply in pieces). */
   open: boolean;
+  /** What it says (trimmed), and the turn it belongs to. */
+  text?: string;
+  turnId?: string | null;
+  /** Where its audio sits on the playback clock, when known (streamed speech). */
+  playback?: Playback;
+}
+
+/**
+ * The item's audio on the AudioContext's own clock: a stalled stream (the next
+ * piece not here yet) or a suspended context stops that clock's progress
+ * through the audio, where wall time would run on.
+ */
+export interface Playback {
+  /** The context's currentTime now. */
+  clock: () => number;
+  /** Each piece of the item's audio: start on that clock, and length, in seconds. Grows as pieces arrive. */
+  pieces: ReadonlyArray<{ at: number; seconds: number }>;
 }
 
 export interface VoiceClock {
@@ -29,8 +46,14 @@ const MAX_ITEMS = 24;
 const items: SpokenItem[] = [];
 let quietAt: number | null = null;
 
-export function noteVoiceStarted(text: string, seconds: number, open: boolean, at = performance.now()): void {
-  items.push({ chars: text.trim().length, startedAt: at, seconds, open });
+export function noteVoiceStarted(
+  text: string,
+  seconds: number,
+  open: boolean,
+  at = performance.now(),
+  extra: { turnId?: string | null; playback?: Playback } = {},
+): void {
+  items.push({ chars: text.trim().length, startedAt: at, seconds, open, text: text.trim(), ...extra });
   if (items.length > MAX_ITEMS) items.shift();
   quietAt = null;
 }
@@ -49,4 +72,24 @@ export function noteVoiceQuiet(at = performance.now()): void {
 
 export function readVoiceClock(): VoiceClock {
   return { items, quietAt };
+}
+
+/** Seconds of the item's audio that have actually played. */
+export function heardSeconds(playback: Playback): number {
+  const now = playback.clock();
+  let heard = 0;
+  for (const piece of playback.pieces) heard += Math.max(0, Math.min(piece.seconds, now - piece.at));
+  return heard;
+}
+
+/**
+ * How much of an item has been said at `now` (performance.now()), 0..1. From
+ * the audio that has played when its playback is known, so a stall or a pause
+ * holds it; else from the time since it started. While more audio is coming
+ * its length is a guess: the last bit is held back.
+ */
+export function spokenShare(item: SpokenItem, now: number): number {
+  if (item.seconds <= 0) return 1;
+  const played = item.playback ? heardSeconds(item.playback) : (now - item.startedAt) / 1000;
+  return Math.min(item.open ? 0.99 : 1, Math.max(0, played / item.seconds));
 }

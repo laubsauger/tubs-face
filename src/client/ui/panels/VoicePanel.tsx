@@ -29,6 +29,7 @@ export function VoicePanel({
     fullscreenActive: current.fullscreenActive,
     vadModel: current.config?.vadModel ?? 'rms',
     muted: current.config?.muted ?? false,
+    interruptible: current.config?.interruptible ?? false,
     vadNoiseGate: current.config?.vadNoiseGate ?? 0.008,
     ambientAudioEnabled: current.ambientAudioEnabled,
     hasConfig: Boolean(current.config),
@@ -106,6 +107,7 @@ export function VoicePanel({
         {state.hasConfig ? (
           <ControlGroup title="Input">
             <ToggleControl label="Mute (M)" checked={state.muted} onChange={(muted) => void patchConfig(store, { muted })} />
+            <ToggleControl label="Interruptible (talk over Tubs and Mini)" checked={state.interruptible} onChange={(interruptible) => void patchConfig(store, { interruptible })} />
             <ToggleControl label="Ambient" checked={state.ambientAudioEnabled} onChange={() => void controls?.ambient?.toggleEnabled()} />
             <SelectControl label="VAD" value={state.vadModel} options={VAD_MODELS} onChange={(vadModel) => void patchConfig(store, { vadModel })} />
             <RangeControl

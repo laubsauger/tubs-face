@@ -131,13 +131,17 @@ function createGpuSceneTarget(gpu: WebGpuState, canvas: HTMLCanvasElement): void
   updateGpuPostBindGroup(gpu);
 }
 
-export function configureWebGpuCanvas(gpu: WebGpuState, canvas: HTMLCanvasElement | null): void {
+/**
+ * 'opaque' shows the canvas as drawn over black, ignoring alpha: what the
+ * face looks like on the page's dark background, and what a video of it needs.
+ */
+export function configureWebGpuCanvas(gpu: WebGpuState, canvas: HTMLCanvasElement | null, alphaMode: 'premultiplied' | 'opaque' = 'premultiplied'): void {
   if (!gpu.gpuContext || !gpu.gpuDevice || !canvas) return;
 
   gpu.gpuContext.configure({
     device: gpu.gpuDevice,
     format: gpu.gpuFormat,
-    alphaMode: 'premultiplied',
+    alphaMode,
   });
   createGpuSceneTarget(gpu, canvas);
 }

@@ -4,6 +4,7 @@ import type {
   SessionStats,
 } from './config.js';
 import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
+import type { StudioActor, StudioCadence, StudioGaze, StudioMicStatus, StudioMood } from './studio.js';
 
 export interface TokenUsage {
   in: number;
@@ -103,6 +104,8 @@ export interface WsPeopleClientMessage {
     awayMs?: number;
     /** Face snapshots the face page holds for auto-onboarding (unnamed people only). */
     snapshots?: number;
+    /** The first of those snapshots, a small JPEG data URL, for the memory view. */
+    thumbnail?: string;
   }>;
 }
 
@@ -112,6 +115,95 @@ export interface WsTtsRequestClientMessage {
   voice?: string;
   turnId?: string;
   requestId?: string;
+}
+
+/** Director: where this actor looks. Overrides the face's own gaze while updates keep coming. */
+export interface WsStudioLookClientMessage {
+  type: 'studio_look';
+  actor: StudioActor;
+  gaze: StudioGaze;
+}
+
+/** Director: whether people are near this actor's window, and how many. */
+export interface WsStudioPresenceClientMessage {
+  type: 'studio_presence';
+  actor: StudioActor;
+  present: boolean;
+  people?: number;
+}
+
+/** A studio face page: its actor's state, on change and once a second; the server passes it on to everyone. */
+export interface WsStudioStateClientMessage {
+  type: 'studio_state';
+  actor: StudioActor;
+  speaking: boolean;
+  expr: string;
+  mood: StudioMood;
+  ts: number;
+}
+
+/**
+ * A studio face page: the line its head is saying and how much of it has been
+ * heard, on change at most 10 times a second; done once per line. The server
+ * passes it on to everyone.
+ */
+export interface WsStudioCaptionClientMessage {
+  type: 'studio_caption';
+  actor: StudioActor;
+  turnId: string;
+  text: string;
+  /** Characters of `text` heard so far. */
+  spoken: number;
+  done: boolean;
+  ts: number;
+}
+
+/**
+ * Director: where the heads are in the venue and who is around (sentient-studio
+ * contract §6/§8). Rendered into the turn context in places, never numbers.
+ */
+export interface WsStudioContextClientMessage {
+  type: 'studio_context';
+  reason: string;
+  heads: Record<string, { zone: string | null; window: string | null; near: boolean | null; mode: string; speaking: boolean }>;
+  people: Array<{
+    id: string;
+    zone: string | null;
+    window: string | null;
+    /** From the speaking head's window (else Main's); older directors leave it out. */
+    relation?: 'here' | 'same-room' | 'next-room' | 'far' | null;
+    /** Metres to that window, for here and same-room. */
+    distance: number | null;
+    dwell: number;
+    engaged: boolean;
+    with: 'main' | 'small' | 'both' | null;
+  }>;
+  reference: { head: string; window: string } | null;
+  /** Once per connection and when the night's theme changes. */
+  venue?: {
+    theme: string | null;
+    phase: string | null;
+    zones: Array<{ id: string; name: string; about: string }>;
+    windows: Array<{ id: string; name: string; zone: string | null; about: string }>;
+  };
+  ts: number;
+}
+
+/** Director: whether a head is in place to speak (it may be travelling to a visitor's window). */
+export interface WsStudioStageClientMessage {
+  type: 'studio_stage';
+  actor: StudioActor;
+  ready: boolean;
+}
+
+/** A studio face page: whether its stream is up (and, from the listener page, the mic). For GET /studio. */
+export interface WsStudioStatusClientMessage {
+  type: 'studio_status';
+  actor: StudioActor;
+  publishing: boolean;
+  error?: string;
+  mic?: StudioMicStatus;
+  cadence?: StudioCadence;
 }
 
 export type WsClientMessage =
@@ -126,7 +218,14 @@ export type WsClientMessage =
   | WsProactiveClientMessage
   | WsCameraFrameClientMessage
   | WsAppearanceFrameClientMessage
-  | WsTtsRequestClientMessage;
+  | WsTtsRequestClientMessage
+  | WsStudioLookClientMessage
+  | WsStudioPresenceClientMessage
+  | WsStudioStateClientMessage
+  | WsStudioStatusClientMessage
+  | WsStudioCaptionClientMessage
+  | WsStudioContextClientMessage
+  | WsStudioStageClientMessage;
 
 export interface WsPingServerMessage {
   type: 'ping';
@@ -192,6 +291,8 @@ export interface WsAudioChunkServerMessage {
   emotion?: SpeechEmotionPayload | null;
   /** A pre-rendered filler ("Um, okay.") played while the reply is generated, not model output. */
   filler?: boolean;
+  /** Studio: a call-out beat (TurnBeat.callout); plays without waiting for the face to be in place. */
+  callout?: boolean;
   /**
    * More audio for the same text follows in the next chunk. Ming streams a
    * whole reply in several chunks; the client plays them back to back and
@@ -241,6 +342,11 @@ export interface WsEnrollRequestServerMessage {
   type: 'enroll_request';
   personId: string;
   name: string;
+}
+
+/** The face library changed (the memory view removed someone): pages that match faces reload it. */
+export interface WsFacesChangedServerMessage {
+  type: 'faces_changed';
 }
 
 /** Tubs's field notes on the people in front of him, for the operator. */
@@ -296,6 +402,73 @@ export interface WsHeadSpeechStateServerMessage {
   durationMs?: number;
 }
 
+/** Studio settings for the face pages: sent on connect and on every change. */
+export interface WsStudioConfigServerMessage {
+  type: 'studio_config';
+  enabled: boolean;
+  site: string;
+  micSource: string;
+  /** Where the listener page takes pictures from (docs/vision.md). */
+  visionSource: string;
+  /** Site node path per actor, e.g. { main: "tubs-main", small: "tubs-small" }. */
+  streams: Record<StudioActor, string>;
+}
+
+/** The director's stage, passed on to the studio face pages: is this head in place to speak? */
+export interface WsStudioStageServerMessage {
+  type: 'studio_stage';
+  actor: StudioActor;
+  ready: boolean;
+}
+
+/** The director's look, passed on to the studio face pages. */
+export interface WsStudioLookServerMessage {
+  type: 'studio_look';
+  actor: StudioActor;
+  gaze: StudioGaze;
+}
+
+/** The director's presence, passed on to the studio face pages. */
+export interface WsStudioPresenceServerMessage {
+  type: 'studio_presence';
+  actor: StudioActor;
+  present: boolean;
+  people?: number;
+}
+
+export interface WsStudioStateServerMessage {
+  type: 'studio_state';
+  actor: StudioActor;
+  speaking: boolean;
+  expr: string;
+  mood: StudioMood;
+  ts: number;
+}
+
+export interface WsStudioCaptionServerMessage {
+  type: 'studio_caption';
+  actor: StudioActor;
+  turnId: string;
+  text: string;
+  spoken: number;
+  done: boolean;
+  ts: number;
+}
+
+export type WsStudioServerMessage =
+  | WsStudioConfigServerMessage
+  | WsStudioStageServerMessage
+  | WsStudioCaptionServerMessage
+  | WsStudioLookServerMessage
+  | WsStudioPresenceServerMessage
+  | WsStudioStateServerMessage;
+
+/** A voice is rendering (Ming or Kokoro): the face window holds its checks meanwhile. */
+export interface WsTtsRenderingServerMessage {
+  type: 'tts_rendering';
+  rendering: boolean;
+}
+
 export type WsServerMessage =
   | WsPingServerMessage
   | WsConfigServerMessage
@@ -315,9 +488,12 @@ export type WsServerMessage =
   | WsConversationModeServerMessage
   | WsFieldNotesServerMessage
   | WsEnrollRequestServerMessage
+  | WsFacesChangedServerMessage
   | WsSleepServerMessage
   | WsWakeServerMessage
   | WsErrorServerMessage
   | WsFaceMotionServerMessage
   | WsFaceBlinkServerMessage
-  | WsHeadSpeechStateServerMessage;
+  | WsHeadSpeechStateServerMessage
+  | WsStudioServerMessage
+  | WsTtsRenderingServerMessage;

@@ -1,0 +1,682 @@
+import { expect, test, type APIRequestContext, type Page, type Route } from '@playwright/test';
+import { MOCK, chunk, instrumentAudio, now, openFace, received, resetMock, send, speechAudio } from './helpers.js';
+import { fakeSiteNode, openStudio, setStudio } from './studio-helpers.js';
+import { DEFAULT_CONFIG } from '../../src/client/glitch/constants.js';
+import { STUDIO_LAYOUT, faceBox } from '../../src/client/glitch/pixel-grid.js';
+
+// Studio mode (sentient-studio contract sections 5-6): a page per head,
+// published to the site node, the mic from a selectable source, and gaze and
+// presence from a director. The mock plays the Tubs server; the site node
+// (mediamtx) is answered inside the page.
+
+/**
+ * In-page stand-ins for WebRTC and the mic: the default mic and the site
+ * node's mic stream are tones made in the page, silent until a test "talks"
+ * into one of them. RTCPeerConnection hands a WHEP (receive) session the site
+ * tone and connects at once; the HTTP side still goes through fakeSiteNode.
+ */
+async function fakeMediaAndWebRtc(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const context = new AudioContext();
+    const source = (name: string) => {
+      const gain = new GainNode(context, { gain: 0 });
+      const tone = new OscillatorNode(context, { frequency: 220 });
+      tone.connect(gain);
+      tone.start();
+      const out = context.createMediaStreamDestination();
+      gain.connect(out);
+      return {
+        out,
+        level: (value: number) => {
+          void context.resume();
+          gain.gain.setValueAtTime(value, context.currentTime);
+          (window as unknown as Record<string, number>)[`__${name}Level`] = value;
+        },
+      };
+    };
+    const local = source('local');
+    const site = source('site');
+    const w = window as unknown as Record<string, unknown>;
+    w.__talkLocal = local.level;
+    w.__talkSite = site.level;
+    w.__localTracks = [];
+    void context.resume();
+
+    const devices = navigator.mediaDevices;
+    devices.getUserMedia = async (constraints) => {
+      if (!constraints?.audio || constraints.video) throw new Error('only audio in this test');
+      // A fresh track per call, like a real device, so a test can see it was stopped.
+      const stream = new MediaStream([local.out.stream.getAudioTracks()[0]!.clone()]);
+      (w.__localTracks as MediaStreamTrack[]).push(stream.getAudioTracks()[0]!);
+      return stream;
+    };
+
+    class FakePeerConnection extends EventTarget {
+      connectionState: RTCPeerConnectionState = 'new';
+      iceGatheringState: RTCIceGatheringState = 'complete';
+      localDescription: RTCSessionDescriptionInit | null = null;
+      onconnectionstatechange: (() => void) | null = null;
+      ontrack: ((event: { track: MediaStreamTrack }) => void) | null = null;
+      private kinds: Array<{ kind: string; direction?: string }> = [];
+      addTransceiver(trackOrKind: MediaStreamTrack | string, init?: { direction?: string }) {
+        const kind = typeof trackOrKind === 'string' ? trackOrKind : trackOrKind.kind;
+        this.kinds.push({ kind, ...(init?.direction ? { direction: init.direction } : {}) });
+        return {
+          sender: { getParameters: () => ({ encodings: [] }), setParameters: async () => {} },
+          setCodecPreferences: () => {},
+        };
+      }
+      getSenders() { return []; }
+      async createOffer() { return { type: 'offer' as const, sdp: `v=0\r\n${this.kinds.map((k) => `m=${k.kind} ${k.direction ?? ''}`).join('\r\n')}\r\n` }; }
+      async setLocalDescription(description: RTCSessionDescriptionInit) { this.localDescription = description; }
+      async setRemoteDescription() {
+        if (this.kinds.some((k) => k.kind === 'audio' && k.direction === 'recvonly')) {
+          const track = site.out.stream.getAudioTracks()[0]!.clone();
+          setTimeout(() => this.ontrack?.({ track }), 10);
+        }
+        if (this.kinds.some((k) => k.kind === 'video' && k.direction === 'recvonly')) {
+          // A camera on the site node: a green test picture.
+          const canvas = document.createElement('canvas');
+          canvas.width = 64;
+          canvas.height = 48;
+          const g = canvas.getContext('2d')!;
+          const paint = () => { g.fillStyle = '#00ff00'; g.fillRect(0, 0, 64, 48); };
+          paint();
+          const timer = setInterval(paint, 50);
+          const track = canvas.captureStream(20).getVideoTracks()[0]!;
+          track.addEventListener('ended', () => clearInterval(timer));
+          setTimeout(() => this.ontrack?.({ track }), 10);
+        }
+        setTimeout(() => {
+          this.connectionState = 'connected';
+          this.onconnectionstatechange?.();
+        }, 20);
+      }
+      close() {
+        this.connectionState = 'closed';
+        (window as unknown as { __closedPeers: number }).__closedPeers = ((window as unknown as { __closedPeers?: number }).__closedPeers ?? 0) + 1;
+      }
+    }
+    (window as unknown as { RTCPeerConnection: unknown }).RTCPeerConnection = FakePeerConnection;
+  });
+}
+
+async function talk(page: Page, where: 'Local' | 'Site', level: number): Promise<void> {
+  await page.evaluate(([fn, value]) => (window as unknown as Record<string, (v: number) => void>)[fn as string]!(value as number), [`__talk${where}`, level]);
+}
+
+async function voiceUploads(request: APIRequestContext): Promise<number> {
+  return (await received(request)).http.filter((entry) => entry.method === 'POST' && entry.path === '/voice').length;
+}
+
+async function interrupts(request: APIRequestContext): Promise<number> {
+  return (await received(request)).ws.filter((message) => message.type === 'interrupt').length;
+}
+
+/** The face's gaze as the renderer gets it (store units: x right, y down). */
+async function gaze(page: Page): Promise<{ x: number; y: number }> {
+  return page.evaluate(() => {
+    const face = document.querySelector<HTMLElement>('#visual-face')!;
+    return { x: Number(face.style.getPropertyValue('--gaze-x') || 0), y: Number(face.style.getPropertyValue('--gaze-y') || 0) };
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  await resetMock(request);
+});
+
+// With studio mode off nothing about the operator face may change: it keeps
+// the default mic, a director's message moves nothing, and nothing is
+// published anywhere. Studio mode is something you ask for.
+test('studio mode off: the operator face keeps its mic, ignores a director and publishes nothing', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __peerConnections: number; __micConstraints: unknown[] };
+    w.__peerConnections = 0;
+    w.__micConstraints = [];
+    const Original = window.RTCPeerConnection;
+    window.RTCPeerConnection = class extends Original {
+      constructor(...args: ConstructorParameters<typeof RTCPeerConnection>) {
+        super(...args);
+        w.__peerConnections += 1;
+      }
+    };
+    const devices = navigator.mediaDevices;
+    devices.getUserMedia = async (constraints) => {
+      w.__micConstraints.push(constraints);
+      const context = new AudioContext();
+      return context.createMediaStreamDestination().stream;
+    };
+  });
+  await openFace(page, request);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __micConstraints: unknown[] }).__micConstraints.length)).toBe(1);
+
+  for (let i = 0; i < 8; i += 1) {
+    await send(request, { type: 'studio_look', actor: 'main', gaze: [0.9, 0.6] }, { type: 'studio_presence', actor: 'main', present: true, people: 3 });
+    await page.waitForTimeout(100);
+  }
+  await page.waitForTimeout(400);
+
+  const { x, y } = await gaze(page);
+  expect(Math.abs(x), 'the director does not move the operator face').toBeLessThan(0.2);
+  expect(Math.abs(y)).toBeLessThan(0.2);
+  const state = await page.evaluate(() => ({
+    peers: (window as unknown as { __peerConnections: number }).__peerConnections,
+    mic: (window as unknown as { __micConstraints: unknown[] }).__micConstraints,
+  }));
+  expect(state.peers, 'nothing published').toBe(0);
+  expect(state.mic).toEqual([{ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }]);
+  const sent = (await received(request)).ws.map((message) => message.type);
+  expect(sent.filter((type) => String(type).startsWith('studio_'))).toEqual([]);
+});
+
+// Two pages listening to one room would answer every visitor twice. Once
+// studio mode is on the studio listener has the mic; the operator face lets
+// go of it, and takes it back when studio mode goes off.
+test('studio mode on: the operator face lets go of the mic, and takes it back when it goes off', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  await openFace(page, request);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __localTracks: MediaStreamTrack[] }).__localTracks.length)).toBe(1);
+
+  await setStudio(request, { enabled: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __localTracks: MediaStreamTrack[] }).__localTracks[0]!.readyState)).toBe('ended');
+
+  await setStudio(request, { enabled: false });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __localTracks: MediaStreamTrack[] }).__localTracks.map((t) => t.readyState))).toEqual(['ended', 'live']);
+});
+
+// The director steers where each head looks, but only while it keeps saying
+// so. A director that stops (crashed, or done) must not leave the face staring
+// at a stale point: after ~2 s it looks for itself again.
+test('a studio_look drives the gaze while fresh, and a stale one releases it back to the face', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+
+  for (let i = 0; i < 10; i += 1) {
+    // The other head's look must not move this one.
+    await send(request, { type: 'studio_look', actor: 'main', gaze: [0.8, 0.5] }, { type: 'studio_look', actor: 'small', gaze: [-0.9, -0.9] });
+    await page.waitForTimeout(150);
+  }
+  const held = await gaze(page);
+  expect(held.x, 'looks right').toBeGreaterThan(0.5);
+  expect(held.y, 'looks up (the director\'s y is up, the face\'s is down)').toBeLessThan(-0.3);
+
+  // A short pause in the updates is not a release.
+  await page.waitForTimeout(1000);
+  expect((await gaze(page)).x).toBeGreaterThan(0.5);
+
+  await expect.poll(async () => Math.abs((await gaze(page)).x), { timeout: 4000 }).toBeLessThan(0.4);
+});
+
+// The voice goes to the site node, so the room plays it from elsewhere and
+// the mic (here the site node's) hears Tubs at full strength. Taken as a
+// visitor he would interrupt or answer himself. While he talks nothing is
+// transcribed; the visitor is heard as soon as he is quiet again.
+test('site mic: Tubs\' own voice coming back is never taken as a visitor, who is heard once he is quiet', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  const site = await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/config`, { data: { vadModel: 'rms', interruptible: true } });
+  await setStudio(request, { enabled: true, micSource: 'site:mic-room' });
+  await expect.poll(() => site.some((r) => r.method === 'POST' && r.path === '/mic-room/whep')).toBe(true);
+  await page.waitForTimeout(400);
+  await request.post(`${MOCK}/__test/reset-received`);
+
+  // Tubs talks for 3 s; the room gives his voice back at a steady level.
+  await send(request, { type: 'turn_start', turnId: 't-echo' }, chunk('t-echo', 0, 'I will talk for a while, and you will hear me twice.', 3000));
+  await page.waitForTimeout(150);
+  await talk(page, 'Site', 0.2);
+  await page.waitForTimeout(2600);
+  await talk(page, 'Site', 0);
+  expect(await interrupts(request), 'his echo did not cut him off').toBe(0);
+  await page.waitForTimeout(2000);
+  expect(await voiceUploads(request), 'his echo was not transcribed').toBe(0);
+
+  // Quiet again: the visitor at the same level is heard.
+  await talk(page, 'Site', 0.2);
+  await page.waitForTimeout(1000);
+  await talk(page, 'Site', 0);
+  await expect.poll(() => voiceUploads(request), { timeout: 5000 }).toBe(1);
+});
+
+// Recognition is muted while he talks, but with Interruptible on someone can
+// still talk over him: they just have to be clearly louder than his echo.
+test('site mic: a visitor well above the echo still cuts Tubs off', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  const site = await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/config`, { data: { vadModel: 'rms', interruptible: true } });
+  await setStudio(request, { enabled: true, micSource: 'site:mic-room' });
+  await expect.poll(() => site.some((r) => r.method === 'POST' && r.path === '/mic-room/whep')).toBe(true);
+  await page.waitForTimeout(400);
+  await request.post(`${MOCK}/__test/reset-received`);
+
+  await send(request, { type: 'turn_start', turnId: 't-over' }, chunk('t-over', 0, 'This is going to be a long and boring story.', 5000));
+  await page.waitForTimeout(150);
+  await talk(page, 'Site', 0.04);
+  await page.waitForTimeout(1600);
+  expect(await interrupts(request)).toBe(0);
+  await talk(page, 'Site', 0.5);
+  await expect.poll(() => interrupts(request), { timeout: 3000 }).toBeGreaterThan(0);
+  await talk(page, 'Site', 0);
+});
+
+// The studio switches mics while the show runs (a guest mic, the room mic, a
+// camera's). The switch must take effect at once, without reloading the face
+// or its stream: the old source stops being heard, the new one is.
+test('switching the mic source takes effect live', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  const site = await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await request.post(`${MOCK}/config`, { data: { vadModel: 'rms' } });
+  await page.evaluate(() => { (window as unknown as { __sameDocument: boolean }).__sameDocument = true; });
+  await setStudio(request, { enabled: true, micSource: 'local' });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __localTracks: MediaStreamTrack[] }).__localTracks.length)).toBe(1);
+  await page.waitForTimeout(300);
+
+  await talk(page, 'Local', 0.2);
+  await page.waitForTimeout(900);
+  await talk(page, 'Local', 0);
+  await expect.poll(() => voiceUploads(request), { timeout: 5000 }).toBe(1);
+
+  await setStudio(request, { micSource: 'site:mic-guest' });
+  await expect.poll(() => site.some((r) => r.method === 'POST' && r.path === '/mic-guest/whep')).toBe(true);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __localTracks: MediaStreamTrack[] }).__localTracks[0]!.readyState)).toBe('ended');
+  await page.waitForTimeout(500);
+
+  await talk(page, 'Local', 0.2);
+  await page.waitForTimeout(900);
+  await talk(page, 'Local', 0);
+  await page.waitForTimeout(1500);
+  expect(await voiceUploads(request), 'the old mic is no longer heard').toBe(1);
+
+  await talk(page, 'Site', 0.2);
+  await page.waitForTimeout(900);
+  await talk(page, 'Site', 0);
+  await expect.poll(() => voiceUploads(request), { timeout: 5000 }).toBe(2);
+
+  await setStudio(request, { micSource: 'off' });
+  await expect.poll(() => site.some((r) => r.method === 'DELETE' && r.path.startsWith('/mic-guest/whep/'))).toBe(true);
+  await talk(page, 'Site', 0.2);
+  await page.waitForTimeout(900);
+  await talk(page, 'Site', 0);
+  await page.waitForTimeout(1500);
+  expect(await voiceUploads(request), 'off is off').toBe(2);
+  expect(await page.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument), 'no reload').toBe(true);
+});
+
+// The site node takes faces as H.264 only (video-codec=h264/90000), with the
+// voice in the same session for lip sync. A site node that is down or says no
+// must not end the stream for the night: the page tries again.
+test('a face page publishes H.264 video with its voice, and tries again when the site node says no', async ({ page, request }) => {
+  let refusals = 0;
+  const site = await fakeSiteNode(page, () => (refusals++ === 0 ? { status: 500 } : { status: 201 }));
+  await openStudio(page, request, 'small');
+  await setStudio(request, { enabled: true });
+
+  await expect.poll(() => site.filter((r) => r.method === 'POST' && r.path === '/tubs-small/whip').length, { timeout: 8000 }).toBeGreaterThanOrEqual(2);
+  const offer = site.find((r) => r.path === '/tubs-small/whip')!.body;
+  const sections = offer.split(/\r?\nm=/).slice(1);
+  const video = sections.find((section) => section.startsWith('video'))!;
+  const audio = sections.find((section) => section.startsWith('audio'))!;
+  const videoCodecs = [...video.matchAll(/a=rtpmap:\d+ ([^/\s]+)\/(\d+)/g)].map((m) => `${m[1]}/${m[2]}`);
+  expect(videoCodecs.length).toBeGreaterThan(0);
+  expect(videoCodecs.every((codec) => codec === 'H264/90000'), videoCodecs.join(' ')).toBe(true);
+  expect(audio).toMatch(/a=rtpmap:\d+ opus\/48000/);
+  expect(video).toMatch(/a=sendonly/);
+  // One stream id on both, so receivers keep the voice in sync with the face.
+  const msid = (section: string) => section.match(/a=msid:(\S+)/)?.[1];
+  expect(msid(video)).toBeTruthy();
+  expect(msid(video)).toBe(msid(audio));
+
+  const statuses = (await received(request)).ws.filter((m) => m.type === 'studio_status');
+  expect(statuses.some((m) => m.publishing === false && typeof m.error === 'string')).toBe(true);
+});
+
+// Captions (contract section 8): each head's line under its face in the
+// windows, the heard part lit, so it reads with the sound turned down. The
+// face page that plays the voice sends them, on its playback clock.
+
+async function captions(request: APIRequestContext): Promise<Array<Record<string, unknown>>> {
+  return (await received(request)).ws.filter((message) => message.type === 'studio_caption');
+}
+
+test('captions follow a head\'s voice line by line, a filler included, each finished once', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await page.waitForTimeout(300);
+  await request.post(`${MOCK}/__test/reset-received`);
+
+  const reply = 'Did it come with instructions?';
+  await send(
+    request,
+    { type: 'turn_start', turnId: 't-cap' },
+    { ...chunk('t-cap', 0, 'Um, okay.', 600), filler: true },
+    chunk('t-cap', 1, reply, 1500),
+    { type: 'speak_end', turnId: 't-cap', fullText: reply },
+  );
+  await expect.poll(async () => (await captions(request)).filter((c) => c.done).length, { timeout: 8000 }).toBe(2);
+  await page.waitForTimeout(800);
+
+  const all = await captions(request);
+  expect(all.every((c) => c.actor === 'main' && c.turnId === 't-cap')).toBe(true);
+  expect(all.filter((c) => c.done).map((c) => [c.text, c.spoken])).toEqual([['Um, okay.', 9], [reply, reply.length]]);
+  // The reply was reported as it was heard, not all at once.
+  const replySpoken = all.filter((c) => c.text === reply).map((c) => c.spoken as number);
+  expect(replySpoken.length).toBeGreaterThan(3);
+  expect(replySpoken).toEqual([...replySpoken].sort((a, b) => a - b));
+  // At most ten a second, not every animation frame: a line's captions come ~100 ms apart.
+  const times = all.filter((c) => c.text === reply).map((c) => c.receivedAt as number);
+  const gaps = times.slice(1).map((t, i) => t - times[i]!).sort((a, b) => a - b);
+  expect(gaps[Math.floor(gaps.length / 2)]!).toBeGreaterThanOrEqual(90);
+});
+
+// A streamed reply whose next piece is late must not light words nobody has
+// heard yet: the caption waits with the voice. (After 280 ms without audio the
+// speech runtime ends the line, as on the face's own subtitle; the caption then
+// ends with what was heard, and the late piece is a line of its own.)
+test('a caption never runs ahead of a stalled voice, and a line given up on ends with what was heard', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await page.waitForTimeout(300);
+  await request.post(`${MOCK}/__test/reset-received`);
+
+  // Twenty words, streamed like Ming: one text over two pieces, the second late.
+  const text = 'One two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty.';
+  await send(request, { type: 'turn_start', turnId: 't-stall' }, { ...chunk('t-stall', 0, text, 1000), more: true });
+  await page.waitForTimeout(2600);
+  const stalledUntil = Date.now();
+  await send(request, chunk('t-stall', 1, text, 1000), { type: 'speak_end', turnId: 't-stall', fullText: text });
+  await expect.poll(async () => (await captions(request)).some((c) => c.done), { timeout: 8000 }).toBe(true);
+
+  const all = await captions(request);
+  const duringStall = all.filter((c) => (c.receivedAt as number) < stalledUntil);
+  expect(duringStall.length, 'the first piece was captioned').toBeGreaterThan(0);
+  // One second of audio heard out of an expected ~6 s: about a sixth of the text,
+  // however long the wait. (Following wall time it would be near half by now.)
+  expect(Math.max(...duringStall.map((c) => c.spoken as number))).toBeLessThanOrEqual(Math.ceil(text.length / 6));
+  const firstDone = all.find((c) => c.done)!;
+  expect(firstDone.spoken as number, 'ended with what was heard, not the whole text').toBeLessThanOrEqual(Math.ceil(text.length / 6));
+});
+
+// Paused playback (a suspended audio context) holds the caption exactly where
+// the voice is, however long; it goes on with the voice.
+test('a caption holds while playback is paused and goes on with it', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const contexts: AudioContext[] = [];
+    (window as unknown as { __contexts: AudioContext[] }).__contexts = contexts;
+    const Original = window.AudioContext;
+    window.AudioContext = class extends Original {
+      constructor(...args: ConstructorParameters<typeof AudioContext>) {
+        super(...args);
+        contexts.push(this);
+      }
+    };
+  });
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await page.waitForTimeout(300);
+  await request.post(`${MOCK}/__test/reset-received`);
+
+  const text = 'I am going to take my time with this sentence.';
+  await send(request, { type: 'turn_start', turnId: 't-pause' }, chunk('t-pause', 0, text, 2500));
+  await page.waitForTimeout(900);
+  // The speech plays in the page's 24 kHz context.
+  await page.evaluate(() => Promise.all((window as unknown as { __contexts: AudioContext[] }).__contexts.filter((c) => c.sampleRate === 24000).map((c) => c.suspend())));
+  await page.waitForTimeout(300);
+  const pausedAt = Date.now();
+  await page.waitForTimeout(2000);
+  const resumedAt = Date.now();
+  await page.evaluate(() => Promise.all((window as unknown as { __contexts: AudioContext[] }).__contexts.filter((c) => c.sampleRate === 24000).map((c) => c.resume())));
+  await expect.poll(async () => (await captions(request)).some((c) => c.done), { timeout: 8000 }).toBe(true);
+
+  const all = await captions(request);
+  const before = all.filter((c) => (c.receivedAt as number) <= pausedAt);
+  const during = all.filter((c) => (c.receivedAt as number) > pausedAt && (c.receivedAt as number) < resumedAt);
+  expect(during, 'nothing new while paused').toEqual([]);
+  expect(before.at(-1)!.spoken as number).toBeLessThan(text.length / 2);
+  expect(all.filter((c) => c.done)).toEqual([expect.objectContaining({ text, spoken: text.length })]);
+});
+
+test('no captions while studio mode is off', async ({ page, request }) => {
+  await openStudio(page, request, 'main');
+  await send(request, { type: 'turn_start', turnId: 't-off' }, chunk('t-off', 0, 'Nobody is filming.', 800));
+  await page.waitForTimeout(2000);
+  expect(await captions(request)).toEqual([]);
+});
+
+// Asleep, the face window floats "z z z" over the face as page text, which a
+// stream never carries. The studio frame has to show it itself, or a sleeping
+// Tubs just looks switched off; awake, nothing may be drawn there.
+test('the published frame shows the sleeping Zs while Tubs sleeps, and none while awake', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    const sent: MediaStreamTrack[] = [];
+    (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo = sent;
+    const original = RTCPeerConnection.prototype.addTransceiver;
+    RTCPeerConnection.prototype.addTransceiver = function addTransceiver(this: RTCPeerConnection, trackOrKind: MediaStreamTrack | string, init?: RTCRtpTransceiverInit) {
+      if (typeof trackOrKind !== 'string' && trackOrKind.kind === 'video') sent.push(trackOrKind);
+      return original.call(this, trackOrKind, init);
+    };
+  });
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  // A red face: its brightest pixels (purple ones get close to white) can't be mistaken for a Z.
+  await request.post(`${MOCK}/config`, { data: { glitchFxBaseColor: '#ff0000', glitchScanBeamColor: '#ff0000' } });
+  await setStudio(request, { enabled: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo.length)).toBeGreaterThan(0);
+
+  // Up and to the right of the face, where the Zs float.
+  const face = faceBox(DEFAULT_CONFIG, 1024, 1024, STUDIO_LAYOUT);
+  const region = { x0: Math.round(face.x + face.w * 0.85), x1: 1024, y0: 0, y1: Math.round(face.y + face.h * 0.45) };
+  /** Z-coloured pixels in that region of the published video (the most in a few frames), and lit face pixels. */
+  const zPixels = () => published().then((counts) => counts.z);
+  const published = () => page.evaluate(async ({ box, faceArea }) => {
+    const track = (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo[0]!;
+    const Processor = (window as unknown as { MediaStreamTrackProcessor: new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> } }).MediaStreamTrackProcessor;
+    const reader = new Processor({ track: track.clone() }).readable.getReader();
+    const canvas = new OffscreenCanvas(1024, 1024);
+    const ctx = canvas.getContext('2d')!;
+    let most = 0;
+    let faceLit = 0;
+    for (let i = 0; i < 6; i += 1) {
+      const { value: frame } = await reader.read();
+      if (!frame) break;
+      ctx.drawImage(frame, 0, 0, 1024, 1024);
+      frame.close();
+      const face = ctx.getImageData(faceArea.x, faceArea.y, faceArea.w, faceArea.h).data;
+      let lit = 0;
+      for (let p = 0; p < face.length; p += 4) {
+        if (Math.max(face[p]!, face[p + 1]!, face[p + 2]!) > 60) lit += 1;
+      }
+      faceLit = Math.max(faceLit, lit);
+      const { data } = ctx.getImageData(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
+      let white = 0;
+      for (let p = 0; p < data.length; p += 4) {
+        const low = Math.min(data[p]!, data[p + 1]!, data[p + 2]!);
+        const high = Math.max(data[p]!, data[p + 1]!, data[p + 2]!);
+        // The Zs' near-white (#f1eefc). The face is drawn pure red below, so
+        // none of its pixels, however bright, has green and blue up as well.
+        if (low >= 200 && high - low <= 40) white += 1;
+      }
+      most = Math.max(most, white);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    void reader.cancel();
+    return { z: most, faceLit };
+  }, { box: region, faceArea: { x: Math.round(face.x), y: Math.round(face.y), w: Math.round(face.w), h: Math.round(face.h) } });
+
+  await send(request, { type: 'wake' });
+  await page.waitForTimeout(600);
+  const awake = await published();
+  expect(awake.z, 'awake: no Zs').toBe(0);
+  // The Zs are drawn over the face, never instead of it.
+  expect(awake.faceLit, 'the face is in the published frame').toBeGreaterThan(500);
+
+  await send(request, { type: 'sleep' });
+  await page.waitForTimeout(1200);
+  expect(await zPixels(), 'asleep: Zs in the frame').toBeGreaterThan(200);
+
+  await send(request, { type: 'wake' });
+  await page.waitForTimeout(600);
+  expect(await zPixels(), 'awake again: gone').toBe(0);
+});
+
+// GET /studio once said "publishing" while both streams were black. Whatever
+// the cause, a face page whose published frame stays black must say so.
+test('a face page whose published frame is black stops claiming to publish', async ({ page, request }) => {
+  // No WebGPU: the face cannot render, so the published frame is black.
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'gpu', { value: undefined, configurable: true });
+  });
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await expect.poll(async () => (await received(request)).ws.some((m) => m.type === 'studio_status' && String(m.error ?? '').includes('published frame is black')), { timeout: 12_000 }).toBe(true);
+  const last = (await received(request)).ws.filter((m) => m.type === 'studio_status').at(-1)!;
+  expect(last.publishing).toBe(false);
+});
+
+test('a face page with its face rendering never reports a black frame', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await page.waitForTimeout(8000);
+  expect((await received(request)).ws.some((m) => m.type === 'studio_status' && String(m.error ?? '').includes('black'))).toBe(false);
+});
+
+// Asleep the eyes are closed: they stay near centre whatever the director
+// says, but they must not look frozen either.
+test('a sleeping face keeps its gaze near centre, alive but not following looks', async ({ page, request }) => {
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await send(request, { type: 'sleep' });
+  await page.waitForTimeout(500);
+  const xs: number[] = [];
+  for (let i = 0; i < 30; i += 1) {
+    await send(request, { type: 'studio_look', actor: 'main', gaze: [0.9, 0.9] });
+    await page.waitForTimeout(200);
+    const { x, y } = await gaze(page);
+    expect(Math.abs(x), 'within the sleeping drift').toBeLessThanOrEqual(0.1001);
+    expect(Math.abs(y)).toBeLessThanOrEqual(0.1001);
+    xs.push(x);
+  }
+  expect(Math.max(...xs) - Math.min(...xs), 'not frozen').toBeGreaterThan(0.002);
+
+  // Awake, the director's looks count again.
+  await send(request, { type: 'wake' });
+  await page.waitForTimeout(300);
+  for (let i = 0; i < 8; i += 1) {
+    await send(request, { type: 'studio_look', actor: 'main', gaze: [0.9, 0.9] });
+    await page.waitForTimeout(150);
+  }
+  expect((await gaze(page)).x).toBeGreaterThan(0.5);
+});
+
+// docs/vision.md: a studio camera that does not stream. A snapshot URL costs
+// one request per picture; a site node stream is opened for one picture and
+// closed again, so the site node's on-demand mirror costs nothing in between.
+test('a snapshot picture is one request, and a site stream picture opens and closes its session', async ({ page, request }) => {
+  await fakeMediaAndWebRtc(page);
+  const site = await fakeSiteNode(page);
+  await openStudio(page, request, 'small');
+  // A JPEG made in the page, served as the camera's snapshot.
+  const jpeg = Buffer.from(await page.evaluate(async () => {
+    const canvas = new OffscreenCanvas(320, 240);
+    const g = canvas.getContext('2d')!;
+    g.fillStyle = '#336699';
+    g.fillRect(0, 0, 320, 240);
+    const bytes = new Uint8Array(await (await canvas.convertToBlob({ type: 'image/jpeg' })).arrayBuffer());
+    return btoa(String.fromCharCode(...bytes));
+  }), 'base64');
+  let snapshots = 0;
+  await page.route('**/studio/snapshot', async (route) => {
+    snapshots += 1;
+    await route.fulfill({ status: 200, contentType: 'image/jpeg', body: jpeg });
+  });
+
+  const sizes = await page.evaluate(async () => {
+    const { snapshotPicture } = await import('/src/client/face/pictures.ts');
+    const out: number[][] = [];
+    for (let i = 0; i < 3; i += 1) {
+      const picture = await snapshotPicture('/studio/snapshot');
+      out.push([picture.width, picture.height]);
+      picture.close();
+    }
+    return out;
+  });
+  expect(sizes).toEqual([[320, 240], [320, 240], [320, 240]]);
+  expect(snapshots, 'one request per picture').toBe(3);
+
+  const frame = await page.evaluate(async (url) => {
+    const { whepPicture } = await import('/src/client/transport/whip.ts');
+    const picture = await whepPicture(url);
+    const canvas = new OffscreenCanvas(picture.width, picture.height);
+    canvas.getContext('2d')!.drawImage(picture, 0, 0);
+    const [r, g, b] = canvas.getContext('2d')!.getImageData(10, 10, 1, 1).data;
+    return { width: picture.width, rgb: [r, g, b], closed: (window as unknown as { __closedPeers?: number }).__closedPeers ?? 0 };
+  }, 'http://127.0.0.1:39011/cam-c920/whep');
+  expect(frame.width).toBe(64);
+  expect(frame.rgb[1]).toBeGreaterThan(200);
+  expect(frame.closed, 'the WHEP session is closed after the picture').toBe(1);
+  expect(site.filter((r) => r.path.startsWith('/cam-c920/whep')).map((r) => r.method)).toEqual(['POST', 'DELETE']);
+});
+
+// Hold until in place: the director may move a head to another window before
+// it speaks; its voice should come from where its face is. A filler or a
+// call-out covers the journey; the line itself waits for studio_stage ready,
+// never longer than 2.5 s.
+async function stagedPage(page: Page, request: APIRequestContext): Promise<void> {
+  await instrumentAudio(page);
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await page.waitForTimeout(300);
+  await send(request, { type: 'studio_stage', actor: 'main', ready: false });
+  await page.waitForTimeout(100);
+}
+
+test('a line waits for its face to be in place, while the filler covers the wait', async ({ page, request }) => {
+  await stagedPage(page, request);
+  const sentAt = await now(page);
+  await send(request, { type: 'turn_start', turnId: 't-stage' }, { ...chunk('t-stage', 0, 'Hmm.', 500), filler: true }, chunk('t-stage', 1, 'Nice hat.', 1200));
+  await page.waitForTimeout(1200);
+  const before = await speechAudio(page);
+  expect(before.map((a) => Math.round(a.duration * 10) / 10), 'only the filler so far').toEqual([0.5]);
+  expect(before[0]!.calledAt - sentAt).toBeLessThan(500);
+  const readyAt = await now(page);
+  await send(request, { type: 'studio_stage', actor: 'main', ready: true });
+  await expect.poll(async () => (await speechAudio(page)).length).toBe(2);
+  const line = (await speechAudio(page))[1]!;
+  expect(line.calledAt).toBeGreaterThanOrEqual(readyAt);
+  expect(line.calledAt - readyAt).toBeLessThan(600);
+});
+
+test('a line starts anyway at the cap when the face never says it is in place', async ({ page, request }) => {
+  await stagedPage(page, request);
+  const sentAt = await now(page);
+  await send(request, { type: 'turn_start', turnId: 't-cap' }, chunk('t-cap', 0, 'Still here?', 1000));
+  await expect.poll(async () => (await speechAudio(page)).length, { timeout: 5000 }).toBe(1);
+  const waited = (await speechAudio(page))[0]!.calledAt - sentAt;
+  expect(waited).toBeGreaterThan(2300);
+  expect(waited).toBeLessThan(3300);
+});
+
+test('a call-out plays at once, and the line after it waits for the face', async ({ page, request }) => {
+  await stagedPage(page, request);
+  const sentAt = await now(page);
+  await send(
+    request,
+    { type: 'turn_start', turnId: 't-call' },
+    { ...chunk('t-call', 0, 'Hey, you over by the cinema!', 800), callout: true },
+    chunk('t-call', 1, 'Come here, I have opinions.', 1200),
+  );
+  await page.waitForTimeout(1000);
+  const early = await speechAudio(page);
+  expect(early).toHaveLength(1);
+  expect(early[0]!.calledAt - sentAt, 'the call-out did not wait').toBeLessThan(500);
+  await send(request, { type: 'studio_stage', actor: 'main', ready: true });
+  await expect.poll(async () => (await speechAudio(page)).length).toBe(2);
+});

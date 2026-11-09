@@ -13,8 +13,10 @@ import { EventLogPanel } from '../panels/EventLogPanel.js';
 import { FacePanel } from '../panels/FacePanel.js';
 import { FxEditor } from '../panels/FxEditor.js';
 import { ManualPanel } from '../panels/ManualPanel.js';
+import { MemoryPanel } from '../panels/MemoryPanel.js';
 import { MindPanel } from '../panels/MindPanel.js';
 import { StatsPanel } from '../panels/StatsPanel.js';
+import { StudioPanel } from '../panels/StudioPanel.js';
 import { VoicePanel } from '../panels/VoicePanel.js';
 import { useAppSelector } from '../react-store.js';
 import { DEFAULT_DOCK_WIDTH, DOCK_TAB_LABELS, clampDockWidth, clickDockTab, dockTabsFor } from './dock-state.js';
@@ -116,12 +118,16 @@ function DockTabContent({ tab, store, controls }: { tab: DockTab; store: AppStor
   switch (tab) {
     case 'chat':
       return <ChatPanel store={store} />;
+    case 'studio':
+      return <StudioPanel store={store} />;
     case 'voice':
       return <VoicePanel store={store} controls={controls} />;
     case 'mind':
       return <MindPanel store={store} />;
     case 'people':
       return <FacePanel store={store} {...(controls?.face ? { controls: controls.face } : {})} />;
+    case 'memory':
+      return <MemoryPanel store={store} />;
     case 'controls':
       return (
         <>

@@ -17,7 +17,7 @@ import { closeFxTab, toggleDockFolded, toggleFxTab } from './hud/dock-state.js';
 import { resolveHotkey, type HotkeyAction } from './hud/hotkeys.js';
 
 export interface AppShellProps {
-  mode: 'main' | 'dashboard' | 'mini' | 'spectator';
+  mode: 'main' | 'dashboard' | 'mini' | 'spectator' | 'studio';
   store: AppStore;
   controls?: AppShellControls | undefined;
 }
@@ -60,6 +60,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
   }
   if (props.mode === 'dashboard') {
     return <DashboardAppShell store={props.store} controls={props.controls} />;
+  }
+  if (props.mode === 'studio') {
+    return <StudioAppShell />;
   }
   return props.mode === 'mini'
     ? <MiniAppShell store={props.store} />
@@ -235,6 +238,19 @@ function MiniAppShell({ store }: { store: AppStore }): JSX.Element {
           className={`visual-subtitle ${state.sleeping || state.config?.secondarySubtitleEnabled === false ? 'is-hidden' : ''}`}
         />
       </section>
+    </main>
+  );
+}
+
+/**
+ * A studio face page: the face alone on black, square. Only the canvas goes
+ * into the stream; the status line under it is for whoever looks at the window.
+ */
+function StudioAppShell(): JSX.Element {
+  return (
+    <main className="studio-shell">
+      <StableFaceContainer id="visual-face" className="visual-face studio-visual-face" />
+      <div id="studio-status" className="studio-status" />
     </main>
   );
 }

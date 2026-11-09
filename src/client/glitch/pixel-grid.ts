@@ -38,9 +38,62 @@ export interface PixelGridBuildResult {
   shapeCenters: ShapeCenter[];
 }
 
+/** How the face sits in its box: the share of the box it may fill, and where it sits vertically. */
+export interface FaceLayout {
+  safeX: number;
+  safeY: number;
+  /** Share of the free height above the face: 0.5 centres it. */
+  top: number;
+  /**
+   * What gets placed: the viewBox, or the face's own (resting) shapes. The
+   * shapes reach past the viewBox's right and bottom edges, so a centred
+   * viewBox leaves the face itself a little right of and below centre.
+   */
+  anchor: 'viewBox' | 'shapes';
+}
+
+/** On a screen: slightly above centre, so the mouth clears the listening indicator at the bottom. */
+export const SCREEN_LAYOUT: FaceLayout = { safeX: FACE_SAFE_AREA_X, safeY: FACE_SAFE_AREA_Y, top: 0.42, anchor: 'viewBox' };
+
+/**
+ * A studio stream (sentient-studio contract section 5): centred, so the
+ * frame's centre is the face's centre, and as large as it can be while the
+ * eyes stay inside the frame looking all the way left or right (they move by
+ * GAZE_EYE_RANGE_X of the frame width). The face is about 1.8 times as wide
+ * as it is tall, so at rest it is ~65 % of a square frame's width and ~36 %
+ * of its height. Centred on its resting shapes, so expressions move about a
+ * fixed centre.
+ */
+export const STUDIO_LAYOUT: FaceLayout = { safeX: 0.74, safeY: 1, top: 0.5, anchor: 'shapes' };
+
 /** Scale that fits the face's viewBox into the safe area of a width x height box. */
-export function featureFitScale(width: number, height: number, viewBox: { w: number; h: number }): number {
-  return Math.min((width * FACE_SAFE_AREA_X) / viewBox.w, (height * FACE_SAFE_AREA_Y) / viewBox.h);
+export function featureFitScale(width: number, height: number, viewBox: { w: number; h: number }, layout: FaceLayout = SCREEN_LAYOUT): number {
+  return Math.min((width * layout.safeX) / viewBox.w, (height * layout.safeY) / viewBox.h);
+}
+
+/** Where the face's viewBox is drawn in a width x height box. */
+export interface FaceBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export function faceBox(config: GlitchConfig, width: number, height: number, layout: FaceLayout = SCREEN_LAYOUT): FaceBox {
+  const vb = config.svg.viewBox;
+  const fitScale = featureFitScale(width, height, vb, layout);
+  const w = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
+  const h = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
+  let x = (width - w) * 0.5;
+  let y = (height - h) * layout.top;
+  if (layout.anchor === 'shapes' && config.svg.shapes.length > 0) {
+    const rest = config.svg.shapes;
+    const centreX = (Math.min(...rest.map((shape) => shape.x)) + Math.max(...rest.map((shape) => shape.x + shape.w))) / 2;
+    const centreY = (Math.min(...rest.map((shape) => shape.y)) + Math.max(...rest.map((shape) => shape.y + shape.h))) / 2;
+    x = width * 0.5 - centreX * (w / vb.w);
+    y = height * layout.top - centreY * (h / vb.h);
+  }
+  return { x, y, w, h };
 }
 
 export function buildPixelGrid(
@@ -50,6 +103,7 @@ export function buildPixelGrid(
   faceHeight: number,
   effectivePixelSize: number,
   effectivePixelGap: number,
+  layout: FaceLayout = SCREEN_LAYOUT,
 ): PixelGridBuildResult {
   const pixelGrid: PixelGridPoint[] = [];
   const shapeCenters: ShapeCenter[] = [];
@@ -58,13 +112,7 @@ export function buildPixelGrid(
   const profile = EXPRESSION_PROFILES[expression] ?? null;
   const shapes = getModifiedShapes(expression, config);
   const vb = config.svg.viewBox;
-  const fitScale = featureFitScale(faceWidth, faceHeight, vb);
-  const drawW = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
-  const drawH = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
-  const offsetX = (faceWidth - drawW) * 0.5;
-  // Slightly above centre, so the mouth clears the listening indicator at the
-  // bottom of short, wide screens.
-  const offsetY = (faceHeight - drawH) * 0.42;
+  const { x: offsetX, y: offsetY, w: drawW, h: drawH } = faceBox(config, faceWidth, faceHeight, layout);
   const mapScaleX = drawW / vb.w;
   const mapScaleY = drawH / vb.h;
   const sz = effectivePixelSize;

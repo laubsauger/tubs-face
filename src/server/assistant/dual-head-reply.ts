@@ -1,6 +1,8 @@
 // Two-head replies: one LLM call returns a beat script for Main and Small.
 
 import { recordFieldNotes } from './field-notes.js';
+import { studioSettings } from '../studio/state.js';
+import { calloutLine, freshStudioContext } from '../studio/context.js';
 import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { SpeechEmotionPayload } from '../../shared/contracts/ws.js';
 import { runtimeConfig } from '../config/runtime.js';
@@ -253,7 +255,10 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
   }
 
   const contents = buildProactiveContents(context, buildTurnDirection('proactive'));
-  const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: Nobody asked you anything; you are speaking up on your own. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.`;
+  // Studio: Tubs starts this one, and nobody is right in front of him. He calls
+  // them over first, while his face travels there (it plays without waiting).
+  const callout = studioCallout();
+  const systemInstruction = `${buildDualHeadSystemInstruction(getVisualContext())}\n\nPROACTIVE: Nobody asked you anything; you are speaking up on your own. ${context}\nOne punchy sentence from main. Small head should chime in with something creative, a roast, a jab, or an unhinged observation.${callout ? `\nYou have just called out to them across the room: "${callout}". They are not close yet; carry on as they come over, and don't repeat the call-out.` : ''}`;
 
   try {
     const dualHeadModel = String(process.env.DUAL_HEAD_LLM_MODEL || '').trim() || runtimeConfig.llmModel;
@@ -300,7 +305,9 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
       return null;
     }
 
-    const beats = script.beats;
+    const beats: TurnBeat[] = callout
+      ? [{ actor: 'main', action: 'speak', text: callout, callout: true }, ...script.beats]
+      : script.beats;
     let fullText = beats
       .filter((beat) => beat.action === 'speak')
       .map((beat) => beat.text?.trim() ?? '')
@@ -375,4 +382,11 @@ function fromTurnEmotion(emotion: TurnEmotion): SpeechEmotionPayload {
     ...(emotion.emoji !== undefined ? { emoji: emotion.emoji } : {}),
     ...(emotion.impulse !== undefined ? { impulse: emotion.impulse } : {}),
   };
+}
+
+/** A call-out for a conversation Tubs starts, in studio mode, from the director's fresh studio_context. */
+function studioCallout(): string | null {
+  if (!studioSettings.enabled) return null;
+  const fresh = freshStudioContext();
+  return fresh ? calloutLine(fresh.context, fresh.venue) : null;
 }

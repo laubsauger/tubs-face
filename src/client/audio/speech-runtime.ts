@@ -6,7 +6,7 @@ import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { createSubtitleController, type SubtitleController } from '../ui/subtitles.js';
 import { createQueueRun, type QueueRun } from './queue-run.js';
 import { STREAMING_GAP_GRACE_MS, createStreamingSession, type ScheduledChunk, type StreamingSession } from './streaming-session.js';
-import { speechOutput } from './speech-level.js';
+import { isSpeechRedirected, speechOutput } from './speech-level.js';
 import { noteVoiceQuiet, noteVoiceRetimed, noteVoiceStarted } from './voice-clock.js';
 
 interface SpeakQueueItem {
@@ -55,6 +55,8 @@ interface SubtitleItem {
   duration: number;
   /** More chunks for it are still coming. */
   open: boolean;
+  /** Its chunks on the AudioContext clock, for what has actually been heard (voice-clock.ts). */
+  pieces?: Array<{ at: number; seconds: number }>;
 }
 
 /**
@@ -75,6 +77,13 @@ export interface SpeechRuntime {
   handleServerMessage(message: WsServerMessage, targetActor?: 'main' | 'small'): void;
   /** Pre-create and unlock the streaming AudioContext during a user gesture. */
   unlockAudio(): void;
+  /** The context speech plays in, created now if needed (a studio page streams from it). */
+  audioContext(): AudioContext;
+  /**
+   * Studio: the first line of a turn waits for this before it plays (the face
+   * may be on its way to another window). Fillers and call-outs don't wait.
+   */
+  setLineGate(gate: (() => Promise<unknown>) | null): void;
   dispose(): void;
 }
 
@@ -117,6 +126,10 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   let queueRun: QueueRun | null = null;
   // Turns the user barged in on. Audio already in flight for them is dropped.
   const interruptedTurnIds = new Set<string>();
+  // Studio: the line held until the face is in place, its chunks, and a speak_end that came meanwhile.
+  let lineGate: (() => Promise<unknown>) | null = null;
+  let holding: { turnKey: string; chunks: Array<Extract<WsServerMessage, { type: 'audio_chunk' }>>; endTurnId: string | undefined | null } | null = null;
+  let gatePassedTurn: string | null = null;
 
   return {
     init(): void {
@@ -159,6 +172,26 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
           if (message.turnId && interruptedTurnIds.has(message.turnId)) {
             return;
           }
+          if (lineGate) {
+            const turnKey = message.turnId ?? '';
+            if (holding && holding.turnKey === turnKey) {
+              holding.chunks.push(message);
+              return;
+            }
+            // The turn's first real line waits for the face; fillers and call-outs cover the journey.
+            if (!message.filler && !message.callout && gatePassedTurn !== turnKey) {
+              holding = { turnKey, chunks: [message], endTurnId: null };
+              const held = holding;
+              void lineGate().then(() => {
+                if (holding !== held) return; // interrupted meanwhile
+                holding = null;
+                gatePassedTurn = turnKey;
+                for (const chunk of held.chunks) this.handleServerMessage(chunk, targetActor);
+                if (held.endTurnId !== null) scheduleStreamingEnd(held.endTurnId);
+              });
+              return;
+            }
+          }
           if (message.emotion?.expression) {
             streamExpression = message.emotion.expression;
           }
@@ -179,6 +212,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
             return;
           }
           if (message.turnId && interruptedTurnIds.has(message.turnId)) {
+            return;
+          }
+          if (holding && holding.turnKey === (message.turnId ?? '')) {
+            // Its audio is still held: end it once that has been played.
+            holding.endTurnId = message.turnId;
             return;
           }
           scheduleStreamingEnd(message.turnId);
@@ -226,6 +264,14 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         // ignore
       }
       console.log('[Spectator] Audio unlocked — AudioContext state:', streamingAudioContext.state);
+    },
+    audioContext(): AudioContext {
+      streamingAudioContext ??= createStreamingAudioContext();
+      return streamingAudioContext;
+    },
+    setLineGate(gate): void {
+      lineGate = gate;
+      holding = null;
     },
     dispose(): void {
       disposed = true;
@@ -558,6 +604,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
     if (mode === 'mini') {
       audio.volume = Math.max(0, Math.min(1.2, store.getState().config?.secondaryAudioGain ?? 1));
     }
+    if (isSpeechRedirected()) {
+      // A studio page: this voice belongs in the stream too, not on the speakers.
+      const context = await getStreamingContext();
+      context.createMediaElementSource(audio).connect(speechOutput(context));
+    }
     audioElement = audio;
     const subtitlesEnabled = mode === 'mini'
       ? store.getState().config?.secondarySubtitleEnabled !== false
@@ -677,13 +728,14 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         if (latestItem && continues) {
           latestItem.duration += chunk.duration;
           latestItem.open = chunk.more;
+          latestItem.pieces?.push({ at: chunk.scheduledAt, seconds: chunk.duration });
           if (runningItem === latestItem) {
             subtitles.retime(subtitleSeconds(latestItem), latestItem.open);
             noteVoiceRetimed(subtitleSeconds(latestItem), latestItem.open);
           }
           return;
         }
-        latestItem = { text: chunk.text, duration: chunk.duration, open: chunk.more };
+        latestItem = { text: chunk.text, duration: chunk.duration, open: chunk.more, pieces: [{ at: chunk.scheduledAt, seconds: chunk.duration }] };
         itemStartingAt.set(chunk.index, latestItem);
       },
       onChunkStarted: (chunk) => {
@@ -693,7 +745,11 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
         runningItem = item;
         if (chunk.text) {
           updateStreamingSubtitle(chunk.text, subtitleSeconds(item), item.open);
-          noteVoiceStarted(chunk.text, subtitleSeconds(item), item.open);
+          const context = streamingAudioContext;
+          noteVoiceStarted(chunk.text, subtitleSeconds(item), item.open, performance.now(), {
+            turnId: sessionTurnId,
+            ...(context && item.pieces ? { playback: { clock: () => context.currentTime, pieces: item.pieces } } : {}),
+          });
         }
       },
       onError: (message) => store.appendLog('error', `Stream ${message}`),
@@ -913,6 +969,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
   }
 
   function stopAllPlayback(): void {
+    holding = null;
     queue.length = 0;
     cancelQueueRun();
     lastEmotion = null;
@@ -1158,6 +1215,7 @@ export function createSpeechRuntime(store: AppStore, mode: 'main' | 'mini'): Spe
 
   function interruptTurn(turnId: string | null): void {
     const targetTurnId = turnId ?? null;
+    if (holding && (targetTurnId == null || holding.turnKey === targetTurnId)) holding = null;
     const beforeLength = queue.length;
     if (targetTurnId) {
       const remaining = queue.filter((item) => item.turnId == null || item.turnId !== targetTurnId);

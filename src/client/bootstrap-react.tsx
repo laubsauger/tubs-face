@@ -4,6 +4,8 @@ import { createAmbientRuntime } from './audio/ambient-runtime.js';
 import { createScreenRecorder } from './audio/screen-recorder.js';
 import { createSpeechRuntime } from './audio/speech-runtime.js';
 import { createVoiceRuntime } from './audio/voice-runtime.js';
+import { createStudioRuntime, type StudioRuntime } from './studio/runtime.js';
+import { isWsStudioServerMessage } from '../shared/guards/index.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
 import { createProactiveRuntime } from './behavior/proactive-runtime.js';
 import { createSleepRuntime } from './behavior/sleep-runtime.js';
@@ -26,13 +28,18 @@ import type { ConfigResponse, HealthResponse, StatsResponse } from '../shared/co
 import type { WsServerMessage } from '../shared/contracts/ws.js';
 
 export interface BootstrapOptions {
-  /** 'dashboard' is the operator HUD without a face, for its own screen. */
-  mode: 'main' | 'dashboard' | 'mini' | 'spectator';
+  /**
+   * 'dashboard' is the operator HUD without a face, for its own screen.
+   * 'studio' is one head published to the studio site node (studio-face.html).
+   */
+  mode: 'main' | 'dashboard' | 'mini' | 'spectator' | 'studio';
   root: HTMLElement;
-  /** Which face to follow in spectator mode. Defaults to 'main'. */
+  /** Which face to follow in spectator mode, or to show in studio mode. Defaults to 'main'. */
   actor?: 'main' | 'small';
   /** Mini only: running as the tile inside the face window, not as its own window. */
   embedded?: boolean;
+  /** Studio only: the stream's size in pixels (square), and whether to also play the voice here. */
+  studio?: { size: number; monitor: boolean };
 }
 
 export interface BootstrapHandle {
@@ -47,10 +54,15 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const isDashboard = options.mode === 'dashboard';
   const isOperator = isController || isDashboard;
   const isSpectator = options.mode === 'spectator';
+  // A studio page shows one head. The main one also does the face window's
+  // listening job (mic, sleep, proactive lines): see studio/runtime.ts.
+  const isStudio = options.mode === 'studio';
+  const studioActor: 'main' | 'small' | undefined = isStudio ? (options.actor ?? 'main') : undefined;
+  const isStudioListener = studioActor === 'main';
   const store = createAppStore(isController ? UI_PREFS_STORAGE_KEY : isDashboard ? DASHBOARD_UI_PREFS_STORAGE_KEY : undefined);
   // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
   // uses 'mini' for speech runtime (don't generate own TTS — only play broadcast audio_chunks).
-  const messageMode: 'main' | 'mini' = options.mode === 'mini' ? 'mini' : 'main';
+  const messageMode: 'main' | 'mini' = options.mode === 'mini' || studioActor === 'small' ? 'mini' : 'main';
   // Speech runtime: spectator uses 'mini' to skip speak/speak_chunk TTS generation.
   // Audio still plays via audio_chunk handler which has no mode check.
   const speechMode: 'main' | 'mini' = isSpectator ? 'mini' : messageMode;
@@ -61,21 +73,52 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     : undefined;
 
   const hasFace = !isDashboard;
-  const ambientRuntime = isSpectator || isDashboard ? null : createAmbientRuntime(store, messageMode);
-  const emotionRuntime = isController ? createEmotionRuntime(store) : null;
+  // Studio pages leave the room's sound to the studio: no ambient bed in the stream.
+  const ambientRuntime = isSpectator || isDashboard || isStudio ? null : createAmbientRuntime(store, messageMode);
+  const emotionRuntime = isController || isStudioListener ? createEmotionRuntime(store) : null;
   const fxRuntime = isOperator ? createFxRuntime(store) : null;
-  const glitchRuntime = hasFace ? createGlitchRuntime(store, messageMode) : null;
+  const glitchRuntime = hasFace
+    ? createGlitchRuntime(store, messageMode, isStudio ? { studioCanvasPx: options.studio?.size ?? 1024 } : {})
+    : null;
   let lastImpulseTurnId: string | undefined;
-  const proactiveRuntime = isController ? createProactiveRuntime(store) : null;
-  const sleepRuntime = isController ? createSleepRuntime(store) : null;
+  const proactiveRuntime = isController || isStudioListener ? createProactiveRuntime(store) : null;
+  const sleepRuntime = isController || isStudioListener ? createSleepRuntime(store) : null;
   const speechRuntime = hasFace ? createSpeechRuntime(store, speechMode) : null;
   const visualRuntime = hasFace ? createVisualRuntime(store, messageMode) : null;
-  const voiceRuntime = isController ? createVoiceRuntime(store) : null;
+  let studioRuntime: StudioRuntime | null = null;
+  const voiceRuntime = isController
+    ? createVoiceRuntime(store)
+    : isStudioListener
+      ? createVoiceRuntime(store, {
+        // The source comes with the studio settings; the voice plays in the
+        // stream, out of reach of the browser's echo cancellation.
+        deferMic: true,
+        echoGuard: true,
+        onMicStatus: (status) => studioRuntime?.noteMic(status),
+      })
+      : null;
   const faceBehaviorRuntime = hasFace ? createFaceBehaviorRuntime(store, messageMode) : null;
-  const faceRuntime = isController ? createFaceShellRuntime(store) : null;
+  // The studio listener takes the studio camera's pictures (docs/vision.md), without a dock to show them.
+  const faceRuntime = isController
+    ? createFaceShellRuntime(store)
+    : isStudioListener ? createFaceShellRuntime(store, { headless: true }) : null;
   const screenRecorder = isController ? createScreenRecorder(store) : null;
   // The mini tile follows the face window it sits in, not the fullscreen sync.
-  const windowRuntime = isDashboard || options.embedded ? null : createWindowRuntime(store, messageMode);
+  const windowRuntime = isDashboard || options.embedded || isStudio ? null : createWindowRuntime(store, messageMode);
+  if (isStudio && studioActor && speechRuntime && faceBehaviorRuntime && glitchRuntime) {
+    studioRuntime = createStudioRuntime({
+      store,
+      actor: studioActor,
+      root: options.root,
+      speech: speechRuntime,
+      faceBehavior: faceBehaviorRuntime,
+      glitch: glitchRuntime,
+      canvasPx: options.studio?.size ?? 1024,
+      voice: voiceRuntime,
+      face: faceRuntime,
+      monitor: options.studio?.monitor ?? false,
+    });
+  }
   const windowLink: WindowLink | null = isController
     ? createWindowLink(store, 'face', (command) => runFaceCommand(command))
     : isDashboard
@@ -262,7 +305,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     store.appendLog('error', `Voice init failed: ${error instanceof Error ? error.message : String(error)}`);
   });
   faceBehaviorRuntime?.init();
-  faceRuntime?.init();
+  // A studio page starts its face detector only once it has a camera (studio/runtime.ts).
+  if (!isStudio) faceRuntime?.init();
   windowRuntime?.init();
   if (isDashboard) {
     void loadFaceLibraryIntoStore(store);
@@ -274,6 +318,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     // The server takes nothing but pings from a spectator, so the dashboard
     // cannot send face motion, speech state or proactive turns by mistake.
     ...(isSpectator || isDashboard ? { role: 'spectator' as const } : {}),
+    ...(studioActor ? { studio: studioActor } : {}),
     onOpen: () => {
       store.setState((current) => ({
         ...current,
@@ -287,6 +332,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         ...current,
         connected: false,
         connectionLabel: 'Reconnecting',
+        // Its "rendering stopped" may never come; the face checks must not wait on it.
+        ttsRenderingSince: null,
       }));
       store.appendLog('error', 'WebSocket disconnected');
     },
@@ -294,6 +341,18 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       store.appendLog('error', 'WebSocket error');
     },
     onMessage: (message: WsServerMessage) => {
+      // Only studio pages act on studio messages. The operator face hears
+      // studio_config only while studio mode is on, or after it was switched:
+      // then the studio listener has the mic and this face lets go of it.
+      if (isWsStudioServerMessage(message)) {
+        studioRuntime?.handle(message);
+        if (isController && message.type === 'studio_config') {
+          void voiceRuntime?.setMicSource(message.enabled ? { kind: 'off' } : { kind: 'local' });
+          // The studio listener owns the pictures too; two cameras would greet everyone twice.
+          if (message.enabled && store.getState().faceCameraActive) faceRuntime?.stopCamera();
+        }
+        return;
+      }
       if (message.type === 'incoming') {
         proactiveRuntime?.onUserTurn();
       } else if (message.type === 'speak' || message.type === 'speak_end' || message.type === 'turn_script') {
@@ -310,6 +369,11 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       // Only the main face holds the camera snapshots.
       if (message.type === 'enroll_request') {
         void faceRuntime?.autoEnroll(message.personId, message.name);
+      }
+      // Someone was removed from the face library: stop recognising them.
+      if (message.type === 'faces_changed') {
+        void faceRuntime?.refreshLibrary();
+        if (isDashboard) void loadFaceLibraryIntoStore(store);
       }
       if (message.type === 'thinking') {
         emotionRuntime?.pushImpulse({ arousal: 0.52 }, 'system');
@@ -386,6 +450,10 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     });
   }
 
+  studioRuntime?.init((message) => {
+    wsClient.send(message);
+  });
+
   // Spectator tap-to-unlock: pre-create and resume the streaming AudioContext
   if (speechRuntime && isSpectator) {
     spectatorUnlockHandler = () => {
@@ -419,6 +487,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         window.removeEventListener('tubs:face-enrolled', faceEnrolledHandler);
       }
       wsClient.disconnect();
+      studioRuntime?.dispose();
       windowLink?.dispose();
       screenRecorder?.dispose();
       sleepRuntime?.dispose();

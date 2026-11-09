@@ -26,6 +26,12 @@ export interface TurnBeat {
   emotion?: TurnEmotion | null;
   delayMs?: number;
   waitForRemote?: boolean;
+  /**
+   * Studio: a short call-out to someone who is not close ("Hey, you over by
+   * the cinema!"). It plays at once, while the face is still on its way; the
+   * lines after it wait until the face is in place (studio_stage).
+   */
+  callout?: boolean;
 }
 
 export interface TurnScript {

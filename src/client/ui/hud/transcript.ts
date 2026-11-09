@@ -1,7 +1,7 @@
 // The floating transcript: the last few chat lines over the face, gone again
 // once the conversation goes quiet.
 
-import type { SpokenItem, VoiceClock } from '../../audio/voice-clock.js';
+import { spokenShare, type VoiceClock } from '../../audio/voice-clock.js';
 import { splitLeadingEmoji } from '../../chat/emoji.js';
 import { withFillerLeads } from '../../chat/filler-lead.js';
 import type { ChatEntry } from '../../state/app-state.js';
@@ -100,12 +100,6 @@ export function nextTyping(
   }
   if (previousIds.has(newest.id)) return null;
   return { id: newest.id, actor: newest.actor, startedAt: now, shown: 0 };
-}
-
-function spokenShare(item: SpokenItem, now: number): number {
-  if (item.seconds <= 0) return 1;
-  // While more audio is coming its length is a guess: hold back the last bit.
-  return Math.min(item.open ? 0.99 : 1, Math.max(0, (now - item.startedAt) / (item.seconds * 1000)));
 }
 
 /**

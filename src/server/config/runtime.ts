@@ -20,6 +20,7 @@ import {
   STT_BACKENDS,
   TTS_BACKENDS,
   VAD_MODELS,
+  VISION_PROVIDERS,
 } from '../../shared/contracts/config.js';
 
 const DEFAULT_STT_MODEL = process.env.REALTIME_STT_MODEL?.trim() || 'small';
@@ -46,6 +47,7 @@ export const runtimeConfig: RuntimeConfig = {
   secondaryAudioGain: parseFloatInRange(process.env.SECONDARY_AUDIO_GAIN, 1.0, 0, 1.2),
   dualHeadTurnPolicy: pickOne(DUAL_HEAD_TURN_POLICIES, process.env.DUAL_HEAD_TURN_POLICY, 'llm_order'),
   muted: parseBoolean(process.env.MUTED, false),
+  interruptible: parseBoolean(process.env.INTERRUPTIBLE, false),
   autoEnrollEnabled: parseBoolean(process.env.AUTO_ENROLL, true),
   ambientAudioEnabled: parseBoolean(process.env.AMBIENT_AUDIO_ENABLED, true),
   glitchFxEnabled: true,
@@ -114,6 +116,15 @@ export const runtimeConfig: RuntimeConfig = {
   ttsStreamingEnabled: parseBoolean(process.env.TTS_STREAMING_ENABLED, true),
   vadNoiseGate: parseFloatInRange(process.env.VAD_NOISE_GATE, 0.008, 0, 0.06),
   vadModel: pickOne(VAD_MODELS, process.env.VAD_MODEL, 'ten-vad'),
+  visionProvider: pickOne(VISION_PROVIDERS, process.env.VISION_PROVIDER, 'gemini'),
+  visionModel: process.env.VISION_MODEL?.trim() ?? '',
+  visionBaseUrl: normalizeVisionBaseUrl(process.env.VISION_BASE_URL, ''),
+  visionMaxPx: parseIntegerInRange(process.env.VISION_MAX_PX, 512, 64, 2048),
+  visionTimeoutMs: parseIntegerInRange(process.env.VISION_TIMEOUT_MS, 8000, 500, 60_000),
+  visionRefreshMs: parseIntegerInRange(process.env.VISION_REFRESH_MS, 30_000, 2000, 3_600_000),
+  visionMaxPerHour: parseIntegerInRange(process.env.VISION_MAX_PER_HOUR, 120, 0, 100_000),
+  visionWhileAsleep: parseBoolean(process.env.VISION_WHILE_ASLEEP, false),
+  relationshipsEnabled: parseBoolean(process.env.RELATIONSHIPS_ENABLED, true),
 };
 
 export const sessionStats: SessionStats = {
@@ -194,6 +205,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
     runtimeConfig.dualHeadTurnPolicy = expectOne(DUAL_HEAD_TURN_POLICIES, patch.dualHeadTurnPolicy, 'dualHeadTurnPolicy');
   }
   if (patch.muted !== undefined) runtimeConfig.muted = Boolean(patch.muted);
+  if (patch.interruptible !== undefined) runtimeConfig.interruptible = Boolean(patch.interruptible);
   if (patch.autoEnrollEnabled !== undefined) runtimeConfig.autoEnrollEnabled = Boolean(patch.autoEnrollEnabled);
   if (patch.ambientAudioEnabled !== undefined) runtimeConfig.ambientAudioEnabled = Boolean(patch.ambientAudioEnabled);
   if (patch.glitchFxEnabled !== undefined) runtimeConfig.glitchFxEnabled = Boolean(patch.glitchFxEnabled);
@@ -513,6 +525,32 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   if (patch.vadModel !== undefined) {
     runtimeConfig.vadModel = pickOne(VAD_MODELS, patch.vadModel, runtimeConfig.vadModel ?? 'rms');
   }
+  if (patch.visionProvider !== undefined) {
+    runtimeConfig.visionProvider = expectOne(VISION_PROVIDERS, patch.visionProvider, 'visionProvider');
+  }
+  if (patch.visionModel !== undefined) {
+    if (typeof patch.visionModel !== 'string' || patch.visionModel.length > 200) throw badRequest('visionModel must be a model name');
+    runtimeConfig.visionModel = patch.visionModel.trim();
+  }
+  if (patch.visionBaseUrl !== undefined) {
+    const base = normalizeVisionBaseUrl(patch.visionBaseUrl, null);
+    if (base === null) throw badRequest('visionBaseUrl must be an http(s) URL, "fleet:vision", or empty');
+    runtimeConfig.visionBaseUrl = base;
+  }
+  if (patch.visionMaxPx !== undefined) {
+    runtimeConfig.visionMaxPx = parseIntegerInRange(patch.visionMaxPx, runtimeConfig.visionMaxPx, 64, 2048);
+  }
+  if (patch.visionTimeoutMs !== undefined) {
+    runtimeConfig.visionTimeoutMs = parseIntegerInRange(patch.visionTimeoutMs, runtimeConfig.visionTimeoutMs, 500, 60_000);
+  }
+  if (patch.visionRefreshMs !== undefined) {
+    runtimeConfig.visionRefreshMs = parseIntegerInRange(patch.visionRefreshMs, runtimeConfig.visionRefreshMs, 2000, 3_600_000);
+  }
+  if (patch.visionMaxPerHour !== undefined) {
+    runtimeConfig.visionMaxPerHour = parseIntegerInRange(patch.visionMaxPerHour, runtimeConfig.visionMaxPerHour, 0, 100_000);
+  }
+  if (patch.visionWhileAsleep !== undefined) runtimeConfig.visionWhileAsleep = Boolean(patch.visionWhileAsleep);
+  if (patch.relationshipsEnabled !== undefined) runtimeConfig.relationshipsEnabled = Boolean(patch.relationshipsEnabled);
 
   sessionStats.model = runtimeConfig.model;
   sessionStats.lastActivity = Date.now();
@@ -654,6 +692,19 @@ function expectOne<T extends readonly string[]>(
 function pickOne<T extends readonly string[]>(allowed: T, value: unknown, fallback: T[number]): T[number] {
   const normalized = String(value ?? '').trim().toLowerCase();
   return (allowed as readonly string[]).includes(normalized) ? (normalized as T[number]) : fallback;
+}
+
+/** "", "fleet:vision" or an http(s) URL without a trailing slash; `fallback` for anything else. */
+function normalizeVisionBaseUrl<T extends string | null>(value: unknown, fallback: T): string | T {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  if (text === 'fleet:vision') return text;
+  try {
+    const url = new URL(text);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString().replace(/\/+$/, '') : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 function badRequest(message: string): Error {

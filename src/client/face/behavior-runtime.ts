@@ -2,6 +2,7 @@ import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import type { AppStore } from '../state/app-state.js';
 import { IDLE_SETTLE_MS } from '../behavior/emotion-runtime.js';
 import { createGazeController, nearestFaceIndex, type GazeSample } from './gaze.js';
+import { sleepLife } from './sleep-life.js';
 
 const BLINK_MIN_MS = 3800;
 const BLINK_MAX_MS = 6400;
@@ -41,12 +42,23 @@ const THINKING_GAZE_Y = -0.4;
 // face_motion feeds the partner face and spectators over the network; ~30 Hz is
 // smooth there and halves the traffic of sending every animation frame.
 const MOTION_SEND_INTERVAL_MS = 33;
+/**
+ * A director's look holds while updates keep coming. This long without one,
+ * the director has let go (or is gone) and the face looks for itself again.
+ */
+export const EXTERNAL_LOOK_STALE_MS = 2000;
 
 export interface FaceBehaviorRuntime {
   bind(root: HTMLElement): void;
   init(): void;
   dispose(): void;
   attachSender(sender: ((message: WsClientMessage) => void) | null): void;
+  /**
+   * Studio mode: the director says where to look (store gaze units, y down).
+   * Overrides wandering, the camera and the pointer until updates stop for
+   * EXTERNAL_LOOK_STALE_MS. The thinking glance away still happens.
+   */
+  setExternalLook(x: number, y: number): void;
 }
 
 export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'): FaceBehaviorRuntime {
@@ -83,6 +95,9 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   let lastSentY = Number.NaN;
   let thinkingGazeTimer: number | null = null;
   let thinkingGaze = false;
+  let externalLook: { x: number; y: number } | null = null;
+  let externalLookTimer: number | null = null;
+  let sleepRaf = 0;
 
   return {
     bind(root: HTMLElement): void {
@@ -93,7 +108,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
 
       rootEl.onpointermove = (event) => {
         // Face bounding box takes priority over mouse cursor
-        if (hasTrackedFaces()) {
+        if (hasTrackedFaces() || externalLook || store.getState().sleeping) {
           return;
         }
         const rect = rootEl?.getBoundingClientRect();
@@ -107,7 +122,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       };
 
       rootEl.onpointerleave = () => {
-        if (hasTrackedFaces()) {
+        if (hasTrackedFaces() || externalLook) {
           return;
         }
         resetGaze();
@@ -119,6 +134,23 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       scheduleBehavior();
       scheduleMicroSaccade();
       resetGaze();
+
+      // Asleep, the eyes are closed: nothing steers them, they drift a little
+      // near centre (face/sleep-life.ts; the studio's sleeping Zs use the room
+      // above them). Awake again, the gaze model takes over from centre.
+      store.subscribeSelector(
+        (state) => state.sleeping,
+        (sleeping) => {
+          clearManagedTimer(externalLookTimer);
+          externalLookTimer = null;
+          externalLook = null;
+          clearManagedTimer(lookResetTimer);
+          resetGaze();
+          if (sleeping) startSleepGaze();
+          else stopSleepGaze();
+        },
+        { fireImmediately: true },
+      );
 
       store.subscribeSelector(
         (state) => state.currentExpression === 'thinking',
@@ -151,6 +183,16 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     attachSender(nextSender): void {
       sender = nextSender;
     },
+    setExternalLook(x, y): void {
+      // Closed eyes don't look around; the director's next look after waking counts.
+      if (store.getState().sleeping) return;
+      externalLook = { x, y };
+      // A wander in progress would pull the eyes back to centre when it ends.
+      clearManagedTimer(lookResetTimer);
+      clearManagedTimer(externalLookTimer);
+      externalLookTimer = window.setTimeout(releaseExternalLook, EXTERNAL_LOOK_STALE_MS);
+      steerTowardExternalLook();
+    },
     dispose(): void {
       clearManagedTimer(blinkTimer);
       clearManagedTimer(behaviorTimer);
@@ -161,6 +203,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       clearManagedTimer(partnerGlanceTimer);
       clearManagedTimer(microSaccadeTimer);
       clearManagedTimer(thinkingGazeTimer);
+      clearManagedTimer(externalLookTimer);
+      stopSleepGaze();
       if (rafId != null) {
         cancelAnimationFrame(rafId);
         rafId = null;
@@ -210,7 +254,8 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   }
 
   function runBehaviorStep(): void {
-    const tracking = hasTrackedFaces();
+    // Someone to look at, from the camera or the director: no wandering off.
+    const tracking = hasTrackedFaces() || externalLook !== null;
 
     // Steer toward detected face (updates gaze target)
     if (tracking) {
@@ -277,15 +322,37 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
       return;
     }
     thinkingGaze = false;
+    if (!steerTowardExternalLook() && !steerTowardDetectedFace()) {
+      resetGaze();
+    }
+  }
+
+  /** Updates stopped: the director let go, so the face looks for itself again. */
+  function releaseExternalLook(): void {
+    externalLookTimer = null;
+    externalLook = null;
+    if (thinkingGaze) {
+      return;
+    }
     if (!steerTowardDetectedFace()) {
       resetGaze();
     }
   }
 
+  function steerTowardExternalLook(): boolean {
+    if (!externalLook || thinkingGaze || store.getState().sleeping) {
+      return false;
+    }
+    // Followed smoothly: the director moves the head, so its look moves too.
+    gaze.pursue(easeInput(externalLook.x), easeInput(externalLook.y), performance.now());
+    startAnimationLoop();
+    return true;
+  }
+
   function scheduleMicroSaccade(): void {
     clearManagedTimer(microSaccadeTimer);
     microSaccadeTimer = window.setTimeout(() => {
-      if (shouldAnimate() && hasTrackedFaces() && !thinkingGaze) {
+      if (shouldAnimate() && (hasTrackedFaces() || externalLook) && !thinkingGaze) {
         // Small involuntary eye movements while fixating on a face
         gaze.microSaccade(
           (Math.random() * 2 - 1) * MICRO_SACCADE_AMPLITUDE,
@@ -343,7 +410,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
         clearManagedTimer(partnerGlanceTimer);
         partnerGlanceTimer = window.setTimeout(() => {
           partnerGlanceTimer = null;
-          if (store.getState().sleeping) {
+          if (store.getState().sleeping || externalLook) {
             return;
           }
           // Add some jitter so they don't look EXACTLY at the same coordinate footprint
@@ -414,10 +481,36 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     rafId = requestAnimationFrame(tick);
   }
 
+  function startSleepGaze(): void {
+    if (sleepRaf) return;
+    const step = (nowMs: number) => {
+      sleepRaf = requestAnimationFrame(step);
+      const pose = sleepLife.sample(nowMs);
+      const state = store.getState();
+      if (Math.abs(state.gazeX - pose.gazeX) > 0.0005 || Math.abs(state.gazeY - pose.gazeY) > 0.0005) {
+        store.setState((current) => ({ ...current, gazeX: pose.gazeX, gazeY: pose.gazeY }));
+      }
+    };
+    sleepRaf = requestAnimationFrame(step);
+  }
+
+  function stopSleepGaze(): void {
+    if (sleepRaf) cancelAnimationFrame(sleepRaf);
+    sleepRaf = 0;
+  }
+
   function tick(nowMs: number): void {
-    // Always steer toward detected face when camera has one;
-    // fall back to face tracking when mouse has been idle for 1.2s.
-    if (hasTrackedFaces() || Date.now() - lastPointerAt > 1200) {
+    if (store.getState().sleeping) {
+      // The sleep loop drives the gaze now.
+      rafId = null;
+      return;
+    }
+    // The director's look wins while it is fresh. Otherwise always steer
+    // toward a detected face when the camera has one; fall back to face
+    // tracking when the mouse has been idle for 1.2s.
+    if (externalLook) {
+      steerTowardExternalLook();
+    } else if (hasTrackedFaces() || Date.now() - lastPointerAt > 1200) {
       steerTowardDetectedFace();
     }
 
@@ -434,7 +527,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
     sendMotion(settled);
 
     // Keep the loop alive while tracking faces so we pick up bounding box changes
-    if (settled && !hasTrackedFaces()) {
+    if (settled && !hasTrackedFaces() && !externalLook) {
       rafId = null;
       return;
     }
@@ -469,7 +562,7 @@ export function createFaceBehaviorRuntime(store: AppStore, mode: 'main' | 'mini'
   }
 
   function steerTowardDetectedFace(): boolean {
-    if (thinkingGaze) {
+    if (thinkingGaze || store.getState().sleeping) {
       return false;
     }
     const state = store.getState();

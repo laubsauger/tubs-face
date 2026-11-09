@@ -21,6 +21,17 @@ export const MICRO_SACCADE_MS = 45;
 const TRACK_STALE_MS = 400;
 /** Deliberate looks (wander, thinking, a new person) are honoured exactly. */
 const LOOK_EPSILON = 0.002;
+/**
+ * The studio director's look is a steadily moving target (a head floating
+ * past windows, updated up to 10 times a second): the eyes follow it
+ * smoothly, critically damped, reaching 95 % of each new target in this long.
+ * Saccades there read as the face jumping around.
+ */
+export const GAZE_PURSUIT_MS = 160;
+const PURSUIT_OMEGA = 4.74 / GAZE_PURSUIT_MS; // critically damped: 95 % at ωt ≈ 4.74
+/** A frame longer than this (a stalled tab) is followed as if it were this long. */
+const PURSUIT_MAX_STEP_MS = 100;
+const PURSUIT_REST = 0.0005;
 
 export interface GazeSample {
   x: number;
@@ -36,6 +47,8 @@ export interface GazeController {
   lookAt(x: number, y: number, nowMs: number): void;
   /** A tiny offset around the current fixation; it bypasses the dead zone and ends with the next saccade. */
   microSaccade(dx: number, dy: number, nowMs: number): void;
+  /** A moving target to follow smoothly (no saccades) until track or lookAt takes over. */
+  pursue(x: number, y: number, nowMs: number): void;
   /** Where the eyes are at nowMs, written into out (no allocation per frame). */
   sample(nowMs: number, out: GazeSample): GazeSample;
 }
@@ -61,9 +74,44 @@ export function createGazeController(): GazeController {
   let microToX = 0;
   let microToY = 0;
   let microStart = Number.NEGATIVE_INFINITY;
+  // Smooth pursuit: position and velocity (per ms) of the followed point.
+  let pursuing = false;
+  let pursueX = 0;
+  let pursueY = 0;
+  let pursueVX = 0;
+  let pursueVY = 0;
+  let pursueTargetX = 0;
+  let pursueTargetY = 0;
+  let pursueAt = 0;
+  // Where the eyes were last drawn, without the micro offset: the next mode starts from here.
+  let baseX = 0;
+  let baseY = 0;
+
+  /** Saccades and fixations again, from where pursuit left the eyes. */
+  function endPursuit(): void {
+    if (!pursuing) return;
+    pursuing = false;
+    fixX = baseX;
+    fixY = baseY;
+    saccadeActive = false;
+  }
 
   return {
+    pursue(x, y, nowMs) {
+      if (!pursuing) {
+        pursuing = true;
+        pursueX = baseX;
+        pursueY = baseY;
+        pursueVX = 0;
+        pursueVY = 0;
+        pursueAt = nowMs;
+        saccadeActive = false;
+      }
+      pursueTargetX = x;
+      pursueTargetY = y;
+    },
     track(x, y, nowMs) {
+      endPursuit();
       const dt = nowMs - lastTrackAt;
       if (dt > TRACK_STALE_MS) {
         filtX = x;
@@ -79,6 +127,7 @@ export function createGazeController(): GazeController {
       desiredDeadZone = GAZE_DEAD_ZONE;
     },
     lookAt(x, y, nowMs) {
+      endPursuit();
       desiredX = x;
       desiredY = y;
       desiredDeadZone = LOOK_EPSILON;
@@ -95,6 +144,20 @@ export function createGazeController(): GazeController {
       microStart = nowMs;
     },
     sample(nowMs, out) {
+      if (pursuing) {
+        const dt = Math.min(PURSUIT_MAX_STEP_MS, Math.max(0, nowMs - pursueAt));
+        pursueAt = nowMs;
+        [pursueX, pursueVX] = criticallyDamped(pursueX, pursueVX, pursueTargetX, dt);
+        [pursueY, pursueVY] = criticallyDamped(pursueY, pursueVY, pursueTargetY, dt);
+        baseX = pursueX;
+        baseY = pursueY;
+        out.x = pursueX + microOffset(nowMs, 'x');
+        out.y = pursueY + microOffset(nowMs, 'y');
+        out.moving = Math.hypot(pursueTargetX - pursueX, pursueTargetY - pursueY) > PURSUIT_REST
+          || Math.hypot(pursueVX, pursueVY) * 16 > PURSUIT_REST
+          || nowMs < microStart + MICRO_SACCADE_MS;
+        return out;
+      }
       if (saccadeActive && nowMs >= saccadeStart + saccadeMs) {
         saccadeActive = false;
       }
@@ -122,6 +185,8 @@ export function createGazeController(): GazeController {
         x = fromX + (fixX - fromX) * e;
         y = fromY + (fixY - fromY) * e;
       }
+      baseX = x;
+      baseY = y;
       out.x = x + microOffset(nowMs, 'x');
       out.y = y + microOffset(nowMs, 'y');
       const stillPending = Math.hypot(desiredX - fixX, desiredY - fixY) > desiredDeadZone;
@@ -136,6 +201,18 @@ export function createGazeController(): GazeController {
       ? microFromX + (microToX - microFromX) * e
       : microFromY + (microToY - microFromY) * e;
   }
+}
+
+/**
+ * One step of a critically damped spring toward target, solved exactly (stable
+ * at any frame time): no overshoot, no oscillation, 95 % there after GAZE_PURSUIT_MS.
+ */
+export function criticallyDamped(position: number, velocity: number, target: number, dtMs: number): [number, number] {
+  const w = PURSUIT_OMEGA;
+  const offset = position - target;
+  const k = velocity + w * offset;
+  const decay = Math.exp(-w * dtMs);
+  return [target + (offset + k * dtMs) * decay, (velocity - w * k * dtMs) * decay];
 }
 
 export function saccadeDurationMs(distance: number): number {

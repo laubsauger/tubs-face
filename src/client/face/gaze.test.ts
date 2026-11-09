@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   GAZE_DEAD_ZONE,
   GAZE_MIN_FIXATION_MS,
+  GAZE_PURSUIT_MS,
   SACCADE_MAX_MS,
   createGazeController,
+  criticallyDamped,
   nearestFaceIndex,
   type GazeSample,
 } from './gaze.js';
@@ -13,6 +15,7 @@ import {
 // camera's face box. Spring-following the raw box made him look nervous.
 
 const FRAME_MS = 1000 / 60;
+const sampleOut = (): GazeSample => ({ x: 0, y: 0, moving: false });
 
 /** Deterministic noise in -1..1, so a failure is reproducible. */
 function noise(seed: number): () => number {
@@ -133,6 +136,99 @@ describe('gaze', () => {
     controller.lookAt(-0.4, 0, 710);
     controller.sample(720, out);
     expect(out.moving).toBe(true);
+  });
+});
+
+// In the studio the director moves the heads past the windows and sends where
+// to look up to 10 times a second. Fixations and saccades on that read as the
+// face jumping around; the eyes follow it smoothly instead, and whatever else
+// moves them (a thinking glance, a micro-saccade) blends in without a jump.
+describe('following the director\'s look', () => {
+  const FRAME = 1000 / 60;
+  const steps = (path: number[]) => path.slice(1).map((value, i) => Math.abs(value - path[i]!));
+
+  it('eases to a new look in 120-200 ms, without overshoot or a jump', () => {
+    const gaze = createGazeController();
+    const out = sampleOut();
+    gaze.sample(0, out);
+    gaze.pursue(0.5, 0, 0);
+    const path: number[] = [];
+    let reached = Number.NaN;
+    for (let t = 0; t <= 600; t += FRAME) {
+      gaze.sample(t, out);
+      path.push(out.x);
+      if (Number.isNaN(reached) && out.x >= 0.475) reached = t;
+    }
+    expect(GAZE_PURSUIT_MS).toBeGreaterThanOrEqual(120);
+    expect(reached).toBeGreaterThanOrEqual(120);
+    expect(reached).toBeLessThanOrEqual(200);
+    expect(Math.max(...path)).toBeLessThanOrEqual(0.5 + 1e-9);
+    // The largest step of one frame is a fraction of the move, never the move.
+    expect(Math.max(...steps(path))).toBeLessThan(0.5 * 0.2);
+  });
+
+  it('turns a 10 Hz stream of looks along a sweep into a continuous path, where saccades would jump', () => {
+    const follow = (useTrack: boolean) => {
+      const gaze = createGazeController();
+      const out = sampleOut();
+      const path: number[] = [];
+      // Resting on the start of the sweep first, then a new look every 100 ms.
+      for (let t = 0; t <= 3000; t += FRAME) {
+        const update = Math.max(0, Math.floor((t - 600) / 100) * 100);
+        const target = -0.6 + Math.min(1.2, (update / 2000) * 1.2);
+        if (useTrack) gaze.track(target, 0, t);
+        else gaze.pursue(target, 0, t);
+        gaze.sample(t, out);
+        if (t >= 600) path.push(out.x);
+      }
+      return { path, maxStep: Math.max(...steps(path)) };
+    };
+    const smooth = follow(false);
+    // 0.6 a second is 0.01 a frame: the eyes never move much more than that.
+    expect(smooth.maxStep).toBeLessThan(0.02);
+    expect(smooth.path.at(-1)).toBeCloseTo(0.6, 2);
+    // What tracking did with the same looks: fixations, then jumps.
+    expect(follow(true).maxStep).toBeGreaterThan(smooth.maxStep * 2);
+  });
+
+  it('hands over to a deliberate look (the thinking glance) from where the eyes are', () => {
+    const gaze = createGazeController();
+    const out = sampleOut();
+    gaze.sample(0, out);
+    gaze.pursue(0.4, 0.1, 0);
+    let t = 0;
+    for (; t <= 70; t += FRAME) gaze.sample(t, out);
+    const before = { x: out.x, y: out.y };
+    gaze.lookAt(-0.5, -0.4, t);
+    gaze.sample(t, out);
+    expect(Math.hypot(out.x - before.x, out.y - before.y)).toBeLessThan(0.02);
+    for (const end = t + 600; t < end; t += FRAME) gaze.sample(t, out);
+    expect(out.x).toBeCloseTo(-0.5, 3);
+  });
+
+  it('lets micro-saccades ride on top, tiny and eased', () => {
+    const gaze = createGazeController();
+    const out = sampleOut();
+    gaze.pursue(0.2, 0, 0);
+    let t = 0;
+    for (; t <= 800; t += FRAME) gaze.sample(t, out);
+    const resting = out.x;
+    gaze.microSaccade(0.018, 0, t);
+    const path = [resting];
+    for (let i = 0; i < 12; i += 1) {
+      t += FRAME;
+      gaze.sample(t, out);
+      path.push(out.x);
+    }
+    expect(Math.max(...steps(path))).toBeLessThanOrEqual(0.018);
+    expect(path.at(-1)! - resting).toBeCloseTo(0.018, 3);
+  });
+
+  it('solves the spring exactly, so a long frame cannot make it overshoot', () => {
+    const [x, v] = criticallyDamped(0, 0, 1, 1000);
+    expect(x).toBeLessThanOrEqual(1);
+    expect(x).toBeGreaterThan(0.999);
+    expect(Math.abs(v)).toBeLessThan(1e-6);
   });
 });
 

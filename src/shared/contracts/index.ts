@@ -4,3 +4,6 @@ export * from './http.js';
 export * from './turn-script.js';
 export * from './worker.js';
 export * from './ws.js';
+export * from './studio.js';
+export * from './memory.js';
+export * from './presets.js';

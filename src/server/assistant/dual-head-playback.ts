@@ -154,6 +154,7 @@ export async function streamDualHeadBeatAudio(
       voice,
       early: earlyForBeat,
       nextChunkIndex: chunkIndex,
+      callout: beat.callout === true,
       onRendered: () => {
         const nextIndex = nextSpeakBeatIndex(beats, index);
         if (nextIndex < 0 || !isAssistantTurnActive(turnId, epoch)) return;
@@ -207,6 +208,8 @@ async function streamDualHeadSpeakBeat(args: {
   voice: string;
   early?: EarlyBeat | null;
   nextChunkIndex: number;
+  /** A studio call-out (TurnBeat.callout): the face page plays it without waiting. */
+  callout?: boolean;
   /** Ming is done with this line (its audio may still be playing). */
   onRendered?: () => void;
   onFirstChunk?: () => void;
@@ -221,6 +224,7 @@ async function streamDualHeadSpeakBeat(args: {
     voice,
     early,
     nextChunkIndex,
+    callout,
     onRendered,
     onFirstChunk,
   } = args;
@@ -274,6 +278,7 @@ async function streamDualHeadSpeakBeat(args: {
           actor,
           beatIndex,
           ...(chunk.more ? { more: true } : {}),
+          ...(callout ? { callout: true } : {}),
         } satisfies WsAudioChunkServerMessage);
         chunkCount += 1;
       },

@@ -3,6 +3,8 @@ import type { AppState, AppStore } from '../state/app-state.js';
 import {
   DEFAULT_CONFIG,
   EXPRESSION_PROFILES,
+  GAZE_EYE_RANGE_X,
+  GAZE_EYE_RANGE_Y,
   MORPH,
   MORPH_SLEEP,
   MORPH_WAKE,
@@ -15,16 +17,27 @@ import {
 import { SHAPE_TRANSFORM_FLOATS, createExpressionMotion, createFaceMotion, packShapeTransforms } from './expression-motion.js';
 import { computeFrameState, renderFrameWebGpu } from './frame.js';
 import { INSTANCE_FLOATS, createMorphPlan, easeOutCubic, packPixels, planMorph, snapshotMorph, writeMorphFrame } from './morph.js';
-import { buildPixelGrid, featureFitScale, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
+import { SCREEN_LAYOUT, STUDIO_LAYOUT, buildPixelGrid, faceBox, featureFitScale, type FaceBox, type PixelGridPoint, type ShapeCenter } from './pixel-grid.js';
 import { createWebGpuState, configureWebGpuCanvas, initWebGpuRenderer, resetWebGpuResources, writeGpuInstances, type WebGpuState } from './webgpu.js';
 import { hexToHSL, mergeConfig } from './utils.js';
 import { readSpeechLevel } from '../audio/speech-level.js';
 import { NEUTRAL_TINT, moodTint } from './mood-tint.js';
+import type { SleepingFace } from '../studio/sleep-zs.js';
+import { SLEEP_BREATH_BRIGHTNESS, SLEEP_GAZE_MAX, SLEEP_LID_FLICKER, applySleepPose, sleepLife } from '../face/sleep-life.js';
 
 export interface GlitchRuntime {
   init(): void;
   bind(root: HTMLElement): void;
   dispose(): void;
+  /** Where the face is drawn on the canvas, in canvas pixels; null before the first draw. */
+  faceBoxPx(): FaceBox | null;
+  /** The sleeping face's eyes and mouth in canvas pixels, and how far gaze moves the eyes; null before the first draw. */
+  sleepingFacePx(): SleepingFace | null;
+  /**
+   * Called right after each frame is drawn, in the same task. A WebGPU canvas
+   * can only be copied (drawImage) then; once presented, a copy reads black.
+   */
+  onFrame(callback: ((canvas: HTMLCanvasElement) => void) | null): void;
 }
 
 interface RendererState {
@@ -32,7 +45,18 @@ interface RendererState {
   initPromise: Promise<boolean> | null;
 }
 
-export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): GlitchRuntime {
+export interface GlitchRuntimeOptions {
+  /**
+   * A studio stream: the canvas is exactly this many pixels square whatever
+   * the window, the face is centred, and the canvas is opaque (black where
+   * nothing is drawn) so a video of it is the face on pure black.
+   */
+  studioCanvasPx?: number;
+}
+
+export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', options: GlitchRuntimeOptions = {}): GlitchRuntime {
+  const studioCanvasPx = options.studioCanvasPx;
+  const layout = studioCanvasPx ? STUDIO_LAYOUT : SCREEN_LAYOUT;
   let faceEl: HTMLElement | null = null;
   let canvas: HTMLCanvasElement | null = null;
   let resizeObserver: ResizeObserver | null = null;
@@ -53,6 +77,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   const morphFromCenters: ShapeCenter[] = [{ cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }, { cx: 0, cy: 0, halfH: 0 }];
   const expressionMotion = createExpressionMotion();
   const faceMotion = createFaceMotion();
+  // faceMotion plus the sleeping twitches, for this frame only.
+  const sleepMotion = createFaceMotion();
   const shapeTransforms = new Float32Array(SHAPE_TRANSFORM_FLOATS * 3);
   const morph = createMorphPlan();
   let morphing = false;
@@ -69,6 +95,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
   let lastProfileSignature = '';
   let lastRendererSignature = '';
   const rendererState: RendererState = { ready: false, initPromise: null };
+  let frameCallback: ((canvas: HTMLCanvasElement) => void) | null = null;
+  let sleepingFace: SleepingFace | null = null;
+  let sleepingFaceKey = '';
   const gpu: WebGpuState = createWebGpuState();
 
   return {
@@ -105,6 +134,46 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       stopRenderLoop();
       teardownResize();
       resetWebGpuResources(gpu);
+    },
+    onFrame(callback): void {
+      frameCallback = callback;
+    },
+    sleepingFacePx(): SleepingFace | null {
+      if (!containerCssW || !containerCssH) return null;
+      const key = `${containerCssW}x${containerCssH}@${cachedDpr}:${lastRendererSignature}:${profileSignature('sleep')}`;
+      if (sleepingFace && sleepingFaceKey === key) return sleepingFace;
+      const { pixelGrid: sleepGrid } = buildPixelGrid({ ...store.getState(), sleeping: true }, rendererConfig, containerCssW, containerCssH, effectivePixelSize, effectivePixelGap, layout);
+      const half = effectivePixelSize / 2;
+      const boxOf = (group: number) => {
+        const points = sleepGrid.filter((point) => point.group === group);
+        if (points.length === 0) return { left: 0, top: 0, right: 0, bottom: 0 };
+        return {
+          left: (Math.min(...points.map((point) => point.x)) - half) * cachedDpr,
+          right: (Math.max(...points.map((point) => point.x)) + half) * cachedDpr,
+          top: (Math.min(...points.map((point) => point.y)) - half) * cachedDpr,
+          bottom: (Math.max(...points.map((point) => point.y)) + half) * cachedDpr,
+        };
+      };
+      const eyeLidGrowth = () => {
+        const eye = boxOf(1);
+        return (eye.bottom - eye.top) * SLEEP_LID_FLICKER;
+      };
+      sleepingFace = {
+        leftEye: boxOf(0),
+        rightEye: boxOf(1),
+        mouth: boxOf(2),
+        // A sleeping face keeps its gaze near centre (face/sleep-life.ts):
+        // only its small drift, and the lid flicker growing the closed lids.
+        gazeX: SLEEP_GAZE_MAX * GAZE_EYE_RANGE_X * containerCssW * cachedDpr,
+        gazeY: SLEEP_GAZE_MAX * GAZE_EYE_RANGE_Y * containerCssH * cachedDpr + eyeLidGrowth(),
+      };
+      sleepingFaceKey = key;
+      return sleepingFace;
+    },
+    faceBoxPx(): FaceBox | null {
+      if (!containerCssW || !containerCssH) return null;
+      const box = faceBox(rendererConfig, containerCssW, containerCssH, layout);
+      return { x: box.x * cachedDpr, y: box.y * cachedDpr, w: box.w * cachedDpr, h: box.h * cachedDpr };
     },
   };
 
@@ -276,14 +345,16 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     if (!rect.width || !rect.height) return;
     // The spectator page runs on weaker screens; cap its resolution.
     const isSpectator = faceEl.closest('.spectator-shell') !== null;
-    const dpr = isSpectator ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
-    const pw = Math.round(rect.width * dpr);
-    const ph = Math.round(rect.height * dpr);
+    const dpr = studioCanvasPx
+      ? studioCanvasPx / rect.width
+      : isSpectator ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
+    const pw = studioCanvasPx ?? Math.round(rect.width * dpr);
+    const ph = studioCanvasPx ?? Math.round(rect.height * dpr);
     if (canvas.width !== pw || canvas.height !== ph) {
       canvas.width = pw;
       canvas.height = ph;
     }
-    configureWebGpuCanvas(gpu, canvas);
+    configureWebGpuCanvas(gpu, canvas, studioCanvasPx ? 'opaque' : 'premultiplied');
     containerCssW = rect.width;
     containerCssH = rect.height;
     cachedDpr = dpr;
@@ -296,7 +367,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     // width: in a wide, short window the face fits the height and full-size
     // pixels would leave it a handful of chunky blocks.
     const vb = rendererConfig.svg.viewBox;
-    const featureBoxWidth = vb.w * featureFitScale(rect.width, rect.height, vb);
+    const featureBoxWidth = vb.w * featureFitScale(rect.width, rect.height, vb, layout);
     const scale = Math.max(0.16, Math.min(1.0, featureBoxWidth / 1400));
     effectivePixelSize = Math.max(2, rendererConfig.pixel.size * scale);
     effectivePixelGap = Math.max(0, rendererConfig.pixel.gap * scale);
@@ -358,7 +429,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     const key = faceKey(state);
     builtFaceKey = key;
     builtProfileSignature = profileSignature(key);
-    return buildPixelGrid(state, rendererConfig, rect.width, rect.height, effectivePixelSize, effectivePixelGap);
+    return buildPixelGrid(state, rendererConfig, rect.width, rect.height, effectivePixelSize, effectivePixelGap, layout);
   }
 
   function uploadPixels(pixels: PixelGridPoint[]): void {
@@ -434,7 +505,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     }
     // Living motion holds still while the FX editor shows the true shapes.
     expressionMotion.update(state.fxEditorOpen ? null : faceKey(state), now, state.gazeX, faceMotion);
-    packShapeTransforms(faceMotion, drawnCenters, containerCssH, shapeTransforms);
+    // Asleep it still breathes and twitches now and then (face/sleep-life.ts).
+    const sleepPose = state.sleeping && !state.fxEditorOpen ? sleepLife.sample(now) : null;
+    packShapeTransforms(sleepPose ? applySleepPose(faceMotion, sleepPose, sleepMotion) : faceMotion, drawnCenters, containerCssH, shapeTransforms);
 
     // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
     const tint = state.sleeping || state.fxEditorOpen
@@ -469,6 +542,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
     });
     lastBurstState = frameResult.lastBurstState;
     glitchBurstSeed = frameResult.glitchBurstSeed;
+    if (sleepPose) frameResult.frame.pulseMod *= 1 + SLEEP_BREATH_BRIGHTNESS * sleepPose.breath;
 
     renderFrameWebGpu(frameResult.frame, {
       gpuDevice: gpu.gpuDevice,
@@ -493,6 +567,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini'): Gli
       sleeping: state.sleeping,
     });
     setCanvasVisible(true);
+    frameCallback?.(canvas);
   }
 
   function getBlinkFactor(): number {

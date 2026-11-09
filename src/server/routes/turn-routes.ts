@@ -14,6 +14,7 @@ import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { broadcast } from '../ws/server.js';
 import { getTtsProxyTarget, transcribeAudio } from '../processing/speech-service.js';
 import { resolveLlmProvider } from '../llm/provider.js';
+import { beginRender } from '../tts/rendering.js';
 import { createTurnTimer } from '../turn-timing.js';
 import { WAKE_MATCHER_VERSION, detectWakeWord } from '../wake-word.js';
 import { isWhisperHallucination } from '../whisper-hallucination.js';
@@ -185,7 +186,8 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
       });
       turnTimer.mark('TTS request received');
       const endTtsSpan = turnTimer.span('Kokoro TTS');
-      const proxied = await proxyTts(buildNormalizedTtsRequestBody(rawBody));
+      const renderDone = beginRender();
+      const proxied = await proxyTts(buildNormalizedTtsRequestBody(rawBody)).finally(renderDone);
       endTtsSpan();
       if (proxied.statusCode >= 400) {
         turnTimer.mark('Python TTS failed');

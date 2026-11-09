@@ -15,6 +15,24 @@ describe('isWsClientMessage', () => {
     expect(isWsClientMessage({ type: 'appearance_frame', frame: 'data:image/jpeg;base64,AAAA', returning: true, awayMs: 45000 })).toBe(true);
   });
 
+  // A window lights text[0..spoken]: a count past the text would light nothing sensible.
+  it('takes a studio caption only with a spoken count inside its text', () => {
+    const caption = { type: 'studio_caption', actor: 'small', turnId: '', text: 'Four.', spoken: 5, done: true, ts: 1 };
+    expect(isWsClientMessage(caption)).toBe(true);
+    expect(isWsClientMessage({ ...caption, spoken: 6 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, spoken: 1.5 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, spoken: -1 })).toBe(false);
+    expect(isWsClientMessage({ ...caption, done: 'yes' })).toBe(false);
+  });
+
+  // The memory view shows it as an <img>: only a small JPEG data URL, nothing else.
+  it('takes a visitor snapshot in the people report only as a small JPEG', () => {
+    const people = (thumbnail: unknown) => ({ type: 'people', people: [{ id: 'v1', names: [], position: 'center', snapshots: 1, thumbnail }] });
+    expect(isWsClientMessage(people('data:image/jpeg;base64,AAAA'))).toBe(true);
+    expect(isWsClientMessage(people('https://example.com/face.jpg'))).toBe(false);
+    expect(isWsClientMessage(people(`data:image/jpeg;base64,${'A'.repeat(70_000)}`))).toBe(false);
+  });
+
   it('rejects payloads that would break a handler', () => {
     expect(isWsClientMessage({ type: 'incoming' })).toBe(false);
     expect(isWsClientMessage({ type: 'incoming', text: '   ' })).toBe(false);

@@ -8,6 +8,7 @@ import { sendError } from './http/response.js';
 import { serveStatic } from './http/static.js';
 import { initWebSocketServer } from './ws/server.js';
 import { shutdownLangfuse } from './observability/langfuse.js';
+import { startStudio, stopStudio } from './studio/control.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 
@@ -35,20 +36,28 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-initWebSocketServer(server);
+const wss = initWebSocketServer(server);
 void startProcessingStack();
 void prepareFillersAtStartup(runtimeConfig.kokoroVoice ?? 'af_heart');
 
 server.listen(port, () => {
   console.log(`[tubs-face] TS server listening on http://localhost:${port}`);
+  // After listen: the face pages connect back to this server.
+  void startStudio().catch((error: unknown) => console.error('[studio] could not start', error));
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
-    void Promise.allSettled([stopProcessingStack(), shutdownLangfuse()]).finally(() => {
+    void Promise.allSettled([stopProcessingStack(), shutdownLangfuse(), stopStudio()]).finally(() => {
       server.close(() => {
         process.exit(0);
       });
+      // Open sockets (the director, face pages, a dashboard) would keep this
+      // process alive after it stopped listening, talking to a server that is
+      // gone while a new one has the port: close them so they reconnect.
+      for (const client of wss.clients) client.close(1001, 'server restarting');
+      server.closeAllConnections();
+      setTimeout(() => process.exit(0), 3000).unref();
     });
   });
 }

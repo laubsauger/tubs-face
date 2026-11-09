@@ -68,3 +68,26 @@ describe('system instructions built from the persona template', () => {
     }
   });
 });
+
+// In the studio the characters know where they are and talk about it in places.
+describe('studio context in the system prompt', () => {
+  it('is there in studio mode, next to what the camera sees, and not otherwise', async () => {
+    const { studioSettings } = await import('../studio/state.js');
+    const { noteStudioContext, forgetStudioContext } = await import('../studio/context.js');
+    const { buildDualHeadSystemInstruction } = await import('./prompt.js');
+    noteStudioContext({ reason: 'turn', heads: { main: { zone: 'cinema', window: 'book', near: true, mode: 'engaged', speaking: false } }, people: [], reference: null, ts: 1 });
+    expect(buildDualHeadSystemInstruction('Left: a red coat.')).not.toContain('IN THE STUDIO');
+    studioSettings.enabled = true;
+    try {
+      const prompt = buildDualHeadSystemInstruction('Left: a red coat.');
+      expect(prompt).toContain('You speak in places');
+      expect(prompt).toContain('through the walls of the otherside');
+      expect(prompt).toContain('You are behind the book, next to the cinema.');
+      // Right before the camera's description (the persona template mentions that block earlier too).
+      expect(prompt.indexOf('IN THE STUDIO')).toBeLessThan(prompt.lastIndexOf('BACKGROUND VISUAL CONTEXT'));
+    } finally {
+      studioSettings.enabled = false;
+      forgetStudioContext();
+    }
+  });
+});

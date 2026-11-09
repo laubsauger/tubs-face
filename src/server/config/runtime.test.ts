@@ -20,6 +20,16 @@ describe('applyRuntimeConfigPatch', () => {
     expect(runtimeConfig.llmMaxOutputTokens).toBe(512);
   });
 
+  // The operator flips it from the Voice panel mid-session; it must stick, and
+  // start off (with speakers the mic hears Tubs, who would cut himself off).
+  it('turns Interruptible on and off, and starts off', () => {
+    expect(snapshot.interruptible).toBe(false);
+    applyRuntimeConfigPatch({ interruptible: true });
+    expect(runtimeConfig.interruptible).toBe(true);
+    applyRuntimeConfigPatch({ interruptible: false });
+    expect(runtimeConfig.interruptible).toBe(false);
+  });
+
   it('rejects an unknown enum value with a BadRequestError', () => {
     expect(() => applyRuntimeConfigPatch({ renderQuality: 'hologram' as never })).toThrow(/renderQuality must be one of/);
     expect(runtimeConfig.renderQuality).toBe(snapshot.renderQuality);
