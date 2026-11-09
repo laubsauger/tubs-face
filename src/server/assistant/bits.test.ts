@@ -36,16 +36,16 @@ function seeded(seed: number): () => number {
 const MIN = 60_000;
 const T0 = Date.UTC(2026, 10, 9, 21, 0, 0);
 const NO_GROUP = { mirror: null, callBackNote: false, useName: null, askName: null };
-const direction = (mode: 'single' | 'dual', random: () => number) => buildTurnDirection(mode, random, ['Nice hat.'], [], false, null, NO_GROUP);
+const direction = (mode: 'single' | 'dual', random: () => number, heard = '') => buildTurnDirection(mode, random, ['Nice hat.'], [], false, null, NO_GROUP, null, heard);
 const status = (id: string, now: number) => bitsStatus(now).find((bit) => bit.id === id)!;
 const remotes = () => activeBits().find((bit) => bit.id === 'projector-remotes')!;
 
 /** Which bit ids get offered over many turns at this time. */
-function offeredOver(turns: number, mode: 'single' | 'dual', now: number, seed = 7): Map<string, number> {
+function offeredOver(turns: number, mode: 'single' | 'dual', now: number, heard = '', smallOnStage = mode === 'dual', seed = 7): Map<string, number> {
   const random = seeded(seed);
   const seen = new Map<string, number>();
   for (let i = 0; i < turns; i += 1) {
-    const bit = offerBit(mode, random, now);
+    const bit = offerBit(mode, random, now, heard, smallOnStage);
     if (bit) seen.set(bit.id, (seen.get(bit.id) ?? 0) + 1);
   }
   return seen;
@@ -70,7 +70,7 @@ describe('running bits', () => {
     for (const after of [1, 20, remotes().cooldownMin - 1]) {
       expect(offeredOver(2000, 'dual', T0 + after * MIN).has('projector-remotes')).toBe(false);
     }
-    expect(offeredOver(2000, 'dual', T0 + (remotes().cooldownMin + 1) * MIN).has('projector-remotes')).toBe(true);
+    expect(offeredOver(2000, 'dual', T0 + (remotes().cooldownMin + 1) * MIN, 'Where did the remote go?').has('projector-remotes')).toBe(true);
 
     const next = direction('dual', () => 0.99);
     expect(next).toMatch(/Stay off them this time/);
@@ -97,15 +97,31 @@ describe('running bits', () => {
     expect(wornMotifs(recentReplyTexts(T0 + 2 * MIN)).filter((term) => /remote|projector/.test(term))).toEqual([]);
   });
 
-  it('offers no bit on most turns', () => {
-    const random = seeded(42);
-    let offered = 0;
-    const turns = 2000;
-    for (let i = 0; i < turns; i += 1) {
-      if (direction('dual', random).includes('may use this:')) offered += 1;
+  // At 15% of turns, offered whatever the visitor was on about, bits came out
+  // as non-sequiturs ("I hid your laptop charger under the floorboards." to
+  // someone testing the mic). Rare out of the blue; likely on topic.
+  it('offers a bit rarely out of the blue, and likely when the visitor brings its topic up', () => {
+    const rate = (heard: string) => {
+      const random = seeded(42);
+      let offered = 0;
+      for (let i = 0; i < 2000; i += 1) if (direction('dual', random, heard).includes('may use this')) offered += 1;
+      return offered / 2000;
+    };
+    expect(rate('')).toBeGreaterThan(0.005);
+    expect(rate('')).toBeLessThan(0.08);
+    expect(rate('I am trying to test the subtitles on the small displays.')).toBeLessThan(0.08);
+    const remotesOffered = offeredOver(2000, 'dual', T0, 'And where are all the projector remotes going?').get('projector-remotes') ?? 0;
+    expect(remotesOffered / 2000).toBeGreaterThan(0.2);
+  });
+
+  // Offered to "either head", both heads used the remotes in the same turn.
+  it('offers a bit to one head only', () => {
+    const offers = Array.from({ length: 300 }, (_, i) => direction('dual', seeded(i), 'Where are the projector remotes?')).flatMap((text) => text.split('\n').filter((line) => line.includes('may use this')));
+    expect(offers.length).toBeGreaterThan(0);
+    for (const line of offers) {
+      expect(line).not.toMatch(/either head/);
+      expect(line).toMatch(/Main may use this; Small leaves it alone|Small may use this as its hook; Main leaves it alone/);
     }
-    expect(offered / turns).toBeGreaterThan(0.03);
-    expect(offered / turns).toBeLessThan(0.2);
   });
 
   it('never offers a bit the operator switched off, and still offers the others', () => {
@@ -117,16 +133,21 @@ describe('running bits', () => {
     expect(setBitEnabled('no-such-bit', false)).toBe(false);
   });
 
-  it('offers a bit of Small\'s only when Small is on stage, and says who may use it', () => {
+  // A Small bit out of the blue is exactly the disconnected side stab the
+  // user tired of; it needs the visitor to have brought it up, and Small on stage.
+  it('offers a bit of Small\'s only when the visitor brought it up and Small is invited to speak', () => {
     setPresetBits([
       { id: 'small-eats-batteries', text: 'Small eats batteries.', match: ['battery'], cooldownMin: 20, head: 'small' },
       { id: 'tubs-hates-mondays', text: 'Tubs hates Mondays.', match: ['monday'], cooldownMin: 20 },
     ]);
-    expect(offeredOver(3000, 'single', T0).has('small-eats-batteries')).toBe(false);
-    expect(offeredOver(3000, 'dual', T0).has('small-eats-batteries')).toBe(true);
-    const offers = Array.from({ length: 400 }, (_, i) => direction('dual', seeded(i))).filter((text) => text.includes('Small eats batteries.'));
+    const heard = 'Do you run on batteries?';
+    expect(offeredOver(3000, 'single', T0, heard).has('small-eats-batteries')).toBe(false);
+    expect(offeredOver(3000, 'dual', T0, '', true).has('small-eats-batteries')).toBe(false);
+    expect(offeredOver(3000, 'dual', T0, heard, false).has('small-eats-batteries')).toBe(false);
+    expect(offeredOver(3000, 'dual', T0, heard, true).has('small-eats-batteries')).toBe(true);
+    const offers = Array.from({ length: 400 }, (_, i) => direction('dual', seeded(i), heard)).filter((text) => text.includes('Small eats batteries.'));
     expect(offers.length).toBeGreaterThan(0);
-    expect(offers.every((text) => text.includes('If it fits, Small may use this: Small eats batteries.'))).toBe(true);
+    expect(offers.every((text) => text.includes('Small may use this as its hook; Main leaves it alone: Small eats batteries.'))).toBe(true);
   });
 
   // The tub joke never repeats a word (garbage cans, buckets, nylon straps,
@@ -134,12 +155,12 @@ describe('running bits', () => {
   // it is not the joke.
   it('counts the body joke in any words as one bit, and not his name', () => {
     noteReplyLines([{ head: 'main', text: 'I am Tubs, and that is Mini Tubs.' }], T0);
-    expect(status('tubs-and-straps', T0).uses).toBe(0);
+    expect(status('your-own-body', T0).uses).toBe(0);
     noteReplyLines([{ head: 'main', text: 'Look at me, two garbage cans strapped together.' }], T0 + MIN);
     noteReplyLines([{ head: 'small', text: 'My plastic casing is jealous.' }], T0 + 2 * MIN);
     noteReplyLines([{ head: 'main', text: 'Just two tubs and a dream.' }], T0 + 3 * MIN);
-    expect(status('tubs-and-straps', T0 + 3 * MIN).uses).toBe(3);
-    expect(stayOffMotifs(T0 + 3 * MIN).all).toContain('tubs and straps');
+    expect(status('your-own-body', T0 + 3 * MIN).uses).toBe(3);
+    expect(stayOffMotifs(T0 + 3 * MIN).all).toContain('your own body');
   });
 
   // A "stay off" list naming every bit on cooldown would put all the lore back
@@ -209,7 +230,7 @@ describe('the static persona', () => {
   });
 
   it('kept the lore as bits in the built-in character', () => {
-    expect(activeBits().map((bit) => bit.id)).toEqual(expect.arrayContaining(['projector-remotes', 'dimi-and-the-rent', 'alan-watts', 'studio-wifi', 'tubs-and-straps']));
+    expect(activeBits().map((bit) => bit.id)).toEqual(expect.arrayContaining(['projector-remotes', 'dimi-and-the-rent', 'alan-watts', 'studio-wifi', 'your-own-body']));
   });
 });
 

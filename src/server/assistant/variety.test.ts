@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BIT_MAX_SENTENCES } from './text.js';
-import { buildTurnDirection, directTurn, dualShape, lengthOf, pickLength, pickName, pickRoastMirror, wornMotifs } from './variety.js';
+import { SMALL_HOOK, buildTurnDirection, directTurn, dualShape, isRealQuestion, lengthOf, noteSmallEmoji, pickLength, pickName, pickRoastMirror, resetMotifMemory, wornMotifs } from './variety.js';
 
 // Variety is decided in code so the model can't settle into one reply shape.
 const fixed = (...values: number[]) => {
@@ -41,8 +41,8 @@ describe('buildTurnDirection', () => {
   });
 
   it('varies the number of beats in two-head mode', () => {
-    expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain('Only one head speaks');
-    expect(buildTurnDirection('dual', fixed(0.7, 0.99, 0.99), [])).toContain('Three beats');
+    expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain('Only Main speaks');
+    expect(buildTurnDirection('dual', fixed(0.75, 0.99, 0.99), [])).toContain('back-and-forth');
   });
 
   // Two heads trading one-liners every turn never got to a joke: on some
@@ -50,7 +50,7 @@ describe('buildTurnDirection', () => {
   // five turns the replies felt long and slow (the user, Nov 6, 2026).
   it('gives one head room for a bit on some two-head turns, about one in eight', () => {
     const shapes = Array.from({ length: 100 }, (_, i) => dualShape(i / 100));
-    const bits = shapes.filter((shape) => shape.includes('takes the room for a bit')).length;
+    const bits = shapes.filter((shape) => shape.text.includes('takes the room for a bit')).length;
     expect(bits).toBeGreaterThanOrEqual(8);
     expect(bits).toBeLessThanOrEqual(16);
   });
@@ -59,7 +59,7 @@ describe('buildTurnDirection', () => {
   // says how short its lines are.
   it('caps the words of every line in every two-head shape', () => {
     for (let i = 0; i < 100; i += 1) {
-      expect(dualShape(i / 100)).toMatch(/under (ten|twelve|fifteen) words/);
+      expect(dualShape(i / 100).text).toMatch(/under (ten|twelve|fifteen) words/);
     }
   });
 
@@ -159,6 +159,104 @@ describe('bits', () => {
   });
   it('never twice in a row', () => {
     for (const roll of [0, 0.3, 0.6, 0.9, 0.999]) expect(pickLength(['Nice hat.', BIT], () => roll)).not.toBe('bit');
+  });
+});
+
+// Small (Mini) spoke on about two turns in three, and two of its lines in
+// three shared not one word with what the visitor or Main had just said:
+// stock threats and insults that fit any visitor ("Say goodbye instead.",
+// "Make the words tiny so they cry."). The user: "pretty lame most of the
+// time and unrelated... feels cheap."
+describe('Small in two-head turns', () => {
+  const seeded = (seed: number) => {
+    let state = seed >>> 0;
+    return () => {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+
+  it('is invited on about two turns in five, and Main has half the turns to itself', () => {
+    const random = seeded(3);
+    const shapes = Array.from({ length: 10_000 }, () => dualShape(random()));
+    const small = shapes.filter((shape) => shape.small).length / shapes.length;
+    const mainAlone = shapes.filter((shape) => shape.text.startsWith('Only Main speaks')).length / shapes.length;
+    expect(small).toBeGreaterThan(0.33);
+    expect(small).toBeLessThan(0.47);
+    expect(mainAlone).toBeGreaterThan(0.45);
+  });
+
+  it('demands a hook whenever Small may speak, and keeps Small quiet otherwise', () => {
+    for (let i = 0; i < 100; i += 1) {
+      const roll = i / 100;
+      const direction = buildTurnDirection('dual', fixed(roll, 0.99, 0.99), []);
+      if (dualShape(roll).small) {
+        expect(direction).toContain(SMALL_HOOK);
+      } else {
+        expect(direction).not.toContain(SMALL_HOOK);
+        expect(direction).toContain('Small stays quiet or only reacts');
+      }
+    }
+    expect(SMALL_HOOK).toMatch(/specific word or detail/);
+    expect(SMALL_HOOK).toMatch(/would fit any visitor is not a hook; then Small only reacts/);
+  });
+
+  // Told all its techniques at once, Small took a word literally in five of
+  // fourteen lines ("Free means it costs zero dollars."): a new tic.
+  it('gets one technique per turn, never the same one twice running', () => {
+    resetMotifMemory();
+    const random = seeded(11);
+    const picked: string[] = [];
+    for (let i = 0; i < 400; i += 1) {
+      const match = /Small's way this time: ([^.]+)\./.exec(buildTurnDirection('dual', random, []));
+      if (match) picked.push(match[1]!);
+    }
+    expect(new Set(picked).size).toBe(5);
+    expect(picked.some((move, i) => i > 0 && move === picked[i - 1])).toBe(false);
+  });
+
+  // Told it is calm, Small reacted with 🤖 on almost every turn.
+  it('asks Small for another feeling after three turns with the same face', () => {
+    resetMotifMemory();
+    for (let i = 0; i < 3; i += 1) noteSmallEmoji('🤖');
+    expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain("Small's face has shown 🤖 three turns in a row");
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [])).not.toContain("Small's face");
+    noteSmallEmoji('😄');
+    expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).not.toContain("Small's face");
+    resetMotifMemory();
+  });
+
+  // Small swearing ("Everything is completely fucked anyway.") was one more
+  // roast; Small's calm is the joke.
+  it('gives the swear word to Main', () => {
+    expect(buildTurnDirection('dual', () => 0.01, [])).toContain('Let Main land a swear word');
+  });
+});
+
+// "Does that mean someone on some machine has to be open or is this all
+// handled?" got "go ask Dimi"; "Can you remember that I was wearing a black
+// hoodie?" got "why are you begging a lunchbox for validation?".
+describe('a real question', () => {
+  const question = 'Does that mean that someone on some machine has to be open or is this all handled?';
+  it('gets the substance, with the joke on it, instead of a comic move', () => {
+    const asked = buildTurnDirection('dual', () => 0, [], [], false, null, { mirror: null, callBackNote: false, useName: null }, null, question);
+    expect(asked).toContain('Main answers what they actually said');
+    expect(asked).not.toContain('Agree with them for once');
+    const single = buildTurnDirection('single', fixed(0.5, 0.99), [], [], false, null, { mirror: null, callBackNote: false, useName: null }, null, question);
+    expect(single).toContain('Answer what they actually said');
+  });
+  it('is told apart from small talk', () => {
+    expect(isRealQuestion(question)).toBe(true);
+    expect(isRealQuestion('Can you remember that I was wearing a black hoodie tonight?')).toBe(true);
+    expect(isRealQuestion('Hello.')).toBe(false);
+    expect(isRealQuestion('Damn.')).toBe(false);
+    expect(isRealQuestion('Who are you?')).toBe(false);
+    const smallTalk = buildTurnDirection('dual', () => 0, [], [], false, null, { mirror: null, callBackNote: false, useName: null }, null, 'Hello.');
+    expect(smallTalk).not.toContain('actually said');
+    expect(smallTalk).toContain('Agree with them for once');
   });
 });
 

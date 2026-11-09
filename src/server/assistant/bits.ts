@@ -212,13 +212,17 @@ export function bitsToStayOff(now = Date.now()): string[] {
 }
 
 // Most turns offer nothing: a bit is a callback the audience enjoys because it
-// is rare. At this rate, with a few bits each on a half-hour cooldown, a
-// visitor hears about one in a conversation.
-export const BIT_OFFER_CHANCE = 0.15;
+// is rare. At 15% of turns, and offered whatever the visitor was talking
+// about, it came out as a non-sequitur ("I hid your laptop charger under the
+// floorboards." to someone testing the mic). Out of the blue it is rare now;
+// when the visitor brings its topic up themselves, it is likely.
+export const BIT_OFFER_CHANCE = 0.05;
+export const BIT_TOPIC_CHANCE = 0.6;
 
 /**
  * The bit offered this turn, if any: rolled among the enabled bits that are
- * off cooldown. A "small" bit needs Small on stage.
+ * off cooldown, preferring one whose words the visitor just used. A "small"
+ * bit only when the visitor brought it up and Small is invited to speak.
  *
  * Everything acts through the prompt before the one generation call: this
  * offer and the "stay off" line are all there is. No rerun, no regeneration,
@@ -226,13 +230,16 @@ export const BIT_OFFER_CHANCE = 0.15;
  * a bit in a reply (noteBitLines, after it was heard) only updates the state
  * that shapes the next turn's stage direction.
  */
-export function offerBit(mode: 'single' | 'dual', random: () => number, now = Date.now()): RunningBit | null {
-  if (random() >= BIT_OFFER_CHANCE) return null;
+export function offerBit(mode: 'single' | 'dual', random: () => number, now = Date.now(), heard = '', smallOnStage = mode === 'dual'): RunningBit | null {
+  const topical = (bit: RunningBit) => heard !== '' && hits(matcherOf(bit), heard);
   const eligible = activeBits().filter((bit) => !disabled.has(bit.id)
     && cooldownLeftMs(bit, now) === 0
-    && (mode === 'dual' || (bit.head ?? 'both') !== 'small'));
-  if (eligible.length === 0) return null;
-  const bit = eligible[Math.floor(random() * eligible.length)]!;
+    && ((bit.head ?? 'both') !== 'small' || (mode === 'dual' && smallOnStage && topical(bit))));
+  const onTopic = eligible.filter(topical);
+  if (random() >= (onTopic.length > 0 ? BIT_TOPIC_CHANCE : BIT_OFFER_CHANCE)) return null;
+  const pool = onTopic.length > 0 ? onTopic : eligible;
+  if (pool.length === 0) return null;
+  const bit = pool[Math.floor(random() * pool.length)]!;
   return random() < (bit.chance ?? 1) ? bit : null;
 }
 

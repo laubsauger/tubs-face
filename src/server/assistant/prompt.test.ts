@@ -36,6 +36,28 @@ describe('system instructions built from the persona template', () => {
     expect(prompt).toContain('"beats" array');
   });
 
+  // Small was defined by attitude ("creepy, mean and funny, with an open,
+  // cartoonish threat now and then") and came out as stock threats. It gets
+  // techniques that start from what was said, silence as an option, and no
+  // example line to copy.
+  it('defines Small by what it does with what was just said, not by attitude', () => {
+    const prompt = buildDualHeadSystemInstruction();
+    expect(prompt).not.toContain('cartoonish threat');
+    expect(prompt).toContain('starts from one specific word or detail that was just said');
+    expect(prompt).toContain('takes it literally');
+    expect(prompt).toContain('Small stays quiet or only reacts');
+    expect(prompt).not.toMatch(/"actor":"small","action":"speak"/);
+  });
+
+  // The body and "humans" stayed on the stay-off list all night on 9 Nov:
+  // the persona itself kept them in front of the model.
+  it('describes the body once, plainly, and real questions get real answers', () => {
+    const prompt = buildAssistantSystemInstruction();
+    for (const pull of ['lunchbox', 'questionable engineering', 'cheap computer', 'Your lens is humans']) expect(prompt).not.toContain(pull);
+    expect(prompt).toContain('two plastic storage tubs held together with ratchet straps');
+    expect(prompt).toContain('A real question gets a real answer');
+  });
+
   it('adds an operator prompt override, but not the default placeholder value', () => {
     runtimeConfig.prompt = 'Talk like a pirate.';
     expect(buildAssistantSystemInstruction()).toContain('# ADDITIONAL INSTRUCTION\nTalk like a pirate.');

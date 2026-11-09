@@ -37,7 +37,7 @@ export async function runStreamingAssistantTurn(args: {
   const { userText, turnId, epoch, broadcast, turnTimer, provider, authState } = args;
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const direction = directionFor('single', turnTimer);
+  const direction = directionFor('single', turnTimer, normalized);
   const context = buildContents(normalized, direction.text);
 
   if (!normalized) {

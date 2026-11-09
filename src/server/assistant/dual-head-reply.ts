@@ -96,7 +96,7 @@ export interface DualHeadReplyOptions {
 export async function generateDualHeadReply(userText: string, turnTimer?: TurnTimer, options: DualHeadReplyOptions = {}): Promise<DualHeadReply> {
   const startedAt = Date.now();
   const normalized = userText.trim();
-  const context = buildContents(normalized, directionFor('dual', turnTimer).text);
+  const context = buildContents(normalized, directionFor('dual', turnTimer, normalized).text);
   const provider = resolveLlmProvider();
   const authState = provider.getAuthState();
 

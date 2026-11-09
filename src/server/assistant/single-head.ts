@@ -14,9 +14,9 @@ import { logRawModelOutput } from './llm-log.js';
 import { maybeRepairPersonaDrift } from './persona-drift.js';
 import { type AssistantReply, assistantUnavailable } from './reply-types.js';
 
-/** This turn's variety direction, also shown in the turn timing log so odd replies can be explained. */
-export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): { text: string; maxSentences: number } {
-  const direction = directTurn(mode);
+/** This turn's variety direction for what the visitor said, also shown in the turn timing log so odd replies can be explained. */
+export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer, heard = ''): { text: string; maxSentences: number } {
+  const direction = directTurn(mode, heard);
   turnTimer?.setMeta('Direction', direction.text.split('\n').slice(1).map((line) => line.replace(/^- /, '')).join(' | '));
   return direction;
 }
@@ -24,7 +24,7 @@ export function directionFor(mode: 'single' | 'dual', turnTimer?: TurnTimer): { 
 export async function generateAssistantReply(userText: string, turnTimer?: TurnTimer): Promise<AssistantReply> {
   const normalized = userText.trim();
   const startedAt = Date.now();
-  const direction = directionFor('single', turnTimer);
+  const direction = directionFor('single', turnTimer, normalized);
   const context = buildContents(normalized, direction.text);
   if (!normalized) {
     const text = 'I did not catch that. Try again.';

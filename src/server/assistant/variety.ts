@@ -212,6 +212,8 @@ function stayOffLines(motifs: { all: string[]; main: string[]; small: string[] }
 /** Test helper: no replies noted. */
 export function resetMotifMemory(): void {
   recentReplies.length = 0;
+  recentSmallEmojis.length = 0;
+  lastSmallMove = -1;
 }
 
 export function lengthOf(text: string): LengthKey {
@@ -232,25 +234,92 @@ export function noteReplyEmoji(emoji: string | null | undefined): void {
   if (recentEmojis.length > 4) recentEmojis.shift();
 }
 
+// Small's face too: told it is calm, it reacted with 🤖 on almost every turn.
+const recentSmallEmojis: string[] = [];
+
+export function noteSmallEmoji(emoji: string | null | undefined): void {
+  if (!emoji) return;
+  recentSmallEmojis.push(emoji);
+  if (recentSmallEmojis.length > 3) recentSmallEmojis.shift();
+}
+
 function opener(text: string): string {
   return text.toLowerCase().replace(/[^\p{L}\p{N}\s']/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).join(' ');
 }
+
+export interface DualShape {
+  text: string;
+  /** Small may speak this turn (with a hook; SMALL_HOOK). */
+  small: boolean;
+}
+
+// Outside a bit each beat is spelled out as one short line: told only the
+// beat count, main wrote a five-sentence riff on most turns. And each line
+// gets a word limit: "one short sentence" alone came back as 25-30 words (a
+// 69-word one once), so a turn ran 16 s or more on one in ten turns.
+// Who speaks is decided here too. Small spoke on about two turns in three
+// (64% of the two-head turns in the 8-9 Nov transcripts, 18 of 29 on the
+// night of 9 Nov), because most shapes asked for two or three speak beats;
+// with nothing of its own to say, Small filled the slot with a jab that fit
+// any visitor ("Say goodbye instead.", "Give us your teeth."). Now Main
+// carries half the turns alone, and Small is invited on about two in five.
+const DUAL_SHAPES: ReadonlyArray<DualShape & { until: number }> = [
+  { until: 0.5, small: false, text: 'Only Main speaks this time: one sentence, under fifteen words. Small stays quiet or only reacts.' },
+  { until: 0.73, small: true, text: 'Main speaks: one sentence, under fifteen words. Small may add one line after it, under twelve words.' },
+  { until: 0.8, small: true, text: 'A quick back-and-forth this time, Main, Small, Main, each line under ten words.' },
+  { until: 0.88, small: true, text: 'Small answers this one, under twelve words. Main may add one line under ten words, or only react.' },
+  { until: 0.97, small: false, text: 'Main takes the room for a bit this time: three to six short sentences in its speak beat, each under twelve words, punchline last. Small stays quiet or only reacts.' },
+  { until: 1, small: true, text: 'Small takes the room for a bit this time: three to six short sentences in its speak beat, each under twelve words, punchline last. Main may cut in once with a few words, or stay quiet.' },
+];
 
 /**
  * The shape of a two-head turn. One head gets the room for a bit on some
  * turns: two heads trading one-liners every time read as a sketch with no
  * jokes in it.
  */
-export function dualShape(roll: number): string {
-  // Outside a bit each beat is spelled out as one short line: told only the
-  // beat count, main wrote a five-sentence riff on most turns. And each line
-  // gets a word limit: "one short sentence" alone came back as 25-30 words
-  // (a 69-word one once), so a turn ran 16 s or more on one in ten turns.
-  if (roll < 0.3) return 'Only one head speaks this time: one sentence, under fifteen words. The other stays quiet or just reacts.';
-  if (roll < 0.62) return 'Two speak beats this time, one sentence each, each under twelve words.';
-  if (roll < 0.88) return 'Three beats this time, a quick back-and-forth, each line under ten words.';
-  return 'One head takes the room for a bit this time, either one (a bit from Small is calm, naive and unsettling): three to six short sentences in its speak beat, each under twelve words, punchline last. The other may cut in once with a few words, or stay quiet.';
+export function dualShape(roll: number): DualShape {
+  const shape = DUAL_SHAPES.find((each) => roll < each.until) ?? DUAL_SHAPES.at(-1)!;
+  return { text: shape.text, small: shape.small };
 }
+
+// An invitation is not an order. In the logs only a third of Small's lines
+// shared a single word with what the visitor or Main had just said; the rest
+// were stock threats and insults ("Make the words tiny so they cry.").
+export const SMALL_HOOK = "Small speaks only with a hook: one specific word or detail from what they just said, or from Main's line, picked up and turned Small's way. A line that would fit any visitor is not a hook; then Small only reacts and Main answers alone.";
+
+// Given all of its techniques at once, Small took a word literally in five
+// of fourteen lines ("Free means it costs zero dollars.", "Plastic means we
+// are cheap to replace."): a new tic within twenty turns. One per turn, never
+// the same one twice running.
+const SMALL_MOVES = [
+  'take one word literally and be sincerely puzzled or pleased by what it literally means',
+  'follow what was said calmly one step further than anyone wanted, to a quiet, unsettling conclusion',
+  'ask the innocent question it raises, the one nobody wants answered',
+  'treat one tiny detail of it as the most important thing in the room',
+  "take Main's line as a compliment, an instruction or a plain fact",
+];
+let lastSmallMove = -1;
+
+function pickSmallMove(random: Random): string {
+  let index = Math.floor(random() * (lastSmallMove < 0 ? SMALL_MOVES.length : SMALL_MOVES.length - 1));
+  if (lastSmallMove >= 0 && index >= lastSmallMove) index += 1;
+  lastSmallMove = Math.min(index, SMALL_MOVES.length - 1);
+  return SMALL_MOVES[lastSmallMove]!;
+}
+
+// "Can you remember that I was wearing a black hoodie tonight?" got "why are
+// you begging a lunchbox for validation?", and a real question about how the
+// faces run got "go ask Dimi". A jab instead of an answer reads as a bot that
+// did not understand, so a real question gets the substance, with the wit on it.
+export function isRealQuestion(heard: string): boolean {
+  const words = heard.split(/\s+/).filter(Boolean).length;
+  return (heard.includes('?') && words >= 4) || words >= 12;
+}
+
+const ENGAGE = {
+  single: 'They asked or told you something real. Answer what they actually said, for real and in your voice (you know a lot: tech, people, this studio, how you yourself work), and build the joke on that answer, not instead of it.',
+  dual: 'They asked or told you something real. Main answers what they actually said, for real and in its voice (you know a lot: tech, people, this studio, how you yourselves work), and builds the joke on that answer, not instead of it.',
+} as const;
 
 export function pickLength(recent: string[], random: Random): LengthKey {
   const lastTwo = recent.slice(-2).map(lengthOf);
@@ -291,6 +360,7 @@ export function buildTurnDirection(
     askName: runtimeConfig.autoEnrollEnabled && Math.random() < ASK_NAME_CHANCE ? nameAskCandidate() : null,
   },
   chosenLength: LengthKey | null = null,
+  heard = '',
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -307,14 +377,24 @@ export function buildTurnDirection(
   }
 
   let length: LengthKey | null = null;
+  let smallOnStage = false;
+  let hookAt = -1;
   if (mode === 'single') {
     length = chosenLength ?? pickLength(recent, random);
     // The shape is Tubs's call, not the visitor's: "tell me a long story"
     // getting "I do not have any." is the character.
     lines.push(LENGTHS[length]);
   } else {
-    lines.push(dualShape(random()));
+    const shape = dualShape(random());
+    smallOnStage = shape.small;
+    lines.push(shape.text);
+    if (shape.small) {
+      hookAt = lines.length;
+      lines.push(SMALL_HOOK);
+    }
   }
+  const engage = isRealQuestion(heard);
+  if (engage) lines.push(ENGAGE[mode]);
 
   const lastThree = recent.slice(-3);
   const questions = lastThree.filter((text) => text.trim().endsWith('?')).length;
@@ -339,6 +419,9 @@ export function buildTurnDirection(
   if (lastEmojis.length === 3 && lastEmojis.every((emoji) => emoji === lastEmojis[0])) {
     lines.push(`Your face has shown ${lastEmojis[0]} three replies in a row. Feel something else this time and pick a different emoji.`);
   }
+  if (mode === 'dual' && recentSmallEmojis.length === 3 && recentSmallEmojis.every((emoji) => emoji === recentSmallEmojis[0])) {
+    lines.push(`Small's face has shown ${recentSmallEmojis[0]} three turns in a row. Even if Small only reacts, it feels something else this time.`);
+  }
 
   if (group.askName) {
     const { position, inGroup } = group.askName;
@@ -362,8 +445,12 @@ export function buildTurnDirection(
       : `Earlier tonight another visitor said: "${gossip.text}". Bring it up if it fits, without saying who.`);
   }
 
-  // Tubs has things on his mind; now and then they win over the visitor's topic.
-  if (mode === 'single' && random() < 0.12) {
+  // Tubs has things on his mind; now and then they win over the visitor's
+  // topic. Not over a real question: a move like "describe them the way a
+  // nature documentary would" there came out as a jab instead of an answer.
+  if (engage) {
+    // The answer is the move.
+  } else if (mode === 'single' && random() < 0.12) {
     // Hooked onto what they said: plain topic skips came out as non-sequiturs.
     lines.push('Bring up what has actually been on your mind, and hook it onto what they just said.');
   } else if (random() < MOVE_CHANCE) {
@@ -373,16 +460,26 @@ export function buildTurnDirection(
   lines.push(...stayOffLines(stayOffMotifs(), mode));
 
   if (random() < SWEAR_CHANCE) {
-    lines.push('Let a swear word land in this one (fuck, shit), where it fits naturally.');
+    // Main's: Small swearing ("Everything is completely fucked anyway.") was
+    // just a second roast; Small's calm is what makes it unsettling.
+    lines.push(mode === 'dual'
+      ? 'Let Main land a swear word in this one (fuck, shit), where it fits naturally.'
+      : 'Let a swear word land in this one (fuck, shit), where it fits naturally.');
   }
 
-  // A running bit on few turns only, off cooldown (bits.ts). The offer is the
-  // only way a bit reaches the model; nothing checks or redoes the reply.
-  const bit = offerBit(mode, random);
+  // A running bit on few turns only, off cooldown (bits.ts), to one head.
+  // Offered to "either head", both used the remotes in the same turn. The
+  // offer is the only way a bit reaches the model; nothing checks or redoes
+  // the reply.
+  const bit = offerBit(mode, random, Date.now(), heard, smallOnStage);
   if (bit) {
-    const who = mode === 'single' ? 'you' : bit.head === 'main' ? 'Main' : bit.head === 'small' ? 'Small' : 'either head';
-    lines.push(`If it fits, ${who} may use this: ${bit.text}`);
+    if (mode === 'single') lines.push(`If it fits what they said, you may use this: ${bit.text}`);
+    else if (bit.head === 'small') lines.push(`If it fits what they said, Small may use this as its hook; Main leaves it alone: ${bit.text}`);
+    else lines.push(`If it fits what they said, Main may use this; Small leaves it alone: ${bit.text}`);
   }
+
+  // Rolled last, so the rolls above stay where they were.
+  if (hookAt >= 0) lines[hookAt] = `${SMALL_HOOK} Small's way this time: ${pickSmallMove(random)}.`;
 
   return `${HEADER}\n${lines.map((line) => `- ${line}`).join('\n')}`;
 }
@@ -392,8 +489,8 @@ export function buildTurnDirection(
  * come from one length roll: a bit asked for in the direction must not be cut
  * off after two sentences by the speech cap.
  */
-export function directTurn(mode: 'single' | 'dual'): { text: string; maxSentences: number } {
+export function directTurn(mode: 'single' | 'dual', heard = ''): { text: string; maxSentences: number } {
   const length = mode === 'single' ? pickLength(recentModelReplies(6), Math.random) : null;
-  const text = buildTurnDirection(mode, Math.random, undefined, undefined, undefined, undefined, undefined, length);
+  const text = buildTurnDirection(mode, Math.random, undefined, undefined, undefined, undefined, undefined, length, heard);
   return { text, maxSentences: length === 'bit' || length === 'open' ? BIT_MAX_SENTENCES : MAX_OUTPUT_SENTENCES };
 }

@@ -49,7 +49,7 @@
       "cooldownMin": 30
     },
     {
-      "id": "tubs-and-straps",
+      "id": "your-own-body",
       "text": "Your own body: two plastic tubs, ratchet straps, a cheap computer, no wheels, no legs. Everyone can see it, so it is the joke visitors would make themselves; only a fresh angle lands.",
       "match": [
         "/\\btub\\b|\\b(?:two|plastic|storage|these|those|my|our|cheap) tubs\\b/",
