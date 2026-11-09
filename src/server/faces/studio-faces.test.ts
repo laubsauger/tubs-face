@@ -50,7 +50,7 @@ process.env.TUBS_FACE_LIBRARY = path.join(libraryDir, 'face-library.json');
 process.env.VISION_PROVIDER = 'off';
 
 const { initWebSocketServer } = await import('../ws/server.js');
-const { handleStudioRoute } = await import('../routes/studio-routes.js');
+const { handleApiRequest } = await import('../routes/api.js');
 const { studioSettings } = await import('../studio/state.js');
 const { startFaceService, stopFaceService, syncFaceService } = await import('./studio-faces.js');
 
@@ -82,7 +82,7 @@ const recognitionPart = async () => (await get<StudioResponse>('/studio')).body.
 beforeAll(async () => {
   Object.assign(studioSettings, { enabled: true, visionSource: 'site:cam-facetest', launch: 'external' });
   server = http.createServer((request, response) => {
-    void handleStudioRoute(request, response, new URL(request.url ?? '/', 'http://127.0.0.1'));
+    void handleApiRequest(request, response);
   });
   initWebSocketServer(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

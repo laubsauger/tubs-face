@@ -18,6 +18,7 @@ import { toStudioResponse } from '../studio/state.js';
 import { visionService } from '../assistant/vision.js';
 import { personaOverride } from '../persona/index.js';
 import { persistState } from '../state-file.js';
+import { syncFaceService } from '../faces/studio-faces.js';
 
 const greetingsPath = resolve(process.cwd(), 'src/persona/greetings.json');
 
@@ -67,6 +68,8 @@ export async function handleSystemRoute(request: IncomingMessage, response: Serv
       }
       broadcastConfig();
       persistState();
+      // Descriptions on or off decides whether the face service looks at all while recognition is off.
+      if (patch.visionDescriptions !== undefined) syncFaceService();
       if (!wasMuted && runtimeConfig.muted) {
         // Mute means silence now: drop the turn in flight and stop client audio.
         interruptAssistantTurns();

@@ -27,6 +27,11 @@ describe('studio settings', () => {
       launch: 'chrome',
       // Faces are recognised in the browser unless FACE_SERVICE says otherwise (docs/face-service.md).
       faceService: false,
+      // Every switch on; the face windows off the screen, so nobody finds a pile of Tubs windows.
+      cameraOn: true,
+      micOn: true,
+      faceRecognition: true,
+      windows: 'offscreen',
     });
   });
 

@@ -132,6 +132,26 @@ describe('vision off', () => {
   });
 });
 
+// The descriptions switch is separate from the provider choice and from face
+// recognition: off, not one picture goes to the provider that stays chosen
+// (recognition runs on the listener page, untouched by it).
+describe('descriptions switched off', () => {
+  it('send no picture to the chosen provider, and turned back on they do', async () => {
+    const stub = stubOpenAi();
+    const base = await stub.start();
+    applyRuntimeConfigPatch({ visionProvider: 'openai', visionBaseUrl: base, visionModel: 'm', visionDescriptions: false });
+    const vision = createVisionService({ log: () => {} });
+    expect(await vision.look(FRAME, 'appearance')).toBeNull();
+    expect(await vision.look(FRAME, 'refresh')).toBeNull();
+    expect(stub.requests).toHaveLength(0);
+    expect(vision.stats().skipped.off).toBe(2);
+    applyRuntimeConfigPatch({ visionDescriptions: true });
+    expect(await vision.look(FRAME, 'appearance')).not.toBeNull();
+    expect(stub.requests).toHaveLength(1);
+    await stub.stop();
+  });
+});
+
 describe('a slow vision provider', () => {
   it('gives up after visionTimeoutMs and keeps the last description', async () => {
     const stub = stubOpenAi({ delayMs: 3000 });

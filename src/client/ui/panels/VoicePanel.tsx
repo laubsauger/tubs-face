@@ -2,6 +2,7 @@ import type { JSX } from 'react';
 import type { AppStore } from '../../state/app-state.js';
 import { useAppSelector } from '../react-store.js';
 import { PanelHeader } from './PanelHeader.js';
+import { deviceView } from '../../studio/live-view.js';
 import type { AppShellControls } from '../app-shell.js';
 import { toggleFullscreen } from '../window-runtime.js';
 import { VAD_MODELS } from '../../../shared/contracts/config.js';
@@ -16,16 +17,17 @@ export function VoicePanel({
   controls?: AppShellControls | undefined;
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
-    micReady: current.micReady,
-    micDenied: current.micDenied,
-    micLevel: current.micLevel,
-    recording: current.recording,
-    listenState: current.listenState,
+    // In studio mode the studio listener's mic (live-view.ts).
+    micReady: deviceView(current).micReady,
+    micDenied: deviceView(current).micDenied,
+    micLevel: deviceView(current).micLevel,
+    recording: deviceView(current).recording,
+    listenState: deviceView(current).listenState,
     voiceWakeWordEnabled: current.voiceWakeWordEnabled,
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
     audioPlaying: current.audioPlaying,
-    voiceLastTranscript: current.voiceLastTranscript,
-    faceCameraActive: current.faceCameraActive,
+    voiceLastTranscript: deviceView(current).voiceLastTranscript,
+    faceCameraActive: deviceView(current).faceCameraActive,
     fullscreenActive: current.fullscreenActive,
     vadModel: current.config?.vadModel ?? 'rms',
     muted: current.config?.muted ?? false,

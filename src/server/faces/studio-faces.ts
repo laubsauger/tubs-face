@@ -3,7 +3,7 @@
 // studio's visionSource), and what its frames mean (recognition.ts). ws/server.ts
 // binds the hooks that reach the pages; index.ts starts and stops it.
 
-import type { FaceObservation, FaceRecognizer, StudioFaceMethod } from '../../shared/contracts/studio.js';
+import type { FaceObservation, FaceRecognizer, StudioFaceMethod, StudioFaceWorkerStatus } from '../../shared/contracts/studio.js';
 import { parseVisionSource } from '../../shared/contracts/studio.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { isInConversation } from '../assistant/turns.js';
@@ -11,6 +11,7 @@ import { siteLogin } from '../studio/site-auth.js';
 import { recognizerOf, studioSettings, type StudioSettings } from '../studio/state.js';
 import { addFace, faceLibraryPath, readFaceLibrary } from './library.js';
 import { createRecognition, type LiveFaceFields, type ListenerEffect } from './recognition.js';
+import { MATCH_MARGIN, MATCH_THRESHOLD } from '../../client/face/matching.js';
 import { createFaceServiceClient, DEFAULT_FACE_SERVICE_PORT, parseFaceServiceMode, type FaceServiceStatus } from './service.js';
 import { statSync } from 'node:fs';
 import type { EnrolledFace } from '../../shared/contracts/faces.js';
@@ -56,9 +57,15 @@ const client = createFaceServiceClient({
   },
 });
 
+/** When the service last saw a face (StudioFaceWorkerStatus.lastFaceAt). */
+let lastFaceAt: number | null = null;
+
 const recognition = createRecognition({
   apply: (message) => hooks.apply(message),
-  publish: (observation) => hooks.publish(observation),
+  publish: (observation) => {
+    if (observation.faces.length > 0) lastFaceAt = observation.t;
+    hooks.publish(observation);
+  },
   library,
   addFace: (face) => {
     addFace(face);
@@ -66,7 +73,7 @@ const recognition = createRecognition({
   },
   facesChanged: () => hooks.facesChanged(),
   inConversation: (now) => isInConversation(now),
-  config: () => runtimeConfig,
+  config: () => ({ ...runtimeConfig, faceRecognition: studioSettings.faceRecognition }),
   frame: (maxPx) => client.frame(maxPx),
   thumbnail: (track) => client.thumbnail(track),
   capture: () => client.capture(),
@@ -125,13 +132,37 @@ export function faceServiceStatus(): FaceServiceStatus {
   return client.status();
 }
 
-/** The people in the library, for the recognition part's detail. */
-export function libraryPeople(): number {
-  return new Set(library().map((face) => face.name.trim().toLowerCase()).filter(Boolean)).size;
-}
-
-export function serviceObservation(): FaceObservation | null {
-  return recognizing ? recognition.observation() : null;
+/**
+ * The face service as the listener page's face worker would report itself
+ * (StudioFaceWorkerStatus), for the camera and recognition parts, the pulse and
+ * /studio/vision while the service recognises; null otherwise.
+ */
+export function serviceFaceWorker(): StudioFaceWorkerStatus | null {
+  if (!recognizing) return null;
+  const { health, error } = client.status();
+  const observation = recognition.observation();
+  const best = observation?.faces.find((face) => face.decision === 'match') ?? observation?.faces[0] ?? null;
+  const problem = !health ? `the face service is not answering${error ? `: ${error}` : ''}` : health.error;
+  return {
+    state: !health || health.error ? 'error' : health.state,
+    ...(health?.state === 'loading' ? { detail: health.download ? `downloading ${health.download.file} ${health.download.pct ?? '?'}%` : 'loading models' } : {}),
+    camera: health?.camera === 'ok',
+    checksPerSecond: health?.fps ?? 0,
+    lastCheckAt: observation?.t ?? null,
+    lastFaceAt,
+    faces: observation?.faces.length ?? 0,
+    best: best ? { name: best.name ?? null, prob: best.candidates.find((c) => c.name === best.name)?.sim ?? best.candidates[0]?.sim ?? 0 } : null,
+    ...(problem ? { error: problem.slice(0, 300) } : {}),
+    ...(health?.backend ? { backend: health.backend } : {}),
+    ...(health?.threads ? { threads: health.threads } : {}),
+    source: studioSettings.visionSource,
+    frameWidth: observation?.frame.w || null,
+    frameHeight: observation?.frame.h || null,
+    lastFrameAt: observation?.t ?? null,
+    inferenceMs: health ? Math.round(health.inferMs) : null,
+    threshold: MATCH_THRESHOLD,
+    margin: MATCH_MARGIN,
+  };
 }
 
 export function serviceLiveFaces(): LiveFaceFields | null {

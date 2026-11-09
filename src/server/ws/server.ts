@@ -34,8 +34,9 @@ import { isLocalNetworkAddress } from '../memory/view.js';
 import { forgetViewer, frameDue, liveGone, liveRelay, noteWatch, pulseLeaseEndsAt, serverFacesRelay, useServerFaces, wantedWatch, watchOf } from '../studio/live.js';
 import { noteHeadSpeaking, studioPulse } from '../studio/pulse.js';
 import type { FaceObservation } from '../../shared/contracts/studio.js';
-import { bindRecognitionHooks, recognizer, serviceAutoEnroll, serviceFaceCall, serviceLiveFaces } from '../faces/studio-faces.js';
+import { bindRecognitionHooks, recognizer, serviceAutoEnroll, serviceFaceCall, serviceFaceWorker, serviceLiveFaces } from '../faces/studio-faces.js';
 import type { ListenerEffect } from '../faces/recognition.js';
+import { forgetObservation, noteObservation } from '../studio/faces.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
@@ -54,8 +55,6 @@ let faceCallSeq = 0;
 const FACE_CALL_TIMEOUT_MS = 30_000;
 /** The page whose camera last reported who is in view; its going away clears recognition. */
 let recognitionSocket: WebSocket | null = null;
-/** The listener page's browser worker's last observation (docs/face-service.md), while it recognises. */
-let browserObservation: FaceObservation | null = null;
 const WS_PATH = '/ws';
 
 
@@ -75,7 +74,7 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     publish: publishObservation,
     facesChanged: () => broadcast({ type: 'faces_changed' }),
   });
-  useServerFaces(serviceLiveFaces);
+  useServerFaces(serviceLiveFaces, serviceFaceWorker);
 
   server.on('upgrade', (request, socket, head) => {
     if (!isWebSocketRequest(request)) {
@@ -160,12 +159,13 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
         recognitionSocket = null;
         forgetRecognised();
       }
-      if (studioActor === 'main') browserObservation = null;
       if (studioActor) {
         studioPages.delete(socket);
         if (![...studioPages.values()].includes(studioActor)) {
           notePageConnection(studioActor, false);
           if (studioActor === 'main') {
+            // The browser producer's observation goes with its page; the face service's does not.
+            if (recognizer() !== 'service') forgetObservation();
             sendToWatchers(liveGone(), 'live');
             failFaceCalls('the studio listener page went away');
           }
@@ -249,6 +249,7 @@ export function syncStudioWatch(now = Date.now()): void {
  * with the studio_live relay and the pulse they show.
  */
 function publishObservation(observation: FaceObservation): void {
+  noteObservation(observation);
   const payload = JSON.stringify({ type: 'face_observation', observation });
   for (const page of listenerPages()) {
     if (page.readyState === page.OPEN) page.send(payload);
@@ -270,11 +271,6 @@ function pushPulse(force = false): void {
     lastPulsePushAt = now;
     sendToWatchers({ type: 'studio_pulse', pulse: studioPulse(now) }, 'live');
   }
-}
-
-/** The last observation from whichever producer recognises (GET /studio/faces). */
-export function lastBrowserObservation(): FaceObservation | null {
-  return recognizer() === 'browser' ? browserObservation : null;
 }
 
 /**
@@ -348,12 +344,6 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
     case 'proactive':
     case 'presence':
       applyListenerMessage(message);
-      return;
-    case 'face_observation':
-      // The listener page's browser worker, in the face service's shape: passed on to the dashboards.
-      if (studioPages.get(socket) !== 'main' || recognizer() !== 'browser') return;
-      browserObservation = message.observation;
-      sendToWatchers({ type: 'face_observation', observation: message.observation }, 'live');
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.
@@ -450,6 +440,12 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       pushPulse(!message.status);
       return;
     }
+    case 'face_observation':
+      // The browser producer: the studio listener page only, and not while the face service recognises (docs/face-service.md).
+      if (studioPages.get(socket) !== 'main' || message.observation.worker.kind !== 'browser' || recognizer() === 'service') return;
+      noteObservation(message.observation);
+      sendToWatchers({ type: 'face_observation', observation: message.observation }, 'live');
+      return;
     case 'studio_watch':
       if (!liveViewers.has(socket)) return;
       noteWatch(socket, { live: message.live, video: message.video });
@@ -501,6 +497,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.mic ? { mic: message.mic } : {}),
         ...(message.cadence ? { cadence: message.cadence } : {}),
         ...(message.devices ? { devices: message.devices } : {}),
+        ...(message.faceWorker ? { faceWorker: message.faceWorker } : {}),
       });
       return;
     default:

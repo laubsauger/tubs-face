@@ -103,6 +103,20 @@ const mood = (v: unknown): boolean => isRecord(v) && unitRange(v.pos) && unitRan
 const optMic = (v: unknown): boolean => v === undefined
   || (isRecord(v) && text(v.source, 300) && typeof v.listening === 'boolean' && optString(v.error, 300));
 const labels = (v: unknown): boolean => Array.isArray(v) && v.length <= 32 && v.every((label) => typeof label === 'string' && label.length > 0 && label.length <= 200);
+const FACE_WORKER_STATES = ['off', 'loading', 'ready', 'error'];
+const optTime = (v: unknown): boolean => v === null || isFiniteNumber(v);
+const optFaceWorker = (v: unknown): boolean => v === undefined || (isRecord(v)
+  && FACE_WORKER_STATES.includes(v.state as string) && optString(v.detail, 300) && typeof v.camera === 'boolean'
+  && isFiniteNumber(v.checksPerSecond) && optTime(v.lastCheckAt) && optTime(v.lastFaceAt) && isFiniteNumber(v.faces)
+  && (v.best === null || (isRecord(v.best) && (v.best.name === null || (typeof v.best.name === 'string' && v.best.name.length <= 80)) && isFiniteNumber(v.best.prob)))
+  && optString(v.error, 300) && optString(v.backend, 40) && (v.threads === undefined || isFiniteNumber(v.threads))
+  && (v.isolated === undefined || typeof v.isolated === 'boolean') && optString(v.source, 300)
+  && [v.frameWidth, v.frameHeight, v.lastFrameAt, v.inferenceMs, v.lastVisionFrameAt].every((n) => n === undefined || optTime(n))
+  && (v.threshold === undefined || isFiniteNumber(v.threshold)) && (v.margin === undefined || isFiniteNumber(v.margin))
+  && (v.visionSkip === undefined || v.visionSkip === null || VISION_SKIPS.includes(v.visionSkip as string))
+  && (v.checkSkip === undefined || v.checkSkip === null || CHECK_SKIPS.includes(v.checkSkip as string)));
+const CHECK_SKIPS = ['voice rendering', 'no frame', 'onboarding'];
+const VISION_SKIPS = ['asleep', 'descriptions off', 'nobody in view', 'not due'];
 const optDevices = (v: unknown): boolean => v === undefined || (isRecord(v) && labels(v.audio) && labels(v.video));
 const MAX_LIVE_FACES = 16;
 /** A preview JPEG (studio_frame): a few hundred pixels wide. */
@@ -112,6 +126,7 @@ const liveFace = (v: unknown): boolean => isRecord(v)
   && isFiniteNumber(v.score) && (v.confidence === undefined || isFiniteNumber(v.confidence))
   && (v.matches === undefined || (Array.isArray(v.matches) && v.matches.length <= 3 && v.matches.every((match) => isRecord(match) && isFiniteNumber(match.score)
     && (match.name === undefined || (typeof match.name === 'string' && match.name.length <= 80)))))
+  && (v.decision === undefined || v.decision === 'match' || v.decision === 'unknown' || v.decision === 'onboarding')
   && (v.name === undefined || v.name === null || (typeof v.name === 'string' && v.name.length <= 80))
   && (v.match === undefined || v.match === null || (isRecord(v.match) && isFiniteNumber(v.match.score)
     && (v.match.name === undefined || (typeof v.match.name === 'string' && v.match.name.length <= 80))));
@@ -123,6 +138,7 @@ function isLiveStatus(v: unknown): boolean {
     && typeof v.micReady === 'boolean' && typeof v.micDenied === 'boolean' && isFiniteNumber(v.micLevel) && (v.micLevel as number) >= 0 && (v.micLevel as number) <= 1
     && typeof v.recording === 'boolean' && shortText(v.listenState) && typeof v.voiceLastTranscript === 'string' && v.voiceLastTranscript.length <= MAX_TEXT_CHARS
     && typeof v.audioPlaying === 'boolean' && typeof v.faceCameraActive === 'boolean' && typeof v.faceWorkerReady === 'boolean' && shortText(v.faceStatus)
+    && typeof v.faceWorkerBusy === 'boolean' && optTime(v.faceLastInferenceMs) && isFiniteNumber(v.faceLastEmbeddingsExtracted) && isFiniteNumber(v.faceLastEmbeddingsReused)
     && isFiniteNumber(v.faceLastDetectedCount) && optFrameSide(v.faceFrameWidth) && optFrameSide(v.faceFrameHeight)
     && liveFaces(v.faceLastFaces);
 }
@@ -180,9 +196,9 @@ export function isWsClientMessage(value: unknown): value is WsClientMessage {
       return isActor(m.actor) && typeof m.speaking === 'boolean' && text(m.expr, MAX_ID_CHARS) && mood(m.mood) && isFiniteNumber(m.ts);
     case 'studio_status':
       return isActor(m.actor) && typeof m.publishing === 'boolean' && optString(m.error, 300) && optMic(m.mic) && optCadence(m.cadence)
-        && optDevices(m.devices);
+        && optDevices(m.devices) && optFaceWorker(m.faceWorker);
     case 'studio_live':
-      return isActor(m.actor) && typeof m.speaking === 'boolean' && (m.status === null || isLiveStatus(m.status));
+      return isActor(m.actor) && typeof m.speaking === 'boolean' && (m.status === null || isLiveStatus(m.status)) && optFaceWorker(m.faceWorker);
     case 'studio_watch':
       return typeof m.live === 'boolean' && typeof m.video === 'boolean';
     case 'studio_frame':

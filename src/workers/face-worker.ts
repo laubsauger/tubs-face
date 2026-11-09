@@ -63,7 +63,7 @@ self.onmessage = async (event: MessageEvent<FaceWorkerRequestMessage>) => {
   if (event.data.type === 'init') {
     try {
       await initModels();
-      post({ type: 'ready' });
+      post({ type: 'ready', backend: 'wasm', threads: WASM_THREADS, isolated: self.crossOriginIsolated });
     } catch (error) {
       postError(`Init failed: ${toErrorMessage(error)}`);
     }

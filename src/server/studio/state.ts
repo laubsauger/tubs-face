@@ -10,13 +10,16 @@ import {
   type StudioActor,
   type StudioCadence,
   type StudioDevices,
+  type StudioFaceWorkerStatus,
   type StudioLaunchMode,
   type StudioMicStatus,
-  type StudioPatch,
   type StudioResponse,
+  type StudioSwitches,
+  type StudioWindowsMode,
 } from '../../shared/contracts/studio.js';
 import type { WsStudioConfigServerMessage } from '../../shared/contracts/ws.js';
 import { siteLoginProblem } from './site-auth.js';
+import { runtimeConfig } from '../config/runtime.js';
 
 export const DEFAULT_STUDIO_SITE = 'http://127.0.0.1:8889';
 
@@ -31,6 +34,12 @@ export interface StudioSettings {
   launch: StudioLaunchMode;
   /** FACE_SERVICE is set (not off): the face service recognises what the server can read (docs/face-service.md). */
   faceService?: boolean;
+  /** Switches (StudioSwitches) kept here; descriptions and relationships are runtime config. */
+  cameraOn: boolean;
+  micOn: boolean;
+  faceRecognition: boolean;
+  /** TUBS_STUDIO_WINDOWS: the launched face pages' windows off screen (default) or on screen. */
+  windows: StudioWindowsMode;
 }
 
 /** Env defaults. Studio mode is off unless TUBS_STUDIO says otherwise. */
@@ -52,6 +61,10 @@ export function studioSettingsFromEnv(env: NodeJS.ProcessEnv): StudioSettings {
     prefix,
     launch: env.TUBS_STUDIO_LAUNCH?.trim() === 'external' ? 'external' : 'chrome',
     faceService: Boolean(env.FACE_SERVICE?.trim()) && env.FACE_SERVICE?.trim() !== 'off',
+    cameraOn: true,
+    micOn: true,
+    faceRecognition: !/^(0|false|no|off)$/i.test(env.TUBS_FACE_RECOGNITION?.trim() ?? ''),
+    windows: env.TUBS_STUDIO_WINDOWS?.trim() === 'visible' ? 'visible' : 'offscreen',
   };
 }
 
@@ -60,9 +73,11 @@ export function studioSettingsFromEnv(env: NodeJS.ProcessEnv): StudioSettings {
  * server can read (a site stream, a snapshot URL), the listener page's browser
  * worker for a local camera or without FACE_SERVICE, nobody without a camera.
  */
-export function recognizerOf(settings: StudioSettings = studioSettings): FaceRecognizer {
+export function recognizerOf(settings: StudioSettings = studioSettings, descriptions = runtimeConfig.visionDescriptions): FaceRecognizer {
   const source = parseVisionSource(settings.visionSource);
-  if (!settings.enabled || !source || source.kind === 'off') return 'off';
+  if (!settings.enabled || !settings.cameraOn || !source || source.kind === 'off') return 'off';
+  // Faces are detected while recognition or descriptions (which need a face in view) is on.
+  if (!settings.faceRecognition && !descriptions) return 'off';
   return settings.faceService && (source.kind === 'site' || source.kind === 'snapshot') ? 'service' : 'browser';
 }
 
@@ -83,6 +98,7 @@ export function studioConfigMessage(settings: StudioSettings = studioSettings): 
     streams: { main: streamName('main', settings), small: streamName('small', settings) },
     // Absent: the browser worker, as before.
     ...(recognizerOf(settings) === 'service' ? { faces: 'service' as const } : {}),
+    switches: { camera: settings.cameraOn, faceRecognition: settings.faceRecognition, mic: settings.micOn },
   };
 }
 
@@ -90,10 +106,20 @@ export function studioConfigMessage(settings: StudioSettings = studioSettings): 
  * Validates a POST /studio body and applies it. Throws a BadRequestError (and
  * changes nothing) when any field is invalid. Returns which fields changed.
  */
-export function applyStudioPatch(patch: unknown, settings: StudioSettings = studioSettings): Array<keyof StudioPatch> {
+export function applyStudioPatch(patch: unknown, settings: StudioSettings = studioSettings): Array<keyof StudioSettings> {
   if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw badRequest('Body must be a JSON object');
   const body = patch as Record<string, unknown>;
-  const next: Partial<Pick<StudioSettings, 'enabled' | 'site' | 'micSource' | 'visionSource'>> = {};
+  const next: Partial<Pick<StudioSettings, 'enabled' | 'site' | 'micSource' | 'visionSource' | 'cameraOn' | 'micOn' | 'faceRecognition' | 'windows'>> = {};
+  if (body.switches !== undefined) {
+    const switches = studioSwitchesPatch(body.switches);
+    if (switches.camera !== undefined) next.cameraOn = switches.camera;
+    if (switches.mic !== undefined) next.micOn = switches.mic;
+    if (switches.faceRecognition !== undefined) next.faceRecognition = switches.faceRecognition;
+  }
+  if (body.windows !== undefined) {
+    if (body.windows !== 'offscreen' && body.windows !== 'visible') throw badRequest('windows must be offscreen or visible');
+    next.windows = body.windows;
+  }
   if (body.enabled !== undefined) {
     if (typeof body.enabled !== 'boolean') throw badRequest('enabled must be true or false');
     next.enabled = body.enabled;
@@ -122,6 +148,7 @@ interface PageReport {
   mic?: StudioMicStatus;
   cadence?: StudioCadence;
   devices?: StudioDevices;
+  faceWorker?: StudioFaceWorkerStatus;
   /** Set while the page's socket is open. */
   connected: boolean;
 }
@@ -146,7 +173,7 @@ export function notePageConnection(actor: StudioActor, connected: boolean): void
   }
 }
 
-export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus; cadence?: StudioCadence; devices?: StudioDevices }): void {
+export function notePageStatus(actor: StudioActor, status: { publishing: boolean; error?: string; mic?: StudioMicStatus; cadence?: StudioCadence; devices?: StudioDevices; faceWorker?: StudioFaceWorkerStatus }): void {
   const before = pages.get(actor);
   pages.set(actor, {
     connected: true,
@@ -155,7 +182,14 @@ export function notePageStatus(actor: StudioActor, status: { publishing: boolean
     ...(status.mic ? { mic: status.mic } : (before?.mic ? { mic: before.mic } : {})),
     ...(status.cadence ? { cadence: status.cadence } : (before?.cadence ? { cadence: before.cadence } : {})),
     ...(status.devices ? { devices: status.devices } : (before?.devices ? { devices: before.devices } : {})),
+    ...(status.faceWorker ? { faceWorker: status.faceWorker } : (before?.faceWorker ? { faceWorker: before.faceWorker } : {})),
   });
+}
+
+/** The listener page's face worker as it last reported it; null while that page is not connected. */
+export function listenerFaceWorker(): StudioFaceWorkerStatus | null {
+  const report = pages.get('main');
+  return report?.connected && report.faceWorker ? report.faceWorker : null;
 }
 
 /** The input devices the listener page (main) last reported, and whether it is still connected. */
@@ -199,7 +233,29 @@ export function toStudioResponse(settings: StudioSettings = studioSettings): Stu
     actors,
     launch: settings.launch,
     ...(settings.enabled && mic ? { mic } : {}),
+    switches: {
+      camera: settings.cameraOn,
+      faceRecognition: settings.faceRecognition,
+      visionDescriptions: runtimeConfig.visionDescriptions,
+      relationships: runtimeConfig.relationshipsEnabled,
+      mic: settings.micOn,
+    },
+    windows: settings.windows,
   };
+}
+
+const SWITCHES = ['camera', 'faceRecognition', 'visionDescriptions', 'relationships', 'mic'] as const;
+
+/** A switches patch: known names, true or false; anything else is a BadRequestError. */
+export function studioSwitchesPatch(value: unknown): Partial<StudioSwitches> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw badRequest('switches must be an object');
+  const out: Partial<StudioSwitches> = {};
+  for (const [key, on] of Object.entries(value)) {
+    if (!(SWITCHES as readonly string[]).includes(key)) throw badRequest(`unknown switch ${key} (there are: ${SWITCHES.join(', ')})`);
+    if (typeof on !== 'boolean') throw badRequest(`switches.${key} must be true or false`);
+    out[key as keyof StudioSwitches] = on;
+  }
+  return out;
 }
 
 function normalizeSite(value: string): string | null {

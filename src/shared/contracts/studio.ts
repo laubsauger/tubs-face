@@ -103,7 +103,29 @@ export interface StudioResponse {
   presets?: { names: string[]; active: string | null };
   /** What runs where (the Studio tab's card, the sentient panel). Keep this shape. */
   parts?: StudioPart[];
+  /** Each part on its own, live, kept in TUBS_STATE_FILE (POST /studio {switches: {...}}). */
+  switches?: StudioSwitches;
+  /** Where the launched face pages' windows are: off screen (the default) or on screen for debugging. */
+  windows?: StudioWindowsMode;
 }
+
+/**
+ * The studio's switches, each independent of the others:
+ *   camera              pictures from the vision source at all (the source choice stays)
+ *   faceRecognition     the listener's face worker: detection, recognition, auto-onboarding
+ *   visionDescriptions  pictures described by the vision provider (the provider choice stays)
+ *   relationships       the attitude lines for recognised people
+ *   mic                 listening from the mic source at all (the source choice stays)
+ */
+export interface StudioSwitches {
+  camera: boolean;
+  faceRecognition: boolean;
+  visionDescriptions: boolean;
+  relationships: boolean;
+  mic: boolean;
+}
+
+export type StudioWindowsMode = 'offscreen' | 'visible';
 
 /**
  * One part of the studio's Tubs: where the work happens (host or host:port,
@@ -112,7 +134,7 @@ export interface StudioResponse {
  * short detail (model, latency, voices, fps).
  */
 export interface StudioPart {
-  id: 'brain' | 'voices' | 'realtime' | 'vision' | 'recognition' | 'mic' | 'faces' | 'site';
+  id: 'brain' | 'voices' | 'realtime' | 'vision' | 'recognition' | 'mic' | 'faces' | 'site' | 'camera' | 'relationships';
   label: string;
   where: string;
   ok: boolean | null;
@@ -179,6 +201,8 @@ export interface StudioLiveFace {
   match?: { name?: string; score: number } | null;
   /** The top candidates, best first (at most 3). */
   matches?: Array<{ name?: string; score: number }>;
+  /** What the listener made of it: the library's match, unknown, or unknown and being onboarded (auto-onboarding collects shots). */
+  decision?: 'match' | 'unknown' | 'onboarding';
 }
 
 /**
@@ -199,7 +223,11 @@ export interface StudioLiveStatus {
   audioPlaying: boolean;
   faceCameraActive: boolean;
   faceWorkerReady: boolean;
+  faceWorkerBusy: boolean;
   faceStatus: string;
+  faceLastInferenceMs: number | null;
+  faceLastEmbeddingsExtracted: number;
+  faceLastEmbeddingsReused: number;
   faceLastDetectedCount: number;
   faceFrameWidth: number | null;
   faceFrameHeight: number | null;
@@ -226,6 +254,12 @@ export interface StudioPulse {
   seen: Array<{ name: string | null; prob: number; box: [number, number, number, number] }>;
   /** The last vision check: how long the provider took and when. */
   vision: { provider: string; lastMs: number | null; at: number | null };
+  /**
+   * Additive: whether anyone is looking. state as the face worker reports it
+   * (off, loading, ready, error), or 'gone' while the listener page is not
+   * connected; with seen [], ready means nobody in view.
+   */
+  faceWorker: { state: StudioFaceWorkerStatus['state'] | 'gone'; checksPerSecond: number; lastCheckAt: number | null };
 }
 
 /**
@@ -252,12 +286,60 @@ export interface StudioVisionCheck {
   error?: string;
 }
 
+/**
+ * The studio listener's face worker, as its page last reported it (every few
+ * seconds and on every change): whether it runs at all, so "nobody in view"
+ * reads differently from "not looking".
+ *   off      no camera on the listener page, or face recognition switched off
+ *   loading  the models are loading (detail: which, how far)
+ *   ready    checking pictures
+ *   error    it could not load or check (error)
+ */
+export interface StudioFaceWorkerStatus {
+  state: 'off' | 'loading' | 'ready' | 'error';
+  detail?: string;
+  /** The listener page has a picture source. */
+  camera: boolean;
+  /** Pictures checked per second over the last few seconds. */
+  checksPerSecond: number;
+  /** When the last check finished, and when the last one found a face (ms since epoch). */
+  lastCheckAt: number | null;
+  lastFaceAt: number | null;
+  /** Faces in the last check, and the best of them: its library match (null: unknown) and how sure. */
+  faces: number;
+  best: { name: string | null; prob: number } | null;
+  error?: string;
+  /** How it runs, once loaded: onnxruntime's backend and threads, the page cross-origin isolated (threads need it). */
+  backend?: string;
+  threads?: number;
+  isolated?: boolean;
+  /** Where its pictures come from (the vision source), their size, and when the last one was taken. */
+  source?: string;
+  frameWidth?: number | null;
+  frameHeight?: number | null;
+  lastFrameAt?: number | null;
+  /** The last check's time in the worker. */
+  inferenceMs?: number | null;
+  /** A match needs this similarity, and this lead over the runner-up. */
+  threshold?: number;
+  margin?: number;
+  /** Pictures for vision descriptions: when the last one went, and why the last chance was skipped. */
+  lastVisionFrameAt?: number | null;
+  visionSkip?: 'asleep' | 'descriptions off' | 'nobody in view' | 'not due' | null;
+  /** Why the last chance to check a picture was passed over: a voice was rendering (Ming comes first), no picture yet, onboarding has the camera. */
+  checkSkip?: 'voice rendering' | 'no frame' | 'onboarding' | null;
+}
+
 /** GET /studio/vision (local network only): what Tubs last made of a picture, for the Studio tab. */
 export interface StudioVisionResponse {
-  /** The studio camera: on while the listener page has a picture source; null when studio mode is off. */
+  /** The studio camera: on while the listener page has a picture source; null when studio mode is off or the page is gone. */
   camera: { on: boolean | null; source: string };
   vision: { provider: string; model: string; on: boolean };
   last: StudioVisionCheck | null;
+  /** The listener's face worker; null while its page is not connected (or studio mode is off). */
+  faces: StudioFaceWorkerStatus | null;
+  /** The last face observation from whichever producer runs (docs/face-service.md); null before the first. */
+  observation: FaceObservation | null;
   /** Listed people recognised in view now, whose attitude the next turn carries. */
   relationships: Array<{ name: string; attitude: string }>;
 }
@@ -310,6 +392,9 @@ export interface StudioPatch {
   site?: string;
   micSource?: string;
   visionSource?: string;
+  /** Any of the switches; the others stay. */
+  switches?: Partial<StudioSwitches>;
+  windows?: StudioWindowsMode;
 }
 
 /** Face space as the director sends it: -1..1, x right, y up. */

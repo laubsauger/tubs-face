@@ -2,7 +2,8 @@
 // with the details.
 
 import { useEffect, useState, type JSX, type ReactNode } from 'react';
-import type { AppStore, DockTab, ScreenRecordingPhase } from '../../state/app-state.js';
+import type { AppState, AppStore, DockTab, ScreenRecordingPhase } from '../../state/app-state.js';
+import { deviceView } from '../../studio/live-view.js';
 import { postJson } from '../../transport/http.js';
 import type { AppShellControls } from '../app-shell.js';
 import { moodWordFor } from '../panels/MindPanel.js';
@@ -17,14 +18,9 @@ export function StatusBar({ store, view, controls }: {
   controls?: AppShellControls | undefined;
 }): JSX.Element {
   const state = useAppSelector(store, (current) => ({
+    ...devicesOf(current),
     connected: current.connected,
     connectionLabel: current.connectionLabel,
-    micReady: current.micReady,
-    micDenied: current.micDenied,
-    // Coarse steps: the bar re-renders when the meter visibly moves, not every frame.
-    micLevel: Math.round(current.micLevel * 20) / 20,
-    recording: current.recording,
-    listenState: current.listenState,
     conversationActive: current.conversationActive,
     voiceWakeWordEnabled: current.voiceWakeWordEnabled,
     voiceHandsFreeEnabled: current.voiceHandsFreeEnabled,
@@ -32,12 +28,11 @@ export function StatusBar({ store, view, controls }: {
     expression: current.currentExpression,
     lastResponseMs: current.lastResponseMs,
     costUsd: current.stats?.costUsd ?? 0,
-    faceCameraActive: current.faceCameraActive,
-    faceCount: current.faceLastDetectedCount,
     gpuError: current.logs.find((entry) => entry.level === 'error' && /webgpu/i.test(entry.text))?.text ?? null,
     dualOn: Boolean(current.config?.dualHeadEnabled && current.config.dualHeadMode !== 'off'),
     miniWindowOpen: current.peers.mini,
     faceWindowOpen: current.peers.face,
+    // In studio mode: the studio listener's mic and camera (live-view.ts).
     studioListener: current.studioLive !== null,
     facePerform: current.facePerform,
     fullscreenActive: current.fullscreenActive,
@@ -204,6 +199,21 @@ function Chip(props: {
       {props.children}
     </button>
   );
+}
+
+/** The mic and camera the bar shows: this page's, or the studio listener's. */
+function devicesOf(current: AppState) {
+  const device = deviceView(current);
+  return {
+    micReady: device.micReady,
+    micDenied: device.micDenied,
+    // Coarse steps: the bar re-renders when the meter visibly moves, not every frame.
+    micLevel: Math.round(device.micLevel * 20) / 20,
+    recording: device.recording,
+    listenState: device.listenState,
+    faceCameraActive: device.faceCameraActive,
+    faceCount: device.faceLastDetectedCount,
+  };
 }
 
 export function MicMeter({ level, mode }: { level: number; mode: string }): JSX.Element {

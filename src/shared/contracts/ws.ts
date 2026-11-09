@@ -4,7 +4,7 @@ import type {
   SessionStats,
 } from './config.js';
 import type { EmotionImpulse, TurnContextMeta, TurnScript } from './turn-script.js';
-import type { FaceObservation, FaceRecognizer, StudioActor, StudioCadence, StudioDevices, StudioFaceMethod, StudioGaze, StudioLiveStatus, StudioMicStatus, StudioMood, StudioPulse } from './studio.js';
+import type { StudioActor, StudioCadence, StudioDevices, StudioFaceMethod, StudioFaceWorkerStatus, StudioGaze, FaceObservation, FaceRecognizer, StudioLiveStatus, StudioMicStatus, StudioMood, StudioPulse } from './studio.js';
 
 export interface TokenUsage {
   in: number;
@@ -206,6 +206,8 @@ export interface WsStudioStatusClientMessage {
   cadence?: StudioCadence;
   /** Listener page only: this box's input devices, for GET /studio/sources. */
   devices?: StudioDevices;
+  /** Listener page only: its face worker (GET /studio/vision, the pulse, parts). */
+  faceWorker?: StudioFaceWorkerStatus;
 }
 
 /**
@@ -217,6 +219,8 @@ export interface WsStudioLiveClientMessage {
   actor: StudioActor;
   status: StudioLiveStatus | null;
   speaking: boolean;
+  /** Its face worker, for the face debug view. */
+  faceWorker?: StudioFaceWorkerStatus;
 }
 
 /** Dashboard: it shows the studio listener's live state (live) and its camera (video); both false when it stops. */
@@ -480,6 +484,8 @@ export interface WsStudioConfigServerMessage {
   visionSource: string;
   /** Site node path per actor, e.g. { main: "tubs-main", small: "tubs-small" }. */
   streams: Record<StudioActor, string>;
+  /** The listener's switches (absent: all on, from an older server). Descriptions and relationships are config. */
+  switches?: { camera: boolean; faceRecognition: boolean; mic: boolean };
   /** Studio face pages only: the Authorization headers for the site node (TUBS_STUDIO_SITE_AUTH). */
   siteAuth?: { publish?: string; read?: string };
   /**
@@ -558,6 +564,7 @@ export interface WsStudioLiveServerMessage {
   actor: StudioActor;
   status: StudioLiveStatus | null;
   speaking: boolean;
+  faceWorker?: StudioFaceWorkerStatus;
 }
 
 /** To the studio listener: whether anyone watches its live state and its camera (it sends nothing otherwise). */

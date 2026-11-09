@@ -38,6 +38,8 @@ const base: PartsSources = {
     visionProvider: 'openai',
     visionModel: 'qwen3-vl:4b-instruct',
     visionBaseUrl: 'fleet:vision',
+    visionDescriptions: true,
+    relationshipsEnabled: true,
   },
   env: {},
   studio: STUDIO,
@@ -54,16 +56,16 @@ const part = (sources: PartsSources, id: string) => studioParts(sources).find((e
 
 describe('studioParts', () => {
   it('lists every part, in the order the card and the sentient panel show them', () => {
-    expect(studioParts(base).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site']);
+    expect(studioParts(base).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site', 'camera', 'recognition', 'relationships']);
   });
 
   it('shows fleet:vision as the box the hub picked, and as not working while no box is known', () => {
     expect(part(base, 'vision')).toMatchObject({ where: 'fleet:vision (no box found yet)', ok: false });
     const picked = { ...base, fleetBase: 'http://192.168.1.20:11434/v1', vision: { at: 1, kind: 'refresh' as const, ok: true, ms: 910, provider: 'openai' as const, model: 'qwen3-vl:4b-instruct', where: '192.168.1.20:11434', text: 'A person.' } };
-    expect(part(picked, 'vision')).toEqual({ id: 'vision', label: 'Vision', where: '192.168.1.20:11434', ok: true, detail: 'qwen3-vl:4b-instruct · 910 ms' });
+    expect(part(picked, 'vision')).toEqual({ id: 'vision', label: 'Vision', where: '192.168.1.20:11434', ok: true, detail: 'qwen3-vl:4b-instruct · 910 ms · when a face is detected' });
     // A last call that failed is not ok, with its reason.
     const failed = { ...picked, vision: { ...picked.vision, ok: false, error: 'timed out after 8000 ms' } };
-    expect(part(failed, 'vision')).toMatchObject({ ok: false, detail: 'qwen3-vl:4b-instruct · timed out after 8000 ms' });
+    expect(part(failed, 'vision')).toMatchObject({ ok: false, detail: 'qwen3-vl:4b-instruct · timed out after 8000 ms · when a face is detected' });
   });
 
   it('names this machine for work on loopback, with the voices and how the heads publish', () => {
@@ -85,24 +87,43 @@ describe('studioParts', () => {
       .toMatchObject({ where: '192.168.1.30:11434', ok: null, detail: 'qwen3:8b' });
   });
 
+  // The user could not tell whether the face worker ran at all. The part says
+  // where it runs and how, ok only while it actually checks pictures.
+  it('shows the face worker: ok while it checks pictures, not ok while loading or stalled, off when switched off', () => {
+    const now = 100_000;
+    const worker = { state: 'ready' as const, camera: true, checksPerSecond: 2, lastCheckAt: now - 400, lastFaceAt: now - 400, faces: 1, best: { name: 'Flo', prob: 0.74 }, threads: 8, inferenceMs: 95 };
+    const withWorker = (faceWorker: typeof worker | null, studio = STUDIO) => ({ ...base, studio, faceWorker, libraryPeople: 10, now });
+    expect(part(withWorker(worker), 'recognition')).toEqual({
+      id: 'recognition', label: 'Face recognition', where: 'Chrome @ studio-mac', ok: true, detail: 'SCRFD+ArcFace · 8 threads · 95 ms · 2 fps · 10 people',
+    });
+    expect(part(withWorker({ ...worker, state: 'loading', lastCheckAt: null, detail: 'Detection model: Downloaded & cached' } as never), 'recognition'))
+      .toMatchObject({ ok: false, detail: 'loading: Detection model: Downloaded & cached' });
+    expect(part(withWorker({ ...worker, lastCheckAt: now - 30_000, checkSkip: 'voice rendering' } as never), 'recognition'))
+      .toMatchObject({ ok: false, detail: expect.stringContaining('no check for 30 s (voice rendering)') });
+    expect(part(withWorker(null), 'recognition')).toMatchObject({ ok: false, detail: 'the listener page is not connected' });
+    expect(part(withWorker(worker, { ...STUDIO, switches: { camera: true, faceRecognition: false, visionDescriptions: true, relationships: true, mic: true } }), 'recognition'))
+      .toMatchObject({ where: 'off', ok: null, detail: 'switched off (faces are still detected, for descriptions)' });
+  });
+
   it('marks what is not in use as such, not as broken', () => {
     const off = { ...base, config: { ...base.config, visionProvider: 'off' as const }, studio: { ...STUDIO, enabled: false } };
     for (const id of ['vision', 'mic', 'faces', 'site']) expect(part(off, id).ok).toBeNull();
   });
 });
 
-describe('the recognition part', () => {
+describe('the recognition part with the face service', () => {
   // Face recognition used to fail silently inside a Chrome page ("LOADING
-  // WORKER" for ever). Now the card says where it runs and what is wrong.
+  // WORKER" for ever). With FACE_SERVICE the card says where the service runs
+  // and what is wrong with it, even before its first frame.
   const READY = { state: 'ready' as const, backend: 'CoreML', fps: 5, inferMs: 40.4, frames: 99, source: 'site:cam-flo-mac', camera: 'ok', where: 'studio-mac' };
-  const withService = (service: RecognitionSource['service'], recognizer: RecognitionSource['recognizer'] = 'service'): PartsSources =>
-    ({ ...base, recognition: { recognizer, service, browser: null, people: 10 } });
   const up = { mode: 'local' as const, where: 'studio-mac:3004', health: READY, error: null };
+  const withService = (service: RecognitionSource['service'], recognizer: RecognitionSource['recognizer'] = 'service'): PartsSources =>
+    ({ ...base, libraryPeople: 10, recognition: { recognizer, service } });
 
-  it('comes right after vision, with the service host and its numbers', () => {
-    expect(studioParts(withService(up)).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'recognition', 'mic', 'faces', 'site']);
+  it('shows the service host and its numbers, in the place the card has for recognition', () => {
+    expect(studioParts(withService(up)).map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site', 'camera', 'recognition', 'relationships']);
     expect(part(withService(up), 'recognition')).toEqual({
-      id: 'recognition', label: 'Recognition', where: 'studio-mac:3004', ok: true, detail: 'SCRFD+ArcFace · CoreML · 40 ms · 5 fps · 10 people',
+      id: 'recognition', label: 'Face recognition', where: 'studio-mac:3004', ok: true, detail: 'SCRFD+ArcFace · CoreML · 40 ms · 5 fps · 10 people',
     });
   });
 
@@ -124,12 +145,10 @@ describe('the recognition part', () => {
       .toMatchObject({ ok: null, detail: 'downloading w600k_r50.onnx 45% (78.5 MB)' });
   });
 
-  it('points at the listener page when the browser worker recognises', () => {
-    const browser: PartsSources = { ...base, recognition: { recognizer: 'browser', service: null, browser: { ready: false, status: 'Loading worker' }, people: 1 } };
-    expect(part(browser, 'recognition')).toEqual({ id: 'recognition', label: 'Recognition', where: 'Chrome @ studio-mac', ok: false, detail: 'browser worker · Loading worker · 1 person' });
-    // FACE_SERVICE on, but the camera is this Mac's: it stays with the listener page, and the card says so.
-    expect(part({ ...browser, recognition: { ...browser.recognition!, service: up } }, 'recognition').detail).toContain('a local camera stays with the listener page');
-    expect(part({ ...base, recognition: { recognizer: 'off', service: up, browser: null, people: 1 } }, 'recognition')).toMatchObject({ where: 'off', ok: null, detail: 'no camera' });
+  it('follows the switches: off with the camera or recognition switched off, whatever the service says', () => {
+    const studio = { ...STUDIO, switches: { camera: true, faceRecognition: false, visionDescriptions: false, relationships: true, mic: true } };
+    expect(part({ ...withService(up), studio }, 'recognition')).toMatchObject({ where: 'off', ok: null });
+    expect(part({ ...withService(up), studio: { ...STUDIO, switches: { ...studio.switches, faceRecognition: true, camera: false } } }, 'recognition')).toMatchObject({ where: 'off', ok: null });
   });
 });
 
@@ -142,7 +161,7 @@ describe('GET /studio', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     try {
       const body = (await (await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/studio`)).json()) as StudioResponse;
-      expect(body.parts?.map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'recognition', 'mic', 'faces', 'site']);
+      expect(body.parts?.map((entry) => entry.id)).toEqual(['brain', 'voices', 'realtime', 'vision', 'mic', 'faces', 'site', 'camera', 'recognition', 'relationships']);
       for (const entry of body.parts ?? []) expect(typeof entry.where).toBe('string');
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));

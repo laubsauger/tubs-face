@@ -115,7 +115,8 @@ export const runtimeConfig: RuntimeConfig = {
   glitchSliceBurstDurationMs: parseIntegerInRange(process.env.GLITCH_SLICE_BURST_DURATION_MS, 1800, 200, 8000),
   secondaryGlitchFxBaseColor: normalizeHexColor(process.env.SECONDARY_GLITCH_FX_BASE_COLOR, '#22d3ee'),
   propMain: 'none',
-  propSmall: 'none',
+  // Small's look: the user picked the propeller cap as its default (2026-11-09).
+  propSmall: 'propeller-cap',
   ttsStreamingEnabled: parseBoolean(process.env.TTS_STREAMING_ENABLED, true),
   vadNoiseGate: parseFloatInRange(process.env.VAD_NOISE_GATE, 0.008, 0, 0.06),
   vadModel: pickOne(VAD_MODELS, process.env.VAD_MODEL, 'ten-vad'),
@@ -128,6 +129,7 @@ export const runtimeConfig: RuntimeConfig = {
   visionMaxPerHour: parseIntegerInRange(process.env.VISION_MAX_PER_HOUR, 120, 0, 100_000),
   visionWhileAsleep: parseBoolean(process.env.VISION_WHILE_ASLEEP, false),
   relationshipsEnabled: parseBoolean(process.env.RELATIONSHIPS_ENABLED, true),
+  visionDescriptions: parseBoolean(process.env.VISION_DESCRIPTIONS, true),
 };
 
 export const sessionStats: SessionStats = {
@@ -556,6 +558,7 @@ export function applyRuntimeConfigPatch(patch: RuntimeConfigPatch): ConfigRespon
   }
   if (patch.visionWhileAsleep !== undefined) runtimeConfig.visionWhileAsleep = Boolean(patch.visionWhileAsleep);
   if (patch.relationshipsEnabled !== undefined) runtimeConfig.relationshipsEnabled = Boolean(patch.relationshipsEnabled);
+  if (patch.visionDescriptions !== undefined) runtimeConfig.visionDescriptions = Boolean(patch.visionDescriptions);
 
   sessionStats.model = runtimeConfig.model;
   sessionStats.lastActivity = Date.now();

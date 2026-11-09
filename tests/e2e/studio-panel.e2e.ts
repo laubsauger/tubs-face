@@ -18,6 +18,8 @@ const STUDIO = {
   launch: 'chrome',
   ui: { dashboard: 'http://localhost:39190/?view=dashboard', memory: 'http://localhost:39190/?view=memory' },
   presets: { names: ['Pirate', 'Tubs'], active: 'Tubs' },
+  switches: { camera: true, faceRecognition: true, visionDescriptions: true, relationships: true, mic: true },
+  windows: 'offscreen',
   parts: [
     { id: 'brain', label: 'Brain', where: 'generativelanguage.googleapis.com', ok: true, detail: 'gemini-3-flash · 840 ms' },
     { id: 'voices', label: 'Voices', where: 'studio-mac:3003', ok: true, detail: 'ming:friend, ming:friend-b' },
@@ -234,14 +236,34 @@ test('presets: apply one and save the current character, from the panel', async 
   await expect.poll(() => posts.find((post) => post.path === '/presets')?.body).toEqual({ name: 'Night Two' });
 });
 
+// Each part on its own: switching one posts only that one; the face windows
+// come on screen for debugging and go back.
+test('switches: each posts only itself, and the face windows can be shown', async ({ page }) => {
+  const posts = await fakeStudioServer(page);
+  const frame = await embeddedDashboard(page);
+  const panel = frame.locator('#dock-panel-studio');
+  const studioPosts = () => posts.filter((post) => post.path === '/studio').map((post) => post.body);
+  await panel.getByRole('switch', { name: 'Vision descriptions' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ switches: { visionDescriptions: false } });
+  await panel.getByRole('switch', { name: 'Face recognition' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ switches: { faceRecognition: false } });
+  await panel.getByRole('switch', { name: 'Camera' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ switches: { camera: false } });
+  await panel.getByRole('switch', { name: 'Mic' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ switches: { mic: false } });
+  await panel.getByRole('switch', { name: 'Show face windows' }).click();
+  await expect.poll(() => studioPosts().at(-1)).toEqual({ windows: 'visible' });
+});
+
 test('relationships: switch them, add, edit and remove people, and save the list', async ({ page, request }) => {
   const posts = await fakeStudioServer(page);
   const frame = await embeddedDashboard(page);
   const panel = frame.locator('#dock-panel-studio');
   await expect(panel.getByRole('group', { name: 'Relationship Flo' }).getByLabel('Attitude')).toHaveValue('He is the boss.');
 
+  // Under Switches, with the camera, recognition, descriptions and the mic.
   await panel.getByRole('switch', { name: 'Relationships' }).click();
-  await expect.poll(async () => (await received(request)).http.find((entry) => entry.path === '/config')?.body).toEqual({ relationshipsEnabled: false });
+  await expect.poll(() => posts.filter((post) => post.path === '/studio').at(-1)?.body).toEqual({ switches: { relationships: false } });
 
   await expect(panel.getByRole('button', { name: 'Save relationships' })).toBeDisabled();
   await panel.getByRole('button', { name: 'Add person' }).click();

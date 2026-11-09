@@ -37,6 +37,8 @@ const CAPTURE_FPS = 30;
 export const CADENCE_REPORT_MS = 5000;
 /** The face is published at 30 fps; drawing it faster only takes CPU and GPU from its voice. */
 export const STUDIO_RENDER_MAX_FPS = 60;
+/** The listener's face worker state goes to the server every this many heartbeats (2 s). */
+const FACE_WORKER_REPORT_BEATS = 2;
 /** An onboarding a dashboard started and then left (closed, crashed) gives the camera back after this. */
 export const ENROLLMENT_IDLE_MS = 60_000;
 
@@ -141,6 +143,8 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       ...(micStatus ? { mic: { ...micStatus, ...(micStatus.error ? { error: micStatus.error.slice(0, 300) } : {}) } } : {}),
       ...(withCadence ? { cadence: withCadence } : {}),
       ...(devices ? { devices } : {}),
+      // Whether the face worker runs at all, every couple of seconds: GET /studio/vision, the pulse, parts.
+      ...(listener && options.face ? { faceWorker: options.face.debugStatus() } : {}),
     });
   }
 
@@ -187,13 +191,15 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   function sendLive(): void {
     const status = liveStatusOf(store.getState());
     const speaking = options.voice?.headsTalking() ?? false;
-    const key = JSON.stringify([status, speaking]);
+    const faceWorker = options.face?.debugStatus();
+    // Ages and rates change every report; what is shown changes with the rest.
+    const key = JSON.stringify([status, speaking, faceWorker?.state, faceWorker?.detail, faceWorker?.lastCheckAt]);
     const now = Date.now();
     if (key === lastLiveKey && now - lastLiveSentAt < LIVE_KEEPALIVE_MS) return;
     lastLiveKey = key;
     lastLiveSentAt = now;
     liveSent = true;
-    send?.({ type: 'studio_live', actor, status, speaking });
+    send?.({ type: 'studio_live', actor, status, speaking, ...(faceWorker ? { faceWorker } : {}) });
   }
 
   function sendPreview(): void {
@@ -415,8 +421,10 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     // The site node's login, if it needs one (TUBS_STUDIO_SITE_AUTH); before publishing.
     setSiteLogin(next.siteAuth);
     publisher.publish(next.enabled ? `${next.site}/${next.streams[actor]}/whip` : null);
+    // The switches (absent from an older server: all on); each leaves its source choice alone.
+    const switches = next.switches ?? { camera: true, faceRecognition: true, mic: true };
     if (options.voice) {
-      const source = next.enabled ? parseMicSource(next.micSource) : { kind: 'off' as const };
+      const source = next.enabled && switches.mic ? parseMicSource(next.micSource) : { kind: 'off' as const };
       if (source) {
         void options.voice.setMicSource(source, next.site);
       } else {
@@ -426,18 +434,21 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     if (options.face) {
       // While the face service recognises, this page opens no camera and starts no worker (docs/face-service.md).
       const service = !browserRecognizes(next);
-      const source: VisionSourceSpec | null = next.enabled && !service ? parseVisionSource(next.visionSource) : { kind: 'off' };
+      // Detection runs for recognition or for descriptions (a detected face triggers them).
+      const detection = !service && (switches.faceRecognition || store.getState().config?.visionDescriptions !== false);
+      options.face.setRecognition(switches.faceRecognition, detection);
+      const source: VisionSourceSpec | null = next.enabled && switches.camera && !service ? parseVisionSource(next.visionSource) : { kind: 'off' };
       if (!source) {
         store.appendLog('error', `Studio: unknown vision source ${next.visionSource}`);
       } else {
         const key = service ? 'service' : `${formatVisionSource(source)}@${source.kind === 'site' ? next.site : ''}`;
+        // The models load only with a camera to look through and something to detect faces for.
+        if (source.kind !== 'off' && detection && !faceStarted) {
+          faceStarted = true;
+          options.face.init();
+        }
         if (key !== pictureSource) {
           pictureSource = key;
-          if (source.kind !== 'off' && !faceStarted) {
-            // The detector loads its models only once there is a camera to look through.
-            faceStarted = true;
-            options.face.init();
-          }
           void options.face.setPictureSource(source, next.site);
         }
       }
@@ -474,8 +485,15 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         send?.({ type: 'studio_caption', actor, ...caption, ts: Date.now() });
       }
     }, CAPTION_TICK_MS);
+    let beats = 0;
     heartbeat = window.setInterval(() => {
       sendState(true);
+      beats += 1;
+      if (listener && options.face && beats % FACE_WORKER_REPORT_BEATS === 0) {
+        reportStatus();
+        // Also between checks (loading, off, stalled): the observation carries the worker's state.
+        send?.({ type: 'face_observation', observation: options.face.observation() });
+      }
       if (listener && presence.visitOver(Date.now())) {
         store.appendLog('info', 'Studio: nobody near either head for a while; the visit is over');
         send?.({ type: 'presence', present: false, count: 0 });
@@ -498,6 +516,12 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   return {
     init(nextSend) {
       send = nextSend;
+      // Each check's faces, in the shape the face service sends (docs/face-service.md).
+      if (listener) {
+        options.face?.onObservation((observation) => {
+          if (config?.enabled) send?.({ type: 'face_observation', observation });
+        });
+      }
       routeVoice();
       setBadge();
       window.addEventListener('pagehide', onPageHide);
@@ -557,6 +581,7 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       options.speech.setLineGate(null);
       window.removeEventListener('pagehide', onPageHide);
       navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+      options.face?.onObservation(null);
       watch = { live: false, video: false };
       syncWatchTimers();
       window.clearTimeout(enrollIdleTimer);

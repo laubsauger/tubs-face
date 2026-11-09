@@ -20,6 +20,10 @@ export type FaceWorkerRequestMessage =
 
 export interface FaceWorkerReadyMessage {
   type: 'ready';
+  /** How it runs: onnxruntime's backend, its threads, and whether the page is cross-origin isolated (threads need it). */
+  backend?: string;
+  threads?: number;
+  isolated?: boolean;
 }
 
 export interface FaceWorkerProgressMessage {

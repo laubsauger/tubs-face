@@ -68,6 +68,24 @@ listener page starts no face worker and loads no models; it takes the server's
 `face_observation` messages into its state instead, so its sleep and proactive
 lines still follow who is in view.
 
+## The studio's switches
+
+The service follows the Studio tab's switches (`GET/POST /studio switches`)
+like the listener page's worker does:
+
+- `camera` off: the service reads nothing (its source is `null`).
+- `faceRecognition` and `visionDescriptions` both off: nothing to detect faces
+  for, so the service reads nothing either.
+- `faceRecognition` off, descriptions on: faces are still detected (presence,
+  greetings, a picture when one appears), never matched against the library,
+  no auto onboarding, and onboarding calls answer "face recognition is
+  switched off".
+- `visionDescriptions` off: no picture leaves the server; recognition goes on.
+- While the service recognises, its own status stands in for the listener
+  page's face worker wherever the server reports one (the camera and
+  recognition parts, `/studio/vision` `faces`, the `faceWorker` of the
+  `studio_live` relay).
+
 ## Frame rate budget
 
 Five frames a second (`FACE_SERVICE_FPS`), each the newest one: a frame that
@@ -181,7 +199,8 @@ interface FaceObservation {
   - listener page → server, when the browser worker produces it:
     `{type: 'face_observation', observation}` (studio listener page only; the
     server passes it on to watching dashboards and keeps the last one);
-  - `GET /studio/faces` (local network): the last observation, or `null`.
+  - `GET /studio/faces` (local network): the last observation, or 404 before
+    the first; the pulse's `seen` and `faceWorker` read the same one.
 
 ## Same embeddings as the browser
 

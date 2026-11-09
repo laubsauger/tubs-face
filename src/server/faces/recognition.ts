@@ -28,6 +28,9 @@ export interface RecognitionConfig {
   visionProvider: string;
   visionMaxPx: number;
   visionRefreshMs: number;
+  /** The studio's switches: names and onboarding (faceRecognition), pictures described (visionDescriptions). */
+  faceRecognition: boolean;
+  visionDescriptions: boolean;
 }
 
 export interface RecognitionDeps {
@@ -193,7 +196,8 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
   }
 
   function reportPeople(people: TrackedPerson[], at: number, frameHeight: number): void {
-    if (deps.config().autoEnrollEnabled) {
+    const config = deps.config();
+    if (config.autoEnrollEnabled && config.faceRecognition) {
       for (const person of people) takeSnapshot(person, at, frameHeight);
     }
     const counts = people.map((person) => (person.names.length === 0 ? snapshots.get(person.id)?.length ?? 0 : 0));
@@ -292,7 +296,9 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
         if (live) live = { ...live, faceWorkerReady: status.state === 'ready', faceStatus: statusText(status, live.faceLastDetectedCount) };
         return;
       }
-      const library = deps.library();
+      const config = deps.config();
+      // Recognition switched off: faces are still detected (presence, descriptions), never named.
+      const library = config.faceRecognition ? deps.library() : [];
       const detected: TrackedFace[] = line.faces.map((face) => ({ box: face.box, score: face.score, confidence: face.score, embedding: face.embedding, track: face.track }));
       const annotated = annotateDetectedFaces(detected, library) as TrackedFace[];
       const wasEmpty = stableFaces.length === 0;
@@ -303,9 +309,8 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
       const greeting = handleVisitorEvents(visitorTracker.update(faces, at, deps.inConversation(at), people.map((person) => person.id)), faces.length);
       reportPeople(people, at, line.frame.h);
       const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
-      const config = deps.config();
       // Only faces trigger a picture: a new one appearing, or a refresh while they stay in view.
-      if (config.visionProvider !== 'off' && faces.length > 0) {
+      if (config.visionDescriptions && config.visionProvider !== 'off' && faces.length > 0) {
         if (greeting || groupChanged) {
           sendVision('appearance', { faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])], count: faces.length, greeting });
         } else if (at - lastVisionFrameAt >= config.visionRefreshMs) {
@@ -330,6 +335,7 @@ export function createRecognition(deps: RecognitionDeps): Recognition {
     lost,
 
     async faceCall(method, args) {
+      if (!deps.config().faceRecognition && method !== 'endEnrollment') throw new Error('face recognition is switched off');
       switch (method) {
         case 'beginEnrollment':
           enrollmentUntil = now() + ENROLLMENT_IDLE_MS;

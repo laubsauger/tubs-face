@@ -242,7 +242,9 @@
     "glitchSliceGapChance": 0.07,
     "glitchSliceIntervalMs": 18000,
     "glitchSliceBurstDurationMs": 1800,
-    "secondaryGlitchFxBaseColor": "#22d3ee"
+    "secondaryGlitchFxBaseColor": "#22d3ee",
+    "propMain": "none",
+    "propSmall": "propeller-cap"
   },
   "behaviour": {
     "sleepTimeout": 10000,

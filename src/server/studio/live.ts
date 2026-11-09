@@ -5,7 +5,7 @@
 // what it shows (studio_watch), a GET /studio/pulse counts for a few seconds,
 // and the listener sends only what someone wants.
 
-import type { StudioLiveFace, StudioLiveStatus } from '../../shared/contracts/studio.js';
+import type { StudioFaceWorkerStatus, StudioLiveFace, StudioLiveStatus } from '../../shared/contracts/studio.js';
 import type { WsStudioLiveClientMessage, WsStudioLiveServerMessage, WsStudioWatchServerMessage } from '../../shared/contracts/ws.js';
 import type { LiveFaceFields } from '../faces/recognition.js';
 
@@ -30,6 +30,7 @@ let lastRelayAt = 0;
  * fields, with or without a report from the page.
  */
 let serverFaces: (() => LiveFaceFields | null) | null = null;
+let serverFaceWorker: (() => StudioFaceWorkerStatus | null) | null = null;
 /** The listener as it is before it reports anything: no mic, no camera. */
 const SILENT_LISTENER: StudioLiveStatus = {
   micReady: false,
@@ -41,7 +42,11 @@ const SILENT_LISTENER: StudioLiveStatus = {
   audioPlaying: false,
   faceCameraActive: false,
   faceWorkerReady: false,
+  faceWorkerBusy: false,
   faceStatus: '',
+  faceLastInferenceMs: null,
+  faceLastEmbeddingsExtracted: 0,
+  faceLastEmbeddingsReused: 0,
   faceLastDetectedCount: 0,
   faceFrameWidth: null,
   faceFrameHeight: null,
@@ -53,9 +58,10 @@ function withServerFaces(status: StudioLiveStatus | null): StudioLiveStatus | nu
   return faces ? { ...(status ?? SILENT_LISTENER), ...faces } : status;
 }
 
-/** Where the faces come from while the face service recognises; null: from the listener page. */
-export function useServerFaces(source: (() => LiveFaceFields | null) | null): void {
+/** Where the faces (and the face worker's status) come from while the face service recognises; null: from the listener page. */
+export function useServerFaces(source: (() => LiveFaceFields | null) | null, worker: (() => StudioFaceWorkerStatus | null) | null = null): void {
   serverFaces = source;
+  serverFaceWorker = worker;
 }
 let lastFrameAt = 0;
 const watchers = new Map<unknown, Watch>();
@@ -70,6 +76,7 @@ function liveFace(face: StudioLiveFace): StudioLiveFace {
     ...(face.name !== undefined ? { name: face.name } : {}),
     ...(face.match ? { match: match(face.match) } : face.match === null ? { match: null } : {}),
     ...(face.matches ? { matches: face.matches.map(match) } : {}),
+    ...(face.decision ? { decision: face.decision } : {}),
   };
 }
 
@@ -85,7 +92,11 @@ function copyStatus(status: StudioLiveStatus): StudioLiveStatus {
     audioPlaying: status.audioPlaying,
     faceCameraActive: status.faceCameraActive,
     faceWorkerReady: status.faceWorkerReady,
+    faceWorkerBusy: status.faceWorkerBusy,
     faceStatus: status.faceStatus,
+    faceLastInferenceMs: status.faceLastInferenceMs,
+    faceLastEmbeddingsExtracted: status.faceLastEmbeddingsExtracted,
+    faceLastEmbeddingsReused: status.faceLastEmbeddingsReused,
     faceLastDetectedCount: status.faceLastDetectedCount,
     faceFrameWidth: status.faceFrameWidth,
     faceFrameHeight: status.faceFrameHeight,
@@ -99,7 +110,14 @@ export function liveRelay(message: WsStudioLiveClientMessage, now = Date.now()):
   lastRelayAt = now;
   last = message.status ? copyStatus(message.status) : null;
   lastSpeaking = message.status ? message.speaking : false;
-  return { type: 'studio_live', actor: message.actor, status: last ? withServerFaces(last) : null, speaking: lastSpeaking };
+  const faceWorker = message.status ? serverFaceWorker?.() ?? message.faceWorker : undefined;
+  return {
+    type: 'studio_live',
+    actor: message.actor,
+    status: last ? withServerFaces(last) : null,
+    speaking: lastSpeaking,
+    ...(faceWorker ? { faceWorker } : {}),
+  };
 }
 
 /** A relay for the server's own faces (each face service frame), or null when the last went out too recently. */
@@ -107,7 +125,8 @@ export function serverFacesRelay(now = Date.now()): WsStudioLiveServerMessage | 
   const status = withServerFaces(last);
   if (!status || !serverFaces?.() || now - lastRelayAt < RELAY_MIN_MS) return null;
   lastRelayAt = now;
-  return { type: 'studio_live', actor: 'main', status, speaking: lastSpeaking };
+  const faceWorker = serverFaceWorker?.() ?? null;
+  return { type: 'studio_live', actor: 'main', status, speaking: lastSpeaking, ...(faceWorker ? { faceWorker } : {}) };
 }
 
 /** Whether this frame goes out (at most one per FRAME_MIN_MS). */
@@ -173,4 +192,5 @@ export function resetLive(): void {
   lastRelayAt = 0;
   lastFrameAt = 0;
   serverFaces = null;
+  serverFaceWorker = null;
 }

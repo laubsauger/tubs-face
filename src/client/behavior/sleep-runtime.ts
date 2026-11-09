@@ -10,6 +10,17 @@ export interface SleepRuntime {
   init(): void;
   dispose(): void;
   onServerMessage(message: WsServerMessage): void;
+  /**
+   * Another page decides (studio mode: the studio listener has the mic and
+   * the camera; the operator face window, idle by then, would put Tubs to
+   * sleep in the middle of a conversation it doesn't hear).
+   */
+  setDeferred(deferred: boolean): void;
+}
+
+export interface SleepRuntimeOptions {
+  /** More that keeps Tubs awake, e.g. either studio head talking. */
+  busy?: () => boolean;
 }
 
 /**
@@ -19,7 +30,8 @@ export interface SleepRuntime {
  * or a new turn wakes it. Sleep and wake go through the server so the mini
  * display and spectators follow.
  */
-export function createSleepRuntime(store: AppStore): SleepRuntime {
+export function createSleepRuntime(store: AppStore, options: SleepRuntimeOptions = {}): SleepRuntime {
+  let deferred = false;
   let lastActivityAt = Date.now();
   let tickTimer: number | undefined;
   let pendingRequest: 'sleep' | 'wake' | null = null;
@@ -52,7 +64,8 @@ export function createSleepRuntime(store: AppStore): SleepRuntime {
       || state.listenState === 'Thinking...'
       || state.fxEditorOpen
       || state.faceEnrollOpen
-      || now < state.conversationUntil;
+      || now < state.conversationUntil
+      || (options.busy?.() ?? false);
   }
 
   function tick(): void {
@@ -61,7 +74,13 @@ export function createSleepRuntime(store: AppStore): SleepRuntime {
     if (state.conversationActive && now >= state.conversationUntil) {
       store.setState((current) => ({ ...current, conversationActive: false }));
     }
-    if (state.sleeping) return;
+    if (deferred) return;
+    if (state.sleeping) {
+      // Someone in view wakes Tubs, also one who was there all along (the
+      // edge below fires only when the count goes from 0 to more).
+      if (state.faceLastDetectedCount > 0) wake('face');
+      return;
+    }
     if (isBusy(state, now)) {
       noteActivity();
       return;
@@ -95,6 +114,10 @@ export function createSleepRuntime(store: AppStore): SleepRuntime {
       window.removeEventListener('pointerdown', noteActivity);
       window.removeEventListener('tubs:voice-presence', onPresence);
       for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
+    },
+    setDeferred(next: boolean): void {
+      deferred = next;
+      noteActivity();
     },
     onServerMessage(message: WsServerMessage): void {
       if (!ACTIVITY_MESSAGES.has(message.type)) return;

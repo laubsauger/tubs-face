@@ -44,7 +44,7 @@ function setup(options: { library?: EnrolledFace[]; config?: Partial<Recognition
     addFace: (face) => added.push(face),
     facesChanged: () => { changed += 1; },
     inConversation: () => false,
-    config: () => ({ autoEnrollEnabled: false, visionProvider: 'openai', visionMaxPx: 512, visionRefreshMs: 30_000, ...options.config }),
+    config: () => ({ autoEnrollEnabled: false, visionProvider: 'openai', visionMaxPx: 512, visionRefreshMs: 30_000, faceRecognition: true, visionDescriptions: true, ...options.config }),
     frame: async (maxPx) => { frames.push(maxPx); return 'data:image/jpeg;base64,AAAA'; },
     thumbnail: async () => 'data:image/jpeg;base64,BBBB',
     capture: options.capture ?? (async () => ({ frame: { w: 960, h: 540 }, faces: [] })),
@@ -132,6 +132,25 @@ describe('recognition on the server', () => {
     recognition.handleLine(line([]));
     await flush();
     expect(applied.filter((message) => message.type === 'camera_frame' || message.type === 'appearance_frame')).toHaveLength(2);
+  });
+
+  it('with recognition switched off: faces still counted and described, never named, no onboarding', async () => {
+    const { recognition, applied, published, flush } = setup({ library: obamaLibrary, config: { faceRecognition: false, autoEnrollEnabled: true } });
+    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
+    await flush();
+    expect(published.at(-1)!.faces[0]).toMatchObject({ decision: 'unknown', candidates: [] });
+    expect(applied.find((message) => message.type === 'people')).toMatchObject({ people: [{ names: [] }] });
+    expect(applied.some((message) => message.type === 'appearance_frame')).toBe(true);
+    await expect(recognition.faceCall('beginEnrollment', {})).rejects.toThrow('face recognition is switched off');
+  });
+
+  it('with descriptions switched off: recognised, but no picture leaves', async () => {
+    const { recognition, applied, published, frames, flush } = setup({ library: obamaLibrary, config: { visionDescriptions: false } });
+    recognition.handleLine(line([{ embedding: embeddingOf('obama-2009.jpg') }]));
+    await flush();
+    expect(published.at(-1)!.faces[0]!.name).toBe('Obama');
+    expect(frames).toEqual([]);
+    expect(applied.some((message) => message.type === 'appearance_frame' || message.type === 'camera_frame')).toBe(false);
   });
 
   it('sends no picture anywhere with vision off', async () => {

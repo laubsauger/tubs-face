@@ -1,7 +1,7 @@
 import type { DetectedFace, EnrolledFace, RecognitionMatch } from '../../shared/contracts/faces.js';
 
-const MATCH_THRESHOLD = 0.65;
-const MATCH_MARGIN = 0.01;
+export const MATCH_THRESHOLD = 0.65;
+export const MATCH_MARGIN = 0.01;
 const MAX_MATCHES = 3;
 
 export function cosineSimilarity(left: number[], right: number[]): number {

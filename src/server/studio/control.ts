@@ -4,9 +4,11 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { StudioResponse } from '../../shared/contracts/studio.js';
-import { broadcast } from '../ws/server.js';
+import { broadcast, broadcastConfig } from '../ws/server.js';
+import { runtimeConfig } from '../config/runtime.js';
+import { windowsModeFrom } from './chrome-window.js';
 import { DEFAULT_CHROME_PATH, createStudioLauncher, defaultProfileRoot, type StudioLauncher } from './launcher.js';
-import { anyPagePublishing, applyStudioPatch, noteLauncherError, streamName, studioConfigMessage, studioSettings, toStudioResponse } from './state.js';
+import { anyPagePublishing, applyStudioPatch, noteLauncherError, streamName, studioConfigMessage, studioSettings, studioSwitchesPatch, toStudioResponse } from './state.js';
 import { syncFaceService } from '../faces/studio-faces.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -27,12 +29,20 @@ export function studioPageBase(): string {
   return `http://127.0.0.1:${process.env.VITE_PORT ?? '5173'}`;
 }
 
+/** TUBS_STUDIO_DEBUG_PORT: main's face page on this DevTools port (this machine only), small's on the next. */
+function debugPort(): number | null {
+  const port = Number.parseInt(process.env.TUBS_STUDIO_DEBUG_PORT ?? '', 10);
+  return Number.isInteger(port) && port > 0 && port < 65535 ? port : null;
+}
+
 function getLauncher(): StudioLauncher {
   launcher ??= createStudioLauncher({
     chromePath: process.env.TUBS_STUDIO_CHROME?.trim() || DEFAULT_CHROME_PATH,
     profileRoot: defaultProfileRoot(port),
     pageUrl: (actor) => `${studioPageBase()}/studio-face.html?actor=${actor}&size=${FACE_SIZE}`,
     onError: noteLauncherError,
+    windows: studioSettings.windows,
+    ...(debugPort() ? { debugPort: debugPort()! } : {}),
   });
   return launcher;
 }
@@ -69,11 +79,34 @@ export async function updateStudio(patch: unknown): Promise<StudioResponse> {
   const changed = applyStudioPatch(patch);
   if (changed.length > 0) {
     console.log(`[studio] ${changed.map((key) => `${key}=${String(studioSettings[key])}`).join(' ')}`);
-    // Pages follow site and micSource live; only enabled starts or stops them.
+    // Pages follow site, sources and switches live; only enabled starts or stops them.
     broadcast(studioConfigMessage());
     // The face service reads the vision source when it recognises (docs/face-service.md).
     syncFaceService();
     if (changed.includes('enabled')) await syncPages();
+    if (changed.includes('windows')) await launcher?.setWindows(windowsModeFrom(studioSettings.windows));
+  }
+  // The switches that are runtime config (applyStudioPatch checked them already).
+  const switches = (patch as { switches?: unknown }).switches;
+  if (switches !== undefined) {
+    const { relationships, visionDescriptions } = studioSwitchesPatch(switches);
+    let config = false;
+    if (relationships !== undefined && relationships !== runtimeConfig.relationshipsEnabled) {
+      runtimeConfig.relationshipsEnabled = relationships;
+      config = true;
+    }
+    if (visionDescriptions !== undefined && visionDescriptions !== runtimeConfig.visionDescriptions) {
+      runtimeConfig.visionDescriptions = visionDescriptions;
+      config = true;
+    }
+    if (config) {
+      console.log(`[studio] relationships=${runtimeConfig.relationshipsEnabled} visionDescriptions=${runtimeConfig.visionDescriptions}`);
+      broadcastConfig();
+      // The listener page detects faces while recognition or descriptions is on: it looks again (after the config).
+      broadcast(studioConfigMessage());
+      // So does the face service (docs/face-service.md).
+      syncFaceService();
+    }
   }
   return toStudioResponse();
 }

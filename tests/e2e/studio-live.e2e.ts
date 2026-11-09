@@ -11,9 +11,15 @@ import { resetMock } from './helpers.js';
 const JPEG = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 const STATUS = {
   micReady: true, micDenied: false, micLevel: 0.4, recording: false, listenState: 'Listening', voiceLastTranscript: 'Hello Tubs',
-  audioPlaying: false, faceCameraActive: true, faceWorkerReady: true, faceStatus: 'Detected 1 face(s)', faceLastDetectedCount: 1,
+  audioPlaying: false, faceCameraActive: true, faceWorkerReady: true, faceWorkerBusy: false, faceStatus: 'Detected 1 face(s)', faceLastDetectedCount: 1,
+  faceLastInferenceMs: 180, faceLastEmbeddingsExtracted: 1, faceLastEmbeddingsReused: 0,
   faceFrameWidth: 960, faceFrameHeight: 540,
   faceLastFaces: [{ box: [480, 135, 672, 405], score: 0.98, name: 'Flo', match: { name: 'Flo', score: 0.87 }, matches: [{ name: 'Flo', score: 0.87 }, { name: 'Dimi', score: 0.41 }] }],
+};
+const FACE_WORKER = {
+  state: 'ready', camera: true, checksPerSecond: 2, lastCheckAt: Date.now(), lastFaceAt: Date.now(), faces: 1, best: { name: 'Flo', prob: 0.87 },
+  backend: 'wasm', threads: 8, isolated: true, source: 'site:cam-flo-mac', frameWidth: 960, frameHeight: 540, lastFrameAt: Date.now(),
+  inferenceMs: 180, threshold: 0.65, margin: 0.01, lastVisionFrameAt: null, visionSkip: 'not due', checkSkip: null,
 };
 const PULSE = {
   t: 1, mic: { source: 'site:cam-flo-mac', level: 0.4, state: 'listening' }, speaking: null, heard: { text: 'Hello Tubs', t: 1 },
@@ -64,11 +70,23 @@ test('the dashboard shows the studio camera with face boxes, names and scores, a
   const socket = await dashboardWithStudio(page);
   await expect.poll(() => watches(socket).at(-1)).toEqual({ type: 'studio_watch', live: true, video: true });
 
-  socket.push({ type: 'studio_live', actor: 'main', status: STATUS, speaking: false });
+  // A worker that has not loaded: the debug view opens by itself and says so.
+  socket.push({ type: 'studio_live', actor: 'main', status: { ...STATUS, faceWorkerReady: false, faceLastFaces: [] }, speaking: false, faceWorker: { ...FACE_WORKER, state: 'loading', detail: 'init: Loading recognition model...', lastCheckAt: null } });
+  const studio = page.locator('#dock-panel-studio');
+  await expect(studio.locator('#face-debug')).toContainText('loading: init: Loading recognition model...');
+  await expect(studio.getByRole('checkbox', { name: 'Face debug' })).toBeChecked();
+
+  socket.push({ type: 'studio_live', actor: 'main', status: STATUS, speaking: false, faceWorker: FACE_WORKER });
   socket.push({ type: 'studio_frame', actor: 'main', frame: JPEG, width: 320, height: 180 });
   socket.push({ type: 'studio_pulse', pulse: PULSE });
-
-  const studio = page.locator('#dock-panel-studio');
+  // Healthy: the debug view is the operator's choice; turned on it shows everything the listener knows.
+  await expect(studio.getByRole('checkbox', { name: 'Face debug' })).not.toBeChecked();
+  await studio.getByRole('checkbox', { name: 'Face debug' }).check();
+  await expect(studio.locator('#face-debug')).toContainText('loaded · wasm · 8 threads');
+  await expect(studio.locator('#face-debug')).toContainText('A match needs 65%');
+  await expect(studio.locator('#face-debug')).toContainText('Flo 87% ≥ 65%');
+  await expect(studio.locator('#face-debug')).toContainText('Dimi 41% < 65%');
+  await expect(studio.locator('#face-debug')).toContainText('match · det 98%');
   await expect(studio.locator('#studio-live-mic')).toContainText('listening');
   await expect(studio.locator('#studio-live-heard')).toContainText('Hello Tubs');
   await expect(studio.getByRole('list', { name: 'In view' })).toContainText('Flo');
@@ -94,6 +112,9 @@ test('the dashboard shows the studio camera with face boxes, names and scores, a
   await expect(people.getByRole('img', { name: 'What the studio camera sees' })).toBeVisible();
   await expect(people.locator('#face-results-list')).toContainText('Likely Flo at 87');
   await expect(people.locator('#face-results-list')).toContainText('Dimi');
+  // The listener's worker in the header, never this page's own (absent) one.
+  await expect(people.locator('#face-debug')).toContainText('2 checks/s · inference 180 ms');
+  await expect(people.locator('#face-results-list')).toContainText('a match needs 65%');
   // The status bar's mic chip knows the mic again.
   await expect(page.locator('#status-mic')).not.toContainText('No face window');
 
@@ -115,7 +136,7 @@ test('the dashboard shows the studio camera with face boxes, names and scores, a
 test('onboarding from the dashboard runs on the studio listener\'s camera, with its preview', async ({ page }) => {
   const socket = await dashboardWithStudio(page);
   await expect.poll(() => watches(socket).length).toBeGreaterThan(0);
-  socket.push({ type: 'studio_live', actor: 'main', status: STATUS, speaking: false });
+  socket.push({ type: 'studio_live', actor: 'main', status: STATUS, speaking: false, faceWorker: FACE_WORKER });
   socket.push({ type: 'studio_frame', actor: 'main', frame: JPEG, width: 320, height: 180 });
   socket.push({ type: 'studio_pulse', pulse: PULSE });
 
@@ -148,4 +169,15 @@ test('onboarding from the dashboard runs on the studio listener\'s camera, with 
   } finally {
     clearInterval(answer);
   }
+});
+
+// The sentient panel's pulse bar opens the dashboard on the People tab.
+test('a link with ?tab=people opens the dashboard on the People tab, dock unfolded', async ({ page }) => {
+  await page.addInitScript(() => {
+    // The operator left the dock folded on Stats.
+    localStorage.setItem('tubs.uiPrefs.dashboard', JSON.stringify({ dockTab: 'stats', dockFolded: true }));
+  });
+  await page.goto('/?view=dashboard&tab=people');
+  await expect(page.getByRole('tab', { name: /^People/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#dock-panel-people')).toBeVisible();
 });

@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState, type JSX } from 'react';
 import type { VisionProvider } from '../../../shared/contracts/config.js';
 import type { VisionModelsResponse, VisionServersResponse, VisionTestResult } from '../../../shared/contracts/vision.js';
 import type { PresetsResponse } from '../../../shared/contracts/presets.js';
-import type { StudioListenState, StudioPart, StudioPulse, StudioResponse, StudioSource, StudioSourcesResponse, StudioVisionResponse } from '../../../shared/contracts/studio.js';
+import type { StudioListenState, StudioPart, StudioPulse, StudioSwitches, StudioResponse, StudioSource, StudioSourcesResponse, StudioVisionResponse } from '../../../shared/contracts/studio.js';
 import { patchConfig } from '../../fx/runtime.js';
 import type { AppStore } from '../../state/app-state.js';
 import { fetchJson, postJson } from '../../transport/http.js';
@@ -17,6 +17,7 @@ import { ControlGroup, SelectControl, ToggleControl } from './controls.js';
 import { PanelHeader } from './PanelHeader.js';
 import { MicMeter } from '../hud/StatusBar.js';
 import { StudioCameraView } from './StudioCamera.js';
+import { FaceDebug, FaceDebugToggle, faceDebugOn } from './FaceDebug.js';
 
 export const STUDIO_REFRESH_MS = 2000;
 /** The pick lists' sources (GET /studio/sources) ask the site node and the hub, so less often. */
@@ -130,7 +131,28 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
           )}
         </ControlGroup>
 
-        {studio?.enabled && <LiveSection store={store} vision={vision} />}
+        {studio?.switches && (
+          <ControlGroup title="Switches">
+            {SWITCHES.map((entry) => (
+              <ToggleControl
+                key={entry.key}
+                label={entry.label}
+                checked={studio.switches![entry.key]}
+                onChange={(on) => void run(() => postJson('/studio', { switches: { [entry.key]: on } }), `${entry.label} ${on ? 'on' : 'off'}`)}
+              />
+            ))}
+            <p className="text-slate-500 text-[10px]">Vision descriptions run when a face is detected; face recognition names the faces (and onboards new ones).</p>
+            {studio.launch === 'chrome' && (
+              <ToggleControl
+                label="Show face windows"
+                checked={studio.windows === 'visible'}
+                onChange={(on) => void run(() => postJson('/studio', { windows: on ? 'visible' : 'offscreen' }), on ? 'Face windows on screen' : 'Face windows off screen')}
+              />
+            )}
+          </ControlGroup>
+        )}
+
+        {studio?.enabled && <LiveSection store={store} vision={vision} listenerConnected={studio.actors.find((actor) => actor.id === 'main')?.error !== 'face page not connected'} />}
 
         {studio && (
           <ControlGroup title="Sources">
@@ -177,12 +199,8 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
 
         <PresetsSection presets={presets} onApply={(name) => void run(() => postJson('/presets/apply', { name }), `${name} applied`)} onSave={(name) => void run(() => postJson('/presets', { name }), `Saved as ${name}`)} />
 
+        {/* Switched on and off with the others under Switches. */}
         <ControlGroup title="Relationships">
-          <ToggleControl
-            label="Relationships"
-            checked={config.relationshipsEnabled}
-            onChange={(relationshipsEnabled) => void patchConfig(store, { relationshipsEnabled })}
-          />
           <RelationshipsEditor />
         </ControlGroup>
       </div>
@@ -209,6 +227,15 @@ function PartsCard({ parts }: { parts: StudioPart[] }): JSX.Element {
   );
 }
 
+/** Each part on its own (POST /studio {switches}); the source choices below stay as they are. */
+const SWITCHES: Array<{ key: keyof StudioSwitches; label: string }> = [
+  { key: 'camera', label: 'Camera' },
+  { key: 'faceRecognition', label: 'Face recognition' },
+  { key: 'visionDescriptions', label: 'Vision descriptions' },
+  { key: 'relationships', label: 'Relationships' },
+  { key: 'mic', label: 'Mic' },
+];
+
 /** The status bar meter's colours, by what the studio mic is doing. */
 const METER_MODE: Record<StudioListenState, string> = {
   off: 'idle',
@@ -231,11 +258,12 @@ function ago(t: number | null | undefined, now: number): string {
  * normal mode: the mic, the last line heard, its camera with the face boxes,
  * who is in view (with the relationship in effect) and the last vision check.
  */
-function LiveSection({ store, vision }: { store: AppStore; vision: StudioVisionResponse | null }): JSX.Element {
+function LiveSection({ store, vision, listenerConnected }: { store: AppStore; vision: StudioVisionResponse | null; listenerConnected: boolean }): JSX.Element {
   const live = useAppSelector(store, (current) => ({
     pulse: current.studioPulse,
     reporting: current.studioLive !== null,
     frame: current.studioFrame !== null,
+    debug: faceDebugOn(current, Date.now()),
   }));
   const pulse: StudioPulse | null = live.reporting ? live.pulse : null;
   const now = Date.now();
@@ -244,7 +272,9 @@ function LiveSection({ store, vision }: { store: AppStore; vision: StudioVisionR
   return (
     <ControlGroup title="Live">
       {!pulse ? (
-        <p className="text-slate-400" id="studio-live-off">The studio listener is not reporting: its page is not connected yet.</p>
+        <p className="text-slate-400" id="studio-live-off">
+          {listenerConnected ? 'Waiting for the studio listener to report…' : 'The studio listener page is not connected.'}
+        </p>
       ) : (
         <div className="flex flex-col gap-2" aria-label="Pulse">
           <p className="studio-row" id="studio-live-mic">
@@ -260,12 +290,13 @@ function LiveSection({ store, vision }: { store: AppStore; vision: StudioVisionR
         </div>
       )}
 
+      {live.reporting && <FaceDebugToggle store={store} />}
       {vision?.camera.on === false ? (
         <p className="text-amber-300" id="studio-live-camera-off">Camera off (vision source: {vision.camera.source}). Nobody is seen or recognised.</p>
       ) : (
         <div className="camera-shell">
           <div className="camera-stage">
-            <StudioCameraView store={store} />
+            <StudioCameraView store={store} detail={live.debug} />
             {!live.frame && <div className="camera-placeholder">Waiting for the studio camera</div>}
           </div>
         </div>
@@ -281,6 +312,7 @@ function LiveSection({ store, vision }: { store: AppStore; vision: StudioVisionR
           ))}
         </ul>
       )}
+      {live.debug && <FaceDebug store={store} faces />}
       <div>
         <button type="button" className="button button-compact button-secondary" disabled={!live.reporting} onClick={() => store.setState((current) => ({ ...current, faceEnrollOpen: true }))}>Onboard someone</button>
       </div>
