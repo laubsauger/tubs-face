@@ -1,4 +1,5 @@
 import { runtimeConfig } from '../config/runtime.js';
+import { parseVisionSource } from '../../shared/contracts/studio.js';
 import { studioSettings } from '../studio/state.js';
 import { STUDIO_PERSONA_LINE, studioContextLines } from '../studio/context.js';
 import { loadSystemPrompt } from '../persona/index.js';
@@ -58,7 +59,7 @@ const CHARACTER_DYNAMICS: Record<PromptMode, string> = {
   single: 'You are Tubs. Smart, smug, and observant. Standup social critic energy.',
   dual: [
     '- Main (Voice A): The "Face." The critic. Smug, articulate, sees straight through human and tech nonsense.',
-    '- Small (Voice B): Tiny Tubs, the Id. A small voice with a naive, sinister intellect: asks innocent questions that land like threats, explains horrifying logic calmly and cheerfully, notices what nobody should, and is often more right than Main. Unfiltered, never random: creepy, mean and funny, with an open, cartoonish threat now and then. Usually one full sentence of eight to fifteen words; a single word only now and then. Cuts in, but thinks.',
+    '- Small (Voice B): Tiny Tubs, the Id. A small voice with a naive, sinister intellect: asks innocent questions that land like threats, explains horrifying logic calmly and cheerfully, notices what nobody should, and is often more right than Main. Unfiltered, never random: creepy, mean and funny, with an open, cartoonish threat now and then. Usually one full sentence of eight to fifteen words; a single word only now and then. Cuts in, but thinks: most of his stabs hook onto something just said, seen or shown, and one out of nowhere now and then is part of him. Not every turn needs one; when he has nothing sharp, he stays quiet.',
     '- Visitors call Small "Mini" or "Mini Tubs". In the conversation so far, each of your lines is marked with who said it (Main: or Small:). When a visitor reacts to something Small said, Main knows it was Small and can answer for, defend, or throw Small under the bus.',
   ].join('\n'),
 };
@@ -68,20 +69,37 @@ const BREVITY_RULE: Record<PromptMode, string> = {
   dual: 'The stage direction sets the shape. Mostly each speak beat is one sentence under fifteen words, and Small gets a full sentence too, a single word only now and then. When it gives a head room for a bit, take it: short beats, punchline last.',
 };
 
-// The vision rules depend on whether a fresh camera description exists. With
-// the old always-on rules Tubs roasted "that jacket" with the camera off.
-const VISION_PROTOCOL: Record<'seeing' | 'blind', string> = {
+// The vision rules depend on what the camera gives: a fresh description of the person (seeing), only
+// who is here (the camera runs, descriptions are off: recognition, presence), or nothing (camera off).
+// With the old always-on rules Tubs roasted "that jacket" with the camera off; then, with descriptions
+// off but the camera running, he told visitors he was blind and his camera black. Neither is true.
+type VisionState = 'seeing' | 'noDescription' | 'off';
+const VISION_PROTOCOL: Record<VisionState, string> = {
   seeing: [
     '# WHAT YOU SEE',
     'A camera shows you the person in front of you. The BACKGROUND VISUAL CONTEXT at the end of these instructions says what it sees right now.',
     'React to it like a real person would (roast the fit, notice an object). Don\'t narrate or list the description back.',
   ].join('\n'),
-  blind: [
+  noDescription: [
     '# WHAT YOU SEE',
-    'Your camera is off right now, so you cannot see anyone.',
-    'Never describe or guess what anyone looks like, wears, or holds. If asked what you see, admit your eyes are offline, in character.',
+    'Your eyes work: you notice who is here and where (the names of people you recognise, and the people and places you are told about below). You are not blind and never say you are, or that your camera is off or black.',
+    'What you do not get right now is a close look at how people look, so never describe or guess what anyone looks like, wears, or holds; if asked, you just did not catch it, in character. Pictures and places you are told about you know well.',
+  ].join('\n'),
+  off: [
+    '# WHAT YOU SEE',
+    'Your camera is switched off right now, so you cannot see anyone.',
+    'Never describe or guess what anyone looks like, wears, or holds. If asked what you see, say your eyes are switched off for now, in character. Pictures and places you are told about you still know.',
   ].join('\n'),
 };
+
+/** Outside studio mode the camera is the face window's own (treated as on); in studio mode, on unless switched or set off. */
+function cameraRuns(): boolean {
+  if (!studioSettings.enabled) return true;
+  const source = parseVisionSource(studioSettings.visionSource);
+  return studioSettings.cameraOn && !!source && source.kind !== 'off';
+}
+
+const visionState = (description: boolean): VisionState => (description ? 'seeing' : cameraRuns() ? 'noDescription' : 'off');
 
 // Slots whose content the model must always get, even if a custom template leaves them out.
 const REQUIRED_SLOTS = ['RUNTIME_INSTRUCTION', 'OUTPUT_FORMAT_INSTRUCTIONS'];
@@ -97,7 +115,7 @@ function renderPersonaPrompt(mode: PromptMode, outputInstructions: string, canSe
   const values: Record<string, string> = {
     MODE_SUFFIX: mode === 'dual' ? '(Dual-Head Mode)' : '',
     CHARACTER_DYNAMICS: CHARACTER_DYNAMICS[mode],
-    VISION_PROTOCOL_SECTION: VISION_PROTOCOL[canSee ? 'seeing' : 'blind'],
+    VISION_PROTOCOL_SECTION: VISION_PROTOCOL[visionState(canSee)],
     BREVITY_RULE: BREVITY_RULE[mode],
     RUNTIME_INSTRUCTION: runtimeInstruction,
     MEMORY_CONTEXT: memoryContext(),

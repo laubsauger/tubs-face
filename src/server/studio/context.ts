@@ -5,6 +5,8 @@
 // night's theme) arrives once per connection and on a theme change and stays
 // as standing context; the rest is dropped from the prompt once it is stale.
 
+import { seenInPicture } from './gallery-vision.js';
+
 export const STUDIO_CONTEXT_STALE_MS = 10_000;
 
 export type Relation = 'here' | 'same-room' | 'next-room' | 'far';
@@ -47,6 +49,8 @@ export interface StudioContextMessage {
   tour?: StudioTour;
   /** the screening while it runs (sentient-studio contract §8): the film on every screen and the shot up now */
   screening?: StudioScreening;
+  /** the gallery night (any phase): what hangs where, in detail at the windows the heads are at */
+  gallery?: StudioGallery;
   ts: number;
 }
 
@@ -63,13 +67,17 @@ export interface StudioScreening {
   of: number;
 }
 
+export interface StudioGallery {
+  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string; img?: string }> }>;
+}
+
 export interface StudioTour {
   where: string;
   step: string;
   stop: number;
   of: number;
   next: string | null;
-  piece?: { title: string; date?: string; by?: string; text?: string };
+  piece?: { title: string; date?: string; by?: string; text?: string; img?: string };
 }
 
 /** the director says the tour still runs at least every 20 s; after this long without word it counts as over (ms) */
@@ -79,6 +87,7 @@ let latest: { context: StudioContextMessage; at: number } | null = null;
 let venue: StudioVenue | null = null;
 let tour: { tour: StudioTour; at: number } | null = null;
 let screening: { screening: StudioScreening; at: number } | null = null;
+let gallery: { gallery: StudioGallery; at: number } | null = null;
 
 export function noteStudioContext(context: StudioContextMessage, now = Date.now()): void {
   latest = { context, at: now };
@@ -87,6 +96,7 @@ export function noteStudioContext(context: StudioContextMessage, now = Date.now(
   tour = context.tour && typeof context.tour.where === 'string' ? { tour: context.tour, at: now } : null;
   // the same for the screening
   screening = context.screening && typeof context.screening.film === 'string' && typeof context.screening.shot?.title === 'string' ? { screening: context.screening, at: now } : null;
+  gallery = context.gallery && Array.isArray(context.gallery.showing) ? { gallery: context.gallery, at: now } : null;
 }
 
 export function forgetStudioContext(): void {
@@ -94,6 +104,7 @@ export function forgetStudioContext(): void {
   venue = null;
   tour = null;
   screening = null;
+  gallery = null;
 }
 
 /** The screening, while the director says it runs. */
@@ -121,6 +132,32 @@ export function renderScreening(s: StudioScreening | null): string[] {
   return lines;
 }
 
+/** The gallery night, while the director says it is on. */
+export function studioGallery(now = Date.now()): StudioGallery | null {
+  return gallery && now - gallery.at <= STUDIO_TOUR_STALE_MS ? gallery.gallery : null;
+}
+
+/**
+ * On the gallery night: who they are tonight (its curators and guides), that "this picture" is one on
+ * the wall and never their camera, what hangs where they are with what the archive says of it, and
+ * what hangs elsewhere.
+ */
+export function renderGallery(g: StudioGallery | null): string[] {
+  if (!g || !g.showing.length) return [];
+  const pic = (p: { title: string; date?: string; by?: string }) => `"${p.title}"${p.date ? ` (${p.date}${p.by ? `, ${p.by}` : ''})` : p.by ? ` (${p.by})` : ''}`;
+  const lines = [
+    '# TONIGHT: THE GALLERY',
+    'Tonight the studio is a gallery of pictures from the Alan Watts archive, hung in a row through the studio\'s windows, and you two are its curators and guides: you know what hangs where and love to talk about it.',
+    'When a visitor says "this picture", "the image", "that photo" or asks what is on the wall or on the screen, they mean these pictures, never your camera. Say only what the archive supports; never invent dates, places or names.',
+  ];
+  for (const w of g.showing.filter((x) => x.here)) {
+    lines.push(`Here where you are, at the ${w.where}: ${w.pictures.map((p) => { const own = seenInPicture(p.img); return `${pic(p)}${p.text ? `: ${p.text}` : ''}${own ? ` (what you see in it yourself: ${own})` : ''}`; }).join(' | ')}`);
+  }
+  const elsewhere = g.showing.filter((x) => !x.here).slice(0, 14);
+  if (elsewhere.length) lines.push(`Elsewhere now: ${elsewhere.map((w) => `${w.where}: ${w.pictures.map(pic).join(', ')}`).join('; ')}.`);
+  return lines;
+}
+
 /** The gallery tour, while the director says it runs. */
 export function studioTour(now = Date.now()): StudioTour | null {
   return tour && now - tour.at <= STUDIO_TOUR_STALE_MS ? tour.tour : null;
@@ -135,7 +172,8 @@ export function renderTour(t: StudioTour | null): string[] {
   const lines = [`You two are guiding a tour through a gallery of pictures from the Alan Watts archive; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`];
   const p = t.piece;
   if (p) {
-    lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` What it shows: ${p.text}` : ''} A visitor's question now is most likely about it; say only what the archive supports.`);
+    const own = seenInPicture(p.img);
+    lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` The archive says: ${p.text}` : ''}${own ? ` What you see in it yourself: ${own}` : ''} A visitor's question now is most likely about it; names and dates only from the archive.`);
   }
   return lines;
 }
@@ -166,7 +204,7 @@ export function calloutLine(context: StudioContextMessage, v: StudioVenue | null
 /** The lines for the prompt now: the standing venue lines, plus the latest context while it is fresh. */
 export function studioContextLines(now = Date.now()): string[] {
   const fresh = latest && now - latest.at <= STUDIO_CONTEXT_STALE_MS ? latest.context : null;
-  return [...renderTour(studioTour(now)), ...renderScreening(studioScreening(now)), ...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
+  return [...renderGallery(studioGallery(now)), ...renderTour(studioTour(now)), ...renderScreening(studioScreening(now)), ...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
 }
 
 /** How the characters talk about the venue, in studio mode. */

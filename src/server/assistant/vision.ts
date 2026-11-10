@@ -30,6 +30,11 @@ const OPENAI_OUT_PER_MTOKENS = Number.parseFloat(process.env.VISION_OUTPUT_COST_
 export interface VisionService {
   /** Describe this picture if the budget allows; the description, or null (skipped, failed, timed out). */
   look(frameDataUrl: string, kind: VisionPictureKind): Promise<string | null>;
+  /**
+   * Any other picture (a gallery picture) to the provider in use, with its own prompt; null when vision
+   * is off, the provider fails or says nothing. Outside the camera's hourly cap (the caller keeps its own).
+   */
+  describe(dataUrl: string, ask: { system: string; prompt: string; maxTokens: number }): Promise<string | null>;
   /** The last picture sent to the provider and what came back, or null. */
   lastCheck(): StudioVisionCheck | null;
   /** fleet:vision: the box picked now (its .../v1 base), without asking the hub; null when none yet. */
@@ -135,6 +140,34 @@ export function createVisionService(options: VisionServiceOptions = {}): VisionS
         const reason = error instanceof Error ? (error.name === 'TimeoutError' || error.name === 'AbortError' ? `timed out after ${config.visionTimeoutMs} ms` : error.message) : String(error);
         Object.assign(check, { ok: false, ms: Math.round(ms), where: base ? hostOf(base) : check.where, error: reason.slice(0, 300) });
         log(`${provider} failed (${kind}): ${reason}; keeping the last description`);
+        return null;
+      }
+    },
+    async describe(dataUrl, { system, prompt, maxTokens }) {
+      const config = runtimeConfig;
+      if (config.visionProvider === 'off' || !/^data:image\/[\w+.-]+;base64,/.test(dataUrl)) return null;
+      const provider = config.visionProvider === 'openai' ? 'openai' : 'gemini';
+      const ask = { dataUrl, system, prompt, model: config.visionModel || (provider === 'gemini' ? config.llmModel : ''), timeoutMs: config.visionTimeoutMs, maxTokens };
+      const started = now();
+      let base: string | null = null;
+      try {
+        let answer;
+        if (provider === 'openai') {
+          base = config.visionBaseUrl === 'fleet:vision' ? await fleet.resolve() : config.visionBaseUrl;
+          if (!base) throw new Error('no vision server');
+          answer = await askOpenAiCompatible({ ...ask, base, apiKey }, deps);
+        } else {
+          answer = await askGemini(ask, deps);
+        }
+        const ms = now() - started;
+        const costUsd = provider === 'gemini'
+          ? estimateCostUsd(answer.tokensIn, answer.tokensOut)
+          : (answer.tokensIn / 1e6) * OPENAI_IN_PER_MTOKENS + (answer.tokensOut / 1e6) * OPENAI_OUT_PER_MTOKENS;
+        counters.call(provider, { ok: Boolean(answer.text), ms, tokensIn: answer.tokensIn, tokensOut: answer.tokensOut, costUsd, base, at: now() });
+        return answer.text || null;
+      } catch (error) {
+        counters.call(provider, { ok: false, ms: now() - started, base });
+        log(`${provider} could not describe a picture: ${error instanceof Error ? error.message : String(error)}`);
         return null;
       }
     },

@@ -42,7 +42,7 @@ describe('buildTurnDirection', () => {
 
   it('varies the number of beats in two-head mode', () => {
     expect(buildTurnDirection('dual', fixed(0.1, 0.99, 0.99), [])).toContain('Only one head speaks');
-    expect(buildTurnDirection('dual', fixed(0.7, 0.99, 0.99), [])).toContain('Three beats');
+    expect(buildTurnDirection('dual', fixed(0.8, 0.99, 0.99), [])).toContain('Three beats');
   });
 
   // Two heads trading one-liners every turn never got to a joke: on some
@@ -53,6 +53,17 @@ describe('buildTurnDirection', () => {
     const bits = shapes.filter((shape) => shape.includes('takes the room for a bit')).length;
     expect(bits).toBeGreaterThanOrEqual(8);
     expect(bits).toBeLessThanOrEqual(16);
+  });
+
+  // Small's stabs are his job, but every turn with one was too much (the user, Nov 10, 2026):
+  // moderated, not off. About four turns in ten are one head alone, mostly Main.
+  it('leaves about four in ten two-head turns to one head, usually Main, and still trades on most of the rest', () => {
+    const shapes = Array.from({ length: 100 }, (_, i) => dualShape(i / 100));
+    const alone = shapes.filter((shape) => shape.startsWith('Only one head speaks')).length;
+    expect(alone).toBeGreaterThanOrEqual(35);
+    expect(alone).toBeLessThanOrEqual(45);
+    expect(shapes.filter((shape) => shape.startsWith('Only one head speaks')).every((shape) => shape.includes('usually Main'))).toBe(true);
+    expect(shapes.filter((shape) => shape.startsWith('Two speak beats') || shape.startsWith('Three beats')).length).toBeGreaterThanOrEqual(40);
   });
 
   // "One short sentence" alone came back as 25-30 words. Every two-head shape

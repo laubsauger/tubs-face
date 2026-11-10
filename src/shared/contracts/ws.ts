@@ -187,7 +187,9 @@ export interface WsStudioContextClientMessage {
     windows: Array<{ id: string; name: string; zone: string | null; about: string }>;
   };
   /** The gallery tour while it runs: where, the step, and the picture up on screen there (sentient-studio contract §6). */
-  tour?: { where: string; step: string; stop: number; of: number; next: string | null; piece?: { title: string; date?: string; by?: string; text?: string } };
+  tour?: { where: string; step: string; stop: number; of: number; next: string | null; piece?: { title: string; date?: string; by?: string; text?: string; img?: string } };
+  /** The gallery night: what hangs where, in detail at the windows the heads are at. */
+  gallery?: { showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string; img?: string }> }> };
   /** The screening while it runs: the film on every screen and the shot up now; host while the heads comment on it at `where` (sentient-studio contract §8). */
   screening?: { film: string; about?: string; cast?: string; host: boolean; where?: string | null; shot: { title: string; date?: string; text?: string }; n: number; of: number };
   ts: number;
