@@ -51,10 +51,11 @@ export const PROP_MAX_TILT = 0.14;
  * Shades inside a prop: lightness (percent) and hue (degrees) offsets from
  * the head's colour, and for hair a saturation (0..1) it is washed out to.
  */
-export type PropTone = 'body' | 'dark' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white';
+export type PropTone = 'body' | 'dark' | 'deep' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white';
 export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: number }> = {
   body: { hue: 0, light: 0 },
   dark: { hue: 0, light: -26 },
+  deep: { hue: 0, light: -38 },
   light: { hue: 0, light: 16 },
   accent: { hue: 42, light: 4 },
   silver: { hue: 0, light: 4, sat: 0.14 },
@@ -331,6 +332,140 @@ const MARK_BEARD: PropArt = {
   },
 };
 
+// Dimi, as every face in Dunbrae wears him (the film Dimination): a mop of
+// dark, wavy hair with a lock falling over the forehead, heavy straight brows,
+// and a full dark beard from the sideburns round the jaw, joined to the
+// moustache. Dark where Watts is white: the head's own hue, shaded down.
+
+/** A thick mop, low on the forehead: curls round its outline, a lock falling over the brow, short at the sides, then sideburns down to the jaw. */
+const DIMI_HAIR: PropArt = {
+  width: 68,
+  height: 23,
+  depth: 30,
+  at(x, y) {
+    const ax = Math.abs(x);
+    const dy = y + 5;
+    // Sideburns: beside the eyes (clear of them), down to where the beard takes over.
+    if (dy <= 0) {
+      if (y < -30 || ax < 29.6 || ax > 33.8 - Math.max(0, (-y - 18) / 6)) return null;
+      return odd((y - ax) / 1.6) ? 'deep' : 'dark';
+    }
+    // The outline in round curls.
+    const angle = Math.atan2(dy, x);
+    const out = 0.95 + 0.08 * Math.abs(Math.sin(angle * 6.5 + 0.5));
+    const reach = Math.sqrt((ax / 33) ** 2 + (dy / 27) ** 2);
+    if (reach > out) return null;
+    // The forehead: a low hairline, a little higher on the right where the lock parts off.
+    const hairline = 13 + 2 * Math.max(0, Math.min(1, (x + 4) / 16));
+    const bare = (ax / 29.6) ** 5 + (dy / hairline) ** 3 < 1;
+    // The lock: off the crown on the left, falling across the forehead to just over the right brow, lit.
+    const across = (x + 18) / 30;
+    const lockBottom = 7.4 + 7 * (1 - across) ** 1.3;
+    const lock = across >= 0 && across <= 1 && y >= lockBottom && y <= lockBottom + 3.6 - 1.2 * across;
+    if (bare && !lock) return null;
+    if (lock) return odd((x + y) / 2.6) ? 'light' : 'body';
+    // Curls: a highlight on each, in the dark mass; shadow along the hairline.
+    if (reach < 0.62 && dy < 14) return 'deep';
+    return Math.sin(x * 0.95 + Math.sin(y * 0.7) * 1.4) * Math.sin(y * 1.05 + x * 0.3) > 0.42 ? 'body' : 'dark';
+  },
+};
+
+/** Heavy and straight, a little lower at the outer end. */
+const DIMI_BROWS: PropArt = {
+  width: 56,
+  height: 4.4,
+  at(x, y) {
+    // 0 at a brow's inner end, 1 at its outer end.
+    const u = (Math.abs(x) - 11) / 16.6;
+    if (u < 0 || u > 1) return null;
+    const top = 4.2 - 1.6 * u * u;
+    const bottom = 0.8 - 0.6 * u;
+    return y >= bottom && y <= top ? 'body' : null;
+  },
+};
+
+/** Full over the mouth, running down past its corners into the beard. */
+const DIMI_MOUSTACHE: PropArt = {
+  width: 21,
+  height: 5,
+  depth: 3.4,
+  at(x, y) {
+    const ax = Math.abs(x);
+    if (ax > 10.5 || y > 5 - (ax / 10.5) ** 2 * 1.6) return null;
+    // Clear of the mouth (about 6.3 to either side) above it; past its corners down to the beard.
+    if (ax < 7.4 ? y < 1.2 : y < -3.4) return null;
+    return odd((x + y * 0.6) / 1.5) ? 'deep' : 'dark';
+  },
+};
+
+/** A full beard round the jaw: up the cheeks to the sideburns, down to a broad, rounded chin. */
+const DIMI_BEARD: PropArt = {
+  width: 62,
+  height: 4.6,
+  depth: 13.5,
+  at(x, y) {
+    const ax = Math.abs(x);
+    // A row clear round the mouth, which changes shape.
+    if (inRounded(x, y, 7.2, 9, -1.1, 1.1)) return null;
+    // Under the eyes it stays low, clear of them; past them it climbs to meet the sideburns.
+    const top = 2 + 2.6 * Math.max(0, Math.min(1, (ax - 22) / 8));
+    if (y > top || y < -13.5) return null;
+    const t = Math.max(0, (-y - 1) / 12.5);
+    const half = 31 * Math.max(0, 1 - t ** 2.6) ** 0.42;
+    if (ax > half) return null;
+    return Math.sin(x * 1.1 + y * 0.4) * Math.sin(y * 1.3 - x * 0.2) > 0.45 ? 'body' : odd((ax * 0.8 - y) / 1.9) ? 'deep' : 'dark';
+  },
+};
+
+// The film's interviewer, made for Small: long straight hair parted in the
+// middle and falling past the shoulders, thin arched brows, and a reporter's
+// handheld microphone held up beside the chin, with a cube on its handle.
+
+/** The microphone's foam head, beside the mouth (x right of the face's middle, y up from the eyes' anchor). */
+const MIC = { x: 19.6, y: -36.6, r: 3.9 };
+
+/** The hair, full over the head and straight down the sides past the jaw; the microphone in front of it. */
+const INTERVIEWER_HAIR: PropArt = {
+  width: 70,
+  height: 20,
+  depth: 50,
+  at(x, y) {
+    const ax = Math.abs(x);
+    // The microphone first: it is held in front of the hair.
+    if (circle(x, y, MIC.x, MIC.y, MIC.r)) return odd((x + y) / 1.3) === odd(x / 1.3) ? 'ash' : 'smoke';
+    const stick = MIC.x + 0.12 * (MIC.y - y);
+    if (y < MIC.y - 3 && y > -50 && Math.abs(x - stick) < 1) return 'silver';
+    if (y < MIC.y - MIC.r - 1.4 && y > MIC.y - MIC.r - 7.8 && Math.abs(x - stick) < 3.4) return 'accent';
+    const dy = y + 6;
+    if (dy > 0) {
+      // A smooth dome, parted in the middle, off a plain forehead.
+      if ((ax / 34.6) ** 2 + (dy / 26) ** 2 > 1) return null;
+      if ((ax / 29.6) ** 5 + (dy / 13.5) ** 3 < 1 || ax < 0.9) return null;
+      // Strands out from the parting, a sheen across the crown.
+      const reach = Math.sqrt((ax / 34.6) ** 2 + (dy / 26) ** 2);
+      if (reach > 0.72 && reach < 0.84 && ax < 24) return 'light';
+      return Math.floor(Math.atan2(dy, ax) * 14) % 3 === 0 ? 'dark' : 'body';
+    }
+    // Down the sides, straight: beside the eyes, clear of them, to the shoulders; the ends cut straight.
+    const below = Math.max(0, Math.min(1, (-y - 28) / 14));
+    const inner = 29.6 - 3 * below;
+    if (ax < inner || ax > 34.6 || y < -48 + (ax - inner) * 0.3) return null;
+    return Math.floor((ax - inner) / 1.5) % 3 === 1 ? 'dark' : 'body';
+  },
+};
+
+/** Thin and arched. */
+const INTERVIEWER_BROWS: PropArt = {
+  width: 54,
+  height: 4.2,
+  at(x, y) {
+    const u = (Math.abs(x) - 12) / 15;
+    if (u < 0 || u > 1) return null;
+    const middle = 1.2 + 2.6 * Math.sin(Math.PI * Math.min(1, u * 1.05));
+    return Math.abs(y - middle) <= 0.85 ? 'body' : null;
+  },
+};
+
 const hat = (art: PropArt): readonly PropPart[] => [{ anchor: 'eyes', art }];
 
 const ART: Record<Exclude<PropId, 'none'>, readonly PropPart[]> = {
@@ -350,6 +485,16 @@ const ART: Record<Exclude<PropId, 'none'>, readonly PropPart[]> = {
     { anchor: 'eyes', art: MARK_BROWS },
     { anchor: 'lip', art: MARK_MOUSTACHE },
     { anchor: 'jaw', art: MARK_BEARD },
+  ],
+  dimi: [
+    { anchor: 'head', art: DIMI_HAIR },
+    { anchor: 'eyes', art: DIMI_BROWS },
+    { anchor: 'lip', art: DIMI_MOUSTACHE },
+    { anchor: 'jaw', art: DIMI_BEARD },
+  ],
+  interviewer: [
+    { anchor: 'head', art: INTERVIEWER_HAIR },
+    { anchor: 'eyes', art: INTERVIEWER_BROWS },
   ],
 };
 

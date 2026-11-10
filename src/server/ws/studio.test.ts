@@ -183,6 +183,20 @@ describe('studio messages on /ws', () => {
     expect(studioContextLines().join(' ')).toContain('at the Book: "Watts in a kimono"');
   });
 
+  // The screening's shot must get through the same way, or a question about it gets no answer.
+  it('take the screening from the director\'s studio_context, so every reply knows the shot on every screen', async () => {
+    studioSettings.enabled = true;
+    const director = await connect();
+    director.send({
+      type: 'studio_context', reason: 'change', heads: {}, people: [], reference: null, ts: 1,
+      screening: { film: 'Dimination', host: true, where: 'Big Wall', shot: { title: 'The fish counter', date: '03:08' }, n: 13, of: 33 },
+    });
+    await settle();
+    const lines = studioContextLines().join(' ');
+    expect(lines).toContain('"Dimination"');
+    expect(lines).toContain('"The fish counter"');
+  });
+
   it('do not let one head\'s page report for the other', async () => {
     studioSettings.enabled = true;
     const main = await connect('?studio=main');

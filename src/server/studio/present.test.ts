@@ -110,3 +110,48 @@ describe('studio present (the gallery tour)', () => {
     expect(ok.next).toBeNull();
   });
 });
+
+// The screening (sentient-studio's second gallery night): a film plays on every screen at once and the
+// heads comment on it shot by shot. Same endpoint and kinds, but the lines are about the film's shot,
+// never the Watts archive or a walking tour with a flag.
+describe('studio present (the screening)', () => {
+  const shot: PresentRequest = {
+    show: 'screening', kind: 'present', where: 'Big Wall', stop: 13, of: 33, first: false, next: null,
+    film: { title: 'Dimination', about: 'A town where every face is Dimi\'s.' },
+    cast: 'Tubs wears Dimi\'s face; Small is the interviewer.',
+    piece: { title: 'The fish counter', date: '03:08', text: 'Every fish has Dimi\'s head.' },
+  };
+
+  it('comments on the shot on every screen: the film, the shot, when in the film, what it shows, who they are tonight', () => {
+    const c = presentContext(shot);
+    expect(c).toContain('no visitor said this');
+    expect(c).toContain('"Dimination"');
+    expect(c).toContain('shot 13 of 33: "The fish counter", 03:08 into the film');
+    expect(c).toContain('Every fish has Dimi\'s head.');
+    expect(c).toContain('Small is the interviewer');
+    expect(c).toContain("director's commentary");
+    // the film is someone's work about a real person: nothing made up
+    expect(c).toContain('never invent the plot');
+    expect(c).not.toContain('Alan Watts');
+    expect(c).not.toContain('flag');
+  });
+
+  it('opens the screening and the floor in their own lines, without describing a shot', () => {
+    const { piece: _shown, ...noShot } = shot;
+    const open = presentContext({ ...noShot, kind: 'gather', first: true });
+    expect(open).toContain('Open the screening');
+    expect(open).not.toContain('What it shows');
+    const floor = presentContext({ ...shot, kind: 'floor' });
+    expect(floor).toContain('"The fish counter" is on every screen');
+    expect(floor).not.toContain('What it shows');
+  });
+
+  it('takes a screening only with the film named, and an unknown show not at all', () => {
+    const r = parsePresent({ show: 'screening', kind: 'present', where: 'Book', film: { title: 'Dimination' }, piece: { title: 'The bus stop', date: '03:14' } });
+    expect(r).toMatchObject({ show: 'screening', film: { title: 'Dimination' }, piece: { title: 'The bus stop', date: '03:14' } });
+    expect(parsePresent({ show: 'screening', kind: 'gather', where: 'Book' })).toBe('a screening needs film.title');
+    expect(parsePresent({ show: 'opera', where: 'Book', piece: { title: 'x' } })).toMatch(/show must be one of/);
+    // a request without a show is the tour, as before
+    expect(parsePresent({ where: 'Book', piece: { title: 'x' } })).not.toHaveProperty('show');
+  });
+});

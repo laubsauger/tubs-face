@@ -34,8 +34,23 @@ export interface PresentPiece {
 export const SAY_KINDS = ['gather', 'present', 'floor', 'move'] as const;
 export type SayKind = (typeof SAY_KINDS)[number];
 
+/**
+ * Which show the lines are for: the gallery tour (the default), or the screening (sentient-studio's
+ * screening scene: a film plays on every screen at once and the heads host it shot by shot, like a
+ * director's commentary). The screening's piece is the shot up on every screen; stop and of count
+ * the shots; where is the window the heads host it at.
+ */
+export const SHOWS = ['tour', 'screening'] as const;
+export type PresentShow = (typeof SHOWS)[number];
+
 export interface PresentRequest {
   kind?: SayKind;
+  /** absent: the tour */
+  show?: PresentShow;
+  /** the screening: the film's title and a line about it */
+  film?: { title: string; about?: string };
+  /** the screening: who the heads are tonight (the theme's words, e.g. what each wears) */
+  cast?: string;
   /** the window the heads stand at, by its name (the Big Wall) */
   where: string;
   /** which stop of how many */
@@ -57,10 +72,17 @@ const str = (v: unknown, max: number): string | undefined => (typeof v === 'stri
 export function parsePresent(body: unknown): PresentRequest | string {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
   if (b.kind !== undefined && !(SAY_KINDS as readonly unknown[]).includes(b.kind)) return `present: kind must be one of ${SAY_KINDS.join(', ')}`;
+  if (b.show !== undefined && !(SHOWS as readonly unknown[]).includes(b.show)) return `present: show must be one of ${SHOWS.join(', ')}`;
   const kind = b.kind as SayKind | undefined;
+  const f = (b.film && typeof b.film === 'object' ? b.film : null) as Record<string, unknown> | null;
+  const filmTitle = f ? str(f.title, MAX_SHORT) : undefined;
+  if (b.show === 'screening' && !filmTitle) return 'a screening needs film.title';
+  const filmAbout = f ? str(f.about, MAX_TEXT) : undefined;
+  const cast = str(b.cast, MAX_TEXT);
+  const screening = b.show === 'screening' ? { show: 'screening' as const, film: { title: filmTitle!, ...(filmAbout ? { about: filmAbout } : {}) }, ...(cast ? { cast } : {}) } : {};
   const where = str(b.where, MAX_SHORT);
   const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1000 ? v : d);
-  const base = { ...(kind ? { kind } : {}), where: where ?? '', stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null };
+  const base = { ...(kind ? { kind } : {}), ...screening, where: where ?? '', stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null };
   const p = (b.piece && typeof b.piece === 'object' ? b.piece : null) as Record<string, unknown> | null;
   const title = p ? str(p.title, MAX_SHORT) : undefined;
   if (!title && (kind === undefined || kind === 'present' || kind === 'floor')) return 'present needs piece.title';
@@ -85,8 +107,35 @@ export function parsePresent(body: unknown): PresentRequest | string {
 
 const TOUR = '[Gallery tour; no visitor said this]';
 
+const SCREENING = '[Screening; no visitor said this]';
+
+/** The screening's lines: open it, comment on the shot up on every screen, open the floor, call the next shot. */
+function screeningContext(r: PresentRequest): string {
+  const film = r.film ?? { title: 'the film' };
+  const about = `Tonight every screen in the studio plays the film "${film.title}", shot by shot.${film.about ? ` ${film.about}` : ''}${r.cast ? ` ${r.cast}` : ''}`;
+  if (r.kind === 'gather') {
+    return `${SCREENING} ${about} You two host it like a director's commentary, here at the ${r.where}. Open the screening in one or two short sentences, your way: welcome the visitors and tell them to watch the screens, the film waits for you. Do not describe a shot yet.`;
+  }
+  if (r.kind === 'move') return `${SCREENING} ${about} Call for the next shot in a few words, like a director on set. Small may add a quick quip.`;
+  const p = r.piece ?? { title: 'this shot' };
+  if (r.kind === 'floor') {
+    return `${SCREENING} The shot "${p.title}" is on every screen. Ask the visitors, in one short line, whether they have a question or a thought about it before the next shot. If someone answers, reply to them as usual. Do not describe the shot again.`;
+  }
+  const lines = [
+    `${SCREENING} ${about}`,
+    `On every screen now, shot ${r.stop} of ${r.of}: "${p.title}"${p.date ? `, ${p.date} into the film` : ''}.`,
+  ];
+  if (p.text) lines.push(`What it shows: ${p.text}`);
+  lines.push(
+    `Comment on it like a director's commentary, here at the ${r.where}, in two to four short sentences between you: what we are looking at and one thing to notice, with a joke if one comes. Say only what the shot shows and what you were told; never invent the plot, names or facts about real people.`,
+  );
+  if (r.first) lines.push('This is the first shot you comment on: one or two words to start.');
+  return lines.join('\n');
+}
+
 /** What the turn is told: where they are, the picture if any, and which line of the tour to say. */
 export function presentContext(r: PresentRequest): string {
+  if (r.show === 'screening') return screeningContext(r);
   if (r.kind === 'gather') {
     return `${TOUR} You two are starting a guided tour through a gallery of pictures from the Alan Watts archive, hung in a row through the studio, ${r.of} stops. Tubs holds up a little tour-guide flag. Tubs: call the visitors to gather round here at the ${r.where}, warmly, in one or two short sentences, the way a city tour guide would, your way. Do not describe a picture yet.`;
   }

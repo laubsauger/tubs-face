@@ -14,6 +14,8 @@ const LABELS: Record<PropId, string> = {
   'propeller-cap': 'Propeller cap',
   watts: 'Alan Watts',
   'mark-watts': 'Mark Watts',
+  dimi: 'Dimi',
+  interviewer: 'The interviewer',
 };
 
 const PREVIEW_W = 44;
