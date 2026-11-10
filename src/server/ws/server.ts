@@ -420,6 +420,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.venue ? { venue: message.venue } : {}),
         // the gallery tour: without it here the picture on screen never reached the prompt
         ...(message.tour && typeof message.tour.where === 'string' ? { tour: message.tour } : {}),
+        ...(message.gallery && Array.isArray(message.gallery.showing) ? { gallery: message.gallery } : {}),
         ts: message.ts,
       });
       return;

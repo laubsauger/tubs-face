@@ -45,7 +45,13 @@ export interface StudioContextMessage {
   venue?: StudioVenue;
   /** the gallery tour while it runs (sentient-studio contract §6): where, the step, and the picture up on screen */
   tour?: StudioTour;
+  /** the gallery night (any phase): what hangs where, in detail at the windows the heads are at */
+  gallery?: StudioGallery;
   ts: number;
+}
+
+export interface StudioGallery {
+  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string }> }>;
 }
 
 export interface StudioTour {
@@ -63,18 +69,47 @@ export const STUDIO_TOUR_STALE_MS = 45_000;
 let latest: { context: StudioContextMessage; at: number } | null = null;
 let venue: StudioVenue | null = null;
 let tour: { tour: StudioTour; at: number } | null = null;
+let gallery: { gallery: StudioGallery; at: number } | null = null;
 
 export function noteStudioContext(context: StudioContextMessage, now = Date.now()): void {
   latest = { context, at: now };
   if (context.venue) venue = context.venue;
   // every context while the tour runs carries it; one without it means the tour is over
   tour = context.tour && typeof context.tour.where === 'string' ? { tour: context.tour, at: now } : null;
+  gallery = context.gallery && Array.isArray(context.gallery.showing) ? { gallery: context.gallery, at: now } : null;
 }
 
 export function forgetStudioContext(): void {
   latest = null;
   venue = null;
   tour = null;
+  gallery = null;
+}
+
+/** The gallery night, while the director says it is on. */
+export function studioGallery(now = Date.now()): StudioGallery | null {
+  return gallery && now - gallery.at <= STUDIO_TOUR_STALE_MS ? gallery.gallery : null;
+}
+
+/**
+ * On the gallery night: who they are tonight (its curators and guides), that "this picture" is one on
+ * the wall and never their camera, what hangs where they are with what the archive says of it, and
+ * what hangs elsewhere.
+ */
+export function renderGallery(g: StudioGallery | null): string[] {
+  if (!g || !g.showing.length) return [];
+  const pic = (p: { title: string; date?: string; by?: string }) => `"${p.title}"${p.date ? ` (${p.date}${p.by ? `, ${p.by}` : ''})` : p.by ? ` (${p.by})` : ''}`;
+  const lines = [
+    '# TONIGHT: THE GALLERY',
+    'Tonight the studio is a gallery of pictures from the Alan Watts archive, hung in a row through the studio\'s windows, and you two are its curators and guides: you know what hangs where and love to talk about it.',
+    'When a visitor says "this picture", "the image", "that photo" or asks what is on the wall or on the screen, they mean these pictures, never your camera. Say only what the archive supports; never invent dates, places or names.',
+  ];
+  for (const w of g.showing.filter((x) => x.here)) {
+    lines.push(`Here where you are, at the ${w.where}: ${w.pictures.map((p) => `${pic(p)}${p.text ? `: ${p.text}` : ''}`).join(' | ')}`);
+  }
+  const elsewhere = g.showing.filter((x) => !x.here).slice(0, 14);
+  if (elsewhere.length) lines.push(`Elsewhere now: ${elsewhere.map((w) => `${w.where}: ${w.pictures.map(pic).join(', ')}`).join('; ')}.`);
+  return lines;
 }
 
 /** The gallery tour, while the director says it runs. */
@@ -122,7 +157,7 @@ export function calloutLine(context: StudioContextMessage, v: StudioVenue | null
 /** The lines for the prompt now: the standing venue lines, plus the latest context while it is fresh. */
 export function studioContextLines(now = Date.now()): string[] {
   const fresh = latest && now - latest.at <= STUDIO_CONTEXT_STALE_MS ? latest.context : null;
-  return [...renderTour(studioTour(now)), ...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
+  return [...renderGallery(studioGallery(now)), ...renderTour(studioTour(now)), ...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
 }
 
 /** How the characters talk about the venue, in studio mode. */

@@ -55,7 +55,8 @@ describe('system instructions built from the persona template', () => {
   // jacket" it had never seen.
   it('tells Tubs it cannot see when there is no camera description', () => {
     for (const prompt of [buildAssistantSystemInstruction(), buildDualHeadSystemInstruction()]) {
-      expect(prompt).toContain('Your camera is off right now');
+      expect(prompt).toContain('you cannot see what anyone looks like');
+      expect(prompt).not.toContain('camera is off');
       expect(prompt).not.toContain('BACKGROUND VISUAL CONTEXT');
     }
   });
