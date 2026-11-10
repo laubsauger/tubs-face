@@ -1,6 +1,7 @@
 import { recentModelReplies, wasLastReplyCutOff } from './context.js';
 import { hasNotesInView, markNameAsked, nameAskCandidate, peopleInView, pickGossip, type Position } from './field-notes.js';
 import { runtimeConfig } from '../config/runtime.js';
+import { galleryNight } from '../studio/context.js';
 import { BIT_MAX_SENTENCES, MAX_OUTPUT_SENTENCES } from './text.js';
 import { bitWordStems, bitsToStayOff, lineWords, noteBitLines, offerBit, stem, type Head, type SpokenLine } from './bits.js';
 
@@ -91,6 +92,15 @@ const MOVES = [
   'Treat this like a job interview they are failing.',
 ];
 const MOVE_CHANCE = 0.55;
+// The gallery night (studio/context.ts studioRole): the heads guide, so the moves are a guide's.
+const GUIDE_MOVES = [
+  'Tie it to the picture here, in one line.',
+  'Bring in one of Watts\'s ideas, in your own words, hooked onto what they said.',
+  'Point out one odd detail in the picture here.',
+  'Answer straight, then one light, friendly jab.',
+  'Tell one tiny thing about Watts\'s life that fits what they said, only what the archive supports.',
+  'Small asks the innocent question about the picture that nobody dares to.',
+];
 
 // Recent replies across visitors. The conversation history resets for every
 // new visitor, so without this nothing noticed Tubs coming back to the same
@@ -293,6 +303,7 @@ export function buildTurnDirection(
     askName: runtimeConfig.autoEnrollEnabled && Math.random() < ASK_NAME_CHANCE ? nameAskCandidate() : null,
   },
   chosenLength: LengthKey | null = null,
+  guide: boolean = galleryNight(),
 ): string {
   const lines: string[] = [];
   const openers = [...new Set(recent.slice(-4).map(opener).filter(Boolean))];
@@ -348,17 +359,17 @@ export function buildTurnDirection(
       ? `Ask the one ${SIDE[position]} their name, your way, pointing at them by what they wear. You collect names.`
       : 'Ask them their name, your way. You collect names.');
     markNameAsked(position);
-  } else if (group.mirror) {
+  } else if (group.mirror && !guide) {
     const { ally, target } = group.mirror;
     lines.push(`There are several people here. Side with ${refer(ally)} and roast ${refer(target)} to them, using what you see or know about them. Call people by name where you know it, otherwise by what they wear or do, never by left or right.`);
   } else if (group.callBackNote) {
     lines.push('Call back one thing from your notes on them, in passing.');
   }
-  if (group.useName && !group.mirror) {
+  if (group.useName && (!group.mirror || guide)) {
     lines.push(`Use ${group.useName}'s name this time.`);
   }
 
-  if (mode !== 'dual' && gossip) {
+  if (mode !== 'dual' && gossip && !guide) {
     lines.push(gossip.name
       ? `Earlier tonight ${gossip.name} said: "${gossip.text}". Bring it up if it fits, by name.`
       : `Earlier tonight another visitor said: "${gossip.text}". Bring it up if it fits, without saying who.`);
@@ -369,18 +380,19 @@ export function buildTurnDirection(
     // Hooked onto what they said: plain topic skips came out as non-sequiturs.
     lines.push('Bring up what has actually been on your mind, and hook it onto what they just said.');
   } else if (random() < MOVE_CHANCE) {
-    lines.push(MOVES[Math.floor(random() * MOVES.length)]!);
+    const moves = guide ? GUIDE_MOVES : MOVES;
+    lines.push(moves[Math.floor(random() * moves.length)]!);
   }
 
   lines.push(...stayOffLines(stayOffMotifs(), mode));
 
-  if (random() < SWEAR_CHANCE) {
+  if (!guide && random() < SWEAR_CHANCE) {
     lines.push('Let a swear word land in this one (fuck, shit), where it fits naturally.');
   }
 
   // A running bit on few turns only, off cooldown (bits.ts). The offer is the
   // only way a bit reaches the model; nothing checks or redoes the reply.
-  const bit = offerBit(mode, random);
+  const bit = guide ? null : offerBit(mode, random);
   if (bit) {
     const who = mode === 'single' ? 'you' : bit.head === 'main' ? 'Main' : bit.head === 'small' ? 'Small' : 'either head';
     lines.push(`If it fits, ${who} may use this: ${bit.text}`);

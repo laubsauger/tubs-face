@@ -125,6 +125,25 @@ describe('buildTurnDirection', () => {
   });
 
   // Enrolled visitors should hear their name; strangers are pointed at by what they wear.
+  // Seen live: on the gallery tour the heads went on roasting guests. On the gallery night the stage
+  // direction is a guide's: no roast mirror, no gossip, no swear push, no stock bits, a guide's moves.
+  it('on the gallery night: no roasting, gossip or swearing pushed, and a guide\'s moves', () => {
+    const group = { mirror: { ally: { position: 'left' as const, name: null }, target: { position: 'right' as const, name: null } }, callBackNote: false, useName: null };
+    const gossip = { text: 'I hate jazz', name: 'Rapha' };
+    for (let roll = 0; roll < 1; roll += 0.05) {
+      const text = buildTurnDirection('single', fixed(roll, roll, 0, 0), [], [], false, gossip, group, null, true);
+      expect(text).not.toContain('roast');
+      expect(text).not.toContain('I hate jazz');
+      expect(text).not.toContain('swear word');
+    }
+    const moves = new Set<string>();
+    for (let roll = 0.13; roll < 0.55; roll += 0.02) moves.add(buildTurnDirection('single', fixed(roll), [], [], false, null, { mirror: null, callBackNote: false, useName: null }, null, true));
+    expect([...moves].join('\n')).toMatch(/picture here|Watts/);
+    expect([...moves].join('\n')).not.toMatch(/job interview|nature documentary|customs officer/);
+    // and every other night as before
+    expect(buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, group, null, false)).toContain('roast the one on the right');
+  });
+
   it('names enrolled people, in the roast mirror and on their own', () => {
     const named = buildTurnDirection('single', fixed(0.5, 0.99, 0.99), [], [], false, null, { mirror: { ally: { position: 'left', name: 'Anna' }, target: { position: 'right', name: null } }, callBackNote: false, useName: null });
     expect(named).toContain('Side with Anna and roast the one on the right');

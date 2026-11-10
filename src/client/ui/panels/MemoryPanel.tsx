@@ -85,6 +85,21 @@ export function MemoryView({ active, layout }: { active: boolean; layout: 'dock'
     }
   }, [load]);
 
+  /** Tonight's names for someone (first is the one used); a name taken off stays off. */
+  const setNames = useCallback(async (key: string, names: string[]): Promise<boolean> => {
+    setBusy(true);
+    try {
+      await postJson('/memory/names', { key, names });
+      await load();
+      return true;
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [load]);
+
   async function confirm(): Promise<void> {
     if (!pending || busy) return;
     if (pending.action === 'remove') {
@@ -176,6 +191,7 @@ export function MemoryView({ active, layout }: { active: boolean; layout: 'dock'
                   onYes={() => void confirm()}
                   onNo={() => setPending(null)}
                   onChange={change}
+                  onNames={setNames}
                 />
               ))}
             </div>
@@ -240,7 +256,7 @@ function RestorePanel({ busy, note, onRestored, onError }: { busy: boolean; note
 
 type PhotoAction = { action: 'remove' | 'move'; ids: string[] } | null;
 
-function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange }: {
+function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange, onNames }: {
   card: MemoryCard;
   people: MemoryResponse['library'];
   pending: 'forget' | 'remove' | 'clear' | null;
@@ -249,8 +265,15 @@ function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange 
   onYes(): void;
   onNo(): void;
   onChange(route: string, body: unknown): Promise<boolean>;
+  onNames(key: string, names: string[]): Promise<boolean>;
 }): JSX.Element {
   const title = card.name ?? 'Unknown visitor';
+  const [editingNames, setEditingNames] = useState(false);
+  const [namesDraft, setNamesDraft] = useState('');
+  const saveNames = async () => {
+    const names = namesDraft.split(',').map((name) => name.trim()).filter(Boolean);
+    if (await onNames(card.key, names)) setEditingNames(false);
+  };
   const flagged = card.library.filter((entry) => entry.flag);
   const [curating, setCurating] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -312,7 +335,18 @@ function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange 
       </div>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h3 className="memory-name">{title}</h3>
-        {card.names.length > 1 && <span className="text-slate-400">also {card.names.filter((name) => name !== card.name).join(', ')}</span>}
+        {card.seenTonight && card.names.length > 1 && (
+          <span className="memory-aliases text-slate-400" aria-label="Other names tonight">
+            also
+            {card.names.filter((name) => name !== card.name).map((name) => (
+              <span key={name} className="memory-alias">
+                {name}
+                <button type="button" className="memory-alias-x" disabled={busy} aria-label={`Take the name ${name} off`} title={`Take "${name}" off (it stays off)`} onClick={() => void onNames(card.key, card.names.filter((each) => each !== name))}>×</button>
+              </span>
+            ))}
+          </span>
+        )}
+        {!card.seenTonight && card.names.length > 1 && <span className="text-slate-400">also {card.names.filter((name) => name !== card.name).join(', ')}</span>}
         {card.inView && <span className="memory-badge memory-badge-live">in view, {POSITION_WORDS[card.inView]}</span>}
         {card.enrolled && <span className="memory-badge">face library · {card.library.length} sample{card.library.length === 1 ? '' : 's'}</span>}
         {flagged.length > 0 && <span className="memory-badge memory-badge-flag">{flagged.length} photo{flagged.length === 1 ? '' : 's'} to check</span>}
@@ -384,6 +418,17 @@ function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange 
         </div>
       )}
 
+      {editingNames && (
+        <form className="memory-names-edit" onSubmit={(event) => { event.preventDefault(); void saveNames(); }}>
+          <label className="text-slate-400" htmlFor={`names-${card.key}`}>Names tonight, first is the one used, commas between (a name taken off stays off):</label>
+          <input id={`names-${card.key}`} className="memory-names-input" value={namesDraft} onChange={(event) => setNamesDraft(event.target.value)} autoFocus />
+          <div className="flex gap-2">
+            <button type="submit" className="button button-compact" disabled={busy}>Save names</button>
+            <button type="button" className="button button-compact button-secondary" onClick={() => setEditingNames(false)}>Cancel</button>
+          </div>
+        </form>
+      )}
+
       {pending === 'forget' || pending === 'remove' ? (
         <ConfirmRow
           question={pending === 'forget' ? forgetText(card) : removePersonText(card)}
@@ -399,6 +444,7 @@ function PersonCard({ card, people, pending, busy, onAsk, onYes, onNo, onChange 
               {curating ? 'Done with photos' : flagged.length > 0 ? `Check photos (${flagged.length} flagged)` : 'Edit photos'}
             </button>
           )}
+          {card.seenTonight && <button type="button" className="button button-compact button-secondary" aria-expanded={editingNames} onClick={() => { setNamesDraft(card.names.join(', ')); setEditingNames(!editingNames); }}>Edit names</button>}
           {card.seenTonight && <button type="button" className="button button-compact button-secondary" onClick={() => onAsk('forget')}>Forget tonight</button>}
           {card.enrolled && <button type="button" className="button button-compact button-danger" onClick={() => onAsk('remove')}>Remove from face library</button>}
         </div>

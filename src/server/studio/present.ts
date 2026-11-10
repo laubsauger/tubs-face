@@ -142,7 +142,7 @@ export function presentContext(r: PresentRequest): string {
   // and between the lines they went back to roasting. Each line now says where they are, what to do and
   // where they go next.
   if (r.kind === 'gather') {
-    return `${TOUR} You two are starting a guided tour: a walk through Alan Watts's life in pictures from his archive, hung through the studio's windows, ${r.of} stops${r.next ? `, starting here at the ${r.where} and then on to the ${r.next}` : ''}. Tubs holds up his little tour-guide flag. Tubs: open the tour like a city tour guide, your way, in two or three short sentences: welcome them, say what the tour is, and tell them to gather round here and stay close to the flag. Small may add one line. Do not describe a picture yet.`;
+    return `${TOUR} You two are starting a guided tour: a walk through Alan Watts's life in pictures from his archive, hung through the studio's windows, ${r.of} stops${r.next ? `, starting here at the ${r.where} and then on to the ${r.next}` : ''}. Tubs holds up his little tour-guide flag. Tubs: open the tour like a city tour guide, your way, quickly, in one or two short sentences: welcome them, say who you two are and what the tour is, and tell them to gather round and stay close to the flag. The first picture comes right after, so keep it brief. Small may add one quick line. Do not describe a picture yet.`;
   }
   if (r.kind === 'move') {
     return r.next

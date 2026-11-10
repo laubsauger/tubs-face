@@ -1,7 +1,7 @@
 import { runtimeConfig } from '../config/runtime.js';
 import { parseVisionSource } from '../../shared/contracts/studio.js';
 import { studioSettings } from '../studio/state.js';
-import { STUDIO_PERSONA_LINE, studioContextLines } from '../studio/context.js';
+import { STUDIO_PERSONA_LINE, studioContextLines, studioRole } from '../studio/context.js';
 import { loadSystemPrompt } from '../persona/index.js';
 import { memoryContext } from './field-notes.js';
 
@@ -158,8 +158,14 @@ function studioContextBlock(): string {
   return `\n\n[System Info] IN THE STUDIO:\n${STUDIO_PERSONA_LINE}${lines.length ? `\n${lines.join('\n')}` : ''}`;
 }
 
+/** Tonight's role (the gallery night: guides), before everything else, in studio mode. */
+function withRole(prompt: string): string {
+  const role = studioSettings.enabled ? studioRole() : null;
+  return role ? `${role}\n\n${prompt}` : prompt;
+}
+
 export function buildAssistantSystemInstruction(visualContextText?: string): string {
-  let prompt = renderPersonaPrompt('single', `- ${OUTPUT_PROTOCOL.join('\n- ')}`, Boolean(visualContextText));
+  let prompt = withRole(renderPersonaPrompt('single', `- ${OUTPUT_PROTOCOL.join('\n- ')}`, Boolean(visualContextText)));
   prompt += studioContextBlock();
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;
@@ -168,7 +174,7 @@ export function buildAssistantSystemInstruction(visualContextText?: string): str
 }
 
 export function buildDualHeadSystemInstruction(visualContextText?: string): string {
-  let prompt = renderPersonaPrompt('dual', DUAL_HEAD_OUTPUT_RULES.join('\n'), Boolean(visualContextText));
+  let prompt = withRole(renderPersonaPrompt('dual', DUAL_HEAD_OUTPUT_RULES.join('\n'), Boolean(visualContextText)));
   prompt += studioContextBlock();
   if (visualContextText) {
     prompt += `\n\n[System Info] BACKGROUND VISUAL CONTEXT:\n${visualContextText}`;

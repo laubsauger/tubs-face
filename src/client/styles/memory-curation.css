@@ -165,3 +165,51 @@
   align-items: center;
   gap: 8px;
 }
+
+/* Tonight's other names on a card, each with a way to take it off; the names editor. */
+.memory-aliases {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.memory-alias {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 2px 0 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #cbd5e1;
+}
+
+.memory-alias-x {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 0 4px;
+  font: inherit;
+  line-height: 1.2;
+}
+
+.memory-alias-x:hover:not(:disabled) {
+  color: #fda4af;
+}
+
+.memory-names-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.memory-names-input {
+  width: 100%;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.8);
+  color: #e5eefc;
+  font: inherit;
+}

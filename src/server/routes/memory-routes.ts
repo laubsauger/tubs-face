@@ -9,6 +9,7 @@ import type { ErrorResponse } from '../../shared/contracts/http.js';
 import type {
   MemoryForgetRequest,
   MemoryLibraryChangeResponse,
+  MemoryNamesRequest,
   MemoryLibraryRemoveRequest,
   MemoryLibraryUndoRequest,
   MemoryResponse,
@@ -17,7 +18,7 @@ import type {
 } from '../../shared/contracts/memory.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendJson } from '../http/response.js';
-import { clearTonight, forgetPeople, tonightsPeople } from '../assistant/field-notes.js';
+import { clearTonight, forgetPeople, setNames, tonightsPeople } from '../assistant/field-notes.js';
 import { loadRelationships } from '../assistant/relationships.js';
 import { runtimeConfig } from '../config/runtime.js';
 import { backupDiff, listBackups, moveFaces, readFaceLibrary, removeFaces, removePerson, restoreBackup, undoLibraryChange } from '../faces/library.js';
@@ -111,6 +112,20 @@ export async function handleMemoryRoute(request: IncomingMessage, response: Serv
         return true;
       }
       sendJson(response, 200, { ok: true, forgotten: forgetPeople(ids) });
+      return true;
+    }
+    if (path === '/memory/names') {
+      const { key, names } = await readJsonBody<Partial<MemoryNamesRequest>>(request);
+      const ids = idsFor(typeof key === 'string' ? key : '');
+      if (ids.length === 0) {
+        sendJson(response, 404, { error: 'Nobody by that key tonight' } satisfies ErrorResponse);
+        return true;
+      }
+      if (!Array.isArray(names) || !names.every((name) => typeof name === 'string')) {
+        sendJson(response, 400, { error: 'names: a list of names' } satisfies ErrorResponse);
+        return true;
+      }
+      sendJson(response, 200, { ok: true, changed: setNames(ids, names) });
       return true;
     }
     if (path === '/memory/library/remove') {

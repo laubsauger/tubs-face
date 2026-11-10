@@ -6,7 +6,7 @@ import { captureTurnTrace } from '../observability/langfuse.js';
 import { noteReplyEmoji, noteReplyLines } from './variety.js';
 import type { SpokenLine } from './bits.js';
 import { forgetConversation } from './context.js';
-import { studioGroupShow, studioTour } from '../studio/context.js';
+import { onGalleryNightStart, studioGroupShow, studioTour } from '../studio/context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 import { noteHeard } from '../studio/pulse.js';
@@ -20,6 +20,10 @@ import { headsQuiet } from './heads.js';
  */
 
 type Broadcast = (message: WsServerMessage) => void;
+
+// The gallery night begins: the conversation so far (the roasting before it) is let go, so the guides
+// start fresh. Tonight's field notes stay.
+onGalleryNightStart(() => { forgetConversation(); console.log('[turn] gallery night: conversation started fresh'); });
 
 /** After a reply, follow-up speech within this window needs no wake word. */
 export const CONVERSATION_WINDOW_MS = 45_000;

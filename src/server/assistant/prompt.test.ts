@@ -88,6 +88,49 @@ describe('system instructions built from the persona template', () => {
 });
 
 // In the studio the characters know where they are and talk about it in places.
+describe('the gallery night in the system prompt', () => {
+  // Seen live: on the tour the heads roasted the guests ("your red lighting scheme is complete shit"),
+  // the gallery's lines coming last, after a persona that says to roast visitors. Tonight's role comes
+  // first and overrides it; on other nights it is not there.
+  it('puts the guides\' role before everything else while the gallery night is on, and only then', async () => {
+    const { studioSettings } = await import('../studio/state.js');
+    const { noteStudioContext, forgetStudioContext } = await import('../studio/context.js');
+    studioSettings.enabled = true;
+    try {
+      noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: 1, gallery: { showing: [{ where: 'Book', here: true, pictures: [{ title: 'Watts at the sea', at: 'middle' }] }] } });
+      for (const build of [buildDualHeadSystemInstruction, buildAssistantSystemInstruction]) {
+        const prompt = build();
+        expect(prompt.startsWith('# TONIGHT FIRST: YOU ARE THE GALLERY\'S GUIDES')).toBe(true);
+        expect(prompt).toContain('where it says to roast, punch at or undercut the visitors, tonight you guide them instead');
+        expect(prompt.indexOf('TONIGHT FIRST')).toBeLessThan(prompt.indexOf('# ROLE'));
+      }
+      noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: 2 });
+      expect(buildDualHeadSystemInstruction()).not.toContain('TONIGHT FIRST');
+    } finally {
+      studioSettings.enabled = false;
+      forgetStudioContext();
+    }
+  });
+
+  it('starts the conversation fresh when the gallery night begins, once', async () => {
+    const { noteStudioContext, forgetStudioContext } = await import('../studio/context.js');
+    const { pushHistory, recentModelReplies } = await import('./context.js');
+    await import('./turns.js');   // it registers the fresh start
+    forgetStudioContext();
+    pushHistory('user', 'nice lamp');
+    pushHistory('model', 'Your lamp is a crime scene.');
+    expect(recentModelReplies(5)).toHaveLength(1);
+    const night = { reason: 'change', heads: {}, people: [], reference: null, gallery: { showing: [{ where: 'Book', pictures: [{ title: 'x' }] }] } } as const;
+    noteStudioContext({ ...night, ts: 1 }, 1000);
+    expect(recentModelReplies(5)).toHaveLength(0);
+    pushHistory('user', 'who is that');
+    pushHistory('model', 'Young Alan.');
+    noteStudioContext({ ...night, ts: 2 }, 2000);
+    expect(recentModelReplies(5)).toHaveLength(1);   // the night goes on: kept
+    forgetStudioContext();
+  });
+});
+
 describe('studio context in the system prompt', () => {
   it('is there in studio mode, next to what the camera sees, and not otherwise', async () => {
     const { studioSettings } = await import('../studio/state.js');

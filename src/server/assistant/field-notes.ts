@@ -54,7 +54,12 @@ interface PersonRecord {
   askedName: boolean;
   /** Their face when first snapshotted tonight (memory only, like the notes). */
   thumbnail: string | null;
+  /** Names the operator took off them: the face tracker does not put these back (a name told in conversation does). */
+  dropped?: string[];
 }
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+const droppedFrom = (record: PersonRecord | undefined, name: string) => !!record?.dropped?.some((each) => sameName(each, name));
 
 interface QuoteRecord {
   personId: string;
@@ -182,7 +187,8 @@ function adoptByName(person: PersonInView, now: number): void {
     if (id === person.id || id === ANONYMOUS || id === GROUP || here.has(id)) continue;
     if (!old.names.some((name) => names.has(name.trim().toLowerCase()))) continue;
     const record = recordFor(person.id, now);
-    for (const name of old.names) if (!record.names.includes(name)) record.names.push(name);
+    for (const name of old.names) if (!record.names.includes(name) && !droppedFrom(record, name)) record.names.push(name);
+    for (const name of old.dropped ?? []) if (!droppedFrom(record, name)) (record.dropped ??= []).push(name);
     addFacts(record, old.notes.join(', '));
     record.firstSeenAt = Math.min(record.firstSeenAt, old.firstSeenAt);
     record.turns += old.turns;
@@ -207,15 +213,15 @@ export function setPeople(people: PersonInView[], now = Date.now()): void {
     record.lastSeenAt = now;
     record.snapshots = person.snapshots ?? 0;
     if (person.thumbnail && !record.thumbnail) record.thumbnail = person.thumbnail;
-    // Names from the tracker come from the face library.
+    // Names from the tracker come from the face library; not those the operator took off them.
     if (person.names.length > 0) record.enrolled = true;
-    for (const name of person.names) if (!record.names.includes(name)) record.names.push(name);
+    for (const name of person.names) if (!record.names.includes(name) && !droppedFrom(record, name)) record.names.push(name);
   }
   if (people.length === 0 && inView.length > 0) {
     lastGroup = inView;
     groupLeftAt = now;
   }
-  inView = people.map((person) => ({ id: person.id, names: person.names, position: person.position }));
+  inView = people.map((person) => ({ id: person.id, names: person.names.filter((name) => !droppedFrom(records.get(person.id), name)), position: person.position }));
   changeListener?.();
   tonightListener?.(false);
 }
@@ -274,6 +280,7 @@ export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
         record.names.unshift(tag.text);
         changed = true;
       }
+      if (record.dropped) record.dropped = record.dropped.filter((name) => !sameName(name, tag.text));
       // Told their name with snapshots ready: remember their face from now on.
       if (!record.enrolled && record.snapshots > 0) {
         record.enrolled = true;
@@ -448,6 +455,37 @@ export function forgetPeople(ids: readonly string[]): number {
   return forgotten;
 }
 
+/**
+ * The operator sets the names tonight's records go by (first is the one used). Seen live: one visitor
+ * collected "Flo, Minos, Cynthia" as the face tracker named them in turn, and nothing could take a
+ * wrong one off. A name taken off stays off: the tracker does not put it back on them. Returns how
+ * many records changed.
+ */
+export function setNames(ids: readonly string[], names: readonly string[]): number {
+  const wanted: string[] = [];
+  for (const raw of names) {
+    const name = clean(String(raw)).slice(0, 40);
+    if (name && !wanted.some((each) => sameName(each, name))) wanted.push(name);
+  }
+  let changed = 0;
+  for (const id of ids) {
+    const record = records.get(id);
+    if (!record || id === ANONYMOUS || id === GROUP) continue;
+    const gone = record.names.filter((name) => !wanted.some((each) => sameName(each, name)));
+    const dropped = [...(record.dropped ?? []).filter((name) => !wanted.some((each) => sameName(each, name))), ...gone];
+    record.names = wanted.slice(0, 8);
+    record.dropped = dropped.filter((name, i) => dropped.findIndex((each) => sameName(each, name)) === i).slice(-20);
+    const here = inView.find((person) => person.id === id);
+    if (here) here.names = here.names.filter((name) => !droppedFrom(record, name));
+    changed += 1;
+  }
+  if (changed > 0) {
+    changeListener?.();
+    tonightListener?.(true);
+  }
+  return changed;
+}
+
 /** The operator clears tonight's notes: everything Tubs noted, about anyone. */
 export function clearTonight(): void {
   records.clear();
@@ -497,6 +535,7 @@ export function importTonight(data: unknown, now = Date.now()): number {
       turns: isNumber(person.turns) ? person.turns : 0,
       askedName: person.askedName === true,
       thumbnail: typeof person.thumbnail === 'string' ? person.thumbnail : null,
+      ...(isStrings(person.dropped) && person.dropped.length ? { dropped: person.dropped } : {}),
     });
     restored += 1;
   }

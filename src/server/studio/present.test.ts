@@ -77,7 +77,9 @@ describe('studio present (the gallery tour)', () => {
   it('says each line of the guided tour: gather, present, floor, move', () => {
     const gather = presentContext({ kind: 'gather', where: 'Mirror', stop: 1, of: 5, first: true, next: 'Big Wall' });
     expect(gather).toContain('starting here at the Mirror');
-    expect(gather).toContain('tell them to gather round here and stay close to the flag');   // Tubs leads, seen live: nobody did
+    expect(gather).toContain('tell them to gather round and stay close to the flag');   // Tubs leads, seen live: nobody did
+    expect(gather).toContain('quickly, in one or two short sentences');   // asked for: introduce themselves quickly, then get going
+    expect(gather).toContain('who you two are');
     expect(gather).toContain('tour-guide flag');
     expect(gather).not.toContain('What it shows');
     const shown = presentContext({ ...req, kind: 'present' });
