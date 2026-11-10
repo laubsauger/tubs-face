@@ -124,6 +124,27 @@ describe('turns', () => {
     expect(service.runProactiveTurn).toHaveBeenLastCalledWith('Someone new is nearby.', ws.broadcast);
   });
 
+  // Seen live: on the gallery tour every newcomer got a greeting and every new face wiped the
+  // conversation, so the guide kept losing the thread. While the director says a tour runs, neither.
+  it('on the gallery tour: no arrival greetings, and a new face does not wipe the conversation', async () => {
+    const { noteStudioContext, forgetStudioContext } = await import('../studio/context.js');
+    const ws = collect();
+    vi.setSystemTime(Date.now() + 30 * APPEARANCE_GREETING_COOLDOWN_MS); // clear of the greetings in earlier tests
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: Date.now(), tour: { where: 'Book', step: 'present', stop: 2, of: 5, next: 'Immersive' } });
+    scheduleAppearanceGreeting('Someone new is nearby.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+    const log = vi.spyOn(console, 'log');
+    onNewVisitor();
+    expect(log.mock.calls.some((c) => String(c[0]).includes('conversation kept (gallery tour)'))).toBe(true);
+    log.mockRestore();
+    // the tour over (a context without it): greetings again
+    forgetStudioContext();
+    scheduleAppearanceGreeting('Someone new is nearby.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(service.runProactiveTurn).toHaveBeenCalledTimes(1);
+  });
+
   it('clears the thinking face when a proactive line produces nothing', async () => {
     const ws = collect();
     service.runProactiveTurn.mockResolvedValueOnce(null);
