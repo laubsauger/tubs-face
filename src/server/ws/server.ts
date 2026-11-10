@@ -23,6 +23,8 @@ import { runtimeConfig, toConfigResponse } from '../config/runtime.js';
 import { interruptAssistantTurns } from '../assistant/service.js';
 import { markLastReplyCutOff } from '../assistant/context.js';
 import { fieldNotesSnapshot, onEnrollRequest, onFieldNotesChange, setPeople } from '../assistant/field-notes.js';
+import { lookAtGalleryPictures } from '../studio/gallery-vision.js';
+import { visionService } from '../assistant/vision.js';
 import { appearancePrompt, cancelAppearanceGreeting, onNewVisitor, onVisitorLeft, scheduleAppearanceGreeting, startProactiveTurn, startUserTurn } from '../assistant/turns.js';
 import { openTtsStream } from '../tts/stream.js';
 import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings } from '../studio/state.js';
@@ -423,6 +425,11 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.gallery && Array.isArray(message.gallery.showing) ? { gallery: message.gallery } : {}),
         ts: message.ts,
       });
+      // vision on: the heads take their own look at the picture pulled up and the ones where they stand
+      lookAtGalleryPictures([
+        ...(message.tour?.piece ? [message.tour.piece] : []),
+        ...(message.gallery?.showing ?? []).filter((w) => w.here).flatMap((w) => w.pictures),
+      ], { describe: (dataUrl, ask) => visionService.describe(dataUrl, ask), fetch, now: Date.now });
       return;
     case 'studio_caption':
       // Only from the page that plays this head's voice: its clock is the stream's.

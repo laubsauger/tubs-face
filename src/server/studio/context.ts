@@ -5,6 +5,8 @@
 // night's theme) arrives once per connection and on a theme change and stays
 // as standing context; the rest is dropped from the prompt once it is stale.
 
+import { seenInPicture } from './gallery-vision.js';
+
 export const STUDIO_CONTEXT_STALE_MS = 10_000;
 
 export type Relation = 'here' | 'same-room' | 'next-room' | 'far';
@@ -51,7 +53,7 @@ export interface StudioContextMessage {
 }
 
 export interface StudioGallery {
-  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string }> }>;
+  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string; img?: string }> }>;
 }
 
 export interface StudioTour {
@@ -60,7 +62,7 @@ export interface StudioTour {
   stop: number;
   of: number;
   next: string | null;
-  piece?: { title: string; date?: string; by?: string; text?: string };
+  piece?: { title: string; date?: string; by?: string; text?: string; img?: string };
 }
 
 /** the director says the tour still runs at least every 20 s; after this long without word it counts as over (ms) */
@@ -105,7 +107,7 @@ export function renderGallery(g: StudioGallery | null): string[] {
     'When a visitor says "this picture", "the image", "that photo" or asks what is on the wall or on the screen, they mean these pictures, never your camera. Say only what the archive supports; never invent dates, places or names.',
   ];
   for (const w of g.showing.filter((x) => x.here)) {
-    lines.push(`Here where you are, at the ${w.where}: ${w.pictures.map((p) => `${pic(p)}${p.text ? `: ${p.text}` : ''}`).join(' | ')}`);
+    lines.push(`Here where you are, at the ${w.where}: ${w.pictures.map((p) => { const own = seenInPicture(p.img); return `${pic(p)}${p.text ? `: ${p.text}` : ''}${own ? ` (what you see in it yourself: ${own})` : ''}`; }).join(' | ')}`);
   }
   const elsewhere = g.showing.filter((x) => !x.here).slice(0, 14);
   if (elsewhere.length) lines.push(`Elsewhere now: ${elsewhere.map((w) => `${w.where}: ${w.pictures.map(pic).join(', ')}`).join('; ')}.`);
@@ -126,7 +128,8 @@ export function renderTour(t: StudioTour | null): string[] {
   const lines = [`You two are guiding a tour through a gallery of pictures from the Alan Watts archive; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`];
   const p = t.piece;
   if (p) {
-    lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` What it shows: ${p.text}` : ''} A visitor's question now is most likely about it; say only what the archive supports.`);
+    const own = seenInPicture(p.img);
+    lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` The archive says: ${p.text}` : ''}${own ? ` What you see in it yourself: ${own}` : ''} A visitor's question now is most likely about it; names and dates only from the archive.`);
   }
   return lines;
 }
