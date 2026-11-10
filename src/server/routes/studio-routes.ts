@@ -11,7 +11,9 @@ import { listStudioSources } from '../studio/sources.js';
 import { notePulsePoll } from '../studio/live.js';
 import { studioPulse } from '../studio/pulse.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
-import { syncStudioWatch } from '../ws/server.js';
+import { broadcast, syncStudioWatch } from '../ws/server.js';
+import { poke, reasonOf } from '../studio/poke.js';
+import { startProactiveTurn } from '../assistant/turns.js';
 import { listenerFaceWorker, studioSettings, toStudioResponse } from '../studio/state.js';
 import { libraryPeopleCount } from '../faces/library.js';
 import { lastObservation } from '../studio/faces.js';
@@ -32,6 +34,17 @@ const SNAPSHOT_TIMEOUT_MS = 4000;
 const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
 
 export async function handleStudioRoute(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
+  // POST /studio/poke {reason?}: a physical cue (the lever) wakes both heads and has them react.
+  if (request.method === 'POST' && url.pathname === '/studio/poke') {
+    if (!isLocalNetworkAddress(request.socket.remoteAddress)) {
+      sendJson(response, 403, { error: 'Poking Tubs is for the local network only' } satisfies ErrorResponse);
+      return true;
+    }
+    const body = await readJsonBody<unknown>(request).catch(() => ({}));
+    poke(reasonOf(body), { broadcast, noteAwake: () => visionService.noteSleeping(false), startProactiveTurn });
+    sendJson(response, 200, { ok: true });
+    return true;
+  }
   if (url.pathname === '/studio/snapshot' && request.method === 'GET') {
     await sendSnapshot(response);
     return true;
