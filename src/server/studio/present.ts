@@ -186,7 +186,16 @@ export function takeWaitingLine(heard: string): string | null {
 
 /** what a visitor just said, folded into a line of the show */
 export function heardLine(heard: string): string {
-  return `Just now a visitor said: "${heard.slice(0, 300)}". If they said it to you, answer it in a few words first, then go on with the line above. If they were talking among themselves, do not answer it; just go on.`;
+  return `Just now a visitor said: "${heard.slice(0, 300)}". If they said it to you, answer it in a few words first, then go on with the line above; if they ask to move on or to get going, lead on instead (with "lead": "next"). If they were talking among themselves, do not answer it; just go on.`;
+}
+
+/** The heads led on (studio/lead.ts): a line of the stop they left, still waiting for quiet, is stale. */
+export function dropWaitingLine(): void {
+  const w = waiting;
+  if (!w) return;
+  clearTimeout(w.timer);
+  waiting = null;
+  w.reject(new Error('the heads led on'));
 }
 
 /**

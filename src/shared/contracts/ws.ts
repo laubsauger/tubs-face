@@ -565,6 +565,17 @@ export type WsStudioServerMessage =
   | WsFaceObservationServerMessage;
 
 /** The studio listener's live state, relayed to dashboards on the local network while studio mode is on. */
+/**
+ * Studio: on the gallery tour the heads decided to lead the group on now (their reply carried
+ * "lead": "next"); the director (sentient-studio contract §8) moves the tour on: to the picture while
+ * they gather, else on to the next stop. Additive.
+ */
+export interface WsStudioLeadServerMessage {
+  type: 'studio_lead';
+  to: 'next';
+  ts: number;
+}
+
 export interface WsStudioLiveServerMessage {
   type: 'studio_live';
   actor: StudioActor;
@@ -646,6 +657,7 @@ export type WsServerMessage =
   | WsHeadSpeechStateServerMessage
   | WsStudioServerMessage
   | WsTtsRenderingServerMessage
+  | WsStudioLeadServerMessage
   | WsStudioLiveServerMessage
   | WsStudioWatchServerMessage
   | WsStudioFrameServerMessage

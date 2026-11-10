@@ -1,6 +1,7 @@
 // Two-head replies: one LLM call returns a beat script for Main and Small.
 
 import { recordFieldNotes } from './field-notes.js';
+import { noteReplyLead } from '../studio/lead.js';
 import { studioSettings } from '../studio/state.js';
 import { calloutLine, freshStudioContext, studioGroupShow } from '../studio/context.js';
 import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
@@ -172,6 +173,7 @@ export async function generateDualHeadReply(userText: string, turnTimer?: TurnTi
     endLlmSpan?.();
     logRawModelOutput('dual', result.text);
     recordFieldNotes(result.text);
+    noteReplyLead(result.text);
 
     let script = parseDualHeadScript(result.text);
     if (!script) {
@@ -277,6 +279,7 @@ export async function generateDualHeadProactiveReply(context: string): Promise<D
     });
     logRawModelOutput('dual-proactive', result.text);
     recordFieldNotes(result.text);
+    noteReplyLead(result.text);
 
     let script = parseDualHeadScript(result.text);
     if (!script) {

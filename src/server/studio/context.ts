@@ -214,6 +214,8 @@ export function renderTour(t: StudioTour | null): string[] {
     `You two are guiding a tour through a gallery of pictures from the Alan Watts archive, a walk through his life; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`,
     // Seen live: between the tour's own lines the heads went back to roasting and nobody led.
     `You lead this tour. Whatever a visitor says, answer in a sentence or two, then lead: ${tourLead(t)} Never leave them wondering what to do. Tonight you are their hosts: tease lightly, never belittle a guest.`,
+    // Seen live: asked to move on, Small said "Follow the flag to the book wall!" and nothing moved.
+    `You decide when the group moves on. When you lead them on now (a visitor asks to move on or to get going, or you are done with this picture and say so), add "lead": "next" to your reply object, beside "beats", and say where you go: only then do you and the flag actually move${t.step === 'gather' || t.step === 'arrive' || t.step === 'walk' ? ' (while the group gathers, it brings up the first picture)' : ''}. Never say you are moving on without it.`,
   ];
   const p = t.piece;
   if (p) {
