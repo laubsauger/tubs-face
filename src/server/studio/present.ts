@@ -136,12 +136,15 @@ function screeningContext(r: PresentRequest): string {
 /** What the turn is told: where they are, the picture if any, and which line of the tour to say. */
 export function presentContext(r: PresentRequest): string {
   if (r.show === 'screening') return screeningContext(r);
+  // Seen live: the lines came, but the heads did not lead: nobody knew what the tour was or what to do,
+  // and between the lines they went back to roasting. Each line now says where they are, what to do and
+  // where they go next.
   if (r.kind === 'gather') {
-    return `${TOUR} You two are starting a guided tour through a gallery of pictures from the Alan Watts archive, hung in a row through the studio, ${r.of} stops. Tubs holds up a little tour-guide flag. Tubs: call the visitors to gather round here at the ${r.where}, warmly, in one or two short sentences, the way a city tour guide would, your way. Do not describe a picture yet.`;
+    return `${TOUR} You two are starting a guided tour: a walk through Alan Watts's life in pictures from his archive, hung through the studio's windows, ${r.of} stops${r.next ? `, starting here at the ${r.where} and then on to the ${r.next}` : ''}. Tubs holds up his little tour-guide flag. Tubs: open the tour like a city tour guide, your way, in two or three short sentences: welcome them, say what the tour is, and tell them to gather round here and stay close to the flag. Small may add one line. Do not describe a picture yet.`;
   }
   if (r.kind === 'move') {
     return r.next
-      ? `${TOUR} Time to move on from the ${r.where}. Tubs raises his tour-guide flag and invites everyone to follow it to the ${r.next} (the next stop), in one short line, maybe a teaser. Small may add a quick quip.`
+      ? `${TOUR} You are done at the ${r.where} (stop ${r.stop} of ${r.of}). Tubs raises his tour-guide flag and leads: tell everyone to follow it to the ${r.next}, the next stop, and give them a reason to come (the next chapter of Watts's life waits there), in one or two short lines. Small may add a quick quip.`
       : `${TOUR} That was the last stop of the tour. Tubs thanks the visitors in one short line.`;
   }
   const p = r.piece ?? { title: 'the picture' };
