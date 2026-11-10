@@ -3,12 +3,14 @@
 // about it. One ordinary proactive turn, so Small may chime in. It never cuts off a reply someone
 // is waiting for: while a reply is being made or a head talks, the picture waits (a proactive line
 // would be dropped then, and the stop stood silent), and it starts at the first quiet moment.
-// Nothing reruns or rewrites the reply.
+// Nothing reruns or rewrites the reply. A visitor who speaks while a line waits gets it at once,
+// with what they said folded in (takeWaitingLine): seen live, the room talked on, every word got
+// its own reply, no quiet moment came, and the tour stood at the Gold Frame for minutes.
 
 import type { PokeDeps } from './poke.js';
 
-/** a picture waits this long for a quiet moment at most (ms), checking this often */
-export const PRESENT_WAIT_MAX_MS = 60_000;
+/** a line waits this long for a quiet moment at most (ms), checking this often; then the tour goes on without it */
+export const PRESENT_WAIT_MAX_MS = 30_000;
 const PRESENT_POLL_MS = 250;
 
 export interface PresentDeps extends PokeDeps {
@@ -167,7 +169,25 @@ export function presentContext(r: PresentRequest): string {
   return lines.join('\n');
 }
 
-let waiting: { timer: ReturnType<typeof setTimeout>; reject: (err: Error) => void } | null = null;
+let waiting: { timer: ReturnType<typeof setTimeout>; reject: (err: Error) => void; take?: (heard: string) => string } | null = null;
+
+/**
+ * A visitor spoke while a line of the show waits for quiet: the line goes now, as the reply to them.
+ * Returns the turn's context (the line, then what they said), and tells the director the line has
+ * started; null when no line waits.
+ */
+export function takeWaitingLine(heard: string): string | null {
+  const w = waiting;
+  if (!w?.take) return null;
+  clearTimeout(w.timer);
+  waiting = null;
+  return w.take(heard);
+}
+
+/** what a visitor just said, folded into a line of the show */
+export function heardLine(heard: string): string {
+  return `Just now a visitor said: "${heard.slice(0, 300)}". If they said it to you, answer it in a few words first, then go on with the line above. If they were talking among themselves, do not answer it; just go on.`;
+}
 
 /**
  * Wake both heads and start the turn about the picture at the first quiet moment. Resolves once the
@@ -180,10 +200,11 @@ export function present(r: PresentRequest, deps: PresentDeps): Promise<void> {
   if (waiting) { clearTimeout(waiting.timer); waiting.reject(new Error('a newer picture replaced it')); waiting = null; }
   const since = Date.now();
   return new Promise((resolve, reject) => {
+    const take = (heard: string) => { resolve(); return `${presentContext(r)}\n${heardLine(heard)}`; };
     const check = () => {
       if (deps.busy()) {
         if (Date.now() - since > PRESENT_WAIT_MAX_MS) { waiting = null; reject(new Error('the heads were busy the whole time')); return; }
-        waiting = { timer: setTimeout(check, PRESENT_POLL_MS), reject };
+        waiting = { timer: setTimeout(check, PRESENT_POLL_MS), reject, take };
         return;
       }
       waiting = null;
