@@ -11,7 +11,7 @@ const MEMORY: MemoryResponse = {
   cards: [
     {
       key: 'name:flo', name: 'Flo', names: ['Flo'], enrolled: true,
-      library: Array.from({ length: 8 }, (_, i) => ({ id: `flo${i}`, createdAt: i, photo: `/memory/photo/flo${i}` })),
+      library: Array.from({ length: 8 }, (_, i) => ({ id: `flo${i}`, createdAt: i, photo: `/memory/photo/flo${i}`, index: i + 1, flag: null })),
       photos: Array.from({ length: 8 }, (_, i) => ({ url: `/memory/photo/flo${i}`, source: 'library' as const, at: i })),
       otherPhotos: [], seenTonight: true, firstSeenAt: Date.now() - 600_000, lastSeenAt: Date.now(), returning: true, turns: 4,
       notes: ['building a robot'], quotes: ['one more track'],
@@ -28,16 +28,35 @@ const MEMORY: MemoryResponse = {
   counts: { tonight: 2, inView: 1, enrolled: 1 },
 };
 
-async function fakeMemoryServer(page: Page): Promise<Array<{ path: string; body: unknown }>> {
+/** Rapha's third photo is nearer Flo's than his own (the audit's flag). */
+const WITH_RAPHA: MemoryResponse = {
+  ...MEMORY,
+  cards: [
+    ...MEMORY.cards,
+    {
+      key: 'name:rapha', name: 'Rapha', names: ['Rapha'], enrolled: true,
+      library: Array.from({ length: 6 }, (_, i) => ({
+        id: `rapha${i + 1}`, createdAt: new Date(2026, 1, 11, 21, 40 + i).getTime(), photo: `/memory/photo/rapha${i + 1}`, index: i + 1,
+        flag: i === 2 ? { looksLike: { name: 'Flo', sim: 0.753 }, unlikeOwn: true, like: { name: 'Flo', sim: 0.753 } } : null,
+      })),
+      photos: Array.from({ length: 6 }, (_, i) => ({ url: `/memory/photo/rapha${i + 1}`, source: 'library' as const, at: i })),
+      otherPhotos: [], seenTonight: false, firstSeenAt: null, lastSeenAt: null, returning: false, turns: 0,
+      notes: [], quotes: [], attitude: null, inView: null,
+    },
+  ],
+  library: [{ name: 'Flo', samples: 8 }, { name: 'Rapha', samples: 6 }, { name: 'Dimi', samples: 10 }],
+};
+
+async function fakeMemoryServer(page: Page, memory: MemoryResponse = MEMORY): Promise<Array<{ path: string; body: unknown }>> {
   const posts: Array<{ path: string; body: unknown }> = [];
   await page.route(/\/memory(\/.*)?$/, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === 'POST') {
       posts.push({ path, body: request.postDataJSON() as unknown });
-      await route.fulfill({ json: { ok: true } });
+      await route.fulfill({ json: path.startsWith('/memory/library/') ? { ok: true, summary: 'Done.', undo: 'u1', until: Date.now() + 60_000 } : { ok: true } });
     } else if (path === '/memory') {
-      await route.fulfill({ json: MEMORY });
+      await route.fulfill({ json: memory });
     } else {
       await route.fulfill({ body: JPEG, contentType: 'image/jpeg' });
     }
@@ -73,7 +92,7 @@ test('a removal needs a second click on the card, and Cancel changes nothing', a
   await page.goto('/?view=memory');
   const flo = page.getByRole('region', { name: 'Flo' });
   await flo.getByRole('button', { name: 'Remove from face library' }).click();
-  await expect(flo).toContainText("Delete Flo's 8 face library samples and photos?");
+  await expect(flo).toContainText('Remove from face library: deletes all 8 face samples of Flo permanently; Tubs stops recognising Flo. Tonight\'s notes stay. It cannot be undone after a minute (a backup is kept).');
   await flo.getByRole('button', { name: 'Cancel' }).click();
   await page.waitForTimeout(200);
   expect(posts).toEqual([]);
@@ -97,4 +116,33 @@ test('the dashboard has it as a Memory tab, and it fits a laptop screen', async 
   const box = await flo.boundingBox();
   expect(box!.x + box!.width).toBeLessThanOrEqual(1280);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1280);
+});
+
+test('a flagged photo shows what it looks like, and moves to that person in two clicks, with an undo', async ({ page }) => {
+  const posts = await fakeMemoryServer(page, WITH_RAPHA);
+  await page.goto('/?view=memory');
+  const rapha = page.getByRole('region', { name: 'Rapha' });
+  await expect(rapha).toContainText('1 photo to check');
+  await rapha.getByRole('button', { name: 'Check photos (1 flagged)' }).click();
+  const third = rapha.locator('[data-sample="rapha3"]');
+  await expect(third).toContainText('looks like Flo · 75%');
+  await expect(third).toContainText('unlike Rapha\'s others');
+  await third.getByRole('button', { name: 'Move Rapha #3 to…' }).click();
+  // The person it resembles is picked already.
+  await expect(rapha.getByRole('combobox')).toHaveValue('Flo');
+  await expect(rapha).toContainText('Move 1 photo from Rapha to Flo (taken 11 Feb 21:42): Tubs matches it as Flo from now on (Flo then has 9); Rapha keeps 5 samples.');
+  await page.waitForTimeout(200);
+  expect(posts).toEqual([]);
+  await rapha.getByRole('button', { name: 'Move to Flo' }).click();
+  await expect.poll(() => posts).toEqual([{ path: '/memory/library/samples/move', body: { ids: ['rapha3'], to: 'Flo' } }]);
+  await page.getByRole('button', { name: /^Undo/ }).click();
+  await expect.poll(() => posts.at(-1)).toEqual({ path: '/memory/library/undo', body: { undo: 'u1' } });
+
+  // Several at once: select two, remove them.
+  await rapha.getByRole('checkbox', { name: 'Select Rapha #1' }).check();
+  await rapha.getByRole('checkbox', { name: 'Select Rapha #2' }).check();
+  await rapha.getByRole('button', { name: 'Remove selected' }).click();
+  await expect(rapha).toContainText('Remove 2 photos of Rapha (taken 11 Feb 21:40 to 11 Feb 21:41)');
+  await rapha.getByRole('button', { name: 'Remove 2 photos' }).click();
+  await expect.poll(() => posts.at(-1)).toEqual({ path: '/memory/library/samples/remove', body: { ids: ['rapha1', 'rapha2'] } });
 });

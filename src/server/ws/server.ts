@@ -30,11 +30,30 @@ import { siteLogin } from '../studio/site-auth.js';
 import { noteStudioContext } from '../studio/context.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 import { isRendering, onRenderingChange } from '../tts/rendering.js';
+import { isLocalNetworkAddress } from '../memory/view.js';
+import { forgetViewer, frameDue, liveGone, liveRelay, noteWatch, pulseLeaseEndsAt, serverFacesRelay, useServerFaces, wantedWatch, watchOf } from '../studio/live.js';
+import { noteHeadSpeaking, studioPulse } from '../studio/pulse.js';
+import type { FaceObservation } from '../../shared/contracts/studio.js';
+import { bindRecognitionHooks, recognizer, serviceAutoEnroll, serviceFaceCall, serviceFaceWorker, serviceLiveFaces } from '../faces/studio-faces.js';
+import type { ListenerEffect } from '../faces/recognition.js';
+import { noteAudioSent, noteHeadSpeaking as noteHeadTalking } from '../assistant/heads.js';
+import { forgetObservation, noteObservation } from '../studio/faces.js';
 
 const clients = new Set<WebSocket>();
 const spectators = new Set<WebSocket>();
 /** Studio face pages (/ws?studio=main|small) and the actor each one shows. */
 const studioPages = new Map<WebSocket, StudioActor>();
+/** Pages that may watch the studio listener (studio_watch): the other pages on the local network. */
+const liveViewers = new Set<WebSocket>();
+/** What the listener was last told to send. */
+let watchSent = { live: false, video: false };
+let watchLeaseTimer: NodeJS.Timeout | null = null;
+let lastPulsePushAt = 0;
+const PULSE_PUSH_MIN_MS = 250;
+/** Dashboards' studio_face_calls waiting for the listener's answer, by the id the listener sees. */
+const faceCalls = new Map<string, { caller: WebSocket; id: string; at: number }>();
+let faceCallSeq = 0;
+const FACE_CALL_TIMEOUT_MS = 30_000;
 /** The page whose camera last reported who is in view; its going away clears recognition. */
 let recognitionSocket: WebSocket | null = null;
 const WS_PATH = '/ws';
@@ -47,8 +66,16 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
   onEnrollRequest((personId, name) => {
     if (!runtimeConfig.autoEnrollEnabled) return;
     console.log(`[faces] auto onboarding: enrolling ${name}`);
-    broadcast({ type: 'enroll_request', personId, name });
+    // The face service's snapshots are on the server; the browser worker's on the listener page.
+    if (recognizer() === 'service') void serviceAutoEnroll(personId, name);
+    else broadcast({ type: 'enroll_request', personId, name });
   });
+  bindRecognitionHooks({
+    apply: applyListenerMessage,
+    publish: publishObservation,
+    facesChanged: () => broadcast({ type: 'faces_changed' }),
+  });
+  useServerFaces(serviceLiveFaces, serviceFaceWorker);
 
   server.on('upgrade', (request, socket, head) => {
     if (!isWebSocketRequest(request)) {
@@ -74,6 +101,9 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     if (studioActor) {
       studioPages.set(socket, studioActor);
       notePageConnection(studioActor, true);
+    } else if (isLocalNetworkAddress(request.socket.remoteAddress)) {
+      // The dashboard connects as a spectator.
+      liveViewers.add(socket);
     }
 
     send(socket, {
@@ -92,6 +122,11 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     if (studioActor || studioSettings.enabled) {
       send(socket, studioActor ? withSiteLogin(studioConfigMessage()) : studioConfigMessage());
     }
+    // The listener sends only what someone watches; it starts out watched by nobody.
+    if (studioActor === 'main') {
+      const wanted = wantedWatch();
+      if (wanted.live || wanted.video) send(socket, wanted);
+    }
     if (isRendering()) send(socket, { type: 'tts_rendering', rendering: true });
 
     socket.on('message', (raw: RawData) => {
@@ -103,8 +138,8 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
           return;
         }
 
-        // Spectators can only send pings
-        if (isSpectator && parsed.type !== 'ping') {
+        // Spectators (the dashboard among them) can only send pings, and say what of the studio listener they watch
+        if (isSpectator && parsed.type !== 'ping' && parsed.type !== 'studio_watch' && parsed.type !== 'studio_face_call') {
           return;
         }
 
@@ -117,13 +152,25 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     socket.on('close', () => {
       clients.delete(socket);
       spectators.delete(socket);
+      if (liveViewers.delete(socket)) {
+        forgetViewer(socket);
+        syncStudioWatch();
+      }
       if (socket === recognitionSocket) {
         recognitionSocket = null;
         forgetRecognised();
       }
       if (studioActor) {
         studioPages.delete(socket);
-        if (![...studioPages.values()].includes(studioActor)) notePageConnection(studioActor, false);
+        if (![...studioPages.values()].includes(studioActor)) {
+          notePageConnection(studioActor, false);
+          if (studioActor === 'main') {
+            // The browser producer's observation goes with its page; the face service's does not.
+            if (recognizer() !== 'service') forgetObservation();
+            sendToWatchers(liveGone(), 'live');
+            failFaceCalls('the studio listener page went away');
+          }
+        }
       }
     });
   });
@@ -137,6 +184,7 @@ function isWebSocketRequest(request: IncomingMessage): boolean {
 }
 
 export function broadcast(message: WsServerMessage): void {
+  if (message.type === 'audio_chunk') noteAudioSent();
   const payload = JSON.stringify(message);
   // The site login goes to the studio face pages only (studio/site-auth.ts).
   const pagePayload = message.type === 'studio_config' ? JSON.stringify(withSiteLogin(message)) : payload;
@@ -164,6 +212,107 @@ function sendToStudioPages(message: WsStudioServerMessage): void {
   }
 }
 
+/** To the dashboards that watch the listener's live state, or its camera. */
+function sendToWatchers(message: WsServerMessage, what: 'live' | 'video'): void {
+  const payload = JSON.stringify(message);
+  for (const viewer of liveViewers) {
+    if (watchOf(viewer)?.[what] && viewer.readyState === viewer.OPEN) viewer.send(payload);
+  }
+}
+
+function listenerPages(): WebSocket[] {
+  return [...studioPages.entries()].filter(([, actor]) => actor === 'main').map(([page]) => page);
+}
+
+/**
+ * Tells the listener page what to send when that changes: its live state while
+ * a dashboard watches or someone polls GET /studio/pulse, its camera while a
+ * dashboard shows it. Called on every watch change and pulse poll.
+ */
+export function syncStudioWatch(now = Date.now()): void {
+  const wanted = wantedWatch(now);
+  if (wanted.live !== watchSent.live || wanted.video !== watchSent.video) {
+    watchSent = { live: wanted.live, video: wanted.video };
+    for (const page of listenerPages()) send(page, wanted);
+  }
+  // A pulse poll's lease runs out without anyone saying so: look again then.
+  if (watchLeaseTimer) clearTimeout(watchLeaseTimer);
+  watchLeaseTimer = null;
+  const leaseLeft = pulseLeaseEndsAt() - now;
+  if (leaseLeft > 0) {
+    watchLeaseTimer = setTimeout(() => syncStudioWatch(), leaseLeft + 10);
+    watchLeaseTimer.unref();
+  }
+}
+
+/**
+ * A frame's faces, from the face service: to the listener page (its sleep and
+ * proactive lines follow who is in view) and the dashboards watching the studio,
+ * with the studio_live relay and the pulse they show.
+ */
+function publishObservation(observation: FaceObservation): void {
+  noteObservation(observation);
+  const payload = JSON.stringify({ type: 'face_observation', observation });
+  for (const page of listenerPages()) {
+    if (page.readyState === page.OPEN) page.send(payload);
+  }
+  for (const viewer of liveViewers) {
+    if (watchOf(viewer)?.live && viewer.readyState === viewer.OPEN) viewer.send(payload);
+  }
+  const relay = serverFacesRelay();
+  if (relay) {
+    sendToWatchers(relay, 'live');
+    pushPulse();
+  }
+}
+
+function pushPulse(force = false): void {
+  const now = Date.now();
+  const watching = [...liveViewers].some((viewer) => watchOf(viewer)?.live);
+  if (watching && (now - lastPulsePushAt >= PULSE_PUSH_MIN_MS || force)) {
+    lastPulsePushAt = now;
+    sendToWatchers({ type: 'studio_pulse', pulse: studioPulse(now) }, 'live');
+  }
+}
+
+/**
+ * What the server does with the listener page's recognition messages; the face
+ * service's frames come here too (faces/recognition.ts), as if a page had sent them.
+ */
+export function applyListenerMessage(message: ListenerEffect): void {
+  switch (message.type) {
+    case 'appearance_frame':
+    case 'camera_frame':
+      // A new visitor is looked at at once; a camera_frame is the periodic refresh (budgeted, docs/vision.md).
+      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'appearance_frame' ? 'appearance' : 'refresh'));
+      if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
+        const names = Array.isArray(message.faces)
+          ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
+          : [];
+        scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
+      }
+      return;
+    case 'proactive':
+      startProactiveTurn(message.context ?? '', broadcast);
+      return;
+    case 'people':
+      setPeople(message.people);
+      noteRecognised(message.people);
+      return;
+    case 'presence':
+      if (!message.present) onVisitorLeft();
+      else if (message.newVisitor) onNewVisitor();
+      return;
+  }
+}
+
+function failFaceCalls(error: string): void {
+  for (const [key, call] of faceCalls) {
+    send(call.caller, { type: 'studio_face_result', id: call.id, ok: false, error });
+    faceCalls.delete(key);
+  }
+}
+
 export function getClientCount(): number {
   return clients.size;
 }
@@ -188,26 +337,15 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'appearance_frame':
     case 'camera_frame':
-      // A new visitor is looked at at once; a camera_frame is the periodic refresh (budgeted, docs/vision.md).
-      void import('../assistant/vision.js').then(m => m.processVisualContext(message.frame, message.type === 'appearance_frame' ? 'appearance' : 'refresh'));
-      if (message.type === 'appearance_frame' && !runtimeConfig.muted) {
-        const names = Array.isArray(message.faces)
-          ? message.faces.map((name) => String(name || '').trim()).filter(Boolean)
-          : [];
-        scheduleAppearanceGreeting(appearancePrompt(names, message.returning === true, message.awayMs), broadcast);
-      }
+    case 'people':
+      // While the face service recognises, a page's own face worker (one left running) must not count twice.
+      if (recognizer() === 'service') return;
+      if (message.type === 'people') recognitionSocket = socket;
+      applyListenerMessage(message);
       return;
     case 'proactive':
-      startProactiveTurn(message.context ?? '', broadcast);
-      return;
-    case 'people':
-      setPeople(message.people);
-      recognitionSocket = socket;
-      noteRecognised(message.people);
-      return;
     case 'presence':
-      if (!message.present) onVisitorLeft();
-      else if (message.newVisitor) onNewVisitor();
+      applyListenerMessage(message);
       return;
     case 'interrupt':
       // The face sends this when a visitor starts talking over Tubs.
@@ -233,6 +371,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       } satisfies WsFaceBlinkServerMessage);
       return;
     case 'head_speech_state':
+      // A face window's head talking (outside studio mode): proactive lines wait for it.
+      if (!studioSettings.enabled) noteHeadTalking(message.actor ?? 'main', message.state === 'start');
       broadcast({
         type: 'head_speech_state',
         actor: message.actor,
@@ -261,6 +401,7 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
       return;
     case 'studio_state':
       if (!studioSettings.enabled || !studioPages.has(socket)) return;
+      if (studioPages.get(socket) === message.actor) noteHeadSpeaking(message.actor, message.speaking);
       broadcast({ type: 'studio_state', actor: message.actor, speaking: message.speaking, expr: message.expr, mood: message.mood, ts: message.ts });
       return;
     case 'studio_stage':
@@ -293,6 +434,65 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ts: message.ts,
       });
       return;
+    case 'studio_live': {
+      // The listener (main) only; a stop goes through even after studio mode went off.
+      if (message.actor !== 'main' || studioPages.get(socket) !== 'main') return;
+      if (!studioSettings.enabled && message.status !== null) return;
+      const relay = liveRelay(message);
+      if (!relay) return;
+      sendToWatchers(relay, 'live');
+      pushPulse(!message.status);
+      return;
+    }
+    case 'face_observation':
+      // The browser producer: the studio listener page only, and not while the face service recognises (docs/face-service.md).
+      if (studioPages.get(socket) !== 'main' || message.observation.worker.kind !== 'browser' || recognizer() === 'service') return;
+      noteObservation(message.observation);
+      sendToWatchers({ type: 'face_observation', observation: message.observation }, 'live');
+      return;
+    case 'studio_watch':
+      if (!liveViewers.has(socket)) return;
+      noteWatch(socket, { live: message.live, video: message.video });
+      syncStudioWatch();
+      return;
+    case 'studio_frame':
+      if (message.actor !== 'main' || studioPages.get(socket) !== 'main' || !studioSettings.enabled) return;
+      if (frameDue()) sendToWatchers({ type: 'studio_frame', actor: 'main', frame: message.frame, width: message.width, height: message.height }, 'video');
+      return;
+    case 'studio_face_call': {
+      // A dashboard on the local network asks the listener's face runtime (onboarding with its camera).
+      if (!liveViewers.has(socket)) return;
+      if (recognizer() === 'service') {
+        // The face service has the camera: the server answers, as the listener page would.
+        void serviceFaceCall(message.method, message.args ?? {}).then(
+          (value) => send(socket, { type: 'studio_face_result', id: message.id, ok: true, value: value ?? null }),
+          (error: unknown) => send(socket, { type: 'studio_face_result', id: message.id, ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) }),
+        );
+        return;
+      }
+      const listener = listenerPages()[0];
+      if (!studioSettings.enabled || !listener) {
+        send(socket, { type: 'studio_face_result', id: message.id, ok: false, error: 'the studio listener page is not connected' });
+        return;
+      }
+      const now = Date.now();
+      for (const [key, call] of faceCalls) {
+        if (now - call.at > FACE_CALL_TIMEOUT_MS) faceCalls.delete(key);
+      }
+      faceCallSeq += 1;
+      const key = `c${faceCallSeq}`;
+      faceCalls.set(key, { caller: socket, id: message.id, at: now });
+      send(listener, { type: 'studio_face_call', id: key, method: message.method, ...(message.args ? { args: message.args } : {}) });
+      return;
+    }
+    case 'studio_face_result': {
+      if (studioPages.get(socket) !== 'main') return;
+      const call = faceCalls.get(message.id);
+      if (!call) return;
+      faceCalls.delete(message.id);
+      send(call.caller, { type: 'studio_face_result', id: call.id, ok: message.ok, ...(message.value !== undefined ? { value: message.value } : {}), ...(message.error ? { error: message.error } : {}) });
+      return;
+    }
     case 'studio_status':
       if (studioPages.get(socket) !== message.actor) return;
       notePageStatus(message.actor, {
@@ -300,6 +500,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.error ? { error: message.error } : {}),
         ...(message.mic ? { mic: message.mic } : {}),
         ...(message.cadence ? { cadence: message.cadence } : {}),
+        ...(message.devices ? { devices: message.devices } : {}),
+        ...(message.faceWorker ? { faceWorker: message.faceWorker } : {}),
       });
       return;
     default:

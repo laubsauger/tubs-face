@@ -56,6 +56,19 @@ describe('Chrome flags for a face page', () => {
     expect(args).toEqual(expect.arrayContaining(['--autoplay-policy=no-user-gesture-required', '--use-fake-ui-for-media-stream']));
   });
 
+  // The user found a pile of Tubs windows on their screen. The faces render
+  // into their streams wherever the window is, so by default it sits small in
+  // the far corner (macOS keeps a corner on screen); never minimised, which
+  // stops the drawing. Moved over a pipe, with no network port unless asked.
+  it('put the window off screen by default and control it over a pipe, not a port', () => {
+    expect(args).toEqual(expect.arrayContaining(['--remote-debugging-pipe', '--window-size=560,600', '--window-position=100000,100000']));
+    expect(args.some((arg) => arg.startsWith('--remote-debugging-port'))).toBe(false);
+    const visible = chromeArgs({ url: 'http://x/', profileDir: '/tmp/p/small', slot: 1, windows: 'visible' });
+    expect(visible).toEqual(expect.arrayContaining(['--window-size=560,600', '--window-position=620,60']));
+    const debug = chromeArgs({ url: 'http://x/', profileDir: '/tmp/p/main', slot: 0, debugPort: 9230 });
+    expect(debug).toEqual(expect.arrayContaining(['--remote-debugging-port=9230', '--remote-debugging-address=127.0.0.1']));
+  });
+
   it('use their own profile, never the user\'s Chrome', () => {
     expect(args).toContain('--user-data-dir=/tmp/p/main');
     expect(args.at(-1)).toBe('--app=http://127.0.0.1:3000/studio-face.html?actor=main');
@@ -120,6 +133,34 @@ describe('studio launcher', () => {
 
   // A server killed with SIGKILL runs no handler. Its pages must not live on
   // next to the new ones: Chrome's profile lock names the leftover.
+  // Reopening a crashed page keeps the studio going; reopening forever put
+  // window after window on the user's screen. After three exits within a
+  // minute it stops and says so loudly in GET /studio.
+  it('stops reopening a page that exits three times within a minute, with an error saying so', async () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'tubs-launcher-'));
+    const file = path.join(dir, 'chrome.sh');
+    writeFileSync(file, `#!/bin/sh\necho start >> "${dir}/starts"\nexit 1\n`);
+    chmodSync(file, 0o755);
+    const errors: Array<string | undefined> = [];
+    const logs: string[] = [];
+    launcher = createStudioLauncher({
+      chromePath: file,
+      profileRoot: path.join(dir, 'profiles'),
+      pageUrl: (actor) => `http://page/${actor}`,
+      onError: (actor, error) => { if (actor === 'main') errors.push(error); },
+      log: (message) => logs.push(message),
+      windows: 'visible',
+    });
+    await launcher.sync(true);
+    await until(() => errors.some((error) => error?.includes('not reopening')), 15_000);
+    const starts = () => readFileSync(path.join(dir, 'starts'), 'utf8').trim().split('\n').length;
+    const after = starts();
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(starts()).toBe(after);
+    expect(errors.at(-1)).toContain('exited 3 times within a minute');
+    expect(logs.some((line) => line.includes('code 1: a crash') && line.includes('reopening'))).toBe(true);
+  }, 20_000);
+
   it('closes a page left over by a killed server before opening a new one', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'tubs-launcher-'));
     const profiles = path.join(dir, 'profiles');
@@ -143,5 +184,16 @@ describe('studio launcher', () => {
     });
     await launcher.sync(true);
     expect(errors).toEqual([expect.stringContaining('Chrome not found'), expect.stringContaining('Chrome not found')]);
+  });
+});
+
+// The face's pixel grid is sized from its window: an off-screen window smaller
+// than the on-screen one drew a coarse face (four-pixel eyes) into the stream.
+describe('off-screen face windows', () => {
+  it('are as large as on-screen ones, so the face renders the same', async () => {
+    const { windowBounds } = await import('./chrome-window.js');
+    const off = windowBounds('offscreen', 0);
+    const on = windowBounds('visible', 0);
+    expect({ width: off.width, height: off.height }).toEqual({ width: on.width, height: on.height });
   });
 });

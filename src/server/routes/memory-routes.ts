@@ -6,36 +6,36 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ErrorResponse } from '../../shared/contracts/http.js';
-import type { MemoryForgetRequest, MemoryLibraryRemoveRequest, MemoryResponse } from '../../shared/contracts/memory.js';
+import type {
+  MemoryForgetRequest,
+  MemoryLibraryChangeResponse,
+  MemoryLibraryRemoveRequest,
+  MemoryLibraryUndoRequest,
+  MemoryResponse,
+  MemorySamplesMoveRequest,
+  MemorySamplesRemoveRequest,
+} from '../../shared/contracts/memory.js';
 import { readJsonBody } from '../http/body.js';
 import { applyCors, sendJson } from '../http/response.js';
 import { clearTonight, forgetPeople, tonightsPeople } from '../assistant/field-notes.js';
 import { loadRelationships } from '../assistant/relationships.js';
 import { runtimeConfig } from '../config/runtime.js';
-import { deleteFacesByName, readFaceLibrary } from '../faces/library.js';
+import { backupDiff, listBackups, moveFaces, readFaceLibrary, removeFaces, removePerson, restoreBackup, undoLibraryChange } from '../faces/library.js';
+import { currentAudit, UNLIKE_OWN_BELOW } from '../faces/audit.js';
+import { MATCH_THRESHOLD } from '../../client/face/matching.js';
+import { originOf } from './face-routes.js';
 import { buildMemory, isLocalNetworkAddress } from '../memory/view.js';
 import { broadcast } from '../ws/server.js';
+import { fromThisOrigin } from './route-helpers.js';
 
 export function currentMemory(now = Date.now()): MemoryResponse {
   return buildMemory({
     ...tonightsPeople(now),
     faces: readFaceLibrary().faces,
+    audit: new Map(currentAudit().map((sample) => [sample.id, sample])),
     relationships: loadRelationships(),
     relationshipsEnabled: runtimeConfig.relationshipsEnabled,
   });
-}
-
-/** Same origin, or not a browser at all (curl on the venue network). */
-function fromThisOrigin(request: IncomingMessage): boolean {
-  const site = request.headers['sec-fetch-site'];
-  if (site) return site === 'same-origin' || site === 'none';
-  const origin = request.headers.origin;
-  if (!origin) return true;
-  try {
-    return new URL(origin).host === request.headers.host;
-  } catch {
-    return false;
-  }
 }
 
 function sendImage(response: ServerResponse, dataUrl: string | null | undefined): void {
@@ -68,6 +68,15 @@ export async function handleMemoryRoute(request: IncomingMessage, response: Serv
     if (photo) {
       const id = decodeURIComponent(photo[1]!);
       sendImage(response, readFaceLibrary().faces.find((face) => face.id === id)?.thumbnail);
+      return true;
+    }
+    if (path === '/memory/library/audit') {
+      // Similarities and names only: the embeddings stay on the server.
+      sendJson(response, 200, { threshold: MATCH_THRESHOLD, unlikeOwnBelow: UNLIKE_OWN_BELOW, samples: currentAudit() });
+      return true;
+    }
+    if (path === '/memory/library/backups') {
+      sendJson(response, 200, { backups: listBackups().map((backup) => ({ ...backup, restores: backupDiff(backup.id) })) });
       return true;
     }
     const snapshot = /^\/memory\/snapshot\/([^/]+)$/.exec(path);
@@ -106,15 +115,63 @@ export async function handleMemoryRoute(request: IncomingMessage, response: Serv
     }
     if (path === '/memory/library/remove') {
       const { name } = await readJsonBody<Partial<MemoryLibraryRemoveRequest>>(request);
-      const removed = typeof name === 'string' && name.trim() ? deleteFacesByName(name) : 0;
-      if (removed === 0) {
+      const change = typeof name === 'string' && name.trim() ? removePerson(name, Date.now(), originOf(request, `POST ${path}`)) : null;
+      if (!change || change.removed.length === 0) {
         sendJson(response, 404, { error: 'No face library samples by that name' } satisfies ErrorResponse);
         return true;
       }
-      console.log(`[memory] removed ${removed} face library sample(s) of ${name}`);
-      // The face pages match visitors against their own copy: they reload it.
-      broadcast({ type: 'faces_changed' });
-      sendJson(response, 200, { ok: true, removed });
+      libraryChanged();
+      const who = change.removed[0]!.name;
+      sendJson(response, 200, { ok: true, removed: change.removed.length, summary: `Removed ${who} from the face library (${photos(change.removed.length)}).`, undo: change.undo, until: change.until } satisfies MemoryLibraryChangeResponse);
+      return true;
+    }
+    if (path === '/memory/library/samples/remove') {
+      const { ids } = await readJsonBody<Partial<MemorySamplesRemoveRequest>>(request);
+      const change = removeFaces(idList(ids), Date.now(), originOf(request, `POST ${path}`));
+      if (change.removed.length === 0) {
+        sendJson(response, 404, { error: 'None of those samples is in the face library' } satisfies ErrorResponse);
+        return true;
+      }
+      libraryChanged();
+      const owners = [...new Set(change.removed.map((face) => face.name))];
+      sendJson(response, 200, { ok: true, removed: change.removed.length, summary: `Removed ${photos(change.removed.length)} of ${owners.join(', ')}.`, undo: change.undo, until: change.until } satisfies MemoryLibraryChangeResponse);
+      return true;
+    }
+    if (path === '/memory/library/samples/move') {
+      const { ids, to } = await readJsonBody<Partial<MemorySamplesMoveRequest>>(request);
+      const person = typeof to === 'string' ? readFaceLibrary().faces.find((face) => face.name.trim().toLowerCase() === to.trim().toLowerCase())?.name : undefined;
+      if (!person) {
+        sendJson(response, 400, { error: 'Move to someone in the face library' } satisfies ErrorResponse);
+        return true;
+      }
+      const change = moveFaces(idList(ids), person, Date.now(), originOf(request, `POST ${path}`));
+      if (change.moved.length === 0) {
+        sendJson(response, 404, { error: 'None of those samples can move there' } satisfies ErrorResponse);
+        return true;
+      }
+      libraryChanged();
+      const owners = [...new Set(change.moved.map((entry) => entry.from))];
+      sendJson(response, 200, { ok: true, moved: change.moved.length, summary: `Moved ${photos(change.moved.length)} from ${owners.join(', ')} to ${change.to}.`, undo: change.undo, until: change.until } satisfies MemoryLibraryChangeResponse);
+      return true;
+    }
+    if (path === '/memory/library/undo') {
+      const { undo } = await readJsonBody<Partial<MemoryLibraryUndoRequest>>(request);
+      if (!undoLibraryChange(typeof undo === 'string' ? undo : '', Date.now(), originOf(request, `POST ${path}`))) {
+        sendJson(response, 409, { error: 'Too late to undo (a minute), or something changed since: restore a backup instead' } satisfies ErrorResponse);
+        return true;
+      }
+      libraryChanged();
+      sendJson(response, 200, { ok: true });
+      return true;
+    }
+    if (path === '/memory/library/restore') {
+      const { backup } = await readJsonBody<{ backup?: unknown }>(request);
+      if (typeof backup !== 'string' || !restoreBackup(backup, originOf(request, `POST ${path}`))) {
+        sendJson(response, 404, { error: 'No such backup' } satisfies ErrorResponse);
+        return true;
+      }
+      libraryChanged();
+      sendJson(response, 200, { ok: true });
       return true;
     }
     if (path === '/memory/clear') {
@@ -129,6 +186,18 @@ export async function handleMemoryRoute(request: IncomingMessage, response: Serv
   sendJson(response, 404, { error: 'Not found' } satisfies ErrorResponse);
   return true;
 }
+
+/** Every page matching faces reloads the library (and drops names settled against the old one). */
+function libraryChanged(): void {
+  broadcast({ type: 'faces_changed' });
+}
+
+const MAX_IDS = 500;
+function idList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 64).slice(0, MAX_IDS) : [];
+}
+
+const photos = (count: number) => `${count} photo${count === 1 ? '' : 's'}`;
 
 /** The field-notes ids behind a card: everyone noted under that name, or the one visitor. */
 function idsFor(key: string): string[] {

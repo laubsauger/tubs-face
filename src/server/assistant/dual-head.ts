@@ -33,6 +33,19 @@ export const DUAL_HEAD_RESPONSE_SCHEMA = Object.freeze({
         required: ['actor', 'action'],
       },
     },
+    // What Tubs noted about the visitor (field-notes.ts); never spoken.
+    notes: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          kind: { type: 'STRING', enum: ['note', 'quote', 'name'] },
+          who: { type: 'STRING', enum: ['left', 'middle', 'right'] },
+          text: { type: 'STRING' },
+        },
+        required: ['kind', 'text'],
+      },
+    },
   },
   required: ['beats'],
 });

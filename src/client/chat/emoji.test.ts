@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { splitLeadingEmoji } from './emoji.js';
+import { splitLeadingEmoji, splitLineEmojis } from './emoji.js';
 
 // Replies are logged as "<reaction emoji> <text>". In the chat views the emoji
 // sits in the entry header so the reply itself reads as plain text.
@@ -34,5 +34,21 @@ describe('splitLeadingEmoji', () => {
 
   it('keeps an emoji-only line as the body, so the card is not empty', () => {
     expect(splitLeadingEmoji('🙄')).toEqual({ emoji: '', body: '🙄' });
+  });
+});
+
+describe('splitLineEmojis', () => {
+  // A bit arrives one sentence per line, each with its own reaction: the text
+  // must read clean while every line keeps its expression beside it.
+  it('lifts each line\'s reaction emoji off its text', () => {
+    expect(splitLineEmojis('Flo, I watched a spider.\n🙂 It worked so hard.\n😏 Like your management style.')).toEqual([
+      { emoji: '', text: 'Flo, I watched a spider.' },
+      { emoji: '🙂', text: 'It worked so hard.' },
+      { emoji: '😏', text: 'Like your management style.' },
+    ]);
+  });
+
+  it('keeps emojis inside a sentence and drops empty lines', () => {
+    expect(splitLineEmojis('I like 🕷 spiders.\n\n')).toEqual([{ emoji: '', text: 'I like 🕷 spiders.' }]);
   });
 });

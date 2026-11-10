@@ -3,16 +3,30 @@ import type { AppStore } from '../state/app-state.js';
 import type { WsClientMessage } from '../../shared/contracts/ws.js';
 import { loadFaceLibraryIntoStore } from './library.js';
 import { annotateDetectedFaces } from './matching.js';
+import { createGreetingHold, createNameSettler } from './settle.js';
 import { type Snapshot, wantsSnapshot } from './auto-onboarding.js';
 import { RETURN_GREETING_MIN_AWAY_MS, createVisitorTracker, type VisitorEvent } from './visitor-tracker.js';
 import { createPeopleTracker, type TrackedPerson } from './people-tracker.js';
 import { createFaceWorkerClient } from './worker-client.js';
 import { type EnrollmentCapture, captureEnrollmentSample, captureFaceThumbnail, saveEnrollment } from './enrollment.js';
+import { uploadVerdict } from './person-match.js';
+
+/** A photo turned into a sample, or the reason it can't be (embedPicture). */
+export type EmbedResult = { ok: true; sample: EnrollmentCapture } | { ok: false; reason: string };
 import { detectUploadedFile, removeFaceEntry, renameFaceEntry, saveDetectedFace } from './library-actions.js';
 import { createStillPictures, snapshotPicture, visionFrame, type StillPictures } from './pictures.js';
 import { whepPicture } from '../transport/whip.js';
 import { formatVisionSource, type VisionSourceSpec } from '../../shared/contracts/studio.js';
 import { RENDER_PAUSE_POLL_MS, faceChecksPaused } from './render-pause.js';
+import { drawFaceBoxes } from './overlay.js';
+import { MATCH_MARGIN, MATCH_THRESHOLD } from './matching.js';
+import type { FaceObservation, StudioFaceWorkerStatus } from '../../shared/contracts/studio.js';
+import { observedFaces, type ObservationTracks } from './observation.js';
+
+/** How long a photo waits for a check in progress to finish. */
+const EMBED_WAIT_MS = 5000;
+/** Checks per second are counted over this window. */
+const CHECK_RATE_WINDOW_MS = 10_000;
 
 export interface FaceShellRuntime {
   init(): void;
@@ -26,8 +40,33 @@ export interface FaceShellRuntime {
   /** Pause live detection while the wizard owns the camera. */
   beginEnrollment(): void;
   endEnrollment(): void;
-  /** Grab one pose; null when no single face was found. */
-  captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+  /** Grab one pose; null when no single face was found (or not the chosen one: box [x, y, w, h] in 0..1). */
+  captureEnrollmentSample(previousEmbeddings: number[][], choose?: [number, number, number, number]): Promise<EnrollmentCapture | null>;
+  /**
+   * A sample from a photo (an upload for someone's samples): detected, aligned
+   * and embedded like a camera pose; refused with the reason unless it holds
+   * exactly one face. It never counts as someone in view.
+   */
+  embedPicture(image: Blob): Promise<EmbedResult>;
+  /**
+   * The studio switches. recognition: faces are matched against the library
+   * (names, relationships) and auto-onboarded. detection: the worker looks for
+   * faces at all, while recognition or vision descriptions (which a detected
+   * face triggers) is on.
+   */
+  setRecognition(recognition: boolean, detection: boolean): void;
+  /** The last check as a FaceObservation (docs/face-service.md): the same shape the face service sends. */
+  observation(now?: number): FaceObservation;
+  /** Called with each check's observation (the studio listener sends it on). */
+  onObservation(sink: ((observation: FaceObservation) => void) | null): void;
+  /** The face worker's state for the studio's operators (studio_status faceWorker): running or not, how fast, what it found. */
+  debugStatus(now?: number): StudioFaceWorkerStatus;
+  /**
+   * What the camera shows now, as a small JPEG, for a dashboard that watches
+   * the studio listener; key changes only with the picture (a still camera's
+   * picture is sent once). null without a camera.
+   */
+  previewFrame(maxPx: number): { frame: string; width: number; height: number; key: number } | null;
   saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number>;
   /** Enroll a person from the snapshots taken while they were in view (auto onboarding). */
   autoEnroll(personId: string, name: string): Promise<void>;
@@ -54,6 +93,10 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   let lastVisionFrameAt = 0;
   // A snapshot URL or a site node stream: pictures taken one at a time.
   let still: StillPictures | null = null;
+  let stillGrab: (() => Promise<ImageBitmap>) | null = null;
+  // Counts the still pictures, so a preview sends each one once.
+  let stillCount = 0;
+  const previewCanvas = document.createElement('canvas');
   const MAX_EMPTY_FRAMES = 2;
   const captureCanvas = document.createElement('canvas');
   const captureCtx = captureCanvas.getContext('2d', { willReadFrequently: true });
@@ -82,9 +125,35 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   // server drops a recognised person it has not heard about for ~10 s).
   const PEOPLE_REFRESH_MS = 5000;
   let enrollmentActive = false;
+  // Studio switches: recognition names the faces (matching, auto-onboarding);
+  // detection runs while recognition or descriptions (faces trigger them) is on.
+  let recognition = true;
+  let detection = true;
+  let embedPending = false;
+  let observationSink: ((observation: FaceObservation) => void) | null = null;
+  const tracks: ObservationTracks = { next: 1, last: [] };
+  const nameSettler = createNameSettler();
+  const greetingHold = createGreetingHold<{ returning: boolean; awayMs?: number }>();
+  // What the studio's operators see of this worker (debugStatus), never sent anywhere else.
+  const debug = {
+    initStarted: false,
+    info: null as { backend?: string; threads?: number; isolated?: boolean } | null,
+    error: null as { message: string; at: number } | null,
+    checks: [] as number[],
+    lastCheckAt: null as number | null,
+    lastFaceAt: null as number | null,
+    faces: 0,
+    best: null as { name: string | null; prob: number } | null,
+    source: 'off',
+    lastFrameAt: null as number | null,
+    visionSkip: null as Exclude<StudioFaceWorkerStatus['visionSkip'], undefined>,
+    checkSkip: null as Exclude<StudioFaceWorkerStatus['checkSkip'], undefined>,
+  };
 
   const worker = createFaceWorkerClient({
-    onReady: () => {
+    onReady: (info) => {
+      debug.info = info;
+      debug.error = null;
       store.setState((current) => ({
         ...current,
         faceWorkerReady: true,
@@ -102,6 +171,11 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       }));
     },
     onFaces: (packet) => {
+      // A photo being turned into a sample (embedPicture) is nobody in view.
+      if (embedPending) {
+        store.setState((current) => ({ ...current, faceWorkerBusy: false }));
+        return;
+      }
       // A detection still in flight when the camera was turned off would
       // refill the faces, and with the loop stopped they stayed "present"
       // forever (no sleep, proactive lines to an empty room).
@@ -109,7 +183,12 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
         return;
       }
       const wasEmpty = stableFaces.length === 0;
-      const faces = stabilizeFaces(annotateDetectedFaces(packet.faces, faceLibrary));
+      // Recognition off: faces are found (descriptions need them), never named.
+      // Names per track, not per frame: a face is named once its track matched that person on a few checks (settle.ts).
+      const settled = nameSettler.settle(annotateDetectedFaces(packet.faces, recognition ? faceLibrary : []), Date.now());
+      const faces = stabilizeFaces(settled);
+      noteCheck(faces, Date.now());
+      observationSink?.(observation());
       const recognizedNames = [...new Set(
         faces
           .map((face) => face.match?.name ?? face.name ?? null)
@@ -138,12 +217,15 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       // Someone new joined people already in view. Not on recognition or
       // face-count flicker: each flicker used to send a fresh greeting.
       const groupChanged = faces.length > 0 && !wasEmpty && people.some((person) => person.joined);
-      const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && faces.length > 0 && (greeting || groupChanged));
+      // A known face's first check only starts its name: the greeting waits briefly for it (settle.ts).
+      const appearance = greetingHold.next({ faces: faces.length, trigger: Boolean(greeting || groupChanged), greeting, nameOnItsWay: settled.some((face) => face.pending), now });
+      const shouldSendAppearance = Boolean(sender && captureCanvas.width > 0 && appearance.send);
 
       const config = store.getState().config;
       const maxPx = config?.visionMaxPx ?? 512;
       // The server keeps the budget too; here no picture leaves for nothing.
-      const refreshAllowed = config?.visionProvider !== 'off' && (!store.getState().sleeping || config?.visionWhileAsleep === true);
+      const descriptions = config?.visionProvider !== 'off' && config?.visionDescriptions !== false;
+      const refreshAllowed = descriptions && (!store.getState().sleeping || config?.visionWhileAsleep === true);
       if (shouldSendAppearance && sender) {
         sender({
           type: 'appearance_frame',
@@ -151,14 +233,21 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
           // Names stick to a person once recognized, so a missed frame still greets by name.
           faces: [...new Set([...recognizedNames, ...people.flatMap((person) => person.names)])],
           count: faces.length,
-          ...(greeting?.returning ? { returning: true, awayMs: greeting.awayMs } : {}),
+          ...(appearance.greeting?.returning ? { returning: true, awayMs: appearance.greeting.awayMs } : {}),
         });
         lastVisionFrameAt = Date.now();
-      } else if (refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
+        debug.visionSkip = null;
+      } else if (!appearance.holding && refreshAllowed && faces.length > 0 && sender && captureCanvas.width > 0 && Date.now() - lastVisionFrameAt >= (config?.visionRefreshMs ?? 30_000)) {
         // The server forgets a camera description after 60 s. While someone is
         // still in view, refresh it (vision only, no new greeting).
         sender({ type: 'camera_frame', frame: visionFrame(captureCanvas, maxPx) });
         lastVisionFrameAt = Date.now();
+        debug.visionSkip = null;
+      } else {
+        debug.visionSkip = faces.length === 0 ? 'nobody in view'
+          : appearance.holding ? 'waiting for a name to settle'
+          : !descriptions ? 'descriptions off'
+            : !refreshAllowed ? 'asleep' : 'not due';
       }
 
       store.appendLog('info', `Face worker finished: ${faces.length} face(s) in ${packet.inferenceMs} ms`);
@@ -167,6 +256,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       }
     },
     onError: (message) => {
+      debug.error = { message: message.slice(0, 300), at: Date.now() };
       store.setState((current) => ({
         ...current,
         faceWorkerBusy: false,
@@ -198,6 +288,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
 
   return {
     init(): void {
+      debug.initStarted = true;
       worker.init();
       void refreshFaceLibraryState(store);
     },
@@ -230,8 +321,90 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       enrollmentActive = false;
       scheduleLoop();
     },
-    captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null> {
-      return captureEnrollmentSample(worker, captureCanvas, videoEl, previousEmbeddings);
+    captureEnrollmentSample(previousEmbeddings: number[][], choose?: [number, number, number, number]): Promise<EnrollmentCapture | null> {
+      // A studio camera without a video: each pose is a fresh picture.
+      const grab = !stream && still && stillGrab ? stillGrab : null;
+      return captureEnrollmentSample(worker, captureCanvas, videoEl, previousEmbeddings, grab ? async () => {
+        const picture = await grab();
+        if (!drawPicture(picture)) return null;
+        // The preview shows the pose that was taken.
+        stillCount += 1;
+        return { imageData: captureCtx!.getImageData(0, 0, captureCanvas.width, captureCanvas.height) };
+      } : undefined, choose);
+    },
+    async embedPicture(image) {
+      if (!worker.ready) return { ok: false, reason: 'the face worker is not ready yet' };
+      let bitmap: ImageBitmap;
+      try {
+        bitmap = await createImageBitmap(image);
+      } catch {
+        return { ok: false, reason: 'not an image this browser can read' };
+      }
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, 960 / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (!context) return { ok: false, reason: 'no canvas' };
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      // The live checks wait meanwhile, and this photo's faces never count as people in view.
+      const wasEnrolling = enrollmentActive;
+      enrollmentActive = true;
+      clearLoop();
+      embedPending = true;
+      try {
+        for (let waited = 0; worker.busy && waited < EMBED_WAIT_MS; waited += 50) await new Promise((resolve) => window.setTimeout(resolve, 50));
+        const result = await worker.detectOnce(context.getImageData(0, 0, canvas.width, canvas.height));
+        const faces = result.faces.filter((face) => Array.isArray(face.embedding));
+        const verdict = uploadVerdict(faces.length);
+        if (!verdict.ok) return verdict;
+        const thumbnail = captureFaceThumbnail(canvas, faces[0]!);
+        if (!thumbnail) return { ok: false, reason: 'the face could not be cut out' };
+        return { ok: true, sample: { embedding: faces[0]!.embedding!, thumbnail, duplicate: false } };
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+      } finally {
+        embedPending = false;
+        enrollmentActive = wasEnrolling;
+        if (!wasEnrolling) scheduleLoop();
+      }
+    },
+    debugStatus,
+    observation,
+    onObservation(sink) {
+      observationSink = sink;
+    },
+    setRecognition(nextRecognition, nextDetection) {
+      if (nextRecognition === recognition && nextDetection === detection) return;
+      const forget = (recognition && !nextRecognition) || (detection && !nextDetection);
+      recognition = nextRecognition;
+      detection = nextDetection;
+      store.appendLog('info', `Face recognition ${recognition ? 'on' : 'off'}, detection ${detection ? 'on' : 'off'}`);
+      if (forget) {
+        // Who was named (or seen) is no longer known: the server lets go of them.
+        stableFaces = [];
+        if (lastPeopleSignature) {
+          lastPeopleSignature = '';
+          sender?.({ type: 'people', people: [] });
+        }
+        store.setState((current) => ({ ...current, faceLastFaces: [], faceLastDetectedCount: 0, faceStatus: detection ? 'Detecting faces, not naming them' : 'Face detection off' }));
+        clearOverlay();
+      }
+      if (detection) scheduleLoop();
+      else clearLoop();
+    },
+    previewFrame(maxPx) {
+      const live = stream && videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0;
+      const source: CanvasImageSource | null = live ? videoEl : still && captureCanvas.width > 0 ? captureCanvas : null;
+      if (!source) return null;
+      const width = live ? videoEl!.videoWidth : captureCanvas.width;
+      const height = live ? videoEl!.videoHeight : captureCanvas.height;
+      const scale = Math.min(1, maxPx / Math.max(width, height));
+      previewCanvas.width = Math.max(1, Math.round(width * scale));
+      previewCanvas.height = Math.max(1, Math.round(height * scale));
+      previewCanvas.getContext('2d')?.drawImage(source, 0, 0, previewCanvas.width, previewCanvas.height);
+      return { frame: previewCanvas.toDataURL('image/jpeg', 0.6), width: previewCanvas.width, height: previewCanvas.height, key: live ? Date.now() : stillCount };
     },
     saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number> {
       return saveEnrollment(store, refreshFaceLibraryState, name, samples);
@@ -255,6 +428,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     },
     async setPictureSource(source, site): Promise<void> {
       stopCamera(store);
+      debug.source = formatVisionSource(source);
+      debug.lastFrameAt = null;
       store.appendLog('info', `Camera source: ${formatVisionSource(source)}`);
       if (source.kind === 'off') return;
       if (source.kind === 'local') {
@@ -270,22 +445,39 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
   };
 
   /** Pictures from a snapshot URL or a site stream, through the same detection as the camera's. */
+  /** A still picture into captureCanvas (at most 960 wide), as the detector takes it. */
+  function drawPicture(picture: ImageBitmap): boolean {
+    if (!captureCtx) {
+      picture.close();
+      return false;
+    }
+    const scale = Math.min(1, 960 / picture.width);
+    captureCanvas.width = Math.round(picture.width * scale);
+    captureCanvas.height = Math.round(picture.height * scale);
+    captureCtx.drawImage(picture, 0, 0, captureCanvas.width, captureCanvas.height);
+    picture.close();
+    return true;
+  }
+
   function startStill(grab: () => Promise<ImageBitmap>): void {
     store.setState((current) => ({ ...current, faceCameraActive: true, faceStatus: 'Pictures from a remote camera' }));
+    stillGrab = grab;
     still = createStillPictures({
       grab,
-      ready: () => worker.ready && !worker.busy && !enrollmentActive,
+      ready: () => detection && worker.ready && !worker.busy && !enrollmentActive,
       onPicture: async (picture) => {
-        if (!captureCtx) return;
-        const scale = Math.min(1, 960 / picture.width);
-        captureCanvas.width = Math.round(picture.width * scale);
-        captureCanvas.height = Math.round(picture.height * scale);
-        captureCtx.drawImage(picture, 0, 0, captureCanvas.width, captureCanvas.height);
-        picture.close();
+        if (!drawPicture(picture) || !captureCtx) return;
+        stillCount += 1;
+        debug.lastFrameAt = Date.now();
+        debug.checkSkip = null;
         store.setState((current) => ({ ...current, faceWorkerBusy: true, faceStatus: 'Detecting from a remote camera' }));
         await worker.detectOnce(captureCtx.getImageData(0, 0, captureCanvas.width, captureCanvas.height));
       },
-      onError: (message) => store.appendLog('error', `Camera picture: ${message}`),
+      onError: (message) => {
+        debug.error = { message: `camera picture: ${message}`.slice(0, 300), at: Date.now() };
+        debug.checkSkip = 'no frame';
+        store.appendLog('error', `Camera picture: ${message}`);
+      },
     });
   }
 
@@ -341,6 +533,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     clearLoop();
     still?.stop();
     still = null;
+    stillGrab = null;
     // No camera, nobody recognised: the server lets go of who was in view at once.
     if (lastPeopleSignature) {
       lastPeopleSignature = '';
@@ -374,7 +567,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
 
   function scheduleLoop(): void {
     clearLoop();
-    if (!stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
+    if (!detection || !stream || !store.getState().faceCameraActive || !worker.ready || enrollmentActive) {
       return;
     }
     const manualDelay = store.getState().faceDetectionDelayMs;
@@ -392,10 +585,12 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
       return;
     }
     if (videoEl.readyState < 2 || !videoEl.videoWidth || !videoEl.videoHeight) {
+      debug.checkSkip = 'no frame';
       scheduleLoop();
       return;
     }
     if (faceChecksPaused(store.getState().ttsRenderingSince, Date.now())) {
+      debug.checkSkip = 'voice rendering';
       clearLoop();
       loopTimer = window.setTimeout(() => {
         void runCameraDetection();
@@ -411,6 +606,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     captureCanvas.height = height;
     captureCtx.drawImage(videoEl, 0, 0, width, height);
     const imageData = captureCtx.getImageData(0, 0, width, height);
+    debug.lastFrameAt = Date.now();
+    debug.checkSkip = null;
     store.setState((current) => ({
       ...current,
       faceWorkerBusy: true,
@@ -438,51 +635,88 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     if (!overlayEl) {
       return;
     }
-    const context = overlayEl.getContext('2d');
-    if (!context) {
-      return;
+    drawFaceBoxes(overlayEl, faces, { width: captureCanvas.width, height: captureCanvas.height }, { mirror: true });
+  }
+
+  function noteCheck(faces: DetectedFace[], now: number): void {
+    debug.checks.push(now);
+    while (debug.checks.length > 0 && now - debug.checks[0]! > CHECK_RATE_WINDOW_MS) debug.checks.shift();
+    debug.lastCheckAt = now;
+    debug.faces = faces.length;
+    if (faces.length > 0) debug.lastFaceAt = now;
+    // The face the library is surest of; an unknown one by its best candidate's similarity.
+    const scored = faces.map((face) => ({ name: face.name ?? face.match?.name ?? null, prob: face.match?.score ?? face.matches?.[0]?.score ?? 0 }));
+    debug.best = scored.sort((a, b) => Number(Boolean(b.name)) - Number(Boolean(a.name)) || b.prob - a.prob)[0] ?? null;
+    if (debug.error && now - debug.error.at > CHECK_RATE_WINDOW_MS) debug.error = null;
+  }
+
+  function observation(now = Date.now()): FaceObservation {
+    const status = debugStatus(now);
+    const width = captureCanvas.width;
+    const height = captureCanvas.height;
+    const config = store.getState().config;
+    return {
+      t: debug.lastCheckAt ?? now,
+      source: debug.source,
+      frame: { w: width, h: height },
+      faces: detection && status.camera
+        ? observedFaces(store.getState().faceLastFaces, { width, height }, tracks, {
+          // Unknown and being onboarded: the dialog has the camera, or auto onboarding holds shots.
+          onboarding: enrollmentActive || (recognition && Boolean(config?.autoEnrollEnabled) && snapshots.size > 0),
+        })
+        : [],
+      worker: {
+        kind: 'browser',
+        state: status.state,
+        backend: debug.info?.backend ?? 'wasm',
+        ...(debug.info?.threads ? { threads: debug.info.threads } : {}),
+        inferMs: Math.max(0, store.getState().faceLastInferenceMs ?? 0),
+        fps: status.checksPerSecond,
+        ...(status.state === 'error' || status.state === 'loading' ? { error: (status.detail ?? status.error ?? status.state).slice(0, 300) } : {}),
+        where: 'the studio listener page',
+      },
+    };
+  }
+
+  function debugStatus(now = Date.now()): StudioFaceWorkerStatus {
+    const camera = Boolean(stream || still);
+    const recent = debug.checks.filter((at) => now - at <= CHECK_RATE_WINDOW_MS).length;
+    if (!detection) {
+      return {
+        state: 'off', detail: 'face recognition and vision descriptions both switched off', camera, checksPerSecond: 0, lastCheckAt: debug.lastCheckAt, lastFaceAt: debug.lastFaceAt,
+        faces: 0, best: null, source: debug.source, lastVisionFrameAt: lastVisionFrameAt || null, visionSkip: debug.visionSkip, lastFrameAt: debug.lastFrameAt,
+      };
     }
-    context.clearRect(0, 0, overlayEl.width, overlayEl.height);
-    const scaleX = overlayEl.width / Math.max(1, captureCanvas.width || overlayEl.width);
-    const scaleY = overlayEl.height / Math.max(1, captureCanvas.height || overlayEl.height);
-
-    // Main's styling: green for a recognised face, orange for an unknown one,
-    // glowing box with corner accents and a label pill.
-    for (const face of faces) {
-      const [x1, y1, x2, y2] = face.box;
-      const width = (x2 - x1) * scaleX;
-      const height = (y2 - y1) * scaleY;
-      const left = overlayEl.width - (x2 * scaleX);
-      const top = y1 * scaleY;
-      const name = face.name ?? face.match?.name ?? null;
-      const color = name ? '#34d399' : '#fb923c';
-
-      context.shadowColor = color;
-      context.shadowBlur = 8;
-      context.lineWidth = 3;
-      context.strokeStyle = color;
-      context.strokeRect(left, top, width, height);
-      context.shadowBlur = 0;
-
-      const corner = Math.min(12, width * 0.2, height * 0.2);
-      context.lineWidth = 4;
-      context.beginPath();
-      context.moveTo(left, top + corner); context.lineTo(left, top); context.lineTo(left + corner, top);
-      context.moveTo(left + width - corner, top); context.lineTo(left + width, top); context.lineTo(left + width, top + corner);
-      context.moveTo(left, top + height - corner); context.lineTo(left, top + height); context.lineTo(left + corner, top + height);
-      context.moveTo(left + width - corner, top + height); context.lineTo(left + width, top + height); context.lineTo(left + width, top + height - corner);
-      context.stroke();
-
-      const score = Math.round((face.match?.score ?? face.confidence ?? face.score) * 100);
-      const label = name ? `${name} ${score}%` : `${score}%`;
-      context.font = 'bold 12px Outfit, system-ui, sans-serif';
-      const labelWidth = context.measureText(label).width + 10;
-      const labelTop = Math.max(0, top - 20);
-      context.fillStyle = name ? 'rgba(52, 211, 153, 0.85)' : 'rgba(251, 146, 60, 0.8)';
-      context.fillRect(left, labelTop, labelWidth, 20);
-      context.fillStyle = '#04121c';
-      context.fillText(label, left + 5, labelTop + 15);
-    }
+    const state: StudioFaceWorkerStatus['state'] = !camera ? 'off'
+      : worker.ready ? 'ready'
+        : debug.error ? 'error'
+          : 'loading';
+    return {
+      state,
+      ...(state === 'loading' ? { detail: debug.initStarted ? store.getState().faceStatus.slice(0, 300) : 'waiting to start' } : {}),
+      ...(state === 'ready' && !recognition ? { detail: 'recognition switched off: faces are detected for descriptions, not named' } : {}),
+      ...(state === 'error' && debug.error ? { detail: debug.error.message } : {}),
+      camera,
+      checksPerSecond: Math.round((recent / (CHECK_RATE_WINDOW_MS / 1000)) * 100) / 100,
+      lastCheckAt: debug.lastCheckAt,
+      lastFaceAt: debug.lastFaceAt,
+      faces: debug.faces,
+      best: debug.best,
+      ...(debug.error ? { error: debug.error.message } : {}),
+      ...(debug.info?.backend ? { backend: debug.info.backend } : {}),
+      ...(debug.info?.threads !== undefined ? { threads: debug.info.threads } : {}),
+      ...(debug.info?.isolated !== undefined ? { isolated: debug.info.isolated } : {}),
+      source: debug.source,
+      frameWidth: captureCanvas.width || null,
+      frameHeight: captureCanvas.height || null,
+      lastFrameAt: debug.lastFrameAt,
+      inferenceMs: store.getState().faceLastInferenceMs,
+      threshold: MATCH_THRESHOLD,
+      margin: MATCH_MARGIN,
+      lastVisionFrameAt: lastVisionFrameAt || null,
+      visionSkip: debug.visionSkip,
+      checkSkip: enrollmentActive ? 'onboarding' : debug.checkSkip,
+    };
   }
 
   function clearOverlay(): void {
@@ -504,6 +738,8 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
     const faces = await loadFaceLibraryIntoStore(appStore);
     if (faces) {
       faceLibrary = faces;
+      // Names settled against the old library (a sample since removed) go.
+      nameSettler.reset();
     }
   }
 
@@ -514,7 +750,7 @@ export function createFaceShellRuntime(store: AppStore, options: FaceShellOption
    */
   /** Tells the server who is in view when the group, positions or snapshot counts change. */
   function reportPeople(people: TrackedPerson[], now: number): void {
-    if (store.getState().config?.autoEnrollEnabled) {
+    if (recognition && store.getState().config?.autoEnrollEnabled) {
       for (const person of people) takeSnapshot(person, now);
     }
     const counts = people.map((person) => (person.names.length === 0 ? snapshots.get(person.id)?.length ?? 0 : 0));

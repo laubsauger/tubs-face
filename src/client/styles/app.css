@@ -1627,6 +1627,11 @@ a {
   transform: scaleX(-1);
 }
 
+/* The studio camera's preview is shown as taken (its boxes are drawn unmirrored). */
+.camera-video.studio-camera-picture {
+  transform: none;
+}
+
 .camera-placeholder {
   display: grid;
   place-items: center;
@@ -2567,6 +2572,12 @@ a {
   transform: scaleX(-1);
 }
 
+/* The studio listener's camera (dashboard in studio mode): its pictures as taken, boxes on top. */
+.enroll-video.enroll-studio-camera {
+  position: relative;
+  transform: none;
+}
+
 .enroll-flash {
   position: absolute;
   inset: 0;
@@ -2635,6 +2646,93 @@ a {
 .enroll-name input:focus {
   outline: 2px solid #7dd3fc;
   outline-offset: 1px;
+}
+
+/* The name field's suggestions: people the library knows, one row each. */
+.enroll-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(125, 211, 252, 0.2);
+  background: rgba(2, 6, 23, 0.85);
+}
+
+.enroll-suggestions button {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #f8fafc;
+  font: 600 15px/1.2 var(--font-sans);
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.enroll-suggestions button:hover,
+.enroll-suggestions button:focus-visible {
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.enroll-suggestions img,
+.enroll-suggestion-blank {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(148, 163, 184, 0.2);
+}
+
+.enroll-suggestions button span {
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(226, 232, 240, 0.6);
+}
+
+.enroll-new-person {
+  color: rgba(125, 211, 252, 0.8);
+}
+
+.enroll-choose {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.enroll-choose span {
+  width: 100%;
+}
+
+.enroll-choose button {
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(15, 23, 42, 0.8);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.enroll-choose button.is-selected {
+  border-color: #7dd3fc;
+  background: rgba(14, 116, 144, 0.35);
+}
+
+.enroll-similarity.is-far {
+  color: #fbbf24;
 }
 
 .enroll-modes {
@@ -2709,6 +2807,7 @@ a {
 }
 
 .is-review .enroll-strip,
+.is-confirm .enroll-strip,
 .is-error .enroll-strip {
   bottom: 76px;
 }
@@ -3014,6 +3113,51 @@ html.is-studio body {
   min-width: 0;
 }
 
+.studio-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.45);
+}
+
+.studio-dot-ready {
+  background: #34d399;
+}
+
+.studio-dot-down {
+  background: #f87171;
+}
+
+.studio-parts {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.studio-part {
+  display: grid;
+  grid-template-columns: 8px 6.5rem minmax(0, 1fr);
+  align-items: center;
+  column-gap: 6px;
+}
+
+.studio-part-where {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-part-detail {
+  grid-column: 3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
 .studio-relationship {
   display: flex;
   flex-direction: column;
@@ -3025,4 +3169,82 @@ html.is-studio body {
 
 .studio-relationship textarea {
   resize: vertical;
+}
+
+/* Face library dialog: people, their capture sessions as thumbnail rows (FacePanel LibraryPeople). */
+.face-library-fold {
+  flex: none;
+  width: 22px;
+  color: #94a3b8;
+}
+
+.face-library-hover-actions {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.face-library-group-card:hover .face-library-group-header .face-library-hover-actions,
+.face-library-session:hover .face-library-hover-actions,
+.face-library-hover-actions:focus-within,
+.face-library-hover-actions:focus-visible {
+  opacity: 1;
+}
+
+.face-library-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.face-library-session-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.face-library-session-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.face-library-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(15, 23, 42, 0.8);
+  display: grid;
+  place-items: center;
+}
+
+.face-library-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.face-library-thumb-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(225, 29, 72, 0.9);
+  color: white;
+  font-size: 12px;
+  line-height: 18px;
+  opacity: 0;
+}
+
+.face-library-thumb:hover .face-library-thumb-remove,
+.face-library-thumb-remove:focus-visible {
+  opacity: 1;
 }

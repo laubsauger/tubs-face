@@ -6,9 +6,12 @@
  * description. Notes are kept per person id from the face tracker, so someone
  * back hours later is remembered; they reach the prompt through the persona's
  * MEMORY_CONTEXT slot. Quotes from people no longer in view feed gossip.
- * Memory only: nothing is written to disk, and notes older than NOTES_TTL_MS
- * are dropped.
+ * Two heads write them in the reply JSON's "notes" instead (prompt.ts).
+ * Memory only, unless TUBS_TONIGHT_FILE keeps them across restarts
+ * (memory/tonight-file.ts); notes older than NOTES_TTL_MS are dropped.
  */
+
+import { extractJsonBlock } from './text.js';
 
 export type Position = 'left' | 'center' | 'right';
 
@@ -63,6 +66,27 @@ const records = new Map<string, PersonRecord>();
 const quotes: QuoteRecord[] = [];
 let inView: PersonInView[] = [];
 let changeListener: (() => void) | null = null;
+let tonightListener: ((urgent: boolean) => void) | null = null;
+
+// The face page reports only the faces found in the current frame, so a head
+// turned down for a moment empties the list. A reply finished in that moment
+// filed its note under nobody, and the turn was not counted (one turn on
+// record for someone who talked all evening). Who was in view this recently
+// is still who Tubs is talking to.
+export const IN_VIEW_GRACE_MS = 15_000;
+let lastGroup: PersonInView[] = [];
+let groupLeftAt = -Infinity;
+
+/** Who Tubs is talking to: the people in view, or those in view a moment ago. */
+function speakers(now: number): PersonInView[] {
+  if (inView.length > 0) return inView;
+  return now - groupLeftAt <= IN_VIEW_GRACE_MS ? lastGroup : [];
+}
+
+/** Called when tonight's memory changed: urgent after the operator removed something, so it is gone from disk at once. */
+export function onTonightChange(listener: ((urgent: boolean) => void) | null): void {
+  tonightListener = listener;
+}
 let enrollListener: ((personId: string, name: string) => void) | null = null;
 
 /** Called when someone told Tubs their name and the face page can enroll them. */
@@ -85,14 +109,43 @@ function normalizePosition(value: string | undefined): Position | null {
   return lower === 'left' || lower === 'right' ? lower : 'center';
 }
 
-/** The note and quote tags in a raw reply (dual-head JSON included). */
-export function extractFieldNotes(rawText: string): Array<{ kind: 'note' | 'quote' | 'name'; position: Position | null; text: string }> {
-  const found: Array<{ kind: 'note' | 'quote' | 'name'; position: Position | null; text: string }> = [];
+type FieldNote = { kind: 'note' | 'quote' | 'name'; position: Position | null; text: string };
+
+/** The note and quote tags in a raw reply, and a two-head reply's "notes" field. */
+export function extractFieldNotes(rawText: string): FieldNote[] {
+  const found: FieldNote[] = [];
   for (const match of String(rawText).matchAll(TAG_RE)) {
     const text = clean(match[3] ?? '');
     if (!text) continue;
     const kind = match[1]!.toLowerCase() as 'note' | 'quote' | 'name';
     found.push({ kind, position: normalizePosition(match[2]), text });
+  }
+  return [...found, ...notesField(rawText)];
+}
+
+/**
+ * Asked to hide [[NOTE: ...]] inside a spoken line of the reply JSON, the
+ * two-head model almost never did: 0 of 9 replies on 9 Nov while Flo said
+ * "I'm Flo" three times, 2-3 in 40 in the check runs. The reply JSON has a
+ * "notes" field of its own now.
+ */
+function notesField(rawText: string): FieldNote[] {
+  if (!String(rawText).includes('"notes"')) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(extractJsonBlock(rawText) ?? '');
+  } catch {
+    return [];
+  }
+  const notes = (parsed as { notes?: unknown } | null)?.notes;
+  if (!Array.isArray(notes)) return [];
+  const found: FieldNote[] = [];
+  for (const entry of notes) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { kind, who, text } = entry as { kind?: unknown; who?: unknown; text?: unknown };
+    const cleaned = typeof text === 'string' ? clean(text) : '';
+    if (!cleaned || (kind !== 'note' && kind !== 'quote' && kind !== 'name')) continue;
+    found.push({ kind, position: normalizePosition(typeof who === 'string' ? who : undefined), text: cleaned });
   }
   return found;
 }
@@ -117,11 +170,37 @@ function recordFor(id: string, now: number): PersonRecord {
   return record;
 }
 
+/**
+ * A recognised person under a new id (the face pages are new after every
+ * restart, and their ids with them) gets what was noted under an old one.
+ */
+function adoptByName(person: PersonInView, now: number): void {
+  if (person.names.length === 0) return;
+  const names = new Set(person.names.map((name) => name.trim().toLowerCase()));
+  const here = new Set(inView.map((each) => each.id));
+  for (const [id, old] of [...records]) {
+    if (id === person.id || id === ANONYMOUS || id === GROUP || here.has(id)) continue;
+    if (!old.names.some((name) => names.has(name.trim().toLowerCase()))) continue;
+    const record = recordFor(person.id, now);
+    for (const name of old.names) if (!record.names.includes(name)) record.names.push(name);
+    addFacts(record, old.notes.join(', '));
+    record.firstSeenAt = Math.min(record.firstSeenAt, old.firstSeenAt);
+    record.turns += old.turns;
+    record.returning ||= old.returning || now - old.lastSeenAt >= RETURNING_AFTER_MS;
+    record.enrolled ||= old.enrolled;
+    record.askedName ||= old.askedName;
+    record.thumbnail ??= old.thumbnail;
+    for (const quote of quotes) if (quote.personId === id) quote.personId = person.id;
+    records.delete(id);
+  }
+}
+
 /** The face tracker says who is in view, left to right. */
 export function setPeople(people: PersonInView[], now = Date.now()): void {
   prune(now);
   for (const person of people) {
     const existing = records.get(person.id);
+    adoptByName(person, now);
     const record = recordFor(person.id, now);
     const back = person.awayMs !== undefined ? person.awayMs >= RETURNING_AFTER_MS : Boolean(existing && now - existing.lastSeenAt >= RETURNING_AFTER_MS);
     if (back) record.returning = true;
@@ -132,23 +211,30 @@ export function setPeople(people: PersonInView[], now = Date.now()): void {
     if (person.names.length > 0) record.enrolled = true;
     for (const name of person.names) if (!record.names.includes(name)) record.names.push(name);
   }
+  if (people.length === 0 && inView.length > 0) {
+    lastGroup = inView;
+    groupLeftAt = now;
+  }
   inView = people.map((person) => ({ id: person.id, names: person.names, position: person.position }));
   changeListener?.();
+  tonightListener?.(false);
 }
 
-/** The visit is over: anonymous and group notes go with the conversation. */
+/** The visit is over: anonymous and group notes go with the conversation, and nobody is still being talked to. */
 export function endVisit(): void {
   records.delete(ANONYMOUS);
   records.delete(GROUP);
+  lastGroup = [];
   changeListener?.();
 }
 
 /** Who a note is about: by position, the only person in view, or the group. */
-function ownerOf(position: Position | null): string {
-  if (inView.length === 0) return ANONYMOUS;
-  if (inView.length === 1) return inView[0]!.id;
+function ownerOf(position: Position | null, now: number): string {
+  const group = speakers(now);
+  if (group.length === 0) return ANONYMOUS;
+  if (group.length === 1) return group[0]!.id;
   if (position) {
-    const atPosition = inView.filter((person) => person.position === position);
+    const atPosition = group.filter((person) => person.position === position);
     if (atPosition.length === 1) return atPosition[0]!.id;
   }
   return GROUP;
@@ -176,7 +262,7 @@ export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
   if (tags.length === 0) return false;
   let changed = false;
   for (const tag of tags) {
-    const owner = ownerOf(tag.position);
+    const owner = ownerOf(tag.position, now);
     if (tag.kind === 'note') {
       const record = recordFor(owner, now);
       record.lastSeenAt = now;
@@ -199,7 +285,10 @@ export function recordFieldNotes(rawText: string, now = Date.now()): boolean {
     }
   }
   if (quotes.length > MAX_QUOTES) quotes.splice(0, quotes.length - MAX_QUOTES);
-  if (changed) changeListener?.();
+  if (changed) {
+    changeListener?.();
+    tonightListener?.(false);
+  }
   return changed;
 }
 
@@ -255,11 +344,12 @@ export function peopleInView(): Array<{ position: Position; name: string | null;
 }
 
 /** A user turn happened: everyone in view has now talked with Tubs a bit more. */
-export function noteTurn(): void {
-  for (const person of inView) {
+export function noteTurn(now = Date.now()): void {
+  for (const person of speakers(now)) {
     const record = records.get(person.id);
     if (record) record.turns += 1;
   }
+  tonightListener?.(false);
 }
 
 /** Someone unnamed Tubs has talked with a while and can enroll: time to ask their name. */
@@ -276,6 +366,7 @@ export function markNameAsked(position: Position): void {
   const person = inView.find((candidate) => candidate.position === position);
   const record = person ? records.get(person.id) : undefined;
   if (record) record.askedName = true;
+  tonightListener?.(false);
 }
 
 /** True when the people in view have any notes (for "call back a note"). */
@@ -350,7 +441,10 @@ export function forgetPeople(ids: readonly string[]): number {
     if (records.delete(id)) forgotten += 1;
     for (let i = quotes.length - 1; i >= 0; i -= 1) if (quotes[i]!.personId === id) quotes.splice(i, 1);
   }
-  if (forgotten > 0) changeListener?.();
+  if (forgotten > 0) {
+    changeListener?.();
+    tonightListener?.(true);
+  }
   return forgotten;
 }
 
@@ -358,7 +452,63 @@ export function forgetPeople(ids: readonly string[]): number {
 export function clearTonight(): void {
   records.clear();
   quotes.length = 0;
+  lastGroup = [];
   changeListener?.();
+  tonightListener?.(true);
+}
+
+/** Tonight's memory as saved to disk (TUBS_TONIGHT_FILE): everyone noted, their quotes. Not the current visit's anonymous or group notes. */
+export interface TonightData {
+  version: 1;
+  people: Array<{ id: string } & PersonRecord>;
+  quotes: QuoteRecord[];
+}
+
+export function exportTonight(now = Date.now()): TonightData {
+  prune(now);
+  return {
+    version: 1,
+    people: [...records].filter(([id]) => id !== ANONYMOUS && id !== GROUP).map(([id, record]) => ({ id, ...record, notes: [...record.notes], names: [...record.names] })),
+    quotes: quotes.map((quote) => ({ ...quote })),
+  };
+}
+
+const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === 'string');
+const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+/** At start: what was saved before the restart, minus what has expired since. Returns how many people came back. */
+export function importTonight(data: unknown, now = Date.now()): number {
+  const saved = data as Partial<TonightData> | null;
+  if (!saved || saved.version !== 1 || !Array.isArray(saved.people)) return 0;
+  let restored = 0;
+  for (const raw of saved.people) {
+    const person = raw as Partial<{ id: string } & PersonRecord>;
+    if (typeof person.id !== 'string' || person.id === ANONYMOUS || person.id === GROUP || records.has(person.id)) continue;
+    if (!isStrings(person.notes) || !isStrings(person.names) || !isNumber(person.firstSeenAt) || !isNumber(person.lastSeenAt)) continue;
+    if (now - person.lastSeenAt > NOTES_TTL_MS) continue;
+    records.set(person.id, {
+      notes: person.notes.slice(-MAX_NOTES_PER_PERSON),
+      names: person.names,
+      firstSeenAt: person.firstSeenAt,
+      lastSeenAt: person.lastSeenAt,
+      returning: person.returning === true,
+      enrolled: person.enrolled === true,
+      snapshots: isNumber(person.snapshots) ? person.snapshots : 0,
+      turns: isNumber(person.turns) ? person.turns : 0,
+      askedName: person.askedName === true,
+      thumbnail: typeof person.thumbnail === 'string' ? person.thumbnail : null,
+    });
+    restored += 1;
+  }
+  for (const raw of Array.isArray(saved.quotes) ? saved.quotes : []) {
+    const quote = raw as Partial<QuoteRecord>;
+    if (typeof quote.personId !== 'string' || typeof quote.text !== 'string' || !isNumber(quote.at) || now - quote.at > NOTES_TTL_MS) continue;
+    if (!quotes.some((each) => each.text === quote.text)) quotes.push({ personId: quote.personId, text: quote.text, at: quote.at });
+  }
+  quotes.sort((a, b) => a.at - b.at);
+  if (quotes.length > MAX_QUOTES) quotes.splice(0, quotes.length - MAX_QUOTES);
+  if (restored > 0) changeListener?.();
+  return restored;
 }
 
 /** Test helper. */
@@ -366,6 +516,8 @@ export function resetFieldNotes(): void {
   records.clear();
   quotes.length = 0;
   inView = [];
+  lastGroup = [];
+  groupLeftAt = -Infinity;
 }
 
 /**

@@ -7,8 +7,8 @@
 // already plays main's voice and hears small's speech state from the server,
 // which is all the echo guard needs, and the studio needs no third page.
 
-import { formatVisionSource, parseMicSource, parseVisionSource, type StudioActor, type StudioCadence, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
-import type { WsAudioChunkServerMessage, WsClientMessage, WsStudioConfigServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
+import { NOT_A_STUDIO_PICTURE, formatVisionSource, isStudioPicture, parseMicSource, parseVisionSource, studioFaceBoxOf, type StudioActor, type StudioCadence, type StudioDevices, type StudioMicStatus, type VisionSourceSpec } from '../../shared/contracts/studio.js';
+import type { WsAudioChunkServerMessage, WsClientMessage, WsStudioConfigServerMessage, WsStudioFaceCallServerMessage, WsStudioServerMessage } from '../../shared/contracts/ws.js';
 import { redirectSpeech } from '../audio/speech-level.js';
 import { readVoiceClock } from '../audio/voice-clock.js';
 import type { SpeechRuntime } from '../audio/speech-runtime.js';
@@ -22,18 +22,25 @@ import { createStageGate } from './stage.js';
 import { createHandoverGate } from './handover.js';
 import { setSiteLogin } from '../transport/whip.js';
 import { createCadenceMeter } from './cadence.js';
+import { readInputDevices } from './devices.js';
+import { LIVE_KEEPALIVE_MS, LIVE_REPORT_MS, PREVIEW_FRAME_MS, PREVIEW_MAX_PX, liveStatusOf } from './live.js';
 import { takeStreamingAudioStats } from '../audio/streaming-session.js';
 import { CAPTION_TICK_MS, createCaptionTracker } from './caption.js';
 import { createStudioPresence } from './presence.js';
 import { createFacePublisher, type PublisherStatus } from './publisher.js';
 import { DEFAULT_GLYPH, drawSleepZs, layoutSleepZs, measureGlyph, type GlyphMetrics, type SleepZLayout, type SleepingFace } from './sleep-zs.js';
 import { STUDIO_STATE_HEARTBEAT_MS, studioStateChanged, studioStateOf, type StudioStateSnapshot } from './state-report.js';
+import { browserRecognizes, faceStateOf } from './face-service.js';
 
 const CAPTURE_FPS = 30;
 /** How often a face page says how steadily it renders and publishes (GET /studio actors[].cadence). */
 export const CADENCE_REPORT_MS = 5000;
 /** The face is published at 30 fps; drawing it faster only takes CPU and GPU from its voice. */
 export const STUDIO_RENDER_MAX_FPS = 60;
+/** The listener's face worker state goes to the server every this many heartbeats (2 s). */
+const FACE_WORKER_REPORT_BEATS = 2;
+/** An onboarding a dashboard started and then left (closed, crashed) gives the camera back after this. */
+export const ENROLLMENT_IDLE_MS = 60_000;
 
 export interface StudioRuntime {
   init(send: (message: WsClientMessage) => void): void;
@@ -80,6 +87,18 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   // The published frame itself went black (see black-frame.ts).
   let frameBlack = false;
   let micStatus: StudioMicStatus | null = null;
+  // The listener's input devices (GET /studio/sources); labels unlocked at most once per page.
+  let devices: StudioDevices | null = null;
+  let devicesProbed = false;
+  // What the dashboards watch (studio_watch): nothing is sent for nobody.
+  let watch = { live: false, video: false };
+  let liveTimer = 0;
+  let previewTimer = 0;
+  let lastLiveKey = '';
+  let lastLiveSentAt = 0;
+  let liveSent = false;
+  let lastPreviewKey = -1;
+  let enrollIdleTimer = 0;
   let lastState: StudioStateSnapshot | null = null;
   let heartbeat = 0;
   let captionTimer = 0;
@@ -123,7 +142,107 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       ...(error && !publishing ? { error: error.slice(0, 300) } : {}),
       ...(micStatus ? { mic: { ...micStatus, ...(micStatus.error ? { error: micStatus.error.slice(0, 300) } : {}) } } : {}),
       ...(withCadence ? { cadence: withCadence } : {}),
+      ...(devices ? { devices } : {}),
+      // Whether the face worker runs at all, every couple of seconds: GET /studio/vision, the pulse, parts.
+      ...(listener && options.face ? { faceWorker: options.face.debugStatus() } : {}),
     });
+  }
+
+  async function reportDevices(): Promise<void> {
+    const media = navigator.mediaDevices;
+    if (!listener || !config?.enabled || !media?.enumerateDevices) return;
+    const probe = !devicesProbed;
+    devicesProbed = true;
+    try {
+      const next = await readInputDevices(media, probe);
+      if (JSON.stringify(next) === JSON.stringify(devices)) return;
+      devices = next;
+      reportStatus();
+    } catch {
+      // No device list here: the pick list offers the default only.
+    }
+  }
+  const onDeviceChange = () => void reportDevices();
+
+  /** Live state ~10 Hz while someone watches it, the camera a few times a second while someone shows it. */
+  function syncWatchTimers(): void {
+    const here = listener && Boolean(options.face) && Boolean(config?.enabled);
+    const live = here && watch.live;
+    const video = here && watch.video;
+    if (live && !liveTimer) liveTimer = window.setInterval(sendLive, LIVE_REPORT_MS);
+    if (!live && liveTimer) {
+      window.clearInterval(liveTimer);
+      liveTimer = 0;
+      lastLiveKey = '';
+      // The dashboards stop showing what no longer comes.
+      if (liveSent) send?.({ type: 'studio_live', actor, status: null, speaking: false });
+      liveSent = false;
+    }
+    if (video && !previewTimer) {
+      lastPreviewKey = -1;
+      previewTimer = window.setInterval(sendPreview, PREVIEW_FRAME_MS);
+    }
+    if (!video && previewTimer) {
+      window.clearInterval(previewTimer);
+      previewTimer = 0;
+    }
+  }
+
+  function sendLive(): void {
+    const status = liveStatusOf(store.getState());
+    const speaking = options.voice?.headsTalking() ?? false;
+    const faceWorker = options.face?.debugStatus();
+    // Ages and rates change every report; what is shown changes with the rest.
+    const key = JSON.stringify([status, speaking, faceWorker?.state, faceWorker?.detail, faceWorker?.lastCheckAt]);
+    const now = Date.now();
+    if (key === lastLiveKey && now - lastLiveSentAt < LIVE_KEEPALIVE_MS) return;
+    lastLiveKey = key;
+    lastLiveSentAt = now;
+    liveSent = true;
+    send?.({ type: 'studio_live', actor, status, speaking, ...(faceWorker ? { faceWorker } : {}) });
+  }
+
+  function sendPreview(): void {
+    const picture = options.face?.previewFrame(PREVIEW_MAX_PX);
+    if (!picture || picture.key === lastPreviewKey) return;
+    lastPreviewKey = picture.key;
+    send?.({ type: 'studio_frame', actor, frame: picture.frame, width: picture.width, height: picture.height });
+  }
+
+  /** A dashboard's onboarding, with this page's camera (it has none). */
+  async function runFaceCall(message: WsStudioFaceCallServerMessage): Promise<void> {
+    const face = options.face;
+    try {
+      if (!face) throw new Error('this studio page has no camera');
+      const args = message.args ?? {};
+      let value: unknown = null;
+      window.clearTimeout(enrollIdleTimer);
+      switch (message.method) {
+        case 'beginEnrollment':
+          face.beginEnrollment();
+          break;
+        case 'endEnrollment':
+          face.endEnrollment();
+          break;
+        case 'captureEnrollmentSample':
+          value = await face.captureEnrollmentSample(embeddingsOf(args.previous), studioFaceBoxOf(args.choose));
+          break;
+        case 'embedPicture': {
+          value = isStudioPicture(args.image) ? await face.embedPicture(await (await fetch(args.image)).blob()) : { ok: false, reason: NOT_A_STUDIO_PICTURE };
+          break;
+        }
+        case 'saveEnrollment':
+          value = await face.saveEnrollment(typeof args.name === 'string' ? args.name : '', samplesOf(args.samples));
+          break;
+      }
+      if (message.method === 'beginEnrollment' || message.method === 'captureEnrollmentSample') {
+        // A dashboard that goes away mid-onboarding must not leave detection paused.
+        enrollIdleTimer = window.setTimeout(() => face.endEnrollment(), ENROLLMENT_IDLE_MS);
+      }
+      send?.({ type: 'studio_face_result', id: message.id, ok: true, value });
+    } catch (error) {
+      send?.({ type: 'studio_face_result', id: message.id, ok: false, error: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+    }
   }
 
   /**
@@ -306,8 +425,10 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
     // The site node's login, if it needs one (TUBS_STUDIO_SITE_AUTH); before publishing.
     setSiteLogin(next.siteAuth);
     publisher.publish(next.enabled ? `${next.site}/${next.streams[actor]}/whip` : null);
+    // The switches (absent from an older server: all on); each leaves its source choice alone.
+    const switches = next.switches ?? { camera: true, faceRecognition: true, mic: true };
     if (options.voice) {
-      const source = next.enabled ? parseMicSource(next.micSource) : { kind: 'off' as const };
+      const source = next.enabled && switches.mic ? parseMicSource(next.micSource) : { kind: 'off' as const };
       if (source) {
         void options.voice.setMicSource(source, next.site);
       } else {
@@ -315,23 +436,30 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       }
     }
     if (options.face) {
-      const source: VisionSourceSpec | null = next.enabled ? parseVisionSource(next.visionSource) : { kind: 'off' };
+      // While the face service recognises, this page opens no camera and starts no worker (docs/face-service.md).
+      const service = !browserRecognizes(next);
+      // Detection runs for recognition or for descriptions (a detected face triggers them).
+      const detection = !service && (switches.faceRecognition || store.getState().config?.visionDescriptions !== false);
+      options.face.setRecognition(switches.faceRecognition, detection);
+      const source: VisionSourceSpec | null = next.enabled && switches.camera && !service ? parseVisionSource(next.visionSource) : { kind: 'off' };
       if (!source) {
         store.appendLog('error', `Studio: unknown vision source ${next.visionSource}`);
       } else {
-        const key = `${formatVisionSource(source)}@${source.kind === 'site' ? next.site : ''}`;
+        const key = service ? 'service' : `${formatVisionSource(source)}@${source.kind === 'site' ? next.site : ''}`;
+        // The models load only with a camera to look through and something to detect faces for.
+        if (source.kind !== 'off' && detection && !faceStarted) {
+          faceStarted = true;
+          options.face.init();
+        }
         if (key !== pictureSource) {
           pictureSource = key;
-          if (source.kind !== 'off' && !faceStarted) {
-            // The detector loads its models only once there is a camera to look through.
-            faceStarted = true;
-            options.face.init();
-          }
           void options.face.setPictureSource(source, next.site);
         }
       }
     }
     options.speech.setLineGate(next.enabled ? lineGate : null);
+    if (next.enabled && !devices) void reportDevices();
+    syncWatchTimers();
     if (next.enabled) startStateReports();
     else stopStateReports();
     // Also after a reconnect: the server forgot this page's status when its socket closed.
@@ -361,8 +489,15 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         send?.({ type: 'studio_caption', actor, ...caption, ts: Date.now() });
       }
     }, CAPTION_TICK_MS);
+    let beats = 0;
     heartbeat = window.setInterval(() => {
       sendState(true);
+      beats += 1;
+      if (listener && options.face && beats % FACE_WORKER_REPORT_BEATS === 0) {
+        reportStatus();
+        // Also between checks (loading, off, stalled): the observation carries the worker's state.
+        send?.({ type: 'face_observation', observation: options.face.observation() });
+      }
       if (listener && presence.visitOver(Date.now())) {
         store.appendLog('info', 'Studio: nobody near either head for a while; the visit is over');
         send?.({ type: 'presence', present: false, count: 0 });
@@ -385,9 +520,16 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
   return {
     init(nextSend) {
       send = nextSend;
+      // Each check's faces, in the shape the face service sends (docs/face-service.md).
+      if (listener) {
+        options.face?.onObservation((observation) => {
+          if (config?.enabled) send?.({ type: 'face_observation', observation });
+        });
+      }
       routeVoice();
       setBadge();
       window.addEventListener('pagehide', onPageHide);
+      if (listener) navigator.mediaDevices?.addEventListener?.('devicechange', onDeviceChange);
     },
     handle(message) {
       switch (message.type) {
@@ -420,6 +562,17 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
         case 'studio_state':
           handover.noteAlive(message.actor);
           return;
+        case 'studio_watch':
+          watch = { live: message.live, video: message.video };
+          syncWatchTimers();
+          return;
+        case 'studio_face_call':
+          void runFaceCall(message);
+          return;
+        case 'face_observation':
+          // The face service's frames, in place of this page's own detections.
+          if (listener && pictureSource === 'service') store.setState((current) => ({ ...current, ...faceStateOf(message.observation) }));
+          return;
       }
     },
     noteMic(status) {
@@ -431,10 +584,37 @@ export function createStudioRuntime(options: StudioRuntimeOptions): StudioRuntim
       handover.dispose();
       options.speech.setLineGate(null);
       window.removeEventListener('pagehide', onPageHide);
+      navigator.mediaDevices?.removeEventListener?.('devicechange', onDeviceChange);
+      options.face?.onObservation(null);
+      watch = { live: false, video: false };
+      syncWatchTimers();
+      window.clearTimeout(enrollIdleTimer);
       stopStateReports();
       publisher.dispose();
       for (const track of stream?.getVideoTracks() ?? []) track.stop();
       stopCompositor?.();
     },
   };
+}
+
+const MAX_SAMPLES = 10;
+const MAX_EMBEDDING = 2048;
+const isEmbedding = (value: unknown): value is number[] => Array.isArray(value) && value.length > 0 && value.length <= MAX_EMBEDDING
+  && value.every((n) => typeof n === 'number' && Number.isFinite(n));
+
+/** A dashboard's earlier poses' embeddings (to spot a pose too like one taken). */
+export function embeddingsOf(value: unknown): number[][] {
+  return Array.isArray(value) ? value.filter(isEmbedding).slice(0, MAX_SAMPLES) : [];
+}
+
+/** The poses a dashboard kept, as the face library takes them. */
+export function samplesOf(value: unknown): Array<{ embedding: number[]; thumbnail: string }> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((sample: unknown) => {
+    if (typeof sample !== 'object' || sample === null) return [];
+    const { embedding, thumbnail } = sample as { embedding?: unknown; thumbnail?: unknown };
+    return isEmbedding(embedding) && typeof thumbnail === 'string' && thumbnail.startsWith('data:image/') && thumbnail.length <= 200_000
+      ? [{ embedding, thumbnail }]
+      : [];
+  }).slice(0, MAX_SAMPLES);
 }

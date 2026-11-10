@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, useEffect, type CSSProperties, type JSX } from 'react';
 import type { EnrollmentCapture } from '../face/enrollment.js';
+import type { EmbedResult } from '../face/runtime.js';
 import type { AppStore } from '../state/app-state.js';
 import { postJson } from '../transport/http.js';
 import { patchConfig } from '../fx/runtime.js';
@@ -38,7 +39,10 @@ export interface AppShellControls {
     getCameraStream(): MediaStream | null;
     beginEnrollment(): void;
     endEnrollment(): void;
-    captureEnrollmentSample(previousEmbeddings: number[][]): Promise<EnrollmentCapture | null>;
+    /** choose: with several people in view, the box ([x, y, w, h] in 0..1) of the one to take. */
+    captureEnrollmentSample(previousEmbeddings: number[][], choose?: [number, number, number, number]): Promise<EnrollmentCapture | null>;
+    /** A photo as a sample for someone: exactly one face in it, or the reason it can't be used. */
+    embedPicture(image: Blob): Promise<EmbedResult>;
     saveEnrollment(name: string, samples: Array<{ embedding: number[]; thumbnail: string }>): Promise<number>;
     refreshLibrary(): Promise<void>;
     renameFace(id: string, name: string): Promise<void>;
@@ -109,6 +113,8 @@ function MainAppShell({ store, controls }: { store: AppStore; controls?: AppShel
  */
 function DashboardAppShell({ store, controls }: { store: AppStore; controls?: AppShellControls | undefined }): JSX.Element {
   useOperatorHotkeys(store, controls, 'dashboard');
+  // Onboarding needs a camera: in studio mode the studio listener's, shown here.
+  const studioCamera = useAppSelector(store, (current) => current.studioLive !== null);
   return (
     <main className="shell shell-main shell-dashboard">
       <StatusBar store={store} view="dashboard" controls={controls} />
@@ -116,6 +122,7 @@ function DashboardAppShell({ store, controls }: { store: AppStore; controls?: Ap
         <ChatPanel store={store} />
       </div>
       <Dock store={store} controls={controls} view="dashboard" defaultWidth={560} />
+      {studioCamera ? <EnrollmentWizard store={store} {...(controls?.face ? { controls: controls.face } : {})} /> : null}
     </main>
   );
 }

@@ -3,10 +3,13 @@ import { runtimeConfig, sessionStats } from '../config/runtime.js';
 import { createTurnTimer, type TurnTimer } from '../turn-timing.js';
 import { logConversation, logTubsReply } from '../observability/conversation-log.js';
 import { captureTurnTrace } from '../observability/langfuse.js';
-import { noteReplyEmoji, noteReplyText } from './variety.js';
+import { noteReplyEmoji, noteReplyLines } from './variety.js';
+import type { SpokenLine } from './bits.js';
 import { forgetConversation } from './context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
+import { noteHeard } from '../studio/pulse.js';
+import { headsQuiet } from './heads.js';
 
 /**
  * Every way a turn can start (typed chat over HTTP or WS, a voice clip, a
@@ -99,7 +102,9 @@ export interface StartUserTurnArgs {
  */
 export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnResult> | null {
   const { text, source, broadcast } = args;
+  if (source === 'voice') noteHeard(text);
   cancelAppearanceGreeting();
+  cancelQuietWait();
   if (runtimeConfig.muted) {
     broadcast({ type: 'expression', expression: 'idle' });
     return null;
@@ -173,12 +178,18 @@ async function runTimedTurn(
 /** A turn Tubs starts on its own: a greeting or a proactive line. */
 export function startProactiveTurn(context: string, broadcast: Broadcast): void {
   cancelAppearanceGreeting();
+  cancelQuietWait();
   if (runtimeConfig.muted || !context.trim()) {
     return;
   }
   // Tubs speaking up on his own never kills a reply someone is waiting for.
   if (hasActiveAssistantTurn()) {
     console.log('[turn] proactive line skipped: a reply is still being generated');
+    return;
+  }
+  // Nor a line still playing: its generation is over, its audio is not. It waits for quiet.
+  if (!headsQuiet()) {
+    waitForQuiet(context, broadcast);
     return;
   }
   interruptCurrentTurn(broadcast, 'system');
@@ -208,9 +219,17 @@ function recordTurn(source: 'text' | 'voice' | 'proactive', input: string, resul
   if (!result.superseded) {
     void logTubsReply(result.reply.text, result.beats);
     noteReplyEmoji(result.reply.emotion?.emoji);
-    noteReplyText(result.reply.text);
+    noteReplyLines(spokenLines(result));
   }
   captureTurnTrace({ source, userText: input, result, startedAt, ...(turnTimer ? { turnTimer } : {}) });
+}
+
+/** Who said what: each head's speak beats in a two-head turn, else Tubs alone. */
+function spokenLines(result: Pick<AssistantTurnResult, 'reply' | 'beats'>): SpokenLine[] {
+  if (!result.beats) return [{ head: 'main', text: result.reply.text }];
+  return result.beats
+    .filter((beat) => beat.action === 'speak' && beat.text?.trim())
+    .map((beat) => ({ head: beat.actor === 'small' ? 'small' : 'main', text: beat.text ?? '' }));
 }
 
 /**
@@ -237,6 +256,36 @@ export function scheduleAppearanceGreeting(prompt: string, broadcast: Broadcast)
     lastAppearanceGreetingAt = Date.now();
     startProactiveTurn(nextPrompt, broadcast);
   }, APPEARANCE_GREETING_DEBOUNCE_MS);
+}
+
+/** A proactive line waits this long at most for the heads to fall quiet, then is dropped. */
+export const QUIET_WAIT_MAX_MS = 20_000;
+const QUIET_POLL_MS = 250;
+let quietWait: { timer: NodeJS.Timeout; since: number } | null = null;
+
+function waitForQuiet(context: string, broadcast: Broadcast): void {
+  const since = Date.now();
+  console.log('[turn] proactive line waits: a head is still talking');
+  const poll = () => {
+    if (Date.now() - since > QUIET_WAIT_MAX_MS) {
+      quietWait = null;
+      console.log('[turn] proactive line dropped: the heads did not fall quiet');
+      return;
+    }
+    if (!headsQuiet()) {
+      quietWait = { timer: setTimeout(poll, QUIET_POLL_MS), since };
+      return;
+    }
+    quietWait = null;
+    startProactiveTurn(context, broadcast);
+  };
+  quietWait = { timer: setTimeout(poll, QUIET_POLL_MS), since };
+}
+
+/** Someone spoke (their turn comes first), or another proactive line replaces it. */
+export function cancelQuietWait(): void {
+  if (quietWait) clearTimeout(quietWait.timer);
+  quietWait = null;
 }
 
 export function cancelAppearanceGreeting(): void {

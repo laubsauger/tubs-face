@@ -17,7 +17,11 @@ struct Globals {
   // Living expression motion per shape: a pixel centre p goes to p * xy + zw.
   xformL: vec4f,
   xformR: vec4f,
-  xformM: vec4f
+  xformM: vec4f,
+  // A worn prop (glitch/props.ts): its pivot (the middle of its base) and its
+  // tilt's cos and sin; then how far it moves with the eyes' tops.
+  prop: vec4f,
+  propMove: vec4f
 };
 
 @group(0) @binding(0) var<uniform> u: Globals;
@@ -28,6 +32,21 @@ fn shapeXform(group: f32) -> vec4f {
   if (group < 0.5 || (group > 2.5 && group < 3.5)) { return u.xformL; }
   if (group < 1.5 || group > 3.5) { return u.xformR; }
   return u.xformM;
+}
+
+// A prop pixel's centre (groups 5-7). The propeller's blades (6) turn round
+// the middle: seen from the front a turn squeezes them in and swaps their
+// sides. The tassel (7) swings a little. Then the whole prop tilts about its
+// pivot and moves with the eyes' tops; the gaze moves it with the eyes.
+fn propCentre(p: vec2f, group: f32) -> vec2f {
+  var local = p - u.prop.xy;
+  if (group > 5.5 && group < 6.5) {
+    local.x = local.x * cos(u.canvas.w * 9.0);
+  } else if (group > 6.5) {
+    local.x = local.x + sin(u.canvas.w * 4.2) * u.motion.y * 0.5;
+  }
+  let turned = vec2f(local.x * u.prop.z - local.y * u.prop.w, local.x * u.prop.w + local.y * u.prop.z);
+  return u.prop.xy + turned + u.propMove.xy;
 }
 
 struct VSOut {
@@ -89,9 +108,14 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
   // The shape's motion moves the pixel centre and sizes the pixel with it.
   let xf = shapeXform(group);
   let sz = u.motion.y;
-  let moved = (a.xy + vec2f(sz * 0.5)) * xf.xy + xf.zw;
-  let drawW = sz * xf.x;
+  var moved = (a.xy + vec2f(sz * 0.5)) * xf.xy + xf.zw;
+  var drawW = sz * xf.x;
   var drawH = sz * xf.y;
+  if (group > 4.5) {
+    moved = propCentre(a.xy + vec2f(sz * 0.5), group);
+    drawW = sz;
+    drawH = sz;
+  }
   var x = moved.x - drawW * 0.5 + u.face.x;
   var y = moved.y - drawH * 0.5 + u.face.y;
 
@@ -115,10 +139,13 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
     // Closing, the pixels flatten too (like a blink); moving only the rows
     // left the mouth looking the same.
     drawH = max(2.0, drawH * clamp(u.motion.x, 0.2, 1.0));
-  } else {
+  } else if (group < 4.5) {
     x = x + u.gaze.x;
     y = y + u.gaze.y;
     y = y + sin(u.canvas.w * 1.5 + a.y * 0.05) * u.motion.y * 0.3;
+  } else {
+    x = x + u.gaze.x;
+    y = y + u.gaze.y;
   }
 
   var visible = 1.0;
@@ -217,7 +244,7 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   var alpha = clamp(u.motion.z + (1.0 - u.motion.z) * u.motion.w, u.motion.z, 1.0);
   alpha = alpha * u.color.w;
 
-  if (in.group > 2.5) {
+  if (in.group > 2.5 && in.group < 4.5) {
     alpha = alpha * (0.5 + 0.5 * sin(u.canvas.w * 2.0 + in.group * 3.14159));
   }
   // Pixels fade as they shrink, so they melt into the new shape instead of popping.

@@ -37,7 +37,10 @@ const DUAL_HEAD_OUTPUT_RULES = [
   'Never use formal connective words (e.g. "furthermore", "however").',
   'Usually return 1-3 beats; a quick back-and-forth may run to five.',
   'A small-only turn is allowed when it genuinely fits. Do not force Main to speak first.',
-  'When you learn something about the person worth remembering tonight (their job, a strong opinion, something they did, wore or carry), add one hidden note at the very end of Main text: [[NOTE: short phrases, commas only]]. With several people in view, say who it is about, as the camera description places them: [[NOTE left: ...]], [[NOTE right: ...]], [[NOTE middle: ...]]. When they say something quotable, you may add [[QUOTE: their words]]. When someone tells you their name, add [[NAME: the name]] ([[NAME left: ...]] with several people). At most one of each, only facts not already in your notes, never their name unless they told you. Notes are never spoken.',
+  // Asked to hide [[NOTE: ...]] at the end of Main's text, the model almost
+  // never did (0 of 9 replies on 9 Nov, though Flo said "I'm Flo" three
+  // times): the notes have a field of their own in the reply JSON.
+  'Notes, in "notes", never in a spoken line. Whenever the person tells you something about themselves or you notice something worth remembering tonight (their job, a strong opinion, something they did, wore or carry), add {"kind":"note","text":"short phrases, commas only"}. When they say something quotable, add {"kind":"quote","text":"their words"}. When someone tells you their name, add {"kind":"name","text":"the name"}. With several people in view, add "who": "left", "middle" or "right", as the camera description places them. At most one of each, only facts not already in your notes, never their name unless they told you. Leave "notes" out when there is nothing new.',
   'Allowed emoji values: 🙂 😄 😏 🥺 😢 😤 🤖 🫶',
   '',
   'Valid example:',

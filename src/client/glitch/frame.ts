@@ -5,6 +5,8 @@ import type { GpuHandle } from './webgpu.js';
 
 /** Where the per-shape transforms start in the pixel pass uniforms (after the 12 shared vec4s). */
 const SHAPE_TRANSFORM_OFFSET = 48;
+/** And a worn prop's, after the eyes' and mouth's. */
+const PROP_TRANSFORM_OFFSET = 60;
 
 export interface FrameState {
   t: number;
@@ -136,12 +138,14 @@ export function writeGpuUniforms(
     shapeCenters: Array<{ cy: number }>;
     /** Left eye, right eye, mouth: (sx, sy, tx, ty) each, from the living expression motion. */
     shapeTransforms: Float32Array;
+    /** A worn prop's pivot, tilt and offset (props.ts packPropTransform). */
+    propTransform: Float32Array;
     baseHSL: { h: number; s: number; l: number };
     glitchBurstSeed: number;
     sleeping: boolean;
   },
 ): void {
-  const { gpuDevice, gpuUniformBuffer, gpuPostUniformBuffer, gpuUniformData, gpuPostUniformData, config, faceW, faceH, shapeCenters, shapeTransforms, baseHSL, glitchBurstSeed, sleeping } = args;
+  const { gpuDevice, gpuUniformBuffer, gpuPostUniformBuffer, gpuUniformData, gpuPostUniformData, config, faceW, faceH, shapeCenters, shapeTransforms, propTransform, baseHSL, glitchBurstSeed, sleeping } = args;
   if (!gpuDevice || !gpuUniformBuffer || !gpuPostUniformBuffer) return;
 
   const sb = config.scanBeam;
@@ -176,8 +180,9 @@ export function writeGpuUniforms(
   gpuUniformData[31] = 0;
   gpuUniformData[32] = 0;
   gpuUniformData[40] = 0;
-  // Pixel pass only (xformL, xformR, xformM); the post pass doesn't move shapes.
+  // Pixel pass only (xformL, xformR, xformM, prop); the post pass doesn't move shapes.
   gpuUniformData.set(shapeTransforms, SHAPE_TRANSFORM_OFFSET);
+  gpuUniformData.set(propTransform, PROP_TRANSFORM_OFFSET);
 
   gpuDevice.queue.writeBuffer(gpuUniformBuffer, 0, gpuUniformData.buffer, gpuUniformData.byteOffset, GPU_UNIFORM_FLOATS * 4);
   gpuDevice.queue.writeBuffer(gpuPostUniformBuffer, 0, gpuPostUniformData.buffer, gpuPostUniformData.byteOffset, GPU_UNIFORM_FLOATS * 4);
@@ -201,6 +206,7 @@ export function renderFrameWebGpu(frame: FrameState, args: {
   faceH: number;
   shapeCenters: Array<{ cy: number }>;
   shapeTransforms: Float32Array;
+  propTransform: Float32Array;
   baseHSL: { h: number; s: number; l: number };
   glitchBurstSeed: number;
   sleeping: boolean;

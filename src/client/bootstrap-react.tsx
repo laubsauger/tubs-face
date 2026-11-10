@@ -5,6 +5,8 @@ import { createScreenRecorder } from './audio/screen-recorder.js';
 import { createSpeechRuntime } from './audio/speech-runtime.js';
 import { createVoiceRuntime } from './audio/voice-runtime.js';
 import { createStudioRuntime, type StudioRuntime } from './studio/runtime.js';
+import { createStudioWatch, withStudioCamera, type StudioWatch } from './studio/watch.js';
+import { studioCameraUrl } from './studio/camera-stream.js';
 import { isWsStudioServerMessage } from '../shared/guards/index.js';
 import { createEmotionRuntime } from './behavior/emotion-runtime.js';
 import { createProactiveRuntime } from './behavior/proactive-runtime.js';
@@ -14,7 +16,7 @@ import { createFaceShellRuntime } from './face/runtime.js';
 import { createFxRuntime } from './fx/runtime.js';
 import { createGlitchRuntime } from './glitch/runtime.js';
 import { applyServerMessage } from './handlers/messages.js';
-import { DASHBOARD_UI_PREFS_STORAGE_KEY, UI_PREFS_STORAGE_KEY, createAppStore, persistUiPrefs, syncStagePrefs, type AppState, type AppStore } from './state/app-state.js';
+import { DASHBOARD_UI_PREFS_STORAGE_KEY, UI_PREFS_STORAGE_KEY, createAppStore, tabFromUrl, persistUiPrefs, syncStagePrefs, type AppState, type AppStore } from './state/app-state.js';
 import { fetchJson } from './transport/http.js';
 import { createManagedWsClient } from './transport/ws-client.js';
 import { createVisualRuntime } from './ui/visual-runtime.js';
@@ -59,7 +61,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   const isStudio = options.mode === 'studio';
   const studioActor: 'main' | 'small' | undefined = isStudio ? (options.actor ?? 'main') : undefined;
   const isStudioListener = studioActor === 'main';
-  const store = createAppStore(isController ? UI_PREFS_STORAGE_KEY : isDashboard ? DASHBOARD_UI_PREFS_STORAGE_KEY : undefined);
+  const store = createAppStore(isController ? UI_PREFS_STORAGE_KEY : isDashboard ? DASHBOARD_UI_PREFS_STORAGE_KEY : undefined, {
+    tab: isDashboard ? tabFromUrl(window.location.search, dockTabsFor('dashboard')) : null,
+  });
   // Dev server only (browser tests read what a face shows): never in a build.
   if (import.meta.env.DEV) (window as unknown as { __tubsStore?: AppStore }).__tubsStore = store;
   // Spectator processes server messages like 'main' (subtitles, gaze, expressions) but
@@ -84,11 +88,19 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     ? createGlitchRuntime(store, messageMode, isStudio ? { studioCanvasPx: options.studio?.size ?? 1024 } : {})
     : null;
   let lastImpulseTurnId: string | undefined;
-  const proactiveRuntime = isController || isStudioListener ? createProactiveRuntime(store) : null;
-  const sleepRuntime = isController || isStudioListener ? createSleepRuntime(store) : null;
+  const proactiveRuntime = isController || isStudioListener
+    // The studio listener plays only main's voice: Small talking is talking too.
+    ? createProactiveRuntime(store, isStudioListener ? { busy: () => voiceRuntime?.headsTalking() ?? false } : {})
+    : null;
+  const sleepRuntime = isController || isStudioListener
+    // The studio listener also stays awake while either head talks (it plays only main's voice).
+    ? createSleepRuntime(store, isStudioListener ? { busy: () => voiceRuntime?.headsTalking() ?? false } : {})
+    : null;
   const speechRuntime = hasFace ? createSpeechRuntime(store, speechMode) : null;
   const visualRuntime = hasFace ? createVisualRuntime(store, messageMode) : null;
   let studioRuntime: StudioRuntime | null = null;
+  // Dashboard: the studio listener's live state, camera and onboarding (studio/watch.ts).
+  let studioWatch: StudioWatch | null = null;
   const voiceRuntime = isController
     ? createVoiceRuntime(store)
     : isStudioListener
@@ -136,7 +148,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
   let ttsRequestHandler: ((event: Event) => void) | null = null;
   let faceEnrolledHandler: ((event: Event) => void) | null = null;
 
-  const controls: AppShellControls | undefined = isController
+  let controls: AppShellControls | undefined = isController
     ? {
       ambient: {
         toggleEnabled: () => ambientRuntime!.toggleEnabled(),
@@ -163,7 +175,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
           getCameraStream: () => faceRuntime.getCameraStream(),
           beginEnrollment: () => faceRuntime.beginEnrollment(),
           endEnrollment: () => faceRuntime.endEnrollment(),
-          captureEnrollmentSample: (previous) => faceRuntime.captureEnrollmentSample(previous),
+          captureEnrollmentSample: (previous, choose) => faceRuntime.captureEnrollmentSample(previous, choose),
+          embedPicture: (image) => faceRuntime.embedPicture(image),
           saveEnrollment: (name, samples) => faceRuntime.saveEnrollment(name, samples),
           refreshLibrary: () => faceRuntime.refreshLibrary(),
           renameFace: (id: string, name: string) => faceRuntime.renameFace(id, name),
@@ -174,6 +187,8 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     : isDashboard
       ? createDashboardControls(store, (command) => windowLink?.command(command))
       : undefined;
+  // In studio mode the camera is the studio listener's (wherever it runs): onboarding from here goes there.
+  if (controls?.face) controls.face = withStudioCamera(controls.face, store, () => studioWatch);
 
   // The dashboard asks; the face window, which has the devices, does.
   function runFaceCommand(command: FaceCommand): void {
@@ -344,12 +359,19 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
       store.appendLog('error', 'WebSocket error');
     },
     onMessage: (message: WsServerMessage) => {
+      // The studio listener's live state, camera, pulse and onboarding answers: the dashboard's.
+      if (studioWatch?.handle(message)) return;
       // Only studio pages act on studio messages. The operator face hears
       // studio_config only while studio mode is on, or after it was switched:
       // then the studio listener has the mic and this face lets go of it.
       if (isWsStudioServerMessage(message)) {
         studioRuntime?.handle(message);
+        if (isDashboard && message.type === 'studio_config') {
+          store.setState((current) => ({ ...current, studioCameraUrl: studioCameraUrl(message, window.location.hostname) }));
+        }
         if (isController && message.type === 'studio_config') {
+          // In studio mode the studio listener decides when Tubs sleeps.
+          sleepRuntime?.setDeferred(message.enabled);
           void voiceRuntime?.setMicSource(message.enabled ? { kind: 'off' } : { kind: 'local' });
           // The studio listener owns the pictures too; two cameras would greet everyone twice.
           if (message.enabled && store.getState().faceCameraActive) faceRuntime?.stopCamera();
@@ -469,6 +491,9 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
     window.addEventListener('tubs:unlock-audio', spectatorUnlockHandler);
   }
 
+  // Pages that run the studio without devices of their own: the dashboard, and the
+  // operator face window, which lets go of its mic and camera in studio mode.
+  if (isDashboard || isController) studioWatch = createStudioWatch(store, (message) => wsClient.send(message));
   wsClient.connect();
 
   return {
@@ -494,6 +519,7 @@ export async function bootstrapClient(options: BootstrapOptions): Promise<Bootst
         window.removeEventListener('tubs:face-enrolled', faceEnrolledHandler);
       }
       wsClient.disconnect();
+      studioWatch?.dispose();
       studioRuntime?.dispose();
       windowLink?.dispose();
       screenRecorder?.dispose();
@@ -534,6 +560,7 @@ function createDashboardControls(store: AppStore, faceCommand: (command: FaceCom
       beginEnrollment: () => {},
       endEnrollment: () => {},
       captureEnrollmentSample: faceWindowOnly,
+      embedPicture: async () => ({ ok: false, reason: 'only the face window (or the studio listener) has a face worker' }),
       saveEnrollment: faceWindowOnly,
       refreshLibrary: () => refreshEverywhere(store),
       renameFace: (id, name) => renameFaceEntry(store, id, name, refreshEverywhere),

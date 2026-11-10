@@ -8,6 +8,26 @@ import { readJsonBody } from '../http/body.js';
 import { sendJson } from '../http/response.js';
 import { addFace, deleteFace, readFaceLibrary, updateFace } from '../faces/library.js';
 import { badRequest } from './route-helpers.js';
+import { broadcast } from '../ws/server.js';
+
+/** After the library changes (an onboarding saves several samples), every page reloads its copy once. */
+const FACES_CHANGED_DEBOUNCE_MS = 300;
+let facesChangedTimer: NodeJS.Timeout | null = null;
+function facesChanged(): void {
+  if (facesChangedTimer) clearTimeout(facesChangedTimer);
+  // The studio listener matches faces against its own copy: a correction made
+  // in a dashboard on another machine reaches it only this way.
+  facesChangedTimer = setTimeout(() => {
+    facesChangedTimer = null;
+    broadcast({ type: 'faces_changed' });
+  }, FACES_CHANGED_DEBOUNCE_MS);
+  facesChangedTimer.unref();
+}
+
+/** Who changed the library, for its edit log: the route and the caller's address. */
+export function originOf(request: IncomingMessage, route: string): string {
+  return `${route} from ${request.socket.remoteAddress ?? 'unknown address'}`;
+}
 
 const shapesDir = resolve(process.cwd(), 'src/shapes');
 
@@ -32,7 +52,8 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
         name: payload.name.trim(),
         embedding: payload.embedding,
         ...(payload.thumbnail ? { thumbnail: payload.thumbnail } : {}),
-      });
+      }, originOf(request, 'POST /faces'));
+      facesChanged();
       sendJson(response, 200, {
         ok: true,
         face,
@@ -53,13 +74,14 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
       }
       const face = updateFace(payload.id.trim(), {
         name: payload.name.trim(),
-      });
+      }, originOf(request, 'PATCH /faces'));
       if (!face) {
         sendJson(response, 404, {
           error: 'Face not found',
         } satisfies ErrorResponse);
         return true;
       }
+      facesChanged();
       sendJson(response, 200, {
         ok: true,
         face,
@@ -79,7 +101,8 @@ export async function handleFaceRoute(request: IncomingMessage, response: Server
       sendJson(response, 400, { error: 'Missing id parameter' } satisfies ErrorResponse);
       return true;
     }
-    const removed = deleteFace(id);
+    const removed = deleteFace(id, originOf(request, 'DELETE /faces'));
+    if (removed) facesChanged();
     sendJson(response, 200, {
       ok: true,
       removed,

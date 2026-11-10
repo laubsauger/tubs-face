@@ -25,11 +25,14 @@ export interface ReadinessSources {
 
 export interface Readiness {
   check(): Promise<{ ready: boolean; parts: HealthParts }>;
+  /** The last finished check, at once (null before the first); starts a new one when it is old. */
+  peek(): { ready: boolean; parts: HealthParts } | null;
 }
 
 export function createReadiness(sources: ReadinessSources): Readiness {
   const now = sources.now ?? Date.now;
   let cached: { at: number; result: Promise<{ ready: boolean; parts: HealthParts }> } | null = null;
+  let settled: { ready: boolean; parts: HealthParts } | null = null;
 
   async function compute(): Promise<{ ready: boolean; parts: HealthParts }> {
     const mingNeeded = sources.voices().some((voice) => voice.startsWith('ming:'));
@@ -60,12 +63,20 @@ export function createReadiness(sources: ReadinessSources): Readiness {
     return { ready, parts };
   }
 
+  const check = () => {
+    if (cached && now() - cached.at < READINESS_CACHE_MS) return cached.result;
+    const result = compute();
+    cached = { at: now(), result };
+    void result.then((value) => {
+      settled = value;
+    }, () => {});
+    return result;
+  };
   return {
-    check() {
-      if (cached && now() - cached.at < READINESS_CACHE_MS) return cached.result;
-      const result = compute();
-      cached = { at: now(), result };
-      return result;
+    check,
+    peek() {
+      void check();
+      return settled;
     },
   };
 }

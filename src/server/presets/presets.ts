@@ -1,28 +1,32 @@
 // Character presets ("profiles"): a night may not always be Tubs with this
 // personality. A preset is a named snapshot of who the characters are
-// (persona template, extra instruction, canned lines), how they sound (a voice
-// per head), how they look (glitch colours, shapes, FX, expression profiles)
-// and how they behave (sleep timing, interruptible, two-head mode). Stored as
-// readable JSON in config/presets/<name>.json (TUBS_CONFIG_DIR), so presets
-// can live in git. Applying one is safe mid-show: it changes the live config
-// and the persona in place, all or nothing, without a restart; the face pages
-// keep publishing and pick the look up from the config broadcast.
+// (persona template, extra instruction, canned lines, running bits), how they
+// sound (a voice per head), how they look (glitch colours, shapes, FX,
+// expression profiles, props) and how they behave (sleep timing, interruptible,
+// two-head mode). Stored as readable JSON in config/presets/<name>.json
+// (TUBS_CONFIG_DIR), so presets can live in git. Applying one is safe
+// mid-show: it changes the live config and the persona in place, all or
+// nothing, without a restart; the face pages keep publishing and pick the look
+// up from the config broadcast.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { GreetingsConfig } from '../../shared/contracts/faces.js';
 import type { RuntimeConfig } from '../../shared/contracts/config.js';
 import type { PresetFile, PresetSummary } from '../../shared/contracts/presets.js';
+import type { RunningBit } from '../../shared/contracts/bits.js';
 import { configDir } from '../assistant/relationships.js';
+import { activeBits, parseBits, setPresetBits } from '../assistant/bits.js';
 import { applyRuntimeConfigPatch, runtimeConfig, type RuntimeConfigPatch } from '../config/runtime.js';
 import { personaOverride, setPersonaOverride } from '../persona/index.js';
 
 /** Behaviour: what the characters do, as opposed to how they look or sound. */
 export const PRESET_BEHAVIOUR_KEYS = ['sleepTimeout', 'interruptible', 'dualHeadEnabled', 'dualHeadMode', 'dualHeadTurnPolicy'] as const satisfies ReadonlyArray<keyof RuntimeConfig>;
 
-/** Look: every glitch setting (colours, shapes, FX, expression profiles) and Small's colour. */
+/** Look: every glitch setting (colours, shapes, FX, expression profiles), Small's colour and what each head wears. */
 export function lookKeys(): Array<keyof RuntimeConfig> {
-  return (Object.keys(runtimeConfig) as Array<keyof RuntimeConfig>).filter((key) => key.startsWith('glitch') || key === 'secondaryGlitchFxBaseColor');
+  const extra = new Set<string>(['secondaryGlitchFxBaseColor', 'propMain', 'propSmall']);
+  return (Object.keys(runtimeConfig) as Array<keyof RuntimeConfig>).filter((key) => key.startsWith('glitch') || extra.has(key));
 }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/;
@@ -109,6 +113,16 @@ function patchOf(preset: PresetFile): RuntimeConfigPatch {
   return patch as RuntimeConfigPatch;
 }
 
+/** The preset's running bits, or null for the built-in ones (tubs.json's). */
+function bitsOf(preset: PresetFile): RunningBit[] | null {
+  if (preset.bits === undefined) return null;
+  try {
+    return parseBits(preset.bits);
+  } catch (error) {
+    throw new PresetError(`${preset.name}: ${error instanceof Error ? error.message : String(error)}`, 400);
+  }
+}
+
 /**
  * Applies a preset live, all or nothing: an unknown name or any bad value
  * leaves the config and the persona exactly as they were.
@@ -117,6 +131,7 @@ export function applyPreset(name: string): PresetFile {
   const preset = readPreset(name);
   const systemPrompt = systemPromptOf(preset);
   const greetings = (preset.lines ?? null) as GreetingsConfig | null;
+  const bits = bitsOf(preset);
   const patch = patchOf(preset);
   const before = structuredClone(runtimeConfig);
   try {
@@ -126,6 +141,7 @@ export function applyPreset(name: string): PresetFile {
     throw new PresetError(`${preset.name}: ${error instanceof Error ? error.message : String(error)}`, 400);
   }
   setPersonaOverride({ systemPrompt, greetings });
+  setPresetBits(bits);
   active = preset.name;
   console.log(`[presets] applied ${preset.name}`);
   return preset;
@@ -142,6 +158,9 @@ export function savePreset(name: string, now = new Date()): PresetFile {
     // No systemPrompt: the built-in persona (src/persona/system-prompt.md).
     persona: { ...(override.systemPrompt ? { systemPrompt: override.systemPrompt } : {}), instruction: runtimeConfig.prompt },
     ...(override.greetings ? { lines: override.greetings } : {}),
+    // Always written, even the built-in ones: those live in tubs.json, and
+    // saving over "Tubs" from the dashboard must not drop them.
+    bits: structuredClone(activeBits()),
     voices: { main: runtimeConfig.kokoroVoice, small: runtimeConfig.secondaryVoice },
     look: pick(lookKeys()),
     behaviour: pick(PRESET_BEHAVIOUR_KEYS),
@@ -157,4 +176,5 @@ export function savePreset(name: string, now = new Date()): PresetFile {
 export function resetPresets(): void {
   active = null;
   setPersonaOverride({ systemPrompt: null, greetings: null });
+  setPresetBits(null);
 }

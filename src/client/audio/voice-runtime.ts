@@ -72,6 +72,8 @@ export interface VoiceRuntime {
    * new one opened, no reload. `site` is the site node base URL (site: sources).
    */
   setMicSource(source: MicSourceSpec, site?: string): Promise<void>;
+  /** Either head is talking (here, or in another window per head_speech_state). */
+  headsTalking(): boolean;
   dispose(): void;
 }
 
@@ -221,6 +223,9 @@ export function createVoiceRuntime(store: AppStore, options: VoiceRuntimeOptions
       store.appendLog('info', `Mic source: ${formatMicSource(source)}`);
       releaseMicrophone();
       await ensureMicrophone();
+    },
+    headsTalking(): boolean {
+      return anyHeadTalking();
     },
     dispose(): void {
       stopRecording(recordingMode ?? 'manual');

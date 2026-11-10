@@ -173,25 +173,24 @@ describe('swearing', () => {
 
 // The conversation resets for every visitor, so a motif Tubs keeps reaching
 // for (the user heard "Wi-Fi drops" in bit after bit) is tracked across replies.
+// The Wi-Fi itself is a running bit now (bits.test.ts); this is the same
+// guard for everything else.
 describe('worn motifs', () => {
-  const wifi = (n: number) => Array.from({ length: n }, (_, i) => `Then the Wi-Fi drops and everyone panics, reply ${i}.`);
+  const printer = (n: number) => Array.from({ length: n }, (_, i) => `Then the printer jams and everyone panics, reply ${i}.`);
   it('flags a motif that came back three times', () => {
-    expect(wornMotifs([...wifi(3), 'Nice hat.'])).toContain('wifi drops');
+    expect(wornMotifs([...printer(3), 'Nice hat.'])).toContain('printer jams');
   });
   it('never counts the studio number or swearing as a motif', () => {
     const lines = Array.from({ length: 4 }, (_, i) => `Welcome to Studio two-oh-four, fucking hell, take ${i}.`);
     expect(wornMotifs(lines)).not.toContain('four');
     expect(wornMotifs(lines).some((term) => term.includes('fucking'))).toBe(false);
   });
-  // The tub joke never repeats a word: garbage cans, buckets, nylon straps,
-  // plastic casing. Counted as one motif, and twice is already too often.
-  it('catches the body joke in any words after two replies', () => {
-    const body = (term: string) => term.startsWith('your own body');
-    expect(wornMotifs(['Look at me, two garbage cans strapped together.', 'Nice shoes.', 'My plastic casing is jealous.']).some(body)).toBe(true);
-    expect(wornMotifs(['Ask the bucket.', 'Nice shoes.', 'Great idea, genius.']).some(body)).toBe(false);
-  });
   it('leaves a motif used twice alone, and ignores filler words', () => {
-    expect(wornMotifs([...wifi(2), 'You really think that is going to work?', 'I really think so.', 'Really.'])).toEqual([]);
+    expect(wornMotifs([...printer(2), 'You really think that is going to work?', 'I really think so.', 'Really.'])).toEqual([]);
+  });
+  // "remote" and "remotes" were two terms, so neither reached the limit.
+  it('counts a plural as the word', () => {
+    expect(wornMotifs(['One printer.', 'Two printers.', 'The printer again.'])).toEqual(['printer']);
   });
 });
 

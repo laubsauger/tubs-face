@@ -119,17 +119,19 @@ export function forgetRecognised(): void {
 
 const WHERE: Record<Position, string> = { left: 'the one on the left', center: 'the one in the middle', right: 'the one on the right' };
 
+/** The listed people recognised in view now, whose attitude the next turn carries. */
+export function relationshipsInEffect(enabled: boolean, now = Date.now()): Array<Relationship & { position: Position }> {
+  if (!enabled || recognised.size === 0) return [];
+  return loadRelationships().flatMap((entry) => {
+    const seen = recognised.get(entry.name.toLowerCase());
+    return seen && now - seen.seenAt <= RELATIONSHIP_GRACE_MS ? [{ ...entry, position: seen.position }] : [];
+  });
+}
+
 /** This turn's relationship lines: one per listed person recognised in view now. */
 export function relationshipLines(enabled: boolean, now = Date.now()): string[] {
-  if (!enabled || recognised.size === 0) return [];
-  const entries = loadRelationships();
-  if (entries.length === 0) return [];
-  const lines: string[] = [];
-  for (const entry of entries) {
-    const seen = recognised.get(entry.name.toLowerCase());
-    if (!seen || now - seen.seenAt > RELATIONSHIP_GRACE_MS) continue;
-    const where = inViewCount > 1 ? ` (${WHERE[seen.position]})` : '';
-    lines.push(`${entry.name} is in front of you${where}. ${entry.attitude}`);
-  }
-  return lines;
+  return relationshipsInEffect(enabled, now).map((entry) => {
+    const where = inViewCount > 1 ? ` (${WHERE[entry.position]})` : '';
+    return `${entry.name} is in front of you${where}. ${entry.attitude}`;
+  });
 }

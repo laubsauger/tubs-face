@@ -2,7 +2,6 @@
 // studio-manager hub ranks first (studio-manager docs/providers-contract.md),
 // so the model can move between boxes without a restart (docs/vision.md).
 
-const PROVIDERS_PATH = '/api/fleet/providers?kind=vision&healthy=1';
 export const FLEET_REFRESH_MS = 5 * 60_000;
 const LAN_PROBE_TIMEOUT_MS = 1500;
 const HUB_TIMEOUT_MS = 3000;
@@ -18,10 +17,16 @@ export interface FleetResolver {
   resolve(): Promise<string | null>;
   /** A call to this base failed or timed out: leave it behind and take the next one. */
   fail(base: string): void;
+  /** The base in use now, without asking the hub; null when none was found yet. */
+  current(): string | null;
 }
 
 export function createFleetResolver(options: {
   hub: string;
+  /** The provider kind to ask the hub for (default vision; the face service asks for faces). */
+  kind?: string;
+  /** Appended to the box's base (default "/v1", the OpenAI-compatible root; "" for the face service). */
+  suffix?: string;
   fetch?: typeof fetch;
   now?: () => number;
   log?: (message: string) => void;
@@ -30,6 +35,9 @@ export function createFleetResolver(options: {
   const now = options.now ?? Date.now;
   const log = options.log ?? ((message: string) => console.log(`[Vision] ${message}`));
   const hub = options.hub.replace(/\/+$/, '');
+  const kind = options.kind ?? 'vision';
+  const suffix = options.suffix ?? '/v1';
+  const providersPath = `/api/fleet/providers?kind=${encodeURIComponent(kind)}&healthy=1`;
   let current: string | null = null;
   let resolvedAt = 0;
   // Bases that failed since the last refresh, skipped until then.
@@ -47,15 +55,15 @@ export function createFleetResolver(options: {
 
   async function baseOf(provider: FleetProvider): Promise<string | null> {
     for (const lan of provider.lanBases ?? []) {
-      if (await answers(lan.replace(/\/+$/, ''))) return `${lan.replace(/\/+$/, '')}/v1`;
+      if (await answers(lan.replace(/\/+$/, ''))) return `${lan.replace(/\/+$/, '')}${suffix}`;
     }
-    return provider.serverBase ? `${provider.serverBase.replace(/\/+$/, '')}/v1` : null;
+    return provider.serverBase ? `${provider.serverBase.replace(/\/+$/, '')}${suffix}` : null;
   }
 
   async function lookUp(): Promise<string | null> {
     let providers: FleetProvider[];
     try {
-      const response = await doFetch(`${hub}${PROVIDERS_PATH}`, { signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
+      const response = await doFetch(`${hub}${providersPath}`, { signal: AbortSignal.timeout(HUB_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`hub answered ${response.status}`);
       providers = ((await response.json()) as { providers?: FleetProvider[] }).providers ?? [];
     } catch (error) {
@@ -67,7 +75,7 @@ export function createFleetResolver(options: {
     for (const provider of providers) {
       const base = await baseOf(provider);
       if (base && !failed.has(base)) {
-        if (base !== current) log(`fleet:vision -> ${provider.id ?? '?'} at ${base}`);
+        if (base !== current) log(`fleet:${kind} -> ${provider.id ?? '?'} at ${base}`);
         current = base;
         return current;
       }
@@ -79,7 +87,7 @@ export function createFleetResolver(options: {
       current = first ?? current;
       return current;
     }
-    log('fleet hub lists no healthy vision provider');
+    log(`fleet hub lists no healthy ${kind} provider`);
     return current;
   }
 
@@ -95,6 +103,9 @@ export function createFleetResolver(options: {
     },
     fail(base) {
       failed.add(base);
+    },
+    current() {
+      return current;
     },
   };
 }
