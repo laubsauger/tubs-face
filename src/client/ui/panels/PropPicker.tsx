@@ -13,6 +13,7 @@ const LABELS: Record<PropId, string> = {
   crown: 'Crown',
   'propeller-cap': 'Propeller cap',
   watts: 'Alan Watts',
+  'mark-watts': 'Mark Watts',
 };
 
 const PREVIEW_W = 44;
@@ -62,7 +63,8 @@ function PropPreview({ prop, color }: { prop: PropId; color: string }): JSX.Elem
     for (const pixel of rasterizeProp(prop, { eyes: at(rest.eyes), lip: at(rest.lip), jaw: at(rest.jaw) }, scale, scale, stride * 0.75, stride * 0.25)) {
       const tone = PROP_TONES[pixel.tone];
       const sat = tone.sat === undefined ? base.s : tone.sat * 100;
-      ctx.fillStyle = `hsl(${base.h + tone.hue} ${sat}% ${Math.max(0, Math.min(100, base.l + tone.light))}%)`;
+      const hue = tone.fixed ? tone.hue : base.h + tone.hue;
+      ctx.fillStyle = `hsl(${hue} ${sat}% ${Math.max(0, Math.min(100, base.l + tone.light))}%)`;
       ctx.fillRect(pixel.x, pixel.y, stride * 0.75, stride * 0.75);
     }
   }, [prop, color]);

@@ -50,9 +50,10 @@ export const PROP_MAX_TILT = 0.14;
 /**
  * Shades inside a prop: lightness (percent) and hue (degrees) offsets from
  * the head's colour, and for hair a saturation (0..1) it is washed out to.
+ * A fixed tone has its own hue whatever the head's colour (tinted lenses).
  */
-export type PropTone = 'body' | 'dark' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white';
-export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: number }> = {
+export type PropTone = 'body' | 'dark' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white' | 'amber';
+export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: number; fixed?: boolean }> = {
   body: { hue: 0, light: 0 },
   dark: { hue: 0, light: -26 },
   light: { hue: 0, light: 16 },
@@ -61,6 +62,7 @@ export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: nu
   ash: { hue: 0, light: -4, sat: 0.16 },
   smoke: { hue: 0, light: -16, sat: 0.14 },
   white: { hue: 0, light: 20, sat: 0.08 },
+  amber: { hue: 34, light: -8, sat: 0.85, fixed: true },
 };
 
 type Mark = PropTone | { tone: PropTone; group: number } | null;
@@ -251,6 +253,96 @@ const WATTS_BEARD: PropArt = {
   },
 };
 
+// Mark Watts, Alan's son, as he is now: bald on top, round sunglasses with
+// amber lenses pushed up onto the dome, a close-cropped grey fringe round
+// the sides, and a short, tidy goatee round the mouth. Nothing like his
+// father's long hair and long beard at a glance.
+
+/** Inside a rectangle with rounded corners, x from its middle, y up; corners of radius r. */
+const inRounded = (x: number, y: number, half: number, top: number, bottom: number, r: number) => {
+  const ax = Math.abs(x);
+  if (ax > half || y > top || y < bottom) return false;
+  const cx = Math.max(0, ax - (half - r));
+  const cy = Math.max(0, y - (top - r), bottom + r - y);
+  return cx * cx + cy * cy <= r * r;
+};
+
+/**
+ * The bald dome: its outline, a shine, the sunglasses pushed up onto it, and
+ * the close-cropped fringe round the sides (the outline thickening into
+ * hair below the temples), clear of the eyes.
+ */
+const MARK_HEAD: PropArt = {
+  width: 63,
+  height: 19,
+  depth: 16,
+  at(x, y) {
+    const ax = Math.abs(x);
+    // The lenses: round, seen from the front lying back on the dome, so wider than tall.
+    const lens = ((ax - 8.4) / 6) ** 2 + ((y - 10.5) / 3.8) ** 2;
+    if (lens <= 1) {
+      // A glint high on each lens, toward the light.
+      if (lens < 0.3 && y > 11 && x < -8.4) return 'white';
+      return lens > 0.5 ? 'smoke' : 'amber';
+    }
+    // The bridge between them.
+    if (ax < 2.6 && y > 10 && y < 11.6) return 'smoke';
+    // The dome's outline (1 on it), from the ears up over the top.
+    const dome = Math.sqrt((ax / 31.6) ** 2 + ((y + 2) / 21) ** 2);
+    // A shine just inside it, up and to the left.
+    if (x < -4 && x > -15 && y > 12 && dome > 0.86 && dome < 0.91) return 'white';
+    // The fringe: below the temples the outline thickens inward into cropped hair.
+    if (y < 2 && y > -15 + (odd(ax / 1.2) ? 1.3 : 0)) {
+      if (ax >= 29.3 && ax <= 31.6) return odd((y + ax) / 1.3) ? 'ash' : 'silver';
+      return null;
+    }
+    return y >= 2 && dome <= 1 && dome > 0.955 ? 'smoke' : null;
+  },
+};
+
+/** A little heavy, evenly arched, not bushy. */
+const MARK_BROWS: PropArt = {
+  width: 54,
+  height: 3.6,
+  at(x, y) {
+    // 0 at a brow's inner end, 1 at its outer end.
+    const u = (Math.abs(x) - 12.4) / 14.4;
+    if (u < 0 || u > 1) return null;
+    const middle = 1.4 + 1.4 * Math.sin(Math.PI * Math.min(1, u * 1.15));
+    return Math.abs(y - middle) <= 1.35 - 0.35 * u ? 'body' : null;
+  },
+};
+
+/** A trim moustache over the mouth, fullest in the middle, thinning as it turns down round the corners into the goatee. */
+const MARK_MOUSTACHE: PropArt = {
+  width: 18,
+  height: 4.6,
+  depth: 3,
+  at(x, y) {
+    const ax = Math.abs(x);
+    if (y < -3 || ax > 8.8) return null;
+    // Clear of the mouth (about 6.3 to either side).
+    if (inRounded(x, y, 7.2, 1.2, -9, 1.2)) return null;
+    return inRounded(x, y, 8.8, 4.6 - (ax / 8.8) ** 1.5 * 2.2, -9, 2.4) ? 'silver' : null;
+  },
+};
+
+/** A short goatee: down both sides of the mouth and round under it to a neat, narrower chin; whitest there. */
+const MARK_BEARD: PropArt = {
+  width: 18,
+  height: 2.8,
+  depth: 7.6,
+  at(x, y) {
+    const ax = Math.abs(x);
+    if (y > 2.8 || y < -7.6) return null;
+    // A row clear round the mouth, which changes shape.
+    if (inRounded(x, y, 7.2, 9, -1.1, 1.1)) return null;
+    // Narrowing from the mouth's corners to a rounded chin.
+    const half = y > -1 ? 8.8 : 8.8 - 4.4 * ((-1 - y) / 6.6) ** 1.6;
+    return ax <= half ? (ax < 4.2 && y < -2.4 ? 'white' : 'silver') : null;
+  },
+};
+
 const hat = (art: PropArt): readonly PropPart[] => [{ anchor: 'eyes', art }];
 
 const ART: Record<Exclude<PropId, 'none'>, readonly PropPart[]> = {
@@ -264,6 +356,12 @@ const ART: Record<Exclude<PropId, 'none'>, readonly PropPart[]> = {
     { anchor: 'eyes', art: WATTS_BROWS },
     { anchor: 'lip', art: WATTS_MOUSTACHE },
     { anchor: 'jaw', art: WATTS_BEARD },
+  ],
+  'mark-watts': [
+    { anchor: 'head', art: MARK_HEAD },
+    { anchor: 'eyes', art: MARK_BROWS },
+    { anchor: 'lip', art: MARK_MOUSTACHE },
+    { anchor: 'jaw', art: MARK_BEARD },
   ],
 };
 
