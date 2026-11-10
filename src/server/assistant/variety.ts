@@ -246,8 +246,10 @@ export function dualShape(roll: number): string {
   // beat count, main wrote a five-sentence riff on most turns. And each line
   // gets a word limit: "one short sentence" alone came back as 25-30 words
   // (a 69-word one once), so a turn ran 16 s or more on one in ten turns.
-  if (roll < 0.3) return 'Only one head speaks this time: one sentence, under fifteen words. The other stays quiet or just reacts.';
-  if (roll < 0.62) return 'Two speak beats this time, one sentence each, each under twelve words.';
+  // Small's stabs are his job, moderated, not switched off (the user, Nov 10,
+  // 2026): more turns are one head alone, and the quick three-way trade is rarer.
+  if (roll < 0.4) return 'Only one head speaks this time, usually Main: one sentence, under fifteen words. The other stays quiet or just reacts.';
+  if (roll < 0.72) return 'Two speak beats this time, one sentence each, each under twelve words.';
   if (roll < 0.88) return 'Three beats this time, a quick back-and-forth, each line under ten words.';
   return 'One head takes the room for a bit this time, either one (a bit from Small is calm, naive and unsettling): three to six short sentences in its speak beat, each under twelve words, punchline last. The other may cut in once with a few words, or stay quiet.';
 }
