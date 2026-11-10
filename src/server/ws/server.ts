@@ -418,6 +418,8 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         people: message.people.map((person) => ({ ...person, with: person.with ?? null })),
         reference: message.reference ?? null,
         ...(message.venue ? { venue: message.venue } : {}),
+        // the gallery tour: without it here the picture on screen never reached the prompt
+        ...(message.tour && typeof message.tour.where === 'string' ? { tour: message.tour } : {}),
         ts: message.ts,
       });
       return;

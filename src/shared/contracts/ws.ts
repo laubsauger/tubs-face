@@ -186,6 +186,8 @@ export interface WsStudioContextClientMessage {
     zones: Array<{ id: string; name: string; about: string }>;
     windows: Array<{ id: string; name: string; zone: string | null; about: string }>;
   };
+  /** The gallery tour while it runs: where, the step, and the picture up on screen there (sentient-studio contract §6). */
+  tour?: { where: string; step: string; stop: number; of: number; next: string | null; piece?: { title: string; date?: string; by?: string; text?: string } };
   ts: number;
 }
 

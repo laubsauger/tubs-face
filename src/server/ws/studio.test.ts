@@ -164,6 +164,21 @@ describe('studio messages on /ws', () => {
     expect(studioContextLines().join(' ')).toContain('You are behind the book, next to the cinema.');
   });
 
+  // Seen live: the director sent the gallery tour's picture, but this handler rebuilt the message
+  // field by field and dropped it, so a visitor's question about the picture got no answer about it.
+  it('take the gallery tour from the director\'s studio_context, so every reply knows the picture on screen', async () => {
+    studioSettings.enabled = true;
+    const director = await connect();
+    director.send({
+      type: 'studio_context', reason: 'change', heads: {}, people: [], reference: null, ts: 1,
+      tour: { where: 'Big Wall', step: 'present', stop: 2, of: 5, next: 'Book', piece: { title: 'Haiku session, 1958', text: 'Watts at a microphone.' } },
+    });
+    await settle();
+    const lines = studioContextLines().join(' ');
+    expect(lines).toContain('guiding a tour');
+    expect(lines).toContain('"Haiku session, 1958"');
+  });
+
   it('do not let one head\'s page report for the other', async () => {
     studioSettings.enabled = true;
     const main = await connect('?studio=main');
