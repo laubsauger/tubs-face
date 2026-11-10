@@ -105,9 +105,6 @@ export const MOTION = {
   breathScale: 0.018,
   breathRise: 0.004,
   breathPeriodMs: 4200,
-  /** Asleep the breath is slower and a little deeper. */
-  sleepBreathScale: 0.03,
-  sleepBreathPeriodMs: 6400,
   /** Surprised pops in: swells past its size, then settles. */
   popAmount: 0.1,
   popPeriodMs: 360,

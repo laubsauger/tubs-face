@@ -49,6 +49,19 @@ describe('living expressions', () => {
     expect(crossings).toBeLessThanOrEqual(5);
   });
 
+  // A pixel grid that is scaled or moved by a fraction of a screen pixel is
+  // re-rasterised with some quad edges a pixel further on, different ones each
+  // frame: asleep that read as a face shuffling by a pixel, all the time.
+  it('asleep the shapes hold their size and place (breathing is in the brightness, face/sleep-life.ts)', () => {
+    const samples = play(settledIn('sleep'), 'sleep', 5000, 8000);
+    for (const key of ['left', 'right', 'mouth'] as const) {
+      expect(range(samples.map((s) => s.m[key].sx))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].sy))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].ox))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].oy))).toBeLessThan(1e-9);
+    }
+  });
+
   it('surprised pops in: swells past its size right away, then settles', () => {
     const motion = settledIn('idle');
     const samples = play(motion, 'surprised', 5000, 1200);

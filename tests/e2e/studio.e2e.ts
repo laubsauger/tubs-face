@@ -3,6 +3,7 @@ import { MOCK, chunk, instrumentAudio, now, openFace, received, resetMock, send,
 import { fakeSiteNode, openStudio, setStudio } from './studio-helpers.js';
 import { DEFAULT_CONFIG } from '../../src/client/glitch/constants.js';
 import { STUDIO_LAYOUT, faceBox } from '../../src/client/glitch/pixel-grid.js';
+import { SLEEP_GAZE_MAX } from '../../src/client/face/sleep-life.js';
 
 // Studio mode (sentient-studio contract sections 5-6): a page per head,
 // published to the site node, the mic from a selectable source, and gaze and
@@ -739,21 +740,18 @@ test('a face page with its face rendering never reports a black frame', async ({
 
 // Asleep the eyes are closed: they stay near centre whatever the director
 // says, but they must not look frozen either.
-test('a sleeping face keeps its gaze near centre, alive but not following looks', async ({ page, request }) => {
+test('a sleeping face keeps its gaze near centre, not following looks', async ({ page, request }) => {
   await fakeSiteNode(page);
   await openStudio(page, request, 'main');
   await send(request, { type: 'sleep' });
   await page.waitForTimeout(500);
-  const xs: number[] = [];
   for (let i = 0; i < 30; i += 1) {
     await send(request, { type: 'studio_look', actor: 'main', gaze: [0.9, 0.9] });
     await page.waitForTimeout(200);
     const { x, y } = await gaze(page);
-    expect(Math.abs(x), 'within the sleeping drift').toBeLessThanOrEqual(0.1001);
-    expect(Math.abs(y)).toBeLessThanOrEqual(0.1001);
-    xs.push(x);
+    expect(Math.abs(x), 'at most a sleeping glance').toBeLessThanOrEqual(SLEEP_GAZE_MAX + 1e-4);
+    expect(Math.abs(y)).toBeLessThanOrEqual(SLEEP_GAZE_MAX + 1e-4);
   }
-  expect(Math.max(...xs) - Math.min(...xs), 'not frozen').toBeGreaterThan(0.002);
 
   // Awake, the director's looks count again.
   await send(request, { type: 'wake' });
@@ -768,6 +766,143 @@ test('a sleeping face keeps its gaze near centre, alive but not following looks'
 // docs/vision.md: a studio camera that does not stream. A snapshot URL costs
 // one request per picture; a site node stream is opened for one picture and
 // closed again, so the site node's on-demand mirror costs nothing in between.
+interface ShapeStats { x: number; y: number; light: number; minX: number; maxX: number; minY: number; maxY: number; quads: number }
+type Region = { x: number; y: number; w: number; h: number };
+
+/** Keeps the video tracks a face page publishes (window.__sentVideo), to read its frames. */
+async function keepPublishedVideo(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const sent: MediaStreamTrack[] = [];
+    (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo = sent;
+    const original = RTCPeerConnection.prototype.addTransceiver;
+    RTCPeerConnection.prototype.addTransceiver = function addTransceiver(this: RTCPeerConnection, trackOrKind: MediaStreamTrack | string, init?: RTCRtpTransceiverInit) {
+      if (typeof trackOrKind !== 'string' && trackOrKind.kind === 'video') sent.push(trackOrKind);
+      return original.call(this, trackOrKind, init);
+    };
+  });
+}
+
+/**
+ * The published frames for `ms`, per region: where the shape is (brightness
+ * weighted, so a brighter breath does not move it), how bright, its lit
+ * bounding box and how many pixel quads a row of it has.
+ */
+async function publishedShapes(page: Page, ms: number, regions: Record<string, Region>): Promise<Array<Record<string, ShapeStats>>> {
+  return page.evaluate(async ({ duration, boxes }) => {
+    const track = (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo[0]!;
+    const Processor = (window as unknown as { MediaStreamTrackProcessor: new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> } }).MediaStreamTrackProcessor;
+    const reader = new Processor({ track: track.clone() }).readable.getReader();
+    const canvas = new OffscreenCanvas(1024, 1024);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    const out: Array<Record<string, ShapeStats>> = [];
+    const started = performance.now();
+    while (performance.now() - started < duration) {
+      const { value: frame } = await reader.read();
+      if (!frame) break;
+      ctx.drawImage(frame, 0, 0, 1024, 1024);
+      frame.close();
+      const row: Record<string, ShapeStats> = {};
+      for (const [name, box] of Object.entries(boxes)) {
+        const x0 = Math.round(box.x);
+        const y0 = Math.round(box.y);
+        const w = Math.round(box.w);
+        const { data } = ctx.getImageData(x0, y0, w, Math.round(box.h));
+        let sx = 0;
+        let sy = 0;
+        let sum = 0;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        const litColumns = new Set<number>();
+        for (let p = 0; p < data.length; p += 4) {
+          const v = Math.max(data[p]!, data[p + 1]!, data[p + 2]!);
+          const x = (p / 4) % w;
+          const y = Math.floor(p / 4 / w);
+          sx += x * v;
+          sy += y * v;
+          sum += v;
+          if (v > 60) {
+            litColumns.add(x);
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+          }
+        }
+        let quads = 0;
+        for (let x = minX; x <= maxX; x += 1) if (litColumns.has(x) && !litColumns.has(x - 1)) quads += 1;
+        row[name] = { x: x0 + sx / sum, y: y0 + sy / sum, light: sum / (data.length / 4), minX: x0 + minX, maxX: x0 + maxX, minY: y0 + minY, maxY: y0 + maxY, quads };
+      }
+      out.push(row);
+    }
+    void reader.cancel();
+    return out;
+  }, { duration: ms, boxes: regions });
+}
+
+/** The left eye and the mouth of a studio frame (the Zs float on the right). */
+function sleepingShapes(): Record<string, Region> {
+  const face = faceBox(DEFAULT_CONFIG, 1024, 1024, STUDIO_LAYOUT);
+  return {
+    leftEye: { x: face.x - 0.05 * face.w, y: face.y + 0.3 * face.h, w: 0.38 * face.w, h: 0.55 * face.h },
+    mouth: { x: face.x + 0.36 * face.w, y: face.y + 0.86 * face.h, w: 0.33 * face.w, h: 0.26 * face.h },
+  };
+}
+
+/** A studio head in a window this size, publishing, asleep for a moment (its sleep morph is over in under a second). */
+async function sleepingHead(page: Page, request: APIRequestContext, size: { width: number; height: number }): Promise<void> {
+  await page.setViewportSize(size);
+  await keepPublishedVideo(page);
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo.length)).toBeGreaterThan(0);
+  await send(request, { type: 'sleep' });
+  await page.waitForTimeout(1500);
+}
+
+const spread = (values: number[]) => Math.max(...values) - Math.min(...values);
+
+// Live, 2026-11-10: both sleeping heads looked like they shuffled by a
+// pixel all the time. A slow drift and a breathing swell moved the face by
+// fractions of a screen pixel each frame, and the pixel grid drew that as
+// quad edges stepping a pixel, different ones each frame; the scanlines'
+// scroll stepped over it too. Asleep the face holds still between twitches
+// (the first comes 6 s after falling asleep at the soonest) and breathes in
+// brightness.
+test('a sleeping face holds still in the published stream between twitches, and still breathes', async ({ page, request }) => {
+  // The face windows' size in the studio (server/studio/chrome-window.ts), where it was seen.
+  await sleepingHead(page, request, { width: 560, height: 600 });
+  const frames = await publishedShapes(page, 3000, sleepingShapes());
+  expect(frames.length).toBeGreaterThan(30);
+  for (const name of ['leftEye', 'mouth']) {
+    // Before, the eyes moved by 5 to 15 px over a few seconds, a pixel at a time.
+    expect(spread(frames.map((frame) => frame[name]!.x)), `${name} holds still sideways`).toBeLessThan(0.5);
+    expect(spread(frames.map((frame) => frame[name]!.y)), `${name} holds still up and down`).toBeLessThan(0.5);
+  }
+  const light = frames.map((frame) => frame.leftEye!.light);
+  expect(spread(light) / Math.max(...light), 'still breathes, in brightness').toBeGreaterThan(0.02);
+});
+
+// The face is laid out in its stream's square, not its window: sized from
+// the window, the small off-screen windows drew four-pixel eyes into the 1024
+// stream (live, 2026-11-09). Any window size gives the same face.
+test('a studio head draws the same face whatever the size of its window', async ({ browser, request }) => {
+  const looks: ShapeStats[][] = [];
+  for (const size of [{ width: 240, height: 180 }, { width: 560, height: 600 }, { width: 1100, height: 900 }]) {
+    const page = await browser.newPage();
+    await sleepingHead(page, request, size);
+    const [frame] = await publishedShapes(page, 1, sleepingShapes());
+    looks.push(['leftEye', 'mouth'].map((name) => frame![name]!));
+    await page.close();
+  }
+  const [small, studio, large] = looks;
+  for (const other of [small!, large!]) {
+    for (let i = 0; i < 2; i += 1) {
+      expect(other[i]!.quads, 'as many pixels across').toBe(studio![i]!.quads);
+      for (const edge of ['minX', 'maxX', 'minY', 'maxY'] as const) expect(Math.abs(other[i]![edge] - studio![i]![edge]), edge).toBeLessThanOrEqual(1);
+    }
+  }
+});
+
 test('a snapshot picture is one request, and a site stream picture opens and closes its session', async ({ page, request }) => {
   await fakeMediaAndWebRtc(page);
   const site = await fakeSiteNode(page);

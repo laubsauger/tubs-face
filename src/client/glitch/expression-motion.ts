@@ -48,7 +48,6 @@ export function createExpressionMotion(): ExpressionMotion {
   const pose = createFaceMotion();
   const target = createFaceMotion();
   let breath = 0;
-  let sleepBreath = 0;
   let tremble = 0;
   let drift = 0;
   let lastExpression: ExpressionName | null = null;
@@ -75,13 +74,12 @@ export function createExpressionMotion(): ExpressionMotion {
 
       const fade = approach(dt, MOTION.loopFadeMs);
       breath += ((expression && BREATHING.has(expression) ? 1 : 0) - breath) * fade;
-      sleepBreath += ((expression === 'sleep' ? 1 : 0) - sleepBreath) * fade;
       tremble += ((expression === 'angry' ? 1 : 0) - tremble) * fade;
       drift += ((expression === 'thinking' ? 1 : 0) - drift) * fade;
 
       const inhale = Math.sin((TWO_PI * nowMs) / MOTION.breathPeriodMs);
-      const sleepInhale = Math.sin((TWO_PI * nowMs) / MOTION.sleepBreathPeriodMs);
-      const swell = breath * MOTION.breathScale * inhale + sleepBreath * MOTION.sleepBreathScale * sleepInhale;
+      // Asleep there is no swell: the shapes hold their size (face/sleep-life.ts breathes in brightness).
+      const swell = breath * MOTION.breathScale * inhale;
       const rise = -breath * MOTION.breathRise * inhale;
 
       const sincePop = nowMs - popAt;
