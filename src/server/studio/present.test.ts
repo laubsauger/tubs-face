@@ -76,7 +76,8 @@ describe('studio present (the gallery tour)', () => {
   // following the flag. Each is its own line, said by Tubs in his own words.
   it('says each line of the guided tour: gather, present, floor, move', () => {
     const gather = presentContext({ kind: 'gather', where: 'Mirror', stop: 1, of: 5, first: true, next: 'Big Wall' });
-    expect(gather).toContain('gather round here at the Mirror');
+    expect(gather).toContain('starting here at the Mirror');
+    expect(gather).toContain('tell them to gather round here and stay close to the flag');   // Tubs leads, seen live: nobody did
     expect(gather).toContain('tour-guide flag');
     expect(gather).not.toContain('What it shows');
     const shown = presentContext({ ...req, kind: 'present' });
@@ -88,6 +89,7 @@ describe('studio present (the gallery tour)', () => {
     expect(floor).not.toContain('What the archive knows');
     const move = presentContext({ ...req, kind: 'move' });
     expect(move).toContain('follow it to the Book');
+    expect(move).toContain('give them a reason to come');
     expect(presentContext({ ...req, kind: 'move', next: null })).toContain('last stop');
     // gather and move need no picture; present and floor do
     expect(parsePresent({ kind: 'gather', where: 'Mirror' })).toMatchObject({ kind: 'gather', where: 'Mirror' });

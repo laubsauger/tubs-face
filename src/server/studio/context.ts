@@ -68,7 +68,7 @@ export interface StudioScreening {
 }
 
 export interface StudioGallery {
-  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string; img?: string }> }>;
+  showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; at?: 'left' | 'middle' | 'right'; cut?: boolean; date?: string; by?: string; text?: string; img?: string }> }>;
 }
 
 export interface StudioTour {
@@ -150,8 +150,14 @@ export function renderGallery(g: StudioGallery | null): string[] {
     'Tonight the studio is a gallery of pictures from the Alan Watts archive, hung in a row through the studio\'s windows, and you two are its curators and guides: you know what hangs where and love to talk about it.',
     'When a visitor says "this picture", "the image", "that photo" or asks what is on the wall or on the screen, they mean these pictures, never your camera. Say only what the archive supports; never invent dates, places or names.',
   ];
+  // Seen live at the Book: told three pictures with no places, Tubs talked about the one on the right.
+  // The director says where each hangs (older ones do not): the middle one first, named as such.
+  const rank = (at?: string) => (at === 'middle' ? 0 : at === 'left' ? 1 : at === 'right' ? 2 : 0);
+  const place = (p: { at?: string; cut?: boolean }) => (p.at === 'middle' ? 'in the middle: ' : p.at ? `on the ${p.at}${p.cut ? ', only partly in view' : ''}: ` : '');
   for (const w of g.showing.filter((x) => x.here)) {
-    lines.push(`Here where you are, at the ${w.where}: ${w.pictures.map((p) => { const own = seenInPicture(p.img); return `${pic(p)}${p.text ? `: ${p.text}` : ''}${own ? ` (what you see in it yourself: ${own})` : ''}`; }).join(' | ')}`);
+    const pictures = [...w.pictures].sort((a, b) => rank(a.at) - rank(b.at));
+    lines.push(`Here where you are, at the ${w.where}: ${pictures.map((p) => { const own = seenInPicture(p.img); return `${place(p)}${pic(p)}${p.text ? `: ${p.text}` : ''}${own ? ` (what you see in it yourself: ${own})` : ''}`; }).join(' | ')}`);
+    if (w.pictures.some((p) => p.at === 'middle')) lines.push(`"This picture", or one a visitor does not name, is the one in the middle at the ${w.where}; the ones at the sides are only partly in view.`);
   }
   const elsewhere = g.showing.filter((x) => !x.here).slice(0, 14);
   if (elsewhere.length) lines.push(`Elsewhere now: ${elsewhere.map((w) => `${w.where}: ${w.pictures.map(pic).join(', ')}`).join('; ')}.`);
@@ -169,7 +175,11 @@ export function studioTour(now = Date.now()): StudioTour | null {
  */
 export function renderTour(t: StudioTour | null): string[] {
   if (!t) return [];
-  const lines = [`You two are guiding a tour through a gallery of pictures from the Alan Watts archive; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`];
+  const lines = [
+    `You two are guiding a tour through a gallery of pictures from the Alan Watts archive, a walk through his life; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`,
+    // Seen live: between the tour's own lines the heads went back to roasting and nobody led.
+    `You lead this tour: you decide where the group goes and when. Whatever a visitor says, answer in a sentence or two, then lead: back to the picture here, or where you go next${t.next ? ` (the ${t.next})` : ''} and why it is worth it. Never leave them wondering what to do. Tonight you are their hosts: tease lightly, never belittle a guest.`,
+  ];
   const p = t.piece;
   if (p) {
     const own = seenInPicture(p.img);

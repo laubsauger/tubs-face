@@ -92,6 +92,9 @@ describe('studio context in the prompt', () => {
     expect(text).toContain('at the Big Wall');
     expect(text).toContain('"Haiku session, 1958", 1958');
     expect(text).toContain('Watts at a microphone with musicians.');
+    // seen live: between the tour's own lines nobody led; every reply leads on
+    expect(text).toContain('You lead this tour');
+    expect(text).toContain('where you go next (the Book)');
     // it still runs between the director's beats; a context without it ends it; silence ends it too
     expect(studioTour(now + STUDIO_TOUR_STALE_MS - 1)).not.toBeNull();
     expect(studioTour(now + STUDIO_TOUR_STALE_MS + 1)).toBeNull();
@@ -140,5 +143,24 @@ describe('studio context in the prompt', () => {
     // the night over: a context without it
     noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now + 1000 }, now + 1000);
     expect(studioContextLines(now + 1000).join('\n')).not.toContain('curators and guides');
+  });
+
+  // Seen live at the Book: three pictures listed with no places, and Tubs talked about the one on the
+  // right of the one in the middle. The middle one comes first, named as such, and is "this picture".
+  it('on the gallery night: says which picture is in the middle where they are, and that it is "this picture"', () => {
+    const now = 3_000_000;
+    noteStudioContext({
+      reason: 'change', heads: {}, people: [], reference: null, ts: now,
+      gallery: { showing: [
+        { where: 'Book', here: true, pictures: [
+          { title: 'Three people at microphone', at: 'left', cut: true },
+          { title: 'Nature, Man & Woman book flyer', at: 'middle', date: '1959' },
+          { title: 'Man in glasses reading', at: 'right', cut: true },
+        ] },
+      ] },
+    }, now);
+    const text = studioContextLines(now).join('\n');
+    expect(text).toContain('Here where you are, at the Book: in the middle: "Nature, Man & Woman book flyer" (1959) | on the left, only partly in view: "Three people at microphone" | on the right, only partly in view: "Man in glasses reading"');
+    expect(text).toContain('"This picture", or one a visitor does not name, is the one in the middle at the Book');
   });
 });
