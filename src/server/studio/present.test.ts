@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WsServerMessage } from '../../shared/contracts/ws.js';
-import { parsePresent, present, presentContext, type PresentRequest } from './present.js';
+import { PRESENT_WAIT_MAX_MS, parsePresent, present, presentContext, type PresentRequest } from './present.js';
 
 const req: PresentRequest = {
   where: 'Big Wall', stop: 2, of: 5, first: false, next: 'Book',
@@ -13,14 +13,48 @@ const req: PresentRequest = {
 // The gallery tour: the director pulls a picture up and Tubs must tell about that very picture,
 // from what the archive knows, where the heads stand, and lead on to the next stop.
 describe('studio present (the gallery tour)', () => {
-  it('wakes both heads and starts one turn about the picture', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('wakes both heads and starts one turn about the picture, at once when the heads are quiet', async () => {
     const sent: WsServerMessage[] = [];
     const turns: string[] = [];
     let awake = false;
-    present(req, { broadcast: (m) => sent.push(m), noteAwake: () => { awake = true; }, startProactiveTurn: (c) => turns.push(c) });
+    await present(req, { broadcast: (m) => sent.push(m), noteAwake: () => { awake = true; }, startProactiveTurn: (c) => turns.push(c), busy: () => false });
     expect(awake).toBe(true);
     expect(sent).toEqual([{ type: 'wake' }]);
     expect(turns).toEqual([presentContext(req)]);
+  });
+
+  // Seen live: visitors talk to Tubs during the tour; a proactive line is dropped while a reply is being
+  // made, so the picture came up and nobody said anything about it. It waits for the reply instead.
+  it('waits while a reply is made or a head talks, then starts; the director hears when it started', async () => {
+    vi.useFakeTimers();
+    let busy = true;
+    const turns: string[] = [];
+    let started = false;
+    const p = present(req, { broadcast: () => {}, noteAwake: () => {}, startProactiveTurn: (c) => turns.push(c), busy: () => busy }).then(() => { started = true; });
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(turns).toEqual([]);
+    expect(started).toBe(false);
+    busy = false;
+    await vi.advanceTimersByTimeAsync(300);
+    await p;
+    expect(turns).toEqual([presentContext(req)]);
+    expect(started).toBe(true);
+  });
+
+  it('gives up when the heads stay busy too long, and a newer picture replaces one still waiting', async () => {
+    vi.useFakeTimers();
+    const turns: string[] = [];
+    const deps = { broadcast: () => {}, noteAwake: () => {}, startProactiveTurn: (c: string) => turns.push(c), busy: () => true };
+    const old = present(req, deps);
+    const replaced = expect(old).rejects.toThrow('newer picture');
+    const newer = present({ ...req, piece: { title: 'Another' } }, deps);
+    await replaced;
+    const gaveUp = expect(newer).rejects.toThrow('busy');
+    await vi.advanceTimersByTimeAsync(PRESENT_WAIT_MAX_MS + 1000);
+    await gaveUp;
+    expect(turns).toEqual([]);
   });
 
   it('tells the turn the picture, what the archive knows, where they are and where they go next', () => {

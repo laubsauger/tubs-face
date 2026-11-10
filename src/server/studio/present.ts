@@ -1,9 +1,20 @@
 // The gallery tour (sentient-studio contract §6, §8): the director has walked both heads to a
 // window and pulled a picture of the Alan Watts archive up to the glass; Tubs tells the visitors
-// about it. One ordinary proactive turn, so Small may chime in; it waits for a line still playing
-// and never cuts off a reply someone is waiting for. Nothing reruns or rewrites the reply.
+// about it. One ordinary proactive turn, so Small may chime in. It never cuts off a reply someone
+// is waiting for: while a reply is being made or a head talks, the picture waits (a proactive line
+// would be dropped then, and the stop stood silent), and it starts at the first quiet moment.
+// Nothing reruns or rewrites the reply.
 
 import type { PokeDeps } from './poke.js';
+
+/** a picture waits this long for a quiet moment at most (ms), checking this often */
+export const PRESENT_WAIT_MAX_MS = 60_000;
+const PRESENT_POLL_MS = 250;
+
+export interface PresentDeps extends PokeDeps {
+  /** a reply is being made, or a head is talking or about to */
+  busy(): boolean;
+}
 
 export interface PresentPiece {
   title: string;
@@ -75,8 +86,29 @@ export function presentContext(r: PresentRequest): string {
   return lines.join('\n');
 }
 
-export function present(r: PresentRequest, deps: PokeDeps): void {
+let waiting: { timer: ReturnType<typeof setTimeout>; reject: (err: Error) => void } | null = null;
+
+/**
+ * Wake both heads and start the turn about the picture at the first quiet moment. Resolves once the
+ * turn has started (the director then listens for its end); rejects when no quiet moment came in
+ * PRESENT_WAIT_MAX_MS, or a newer picture replaced this one.
+ */
+export function present(r: PresentRequest, deps: PresentDeps): Promise<void> {
   deps.noteAwake();
   deps.broadcast({ type: 'wake' });
-  deps.startProactiveTurn(presentContext(r), deps.broadcast);
+  if (waiting) { clearTimeout(waiting.timer); waiting.reject(new Error('a newer picture replaced it')); waiting = null; }
+  const since = Date.now();
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (deps.busy()) {
+        if (Date.now() - since > PRESENT_WAIT_MAX_MS) { waiting = null; reject(new Error('the heads were busy the whole time')); return; }
+        waiting = { timer: setTimeout(check, PRESENT_POLL_MS), reject };
+        return;
+      }
+      waiting = null;
+      deps.startProactiveTurn(presentContext(r), deps.broadcast);
+      resolve();
+    };
+    check();
+  });
 }
