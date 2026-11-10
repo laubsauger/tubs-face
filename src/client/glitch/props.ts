@@ -50,10 +50,9 @@ export const PROP_MAX_TILT = 0.14;
 /**
  * Shades inside a prop: lightness (percent) and hue (degrees) offsets from
  * the head's colour, and for hair a saturation (0..1) it is washed out to.
- * A fixed tone has its own hue whatever the head's colour (tinted lenses).
  */
-export type PropTone = 'body' | 'dark' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white' | 'amber';
-export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: number; fixed?: boolean }> = {
+export type PropTone = 'body' | 'dark' | 'light' | 'accent' | 'silver' | 'ash' | 'smoke' | 'white';
+export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: number }> = {
   body: { hue: 0, light: 0 },
   dark: { hue: 0, light: -26 },
   light: { hue: 0, light: 16 },
@@ -62,7 +61,6 @@ export const PROP_TONES: Record<PropTone, { hue: number; light: number; sat?: nu
   ash: { hue: 0, light: -4, sat: 0.16 },
   smoke: { hue: 0, light: -16, sat: 0.14 },
   white: { hue: 0, light: 20, sat: 0.08 },
-  amber: { hue: 34, light: -8, sat: 0.85, fixed: true },
 };
 
 type Mark = PropTone | { tone: PropTone; group: number } | null;
@@ -253,10 +251,9 @@ const WATTS_BEARD: PropArt = {
   },
 };
 
-// Mark Watts, Alan's son, as he is now: bald on top, round sunglasses with
-// amber lenses pushed up onto the dome, a close-cropped grey fringe round
-// the sides, and a short, tidy goatee round the mouth. Nothing like his
-// father's long hair and long beard at a glance.
+// Mark Watts, Alan's son, as he is now: bald on top, a close-cropped grey
+// fringe round the sides, and a short, tidy goatee round the mouth. Nothing
+// like his father's long hair and long beard at a glance.
 
 /** Inside a rectangle with rounded corners, x from its middle, y up; corners of radius r. */
 const inRounded = (x: number, y: number, half: number, top: number, bottom: number, r: number) => {
@@ -268,9 +265,9 @@ const inRounded = (x: number, y: number, half: number, top: number, bottom: numb
 };
 
 /**
- * The bald dome: its outline, a shine, the sunglasses pushed up onto it, and
- * the close-cropped fringe round the sides (the outline thickening into
- * hair below the temples), clear of the eyes.
+ * The bald dome: its outline and a shine, and the close-cropped fringe round
+ * the sides (the outline thickening into hair below the temples), clear of
+ * the eyes.
  */
 const MARK_HEAD: PropArt = {
   width: 63,
@@ -278,15 +275,6 @@ const MARK_HEAD: PropArt = {
   depth: 16,
   at(x, y) {
     const ax = Math.abs(x);
-    // The lenses: round, seen from the front lying back on the dome, so wider than tall.
-    const lens = ((ax - 8.4) / 6) ** 2 + ((y - 10.5) / 3.8) ** 2;
-    if (lens <= 1) {
-      // A glint high on each lens, toward the light.
-      if (lens < 0.3 && y > 11 && x < -8.4) return 'white';
-      return lens > 0.5 ? 'smoke' : 'amber';
-    }
-    // The bridge between them.
-    if (ax < 2.6 && y > 10 && y < 11.6) return 'smoke';
     // The dome's outline (1 on it), from the ears up over the top.
     const dome = Math.sqrt((ax / 31.6) ** 2 + ((y + 2) / 21) ** 2);
     // A shine just inside it, up and to the left.

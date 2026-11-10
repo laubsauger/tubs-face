@@ -325,22 +325,6 @@ describe.each(LOOKS)('a look (%s) in a studio frame', (look) => {
   });
 });
 
-// Mark Watts's sunglasses are amber on either head; the rest of a look is
-// the head's own colour, washed out for hair.
-describe('a look\'s tinted lenses', () => {
-  it('stay amber on a purple head and a cyan one, while the hair follows the head', () => {
-    for (const colour of ['#a855f7', '#22d3ee'] as const) {
-      const config = withProp('mark-watts');
-      config.color.base = colour;
-      const head = grid(config, 'idle').pixelGrid.filter((pixel) => pixel.group === PROP_HEAD_GROUP);
-      const lenses = head.filter((pixel) => pixel.overrideH >= 0);
-      expect(lenses.length, colour).toBeGreaterThan(10);
-      for (const lens of lenses) expect(lens.overrideH * 360, colour).toBeCloseTo(34, 3);
-      expect(head.some((pixel) => pixel.overrideH < 0 && pixel.overrideS > 0), colour).toBe(true);
-    }
-  });
-});
-
 describe('a worn prop on a screen', () => {
   it('fits on the screen with the face, at any aspect ratio', () => {
     for (const [width, height] of [[1920, 1080], [1280, 800], [800, 1280]] as const) {

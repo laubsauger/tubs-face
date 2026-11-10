@@ -10,7 +10,7 @@ export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-o
 /**
  * What a head wears (client/glitch/props.ts draws them as part of the face):
  * a hat, or a look (watts: Alan Watts's hair, brows, moustache and beard;
- * mark-watts: his son Mark's bald dome, sunglasses pushed up and goatee).
+ * mark-watts: his son Mark's bald dome, cropped fringe and short goatee).
  * Fixed ids: the studio director and panel build against them.
  */
 export const PROPS = ['none', 'party-hat', 'top-hat', 'witch-hat', 'crown', 'propeller-cap', 'watts', 'mark-watts'] as const;
