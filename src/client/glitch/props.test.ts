@@ -33,8 +33,10 @@ import {
 
 const FRAME = 1024;
 const WORN = PROPS.filter((prop) => prop !== 'none');
-/** Looks: parts round the whole face (hair, brows, a beard), not a hat on top. */
-const LOOKS: readonly PropId[] = ['watts', 'mark-watts'];
+/** Looks: parts round the whole face (hair, brows, maybe a beard), not a hat on top. */
+const LOOKS: readonly PropId[] = ['watts', 'mark-watts', 'dimi', 'interviewer'];
+/** Looks with a moustache and a beard on the mouth (the interviewer has none). */
+const BEARDED: readonly PropId[] = ['watts', 'mark-watts', 'dimi'];
 const HATS = WORN.filter((prop) => !LOOKS.includes(prop));
 /** Widest a mouth opens talking: worked up all the way (glitch/runtime.ts getSpeakMouthScale). */
 const TALK_WIDEST = SPEAK_MIN_SCALE + (SPEAK_MAX_SCALE - SPEAK_MIN_SCALE) * 1.25;
@@ -206,6 +208,7 @@ describe('a worn prop in a studio frame', () => {
 
 describe.each(LOOKS)('a look (%s) in a studio frame', (look) => {
   const config = withProp(look);
+  const bearded = BEARDED.includes(look);
 
   it('puts each part where it grows: hair above and beside the eyes, brows over them, a moustache over the mouth, a beard under it', () => {
     const { pixelGrid } = grid(config, 'idle');
@@ -222,6 +225,12 @@ describe.each(LOOKS)('a look (%s) in a studio frame', (look) => {
     expect(span(brows, 'y').max).toBeLessThan(eyesTop);
     const moustache = of(PROP_LIP_GROUP);
     const beard = of(PROP_JAW_GROUP);
+    // A look without a beard has nothing on the mouth, so it never moves with talking.
+    if (!bearded) {
+      expect(moustache).toEqual([]);
+      expect(beard).toEqual([]);
+      return;
+    }
     expect(span(moustache, 'y').min).toBeLessThan(span(mouth, 'y').min);
     expect(span(beard, 'y').max).toBeGreaterThan(span(mouth, 'y').max);
   });
@@ -231,7 +240,7 @@ describe.each(LOOKS)('a look (%s) in a studio frame', (look) => {
   // never cover the mouth, nor float off it: a row or two clear, and a little
   // more on a thin frown opened wide, whose pixel rows barely move.
   const NEAR = 3.5;
-  it('keeps the moustache and beard on the mouth in every expression, however far it opens', () => {
+  it.runIf(bearded)('keeps the moustache and beard on the mouth in every expression, however far it opens', () => {
     for (const expression of EXPRESSIONS) {
       const built = grid(config, expression);
       const { pixelGrid, shapeCenters, size, gap } = built;
