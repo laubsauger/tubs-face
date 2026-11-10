@@ -1,19 +1,22 @@
 // A sleeping face that still lives. Asleep the eyes are closed, so they stay
 // near centre (the studio's sleeping Zs use the room above them), but a face
 // held perfectly still reads as switched off. So it breathes (a slow
-// brightness swell), its gaze drifts a little, and now and then it twitches:
-// a lid flicker, a tiny mouth shift or a quick micro-glance, settled again
-// within a third of a second. All of it small enough to clearly read as sleep.
+// brightness swell) and now and then it twitches: a lid flicker, a tiny mouth
+// shift or a quick micro-glance, settled again within a third of a second.
+// Between twitches its shapes hold still. A slow, continuous drift of a few
+// screen pixels is drawn on the pixel grid as edges stepping one pixel at a
+// time, a different quad each frame: it read as a face shuffling by a pixel,
+// all the time (live, 2026-11-10). So the motion is in the brightness, and in
+// the twitches, which are over before they read as steps.
 
 import type { FaceMotion } from '../glitch/expression-motion.js';
 
 /** Breathing: one swell every ~4.6 s, brightness up and down by this share. */
 export const SLEEP_BREATH_PERIOD_MS = 4600;
 export const SLEEP_BREATH_BRIGHTNESS = 0.06;
-/** Slow gaze drift and the micro-glance, as shares of the waking gaze range; together at most SLEEP_GAZE_MAX. */
-export const SLEEP_DRIFT = 0.06;
+/** The micro-glance, as a share of the waking gaze range: the furthest a sleeping face's eyes go. */
 export const SLEEP_GLANCE = 0.04;
-export const SLEEP_GAZE_MAX = SLEEP_DRIFT + SLEEP_GLANCE;
+export const SLEEP_GAZE_MAX = SLEEP_GLANCE;
 /** A twitch every 6 to 15 s, settled within 0.3 s. */
 export const SLEEP_TWITCH_MIN_MS = 6000;
 export const SLEEP_TWITCH_MAX_MS = 15_000;
@@ -26,7 +29,7 @@ export const SLEEP_MOUTH_SHIFT = 0.008;
 export type SleepTwitchKind = 'lid' | 'mouth' | 'glance';
 
 export interface SleepPose {
-  /** Store gaze units (the waking range is -1..1). */
+  /** Store gaze units (the waking range is -1..1): 0, except in a glance. */
   gazeX: number;
   gazeY: number;
   /** -1..1 over a breath. */
@@ -51,7 +54,6 @@ export function twitchEnvelope(sinceMs: number): number {
 }
 
 export function createSleepLife(random: () => number = Math.random): SleepLife {
-  const phases = [random(), random(), random(), random()].map((r) => r * Math.PI * 2);
   const twitches: Array<{ kind: SleepTwitchKind; at: number; dx: number; dy: number }> = [];
   let nextTwitchAt: number | null = null;
   const interval = () => SLEEP_TWITCH_MIN_MS + random() * (SLEEP_TWITCH_MAX_MS - SLEEP_TWITCH_MIN_MS);
@@ -68,13 +70,9 @@ export function createSleepLife(random: () => number = Math.random): SleepLife {
         if (twitches.length > 32) twitches.shift();
         nextTwitchAt += interval();
       }
-      const seconds = nowMs / 1000;
-      // Two slow, unrelated waves per axis: drifts, never a visible loop.
-      const driftX = SLEEP_DRIFT * (0.6 * Math.sin(seconds / 9.7 * Math.PI * 2 + phases[0]!) + 0.4 * Math.sin(seconds / 14.3 * Math.PI * 2 + phases[1]!));
-      const driftY = SLEEP_DRIFT * (0.6 * Math.sin(seconds / 11.9 * Math.PI * 2 + phases[2]!) + 0.4 * Math.sin(seconds / 17.1 * Math.PI * 2 + phases[3]!));
       const pose: SleepPose = {
-        gazeX: driftX,
-        gazeY: driftY,
+        gazeX: 0,
+        gazeY: 0,
         breath: Math.sin((nowMs / SLEEP_BREATH_PERIOD_MS) * Math.PI * 2),
         lid: 0,
         mouth: 0,
@@ -100,6 +98,7 @@ export const sleepLife = createSleepLife();
 /** `motion` with this pose's lid flicker and mouth shift, written into `out` (motion itself is left alone). */
 export function applySleepPose(motion: FaceMotion, pose: SleepPose, out: FaceMotion): FaceMotion {
   for (const key of ['left', 'right', 'mouth'] as const) Object.assign(out[key], motion[key]);
+  out.light = motion.light;
   const lid = 1 + SLEEP_LID_FLICKER * pose.lid;
   out.left.sy *= lid;
   out.right.sy *= lid;

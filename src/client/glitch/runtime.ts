@@ -355,15 +355,27 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     canvas.style.display = active ? 'block' : 'none';
   }
 
+  /**
+   * The box the face is laid out in. A studio head is laid out in its stream's
+   * square (studioCanvasPx), never in its window: sized from the window, a
+   * small off-screen window drew four-pixel eyes into the 1024 stream, and any
+   * other window size changed the face's look.
+   */
+  function layoutSize(face: HTMLElement): { width: number; height: number } {
+    if (studioCanvasPx) return { width: studioCanvasPx, height: studioCanvasPx };
+    const rect = face.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  }
+
   function sizeCanvas(): void {
     if (!faceEl || !canvas) return;
     updateEffectivePixelMetrics();
-    const rect = faceEl.getBoundingClientRect();
+    const rect = layoutSize(faceEl);
     if (!rect.width || !rect.height) return;
     // The spectator page runs on weaker screens; cap its resolution.
     const isSpectator = faceEl.closest('.spectator-shell') !== null;
     const dpr = studioCanvasPx
-      ? studioCanvasPx / rect.width
+      ? 1
       : isSpectator ? Math.min(window.devicePixelRatio || 1, 1.5) : (window.devicePixelRatio || 1);
     const pw = studioCanvasPx ?? Math.round(rect.width * dpr);
     const ph = studioCanvasPx ?? Math.round(rect.height * dpr);
@@ -379,7 +391,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
 
   function updateEffectivePixelMetrics(): void {
     if (!faceEl) return;
-    const rect = faceEl.getBoundingClientRect();
+    const rect = layoutSize(faceEl);
     // Scale pixels with the box the features are fitted into, not the raw
     // width: in a wide, short window the face fits the height and full-size
     // pixels would leave it a handful of chunky blocks.
@@ -443,7 +455,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
   }
 
   function buildNextGrid(face: HTMLElement): ReturnType<typeof buildPixelGrid> {
-    const rect = face.getBoundingClientRect();
+    const rect = layoutSize(face);
     const state = store.getState();
     const key = faceKey(state);
     builtFaceKey = key;
@@ -543,6 +555,7 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
       l: Math.max(0, Math.min(100, baseHSL.l + tint.lightness)),
     };
 
+    const faceSize = layoutSize(faceEl);
     const frameResult = computeFrameState(now, {
       state,
       tint,
@@ -557,8 +570,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
       // it again here made saccades drag.
       gazeX: state.gazeX,
       gazeY: state.gazeY,
-      faceW: faceEl.getBoundingClientRect().width,
-      faceH: faceEl.getBoundingClientRect().height,
+      faceW: faceSize.width,
+      faceH: faceSize.height,
       getBlinkFactor,
       getSpeakMouthScale,
       lastBurstState,
@@ -566,6 +579,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     });
     lastBurstState = frameResult.lastBurstState;
     glitchBurstSeed = frameResult.glitchBurstSeed;
+    // Breathing is in the brightness, so the shapes hold still (glitch/expression-motion.ts, face/sleep-life.ts).
+    frameResult.frame.pulseMod *= 1 + faceMotion.light;
     if (sleepPose) frameResult.frame.pulseMod *= 1 + SLEEP_BREATH_BRIGHTNESS * sleepPose.breath;
 
     renderFrameWebGpu(frameResult.frame, {
@@ -582,8 +597,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
       gpuUniformData: gpu.gpuUniformData,
       gpuPostUniformData: gpu.gpuPostUniformData,
       config: rendererConfig,
-      faceW: faceEl.getBoundingClientRect().width,
-      faceH: faceEl.getBoundingClientRect().height,
+      faceW: faceSize.width,
+      faceH: faceSize.height,
       shapeCenters: drawnCenters,
       shapeTransforms,
       propTransform,

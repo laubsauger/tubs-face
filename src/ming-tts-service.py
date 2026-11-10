@@ -6,7 +6,7 @@ the listening tests behind every setting below live.
 
 Start by hand:  venv-ming/bin/python -I src/ming-tts-service.py [--port 3003]
         (the port can also come from MING_PORT; --port wins)
-Voice references are read from MING_VOICE_DIR (default data/ming-voices, kept out of git).
+Voice references are read from MING_VOICE_DIR, else data/ming-voices (local), else assets/ming-voices (in git).
 HTTP on 127.0.0.1:3003 (stdlib ThreadingHTTPServer):
   GET  /health      -> {"status", "model", "ready", "reference", "stream"}
   Both POSTs take an optional "voice" (a key of VOICES below, default "friend").
@@ -51,9 +51,12 @@ from scipy.signal import resample_poly  # noqa: E402
 
 from ming_eq import VoiceEQ  # noqa: E402  (src/, next to this file)
 
-# The references are recordings of a real person, and this repo is public: they stay out of git.
-VOICE_DIR = os.environ.get("MING_VOICE_DIR") or os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "ming-voices")
+# The voice references: MING_VOICE_DIR, else a local data/ming-voices (private override), else the
+# ones in the repo (assets/ming-voices, committed so a new machine gets Tubs' and Mini's voices).
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_LOCAL_VOICES = os.path.join(_ROOT, "data", "ming-voices")
+VOICE_DIR = os.environ.get("MING_VOICE_DIR") or (
+    _LOCAL_VOICES if os.path.isfile(os.path.join(_LOCAL_VOICES, "ref_rec_full.wav")) else os.path.join(_ROOT, "assets", "ming-voices"))
 HOST, PORT = "127.0.0.1", int(os.environ.get("MING_PORT", "3003"))
 REPO = "mlx-community/Ming-3.0-tts-0.5B-bf16"
 # Voices: name -> reference. Each has <ref>.wav, <ref>.txt (corrected transcript) and

@@ -142,6 +142,7 @@ describe('the shipped relationships', () => {
     const { readFileSync } = await import('node:fs');
     const shipped = JSON.parse(readFileSync(path.resolve(process.cwd(), 'config/relationships.json'), 'utf8')) as unknown;
     const { validateRelationships } = await import('./relationships.js');
-    expect(validateRelationships(shipped)).toEqual([{ name: 'Flo', attitude: ATTITUDE }]);
+    // the operator adds people from the Studio tab (Dimi on 10 Nov); the boss stays first and as shipped
+    expect(validateRelationships(shipped)[0]).toEqual({ name: 'Flo', attitude: ATTITUDE });
   });
 });

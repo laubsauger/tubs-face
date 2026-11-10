@@ -37,16 +37,34 @@ function settledIn(expression: ExpressionName) {
 const range = (values: number[]) => Math.max(...values) - Math.min(...values);
 
 describe('living expressions', () => {
-  it('idle breathes: a slow, small swell rather than a still picture', () => {
+  // A pixel grid that is scaled or moved by a fraction of a screen pixel is
+  // re-rasterised with some quad edges a pixel further on, different ones each
+  // frame: asleep that read as a face shuffling by a pixel, all the time, and
+  // awake, on the studio projectors, as the faces jittering. So a face breathes
+  // in brightness, and between deliberate motions its shapes hold still.
+  it('idle breathes in brightness, slowly, while its shapes hold still', () => {
     const samples = play(settledIn('idle'), 'idle', 5000, 8400);
-    const sy = samples.map((s) => s.m.left.sy);
-    expect(range(sy)).toBeGreaterThan(MOTION.breathScale);
-    expect(range(sy)).toBeLessThanOrEqual(2 * MOTION.breathScale + 1e-6);
+    const light = samples.map((s) => s.m.light);
+    expect(range(light)).toBeGreaterThan(MOTION.breathLight);
+    expect(range(light)).toBeLessThanOrEqual(2 * MOTION.breathLight + 1e-6);
     // About two breaths in 8.4 s: slow, not a flutter.
     let crossings = 0;
-    for (let i = 1; i < sy.length; i += 1) if ((sy[i - 1]! - 1) * (sy[i]! - 1) < 0) crossings += 1;
+    for (let i = 1; i < light.length; i += 1) if (light[i - 1]! * light[i]! < 0) crossings += 1;
     expect(crossings).toBeGreaterThanOrEqual(3);
     expect(crossings).toBeLessThanOrEqual(5);
+    for (const key of ['left', 'right', 'mouth'] as const) {
+      for (const field of ['sx', 'sy', 'ox', 'oy'] as const) expect(range(samples.map((s) => s.m[key][field])), `${key}.${field}`).toBeLessThan(1e-9);
+    }
+  });
+
+  it('asleep the shapes hold their size and place (breathing is in the brightness, face/sleep-life.ts)', () => {
+    const samples = play(settledIn('sleep'), 'sleep', 5000, 8000);
+    for (const key of ['left', 'right', 'mouth'] as const) {
+      expect(range(samples.map((s) => s.m[key].sx))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].sy))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].ox))).toBeLessThan(1e-9);
+      expect(range(samples.map((s) => s.m[key].oy))).toBeLessThan(1e-9);
+    }
   });
 
   it('surprised pops in: swells past its size right away, then settles', () => {
@@ -104,11 +122,13 @@ describe('living expressions', () => {
     expect(m.right.pivotY).toBeCloseTo(1, 2);
   });
 
-  it('thinking squints one eye more than the other and lets the eyes drift', () => {
+  it('thinking squints one eye more than the other, and holds that pose still', () => {
     const samples = play(settledIn('thinking'), 'thinking', 5000, 6500);
     const last = samples.at(-1)!.m;
     expect(last.right.sy - last.left.sy).toBeGreaterThan(0.1);
-    expect(range(samples.map((s) => s.m.left.ox))).toBeGreaterThan(MOTION.thinkDrift);
+    // Its slow drift was a pixel or two of creep, drawn as edges stepping.
+    expect(range(samples.map((s) => s.m.left.ox))).toBeLessThan(1e-6);
+    expect(range(samples.map((s) => s.m.left.oy))).toBeLessThan(1e-6);
   });
 
   it('looking sideways turns the head: the near eye grows, the far eye narrows', () => {

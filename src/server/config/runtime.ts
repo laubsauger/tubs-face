@@ -39,10 +39,12 @@ export const runtimeConfig: RuntimeConfig = {
   renderQuality: pickOne(RENDER_QUALITIES, process.env.RENDER_QUALITY, 'high'),
   ttsBackend: pickOne(TTS_BACKENDS, process.env.REALTIME_TTS_BACKEND, 'kokoro'),
   sttBackend: pickOne(STT_BACKENDS, process.env.REALTIME_STT_BACKEND, 'mlx'),
-  kokoroVoice: pickOne(KOKORO_VOICES, process.env.REALTIME_KOKORO_VOICE, 'hm_omega'),
+  // Tubs and Mini speak with their cloned voices (Ming) unless a Kokoro voice is chosen on purpose;
+  // a missing Ming is an error (/healthz 503, the log, the Studio tab), never a quiet switch to Kokoro.
+  kokoroVoice: pickOne(KOKORO_VOICES, process.env.REALTIME_KOKORO_VOICE, 'ming:friend'),
   dualHeadEnabled: parseBoolean(process.env.DUAL_HEAD_ENABLED, false),
   dualHeadMode: normalizeDualHeadModeInput(process.env.DUAL_HEAD_MODE, 'off'),
-  secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'jf_tebukuro'),
+  secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'ming:friend-b'),
   secondaryRenderQuality: pickOne(RENDER_QUALITIES, process.env.SECONDARY_RENDER_QUALITY, 'balanced'),
   secondarySubtitleEnabled: parseBoolean(process.env.SECONDARY_SUBTITLE_ENABLED, true),
   secondaryAudioGain: parseFloatInRange(process.env.SECONDARY_AUDIO_GAIN, 1.0, 0, 1.2),
@@ -60,7 +62,7 @@ export const runtimeConfig: RuntimeConfig = {
   glitchScanlineIntensity: parseFloatInRange(process.env.GLITCH_SCANLINE_INTENSITY, 0.41, 0, 1),
   glitchScanlineSpacing: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPACING, 5, 1, 20),
   glitchScanlineThickness: parseIntegerInRange(process.env.GLITCH_SCANLINE_THICKNESS, 3, 1, 10),
-  glitchScanlineSpeed: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPEED, 26, 1, 60),
+  glitchScanlineSpeed: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPEED, 3, 1, 60),
   glitchPixelJitter: parseFloatInRange(process.env.GLITCH_PIXEL_JITTER, 0, 0, 10),
   glitchFlicker: parseBoolean(process.env.GLITCH_FLICKER, true),
   glitchFlickerSpeed: parseIntegerInRange(process.env.GLITCH_FLICKER_SPEED, 11, 1, 30),

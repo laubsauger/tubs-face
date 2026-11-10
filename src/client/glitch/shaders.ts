@@ -314,6 +314,13 @@ fn sampleScene(uv: vec2f) -> vec4f {
   return textureSample(sceneTex, sceneSampler, suv);
 }
 
+// How much of [0, x] the dark scanline rows cover: each period starts with
+// that much dark.
+fn darkUpTo(x: f32, period: f32, dark: f32) -> f32 {
+  let n = floor(x / period);
+  return n * dark + min(x - n * period, dark);
+}
+
 @fragment
 fn fsPost(in: VSOut) -> @location(0) vec4f {
   var uv = in.uv;
@@ -334,8 +341,14 @@ fn fsPost(in: VSOut) -> @location(0) vec4f {
 
   var color = sampleScene(vec2f(x, y));
   if (u.scanline.x > 0.5 && u.scanline.z > 0.0) {
-    let phase = fract((y * u.canvas.y + u.scanline.w) / max(1.0, u.scanline.z));
-    let lineMask = 1.0 - step(u.flags.y, phase);
+    // The share of this screen pixel the dark rows cover. A hard edge made a
+    // scrolling row step a whole pixel at a time, which read as jitter; this
+    // way it slides. Still lines on whole pixels look as before.
+    let period = max(1.0, u.scanline.z);
+    let dark = u.flags.y * period;
+    let pos = y * u.canvas.y + u.scanline.w;
+    let pixel = 1.0 / max(u.canvas.z, 0.0001);
+    let lineMask = clamp((darkUpTo(pos + 0.5 * pixel, period, dark) - darkUpTo(pos - 0.5 * pixel, period, dark)) / pixel, 0.0, 1.0);
     let dim = 1.0 - lineMask * u.scanline.y;
     color = vec4f(color.rgb * dim, color.a);
   }

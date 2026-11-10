@@ -189,7 +189,7 @@
     "glitchScanlineIntensity": 0.41,
     "glitchScanlineSpacing": 5,
     "glitchScanlineThickness": 3,
-    "glitchScanlineSpeed": 26,
+    "glitchScanlineSpeed": 3,
     "glitchPixelJitter": 0,
     "glitchFlicker": true,
     "glitchFlickerSpeed": 11,

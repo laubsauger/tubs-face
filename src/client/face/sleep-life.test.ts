@@ -3,6 +3,7 @@ import { createFaceMotion } from '../glitch/expression-motion.js';
 import {
   SLEEP_BREATH_PERIOD_MS,
   SLEEP_GAZE_MAX,
+  SLEEP_GLANCE,
   SLEEP_TWITCH_MAX_MS,
   SLEEP_TWITCH_MIN_MS,
   SLEEP_TWITCH_SETTLE_MS,
@@ -13,8 +14,10 @@ import {
 
 // Asleep the eyes are closed, so they must stay near centre (the studio's
 // sleeping Zs use the room above them), yet a face held perfectly still reads
-// as switched off. So it drifts a little, breathes, and twitches now and then,
-// briefly.
+// as switched off. So it breathes and twitches now and then, briefly. Between
+// twitches it holds still: a slow drift of a few screen pixels is drawn on the
+// pixel grid as edges stepping a pixel at a time, and read live as a face
+// shuffling by a pixel all the time.
 
 /** A seeded random, so the test is the same every run. */
 function seeded(seed: number): () => number {
@@ -26,19 +29,24 @@ function seeded(seed: number): () => number {
 }
 
 describe('a sleeping face', () => {
-  it('keeps its gaze within a tenth of the waking range, but never freezes', () => {
+  it('holds its gaze at centre between twitches; only a glance moves it, a little and briefly', () => {
     const life = createSleepLife(seeded(7));
-    let minX = Infinity;
-    let maxX = -Infinity;
+    let moving = 0;
+    let samples = 0;
+    let glanced = false;
     for (let t = 0; t < 10 * 60_000; t += 16) {
       const pose = life.sample(t);
-      expect(Math.hypot(pose.gazeX, pose.gazeY)).toBeLessThanOrEqual(SLEEP_GAZE_MAX * Math.SQRT2 + 1e-9);
-      expect(Math.abs(pose.gazeX)).toBeLessThanOrEqual(SLEEP_GAZE_MAX + 1e-9);
-      expect(Math.abs(pose.gazeY)).toBeLessThanOrEqual(SLEEP_GAZE_MAX + 1e-9);
-      minX = Math.min(minX, pose.gazeX);
-      maxX = Math.max(maxX, pose.gazeX);
+      samples += 1;
+      expect(Math.hypot(pose.gazeX, pose.gazeY)).toBeLessThanOrEqual(SLEEP_GAZE_MAX + 1e-9);
+      const last = life.twitches.at(-1);
+      const inGlance = last?.kind === 'glance' && t - last.at < SLEEP_TWITCH_SETTLE_MS * 3;
+      if (!inGlance) expect(Math.hypot(pose.gazeX, pose.gazeY), `still at ${t} ms`).toBeLessThan(1e-3);
+      if (Math.hypot(pose.gazeX, pose.gazeY) > 1e-3) moving += 1;
+      if (inGlance && Math.hypot(pose.gazeX, pose.gazeY) > SLEEP_GLANCE * 0.9) glanced = true;
     }
-    expect(maxX - minX, 'it drifts').toBeGreaterThan(0.03);
+    expect(glanced, 'a glance still shows').toBe(true);
+    // Moving under 5 % of the time: very occasional, not a drift.
+    expect(moving / samples).toBeLessThan(0.05);
   });
 
   it('twitches every 6 to 15 s, a lid, the mouth or a glance', () => {

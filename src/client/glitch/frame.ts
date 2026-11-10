@@ -153,7 +153,9 @@ export function writeGpuUniforms(
   const gs = config.glitchSlice;
   const fl = config.glitch;
   const spacing = Math.max(1, fl.scanlineSpacing);
-  const scanlineScroll = fl.scanlineMove ? (frame.t * fl.scanlineSpeed) % spacing : 0;
+  // Asleep the scanlines hold still: over a still face their scroll was the
+  // one thing moving, dark rows stepping a pixel or two every frame.
+  const scanlineScroll = fl.scanlineMove && !sleeping ? (frame.t * fl.scanlineSpeed) % spacing : 0;
   const scanlineThicknessRatio = Math.min(0.95, Math.max(0.02, fl.scanlineThickness / spacing));
   const bloomIntensity = Math.max(0, config.glow.bloomIntensity);
   const glowStrength = Math.max(0, config.glow.pixelGlow / 24);
