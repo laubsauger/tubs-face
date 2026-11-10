@@ -30,6 +30,7 @@ import { openTtsStream } from '../tts/stream.js';
 import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings } from '../studio/state.js';
 import { siteLogin } from '../studio/site-auth.js';
 import { noteStudioContext } from '../studio/context.js';
+import { setLeadSink } from '../studio/lead.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 import { isRendering, onRenderingChange } from '../tts/rendering.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
@@ -184,6 +185,9 @@ function isWebSocketRequest(request: IncomingMessage): boolean {
   const pathname = new URL(request.url ?? '/', 'http://localhost').pathname;
   return pathname === WS_PATH;
 }
+
+// the heads' decision to lead the tour on goes to the director (and every page)
+setLeadSink(() => broadcast({ type: 'studio_lead', to: 'next', ts: Date.now() }));
 
 export function broadcast(message: WsServerMessage): void {
   if (message.type === 'audio_chunk') noteAudioSent();
