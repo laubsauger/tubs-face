@@ -17,6 +17,10 @@ pip install -r requirements.txt
 npm run setup-ming    # venv-ming for the cloned voices (Apple Silicon); the server starts Ming once it exists
 ```
 
+## Branches
+
+`main` is the only long-lived branch. Work that takes more than one sitting goes on a short branch from `main`; merge it back (a PR) once it works and delete the branch.
+
 ## Run on a studio Mac (a studio-manager service)
 
 First-time setup, step by step (Gemini key, voices, start, checks): `docs/SETUP-STUDIO-MAC.md`. `npm ci` sets up the speech service, the Ming voices (Apple Silicon) and a `.env` from `.env.example`; the voice references are in git (`assets/ming-voices/`). The default voices are Ming (`ming:friend`, `ming:friend-b`); Kokoro is only a deliberate choice in `.env`, and a missing Ming is an error, never a quiet switch.

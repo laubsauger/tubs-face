@@ -1,6 +1,6 @@
 # Vision: where Tubs' eyes come from and who looks at the pictures
 
-Status: built (2026-11-08, branch `feat/studio-mode`), tested against a stub
+Status: built (2026-11-08, on `main` since 2026-11-10), tested against a stub
 OpenAI-compatible server, Gemini and a local Ollama (2026-11-09, below).
 Applies to tubs-face in general; the studio mode only adds the `visionSource`
 choice (default `off`: a `snapshot:` source needs its URL).

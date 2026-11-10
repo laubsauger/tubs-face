@@ -15,9 +15,11 @@ for the RnA studio. About 20 minutes, most of it downloads. Check each step befo
 
 ```sh
 git clone https://github.com/laubsauger/tubs-face.git && cd tubs-face
-git switch feat/studio-mode        # until PR #4 is merged into ts-refactor
 npm ci
 ```
+
+Studio mode is on `main`. A checkout from before 10 Nov 2026 may still be on `feat/studio-mode`:
+`git switch main && git pull`, then `npm ci` again.
 
 `npm ci` does the whole setup:
 - the speech service's Python environment (`venv/`);
