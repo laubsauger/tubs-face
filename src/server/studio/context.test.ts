@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { STUDIO_TOUR_STALE_MS, forgetStudioContext, noteStudioContext, studioContextLines, studioTour, type StudioContextMessage, type StudioVenue } from './context.js';
+import { STUDIO_TOUR_STALE_MS, forgetStudioContext, noteStudioContext, studioContextLines, studioGroupShow, studioScreening, studioTour, type StudioContextMessage, type StudioVenue } from './context.js';
 
 // The director tells Tubs where he is and who is around. The model must get
 // that as places a host would talk about ("by the cinema"), never as ids or
@@ -98,5 +98,26 @@ describe('studio context in the prompt', () => {
     noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now + 1000 }, now + 1000);
     expect(studioTour(now + 1000)).toBeNull();
     expect(studioContextLines(now + 1000).join('\n')).not.toContain('guiding a tour');
+  });
+
+  // The screening: every screen plays the same shot, so a visitor asking "what's that?" means it.
+  it('during the screening every reply knows the film and the shot on every screen', () => {
+    const now = 2_000_000;
+    const screening = { film: 'Dimination', about: 'A town where every face is Dimi\'s.', host: false, where: null, shot: { title: 'The bus stop', date: '03:14', text: 'Dimi at a request stop in the rain.' }, n: 14, of: 33 };
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now, screening }, now);
+    const text = studioContextLines(now).join('\n');
+    expect(text).toContain('plays the film "Dimination"');
+    expect(text).toContain('shot 14 of 33: "The bus stop", 03:14 into the film');
+    expect(text).toContain('Dimi at a request stop in the rain.');
+    expect(text).not.toContain('commentary');
+    // only a hosted screening is a group show (no greetings, no resets); the plain broadcast is a normal night
+    expect(studioGroupShow(now)).toBe(false);
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now, screening: { ...screening, host: true, where: 'Big Wall' } }, now);
+    expect(studioGroupShow(now)).toBe(true);
+    expect(studioContextLines(now).join('\n')).toContain("director's commentary at the Big Wall");
+    // a context without it ends it
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now + 1000 }, now + 1000);
+    expect(studioScreening(now + 1000)).toBeNull();
+    expect(studioGroupShow(now + 1000)).toBe(false);
   });
 });

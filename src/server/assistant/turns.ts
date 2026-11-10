@@ -6,7 +6,7 @@ import { captureTurnTrace } from '../observability/langfuse.js';
 import { noteReplyEmoji, noteReplyLines } from './variety.js';
 import type { SpokenLine } from './bits.js';
 import { forgetConversation } from './context.js';
-import { studioTour } from '../studio/context.js';
+import { studioGroupShow, studioTour } from '../studio/context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 import { noteHeard } from '../studio/pulse.js';
@@ -51,8 +51,8 @@ export function onVisitorLeft(now = Date.now()): boolean {
   if (now - lastConversationAt < STILL_TALKING_MS) {
     return false;
   }
-  // on the gallery tour the group moves along with the guide: nothing to forget
-  if (studioTour(now)) return false;
+  // on the gallery tour (or a hosted screening) the group moves along: nothing to forget
+  if (studioGroupShow(now)) return false;
   forgetVisitor('visitor left');
   return true;
 }
@@ -60,7 +60,7 @@ export function onVisitorLeft(now = Date.now()): boolean {
 /** The face saw a different person than the last visitor come into view. */
 export function onNewVisitor(): void {
   // on the gallery tour the group changes all the time: the tour's conversation goes on
-  if (studioTour()) { console.log('[turn] new visitor; conversation kept (gallery tour)'); return; }
+  if (studioGroupShow()) { console.log(`[turn] new visitor; conversation kept (${studioTour() ? 'gallery tour' : 'screening'})`); return; }
   forgetVisitor('new visitor');
 }
 
@@ -243,7 +243,7 @@ function spokenLines(result: Pick<AssistantTurnResult, 'reply' | 'beats'>): Spok
  */
 export function scheduleAppearanceGreeting(prompt: string, broadcast: Broadcast): void {
   // on the gallery tour people come and go with the group: the guide does not greet each of them
-  if (studioTour()) { console.log('[Greeting] Skipped, gallery tour'); return; }
+  if (studioGroupShow()) { console.log(`[Greeting] Skipped, ${studioTour() ? 'gallery tour' : 'screening'}`); return; }
   pendingGreetingPrompt = prompt;
   if (pendingGreetingTimer) {
     clearTimeout(pendingGreetingTimer);

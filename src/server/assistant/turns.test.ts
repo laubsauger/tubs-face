@@ -145,6 +145,22 @@ describe('turns', () => {
     expect(service.runProactiveTurn).toHaveBeenCalledTimes(1);
   });
 
+  // The hosted screening is a group show like the tour; the plain broadcast is not (people come one by one).
+  it('while the heads host the screening: no arrival greetings and the conversation is kept', async () => {
+    const { noteStudioContext, forgetStudioContext } = await import('../studio/context.js');
+    const ws = collect();
+    vi.setSystemTime(Date.now() + 60 * APPEARANCE_GREETING_COOLDOWN_MS);
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: Date.now(), screening: { film: 'Dimination', host: true, where: 'Big Wall', shot: { title: 'The fish counter' }, n: 13, of: 33 } });
+    scheduleAppearanceGreeting('Someone new is nearby.', ws.broadcast);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(service.runProactiveTurn).not.toHaveBeenCalled();
+    const log = vi.spyOn(console, 'log');
+    onNewVisitor();
+    expect(log.mock.calls.some((c) => String(c[0]).includes('conversation kept (screening)'))).toBe(true);
+    log.mockRestore();
+    forgetStudioContext();
+  });
+
   it('clears the thinking face when a proactive line produces nothing', async () => {
     const ws = collect();
     service.runProactiveTurn.mockResolvedValueOnce(null);
