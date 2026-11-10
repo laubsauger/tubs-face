@@ -343,6 +343,13 @@ async function runProactiveTurnBody(
         superseded: true,
       };
     }
+    // Seen live: every proactive line (the gallery tour's welcome, picture, floor and "follow the flag",
+    // greetings, the screening's commentary) was written and never heard: clients don't render a
+    // turn_script's audio themselves while the server streams TTS (see playManualTurnScript). It
+    // streams here as for a reply, and the turn lasts until it has played.
+    if (runtimeConfig.ttsStreamingEnabled) {
+      await streamDualHeadBeatAudio(reply.beats, turnId, epoch, broadcast);
+    }
   } else {
     if (!emitIfActive(turnId, epoch, broadcast, {
       type: 'speak',
