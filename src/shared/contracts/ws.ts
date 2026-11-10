@@ -188,6 +188,8 @@ export interface WsStudioContextClientMessage {
   };
   /** The gallery tour while it runs: where, the step, and the picture up on screen there (sentient-studio contract §6). */
   tour?: { where: string; step: string; stop: number; of: number; next: string | null; piece?: { title: string; date?: string; by?: string; text?: string } };
+  /** The gallery night: what hangs where, in detail at the windows the heads are at. */
+  gallery?: { showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; date?: string; by?: string; text?: string }> }> };
   ts: number;
 }
 

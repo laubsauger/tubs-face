@@ -177,6 +177,10 @@ describe('studio messages on /ws', () => {
     const lines = studioContextLines().join(' ');
     expect(lines).toContain('guiding a tour');
     expect(lines).toContain('"Haiku session, 1958"');
+    // and the gallery night's listing, with or without the tour
+    director.send({ type: 'studio_context', reason: 'change', heads: {}, people: [], reference: null, ts: 2, gallery: { showing: [{ where: 'Book', here: true, pictures: [{ title: 'Watts in a kimono' }] }] } });
+    await settle();
+    expect(studioContextLines().join(' ')).toContain('at the Book: "Watts in a kimono"');
   });
 
   it('do not let one head\'s page report for the other', async () => {

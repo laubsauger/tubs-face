@@ -99,4 +99,25 @@ describe('studio context in the prompt', () => {
     expect(studioTour(now + 1000)).toBeNull();
     expect(studioContextLines(now + 1000).join('\n')).not.toContain('guiding a tour');
   });
+
+  // Seen live: asked about the picture in view, Tubs said his camera was black. On the gallery night
+  // every reply knows it is the gallery's curator and guide, and what hangs where.
+  it('on the gallery night: curators and guides, "this picture" is on the wall, what hangs here and elsewhere', () => {
+    const now = 2_000_000;
+    noteStudioContext({
+      reason: 'change', heads: {}, people: [], reference: null, ts: now,
+      gallery: { showing: [
+        { where: 'Book', here: true, pictures: [{ title: 'Watts in a kimono, 1966', date: '1966', by: 'AW portraits', text: 'Watts in a dark kimono, arms folded.' }] },
+        { where: 'Big Wall', pictures: [{ title: 'Haiku session', date: '1958' }, { title: 'Druid Heights', date: '1973' }] },
+      ] },
+    }, now);
+    const text = studioContextLines(now).join('\n');
+    expect(text).toContain('curators and guides');
+    expect(text).toContain('never your camera');
+    expect(text).toContain('Here where you are, at the Book: "Watts in a kimono, 1966" (1966, AW portraits): Watts in a dark kimono, arms folded.');
+    expect(text).toContain('Big Wall: "Haiku session" (1958), "Druid Heights" (1973)');
+    // the night over: a context without it
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now + 1000 }, now + 1000);
+    expect(studioContextLines(now + 1000).join('\n')).not.toContain('curators and guides');
+  });
 });
