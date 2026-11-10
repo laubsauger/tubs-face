@@ -67,6 +67,31 @@ describe('turns', () => {
     expect(isInConversation(1_000_000 + CONVERSATION_WINDOW_MS + 1)).toBe(false);
   });
 
+  // Seen live: on the tour every word in the room got its own reply, the tour's next line waited for a
+  // quiet moment that never came, and the tour stood still at the Gold Frame for minutes.
+  it('on the tour: a visitor who speaks while the tour\'s line waits gets that line at once, with their words folded in', async () => {
+    const { present } = await import('../studio/present.js');
+    const req = { kind: 'move' as const, where: 'Gold Frame', stop: 1, of: 6, first: false, next: 'Book' };
+    let started = false;
+    const turns: string[] = [];
+    void present(req, { broadcast: () => {}, noteAwake: () => {}, startProactiveTurn: (c) => turns.push(c), busy: () => true }).then(() => { started = true; });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(started).toBe(false);   // the room is busy: the line waits
+    service.runProactiveTurn.mockResolvedValueOnce({ turnId: 't2', reply: { text: 'Follow the flag!' } } as never);
+    const ws = collect();
+    await startUserTurn({ text: 'okay where to now', source: 'voice', broadcast: ws.broadcast });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(started).toBe(true);   // the director hears the line has started
+    expect(service.runAssistantTurn).not.toHaveBeenCalled();
+    const context = service.runProactiveTurn.mock.calls[0]![0] as unknown as string;
+    expect(context).toContain('follow it to the Book');
+    expect(context).toContain('Just now a visitor said: "okay where to now"');
+    expect(turns).toEqual([]);   // and it does not go a second time
+    // the next visitor gets an ordinary reply
+    await startUserTurn({ text: 'cool', source: 'voice', broadcast: ws.broadcast });
+    expect(service.runAssistantTurn).toHaveBeenCalledTimes(1);
+  });
+
   it('writes both sides of the exchange to the conversation log', async () => {
     recorded.lines.length = 0;
     await startUserTurn({ text: 'nice hat', source: 'voice', broadcast: collect().broadcast });

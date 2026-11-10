@@ -10,6 +10,7 @@ import { studioGroupShow, studioTour } from '../studio/context.js';
 import { endVisit, noteTurn } from './field-notes.js';
 import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runProactiveTurn, type AssistantTurnResult } from './service.js';
 import { noteHeard } from '../studio/pulse.js';
+import { takeWaitingLine } from '../studio/present.js';
 import { headsQuiet } from './heads.js';
 
 /**
@@ -128,7 +129,14 @@ export function startUserTurn(args: StartUserTurnArgs): Promise<AssistantTurnRes
   turnTimer.setMeta('User', text);
   const startedAt = Date.now();
   void logConversation(source === 'voice' ? 'USER' : 'USER (typed)', text);
-  return runTimedTurn(turnTimer, broadcast, () => runAssistantTurn(text, broadcast, turnTimer, { filler: source === 'voice' }))
+  // On the tour (or the screening) a line of the show that waits for a quiet moment goes now, with
+  // what the visitor said folded in: the guide leads instead of waiting for the room to fall silent.
+  const showLine = takeWaitingLine(text);
+  if (showLine) console.log('[turn] the show\'s waiting line goes now, with what the visitor said');
+  const run = showLine
+    ? () => runProactiveTurn(showLine, broadcast).then((result) => result ?? Promise.reject(new Error('the show\'s line got no reply')))
+    : () => runAssistantTurn(text, broadcast, turnTimer, { filler: source === 'voice' });
+  return runTimedTurn(turnTimer, broadcast, run)
     .then((result) => {
       recordTurn(source, text, result, startedAt, turnTimer);
       return result;

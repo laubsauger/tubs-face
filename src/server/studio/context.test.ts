@@ -92,9 +92,16 @@ describe('studio context in the prompt', () => {
     expect(text).toContain('at the Big Wall');
     expect(text).toContain('"Haiku session, 1958", 1958');
     expect(text).toContain('Watts at a microphone with musicians.');
-    // seen live: between the tour's own lines nobody led; every reply leads on
+    // seen live: between the tour's own lines nobody led; every reply leads back to the tour
     expect(text).toContain('You lead this tour');
-    expect(text).toContain('where you go next (the Book)');
+    // seen live: "next stop is the Book" said while still at the picture, then standing there; on the
+    // picture the lead is back to it, and on to the next stop only when the tour moves on
+    expect(text).toContain('back to the picture here at the Big Wall');
+    expect(text).toContain('do not announce it yet');
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now, tour: { where: 'Big Wall', step: 'move', stop: 2, of: 5, next: 'Book' } }, now);
+    expect(studioContextLines(now).join('\n')).toContain('leading everyone on to the Book now');
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now, tour: { where: 'Book', step: 'walk', stop: 3, of: 5, next: 'Immersive' } }, now);
+    expect(studioContextLines(now).join('\n')).toContain('on your way to the Book');
     // it still runs between the director's beats; a context without it ends it; silence ends it too
     expect(studioTour(now + STUDIO_TOUR_STALE_MS - 1)).not.toBeNull();
     expect(studioTour(now + STUDIO_TOUR_STALE_MS + 1)).toBeNull();

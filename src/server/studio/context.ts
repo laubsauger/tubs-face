@@ -178,7 +178,7 @@ export function renderTour(t: StudioTour | null): string[] {
   const lines = [
     `You two are guiding a tour through a gallery of pictures from the Alan Watts archive, a walk through his life; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`,
     // Seen live: between the tour's own lines the heads went back to roasting and nobody led.
-    `You lead this tour: you decide where the group goes and when. Whatever a visitor says, answer in a sentence or two, then lead: back to the picture here, or where you go next${t.next ? ` (the ${t.next})` : ''} and why it is worth it. Never leave them wondering what to do. Tonight you are their hosts: tease lightly, never belittle a guest.`,
+    `You lead this tour. Whatever a visitor says, answer in a sentence or two, then lead: ${tourLead(t)} Never leave them wondering what to do. Tonight you are their hosts: tease lightly, never belittle a guest.`,
   ];
   const p = t.piece;
   if (p) {
@@ -186,6 +186,28 @@ export function renderTour(t: StudioTour | null): string[] {
     lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` The archive says: ${p.text}` : ''}${own ? ` What you see in it yourself: ${own}` : ''} A visitor's question now is most likely about it; names and dates only from the archive.`);
   }
   return lines;
+}
+
+/**
+ * Where to lead a visitor back to, by the tour's step. Seen live: told to lead on in every reply, Tubs
+ * said "next stop is the Book" while the tour still had them at the Gold Frame's picture, and then
+ * stood there: the words and the walk must match. The walk to the next stop comes after the picture.
+ */
+function tourLead(t: StudioTour): string {
+  const next = t.next ? `the ${t.next}` : 'the next stop';
+  switch (t.step) {
+    case 'walk':
+      return `you are on your way to the ${t.where} with them now, your flag up: tell them to follow it.`;
+    case 'move':
+    case 'pause':
+      return `you are done here and leading everyone on to ${next} now: tell them to follow your flag.`;
+    case 'gather':
+    case 'arrive':
+    case 'pull':
+      return `the group is gathering here at the ${t.where}; the picture comes up next. Do not announce the next stop yet.`;
+    default:
+      return `back to the picture here at the ${t.where}. You lead on to ${next} yourself once you are done with this picture, not before: do not announce it yet.`;
+  }
 }
 
 /** The latest context while it is fresh (and the venue), for decisions like a call-out. */
