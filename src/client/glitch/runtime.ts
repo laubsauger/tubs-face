@@ -579,6 +579,8 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     });
     lastBurstState = frameResult.lastBurstState;
     glitchBurstSeed = frameResult.glitchBurstSeed;
+    // Breathing is in the brightness, so the shapes hold still (glitch/expression-motion.ts, face/sleep-life.ts).
+    frameResult.frame.pulseMod *= 1 + faceMotion.light;
     if (sleepPose) frameResult.frame.pulseMod *= 1 + SLEEP_BREATH_BRIGHTNESS * sleepPose.breath;
 
     renderFrameWebGpu(frameResult.frame, {

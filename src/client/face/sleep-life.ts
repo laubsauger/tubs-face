@@ -98,6 +98,7 @@ export const sleepLife = createSleepLife();
 /** `motion` with this pose's lid flicker and mouth shift, written into `out` (motion itself is left alone). */
 export function applySleepPose(motion: FaceMotion, pose: SleepPose, out: FaceMotion): FaceMotion {
   for (const key of ['left', 'right', 'mouth'] as const) Object.assign(out[key], motion[key]);
+  out.light = motion.light;
   const lid = 1 + SLEEP_LID_FLICKER * pose.lid;
   out.left.sy *= lid;
   out.right.sy *= lid;

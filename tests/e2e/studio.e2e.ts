@@ -838,6 +838,37 @@ async function publishedShapes(page: Page, ms: number, regions: Record<string, R
   }, { duration: ms, boxes: regions });
 }
 
+/** Per published frame for `ms`: how many pixels of the area changed hard from the frame before (a step, not a glow), and how bright it is. */
+async function publishedChanges(page: Page, ms: number, area: Region): Promise<Array<{ changed: number; light: number }>> {
+  return page.evaluate(async ({ duration, box }) => {
+    const track = (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo[0]!;
+    const Processor = (window as unknown as { MediaStreamTrackProcessor: new (init: { track: MediaStreamTrack }) => { readable: ReadableStream<VideoFrame> } }).MediaStreamTrackProcessor;
+    const reader = new Processor({ track: track.clone() }).readable.getReader();
+    const canvas = new OffscreenCanvas(1024, 1024);
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    const out: Array<{ changed: number; light: number }> = [];
+    let previous: Uint8ClampedArray | null = null;
+    const started = performance.now();
+    while (performance.now() - started < duration) {
+      const { value: frame } = await reader.read();
+      if (!frame) break;
+      ctx.drawImage(frame, 0, 0, 1024, 1024);
+      frame.close();
+      const { data } = ctx.getImageData(Math.round(box.x), Math.round(box.y), Math.round(box.w), Math.round(box.h));
+      let changed = 0;
+      let light = 0;
+      for (let p = 0; p < data.length; p += 4) {
+        light += Math.max(data[p]!, data[p + 1]!, data[p + 2]!);
+        if (previous && Math.abs(data[p]! - previous[p]!) + Math.abs(data[p + 1]! - previous[p + 1]!) + Math.abs(data[p + 2]! - previous[p + 2]!) > 90) changed += 1;
+      }
+      if (previous) out.push({ changed, light: light / (data.length / 4) });
+      previous = data;
+    }
+    void reader.cancel();
+    return out;
+  }, { duration: ms, box: area });
+}
+
 /** The left eye and the mouth of a studio frame (the Zs float on the right). */
 function sleepingShapes(): Record<string, Region> {
   const face = faceBox(DEFAULT_CONFIG, 1024, 1024, STUDIO_LAYOUT);
@@ -879,6 +910,31 @@ test('a sleeping face holds still in the published stream between twitches, and 
     expect(spread(frames.map((frame) => frame[name]!.y)), `${name} holds still up and down`).toBeLessThan(0.5);
   }
   const light = frames.map((frame) => frame.leftEye!.light);
+  expect(spread(light) / Math.max(...light), 'still breathes, in brightness').toBeGreaterThan(0.02);
+});
+
+// Live, 2026-11-10, on the studio projectors: the faces jittered awake too.
+// A breathing swell of a pixel or two and the scanlines' scroll (26 px/s,
+// hard-edged rows) changed thousands of pixels in every published frame by
+// stepping them a pixel. Awake, the face breathes in brightness and holds still
+// between deliberate motions (glances, blinks, expressions, talking), and the
+// scanlines roll slowly with soft edges, so most frames are the same picture.
+test('an awake head holds still between deliberate motions, and still breathes', async ({ page, request }) => {
+  await page.setViewportSize({ width: 560, height: 600 });
+  await keepPublishedVideo(page);
+  await fakeSiteNode(page);
+  await openStudio(page, request, 'main');
+  await setStudio(request, { enabled: true });
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __sentVideo: MediaStreamTrack[] }).__sentVideo.length)).toBeGreaterThan(0);
+  await send(request, { type: 'wake' });
+  await page.waitForTimeout(2000);
+  const face = faceBox(DEFAULT_CONFIG, 1024, 1024, STUDIO_LAYOUT);
+  const frames = await publishedChanges(page, 4000, { x: face.x - 0.1 * face.w, y: face.y - 0.15 * face.h, w: 1.2 * face.w, h: 1.4 * face.h });
+  expect(frames.length).toBeGreaterThan(60);
+  const still = frames.filter((frame) => frame.changed === 0).length;
+  // Before, 1 frame in 149 was the same picture as the one before it.
+  expect(still / frames.length, 'most frames are the same picture').toBeGreaterThan(0.4);
+  const light = frames.map((frame) => frame.light);
   expect(spread(light) / Math.max(...light), 'still breathes, in brightness').toBeGreaterThan(0.02);
 });
 

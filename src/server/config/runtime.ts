@@ -60,7 +60,7 @@ export const runtimeConfig: RuntimeConfig = {
   glitchScanlineIntensity: parseFloatInRange(process.env.GLITCH_SCANLINE_INTENSITY, 0.41, 0, 1),
   glitchScanlineSpacing: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPACING, 5, 1, 20),
   glitchScanlineThickness: parseIntegerInRange(process.env.GLITCH_SCANLINE_THICKNESS, 3, 1, 10),
-  glitchScanlineSpeed: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPEED, 26, 1, 60),
+  glitchScanlineSpeed: parseIntegerInRange(process.env.GLITCH_SCANLINE_SPEED, 3, 1, 60),
   glitchPixelJitter: parseFloatInRange(process.env.GLITCH_PIXEL_JITTER, 0, 0, 10),
   glitchFlicker: parseBoolean(process.env.GLITCH_FLICKER, true),
   glitchFlickerSpeed: parseIntegerInRange(process.env.GLITCH_FLICKER_SPEED, 11, 1, 30),

@@ -6,6 +6,13 @@ import type { ShapeCenter } from './pixel-grid.js';
 // living face has: breathing, a pop or hop when a feeling appears, a tremble
 // when angry, a slow sink when sad, and the head turning with the gaze. It is
 // one scale and offset per eye and mouth, so it costs the shader nothing.
+//
+// Between deliberate motions the shapes hold still. A slow, continuous swell
+// or drift of a pixel or two is drawn on the pixel grid as quad edges stepping
+// a pixel at a time, different ones each frame, and on the studio projectors
+// it read as the faces jittering (2026-11-10). So breathing is a brightness
+// swell (`light`), and the loops that moved shapes slowly (the breath's swell
+// and rise, thinking's drift) are gone; what moves is deliberate and brief.
 
 /** Transform of one shape: scale about a pivot, then an offset. */
 export interface ShapeMotion {
@@ -22,6 +29,8 @@ export interface FaceMotion {
   left: ShapeMotion;
   right: ShapeMotion;
   mouth: ShapeMotion;
+  /** Brightness swell of the whole face, a fraction (0.03 = 3 % brighter): breathing. */
+  light: number;
 }
 
 export interface ExpressionMotion {
@@ -40,7 +49,7 @@ const HOPPING: ReadonlySet<ExpressionName> = new Set(['happy', 'smile']);
 const TWO_PI = Math.PI * 2;
 
 export function createFaceMotion(): FaceMotion {
-  return { left: identity(), right: identity(), mouth: identity() };
+  return { left: identity(), right: identity(), mouth: identity(), light: 0 };
 }
 
 export function createExpressionMotion(): ExpressionMotion {
@@ -49,7 +58,6 @@ export function createExpressionMotion(): ExpressionMotion {
   const target = createFaceMotion();
   let breath = 0;
   let tremble = 0;
-  let drift = 0;
   let lastExpression: ExpressionName | null = null;
   let lastNow = Number.NaN;
   // Entry accents play out in full even if the expression moves on, so they never cut off mid-swing.
@@ -75,12 +83,9 @@ export function createExpressionMotion(): ExpressionMotion {
       const fade = approach(dt, MOTION.loopFadeMs);
       breath += ((expression && BREATHING.has(expression) ? 1 : 0) - breath) * fade;
       tremble += ((expression === 'angry' ? 1 : 0) - tremble) * fade;
-      drift += ((expression === 'thinking' ? 1 : 0) - drift) * fade;
 
       const inhale = Math.sin((TWO_PI * nowMs) / MOTION.breathPeriodMs);
       // Asleep there is no swell: the shapes hold their size (face/sleep-life.ts breathes in brightness).
-      const swell = breath * MOTION.breathScale * inhale;
-      const rise = -breath * MOTION.breathRise * inhale;
 
       const sincePop = nowMs - popAt;
       const pop = sincePop < 4 * MOTION.popDecayMs + MOTION.popPeriodMs
@@ -92,8 +97,6 @@ export function createExpressionMotion(): ExpressionMotion {
         : 0;
 
       const seconds = nowMs / 1000;
-      const driftX = drift * MOTION.thinkDrift * Math.sin((TWO_PI * nowMs) / MOTION.thinkDriftPeriodMs);
-      const driftY = drift * MOTION.thinkDrift * 0.4 * Math.sin((TWO_PI * nowMs) / (MOTION.thinkDriftPeriodMs * 1.37));
 
       // Head turn: looking right, the left eye comes nearer and the right one turns away.
       const turn = expression === null ? 0 : Math.max(-1, Math.min(1, gazeX));
@@ -102,17 +105,18 @@ export function createExpressionMotion(): ExpressionMotion {
       const farY = 1 - MOTION.headTurnFarNarrow * 0.15 * Math.abs(turn);
       const shift = MOTION.headTurnShift * turn;
 
-      compose(out.left, pose.left, swell, pop, turn > 0 ? near : farX, turn > 0 ? near : farY);
-      compose(out.right, pose.right, swell, pop, turn > 0 ? farX : near, turn > 0 ? farY : near);
-      compose(out.mouth, pose.mouth, swell, pop, 1 - MOTION.headTurnFarNarrow * 0.3 * Math.abs(turn), 1);
+      compose(out.left, pose.left, pop, turn > 0 ? near : farX, turn > 0 ? near : farY);
+      compose(out.right, pose.right, pop, turn > 0 ? farX : near, turn > 0 ? farY : near);
+      compose(out.mouth, pose.mouth, pop, 1 - MOTION.headTurnFarNarrow * 0.3 * Math.abs(turn), 1);
+      out.light = breath * MOTION.breathLight * inhale;
 
       // Each shape trembles on its own phase, so it reads as tension, not a shaking screen.
-      out.left.ox += shift + driftX + tremble * trembleWave(seconds, 0);
-      out.left.oy += rise + hop + driftY + tremble * trembleWave(seconds, 1.7);
-      out.right.ox += shift + driftX + tremble * trembleWave(seconds, 3.1);
-      out.right.oy += rise + hop + driftY + tremble * trembleWave(seconds, 4.4);
+      out.left.ox += shift + tremble * trembleWave(seconds, 0);
+      out.left.oy += hop + tremble * trembleWave(seconds, 1.7);
+      out.right.ox += shift + tremble * trembleWave(seconds, 3.1);
+      out.right.oy += hop + tremble * trembleWave(seconds, 4.4);
       out.mouth.ox += shift + tremble * trembleWave(seconds, 5.9);
-      out.mouth.oy += rise * 0.5 + hop + tremble * trembleWave(seconds, 7.3);
+      out.mouth.oy += hop + tremble * trembleWave(seconds, 7.3);
       return out;
     },
   };
@@ -163,9 +167,9 @@ function targetPose(expression: ExpressionName | null, out: FaceMotion): void {
   }
 }
 
-function compose(out: ShapeMotion, pose: ShapeMotion, swell: number, pop: number, turnX: number, turnY: number): void {
-  out.sx = pose.sx * (1 + swell * 0.5) * (1 + pop) * turnX;
-  out.sy = pose.sy * (1 + swell) * (1 + pop) * turnY;
+function compose(out: ShapeMotion, pose: ShapeMotion, pop: number, turnX: number, turnY: number): void {
+  out.sx = pose.sx * (1 + pop) * turnX;
+  out.sy = pose.sy * (1 + pop) * turnY;
   out.pivotY = pose.pivotY;
   out.ox = pose.ox;
   out.oy = pose.oy;

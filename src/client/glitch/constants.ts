@@ -61,7 +61,7 @@ export const DEFAULT_CONFIG: GlitchConfig = {
   },
   glitch: {
     scanlines: true, scanlineIntensity: 0.41, scanlineSpacing: 5,
-    scanlineThickness: 3, scanlineMove: true, scanlineSpeed: 26,
+    scanlineThickness: 3, scanlineMove: true, scanlineSpeed: 3,
     pixelJitter: 0, flicker: true, flickerSpeed: 11, flickerDepth: 0.02,
   },
   prop: 'none',
@@ -101,9 +101,8 @@ export const MORPH_WAKE = {
  * fractions of the face height. Subtle on purpose: a character, not a cartoon.
  */
 export const MOTION = {
-  /** Idle and listening breathe: a slow swell of eyes and mouth, rising a touch. */
-  breathScale: 0.018,
-  breathRise: 0.004,
+  /** Idle and listening breathe: the face brightens and dims a little, slowly (its shapes hold still). */
+  breathLight: 0.05,
   breathPeriodMs: 4200,
   /** Surprised pops in: swells past its size, then settles. */
   popAmount: 0.1,
@@ -119,11 +118,9 @@ export const MOTION = {
   sadSink: 0.022,
   sadDroop: 0.08,
   sadSettleMs: 1600,
-  /** Thinking: one eye squints a little, the other opens, both drift. */
+  /** Thinking: one eye squints a little, the other opens. */
   thinkSquint: 0.14,
   thinkWiden: 0.03,
-  thinkDrift: 0.012,
-  thinkDriftPeriodMs: 6500,
   /** Smug: one upper lid a little lower. */
   smugLid: 0.22,
   /** Looking sideways turns the head: the near eye grows, the far eye narrows, and the face travels a bit further. */
