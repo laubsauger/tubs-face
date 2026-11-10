@@ -25,7 +25,17 @@ export interface PresentPiece {
   tags?: string[];
 }
 
+/**
+ * The lines of the guided tour: gather (call the visitors over at the first stop), present (tell
+ * about the picture just pulled up), floor (open the floor for questions about it), move (lead on to
+ * the next stop, following the guide's flag). A request without a kind is a present from an older
+ * director, which also led on to the next stop in the same line.
+ */
+export const SAY_KINDS = ['gather', 'present', 'floor', 'move'] as const;
+export type SayKind = (typeof SAY_KINDS)[number];
+
 export interface PresentRequest {
+  kind?: SayKind;
   /** the window the heads stand at, by its name (the Big Wall) */
   where: string;
   /** which stop of how many */
@@ -35,7 +45,8 @@ export interface PresentRequest {
   first: boolean;
   /** where the tour goes next, by name */
   next: string | null;
-  piece: PresentPiece;
+  /** the picture: needed to present it or open the floor on it */
+  piece?: PresentPiece;
 }
 
 const MAX_TEXT = 400, MAX_SHORT = 120, MAX_FACTS = 8, MAX_TAGS = 8;
@@ -45,11 +56,16 @@ const str = (v: unknown, max: number): string | undefined => (typeof v === 'stri
 /** A present request from a body, or why it is not one. Strings are clipped; unknown fields dropped. */
 export function parsePresent(body: unknown): PresentRequest | string {
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  if (b.kind !== undefined && !(SAY_KINDS as readonly unknown[]).includes(b.kind)) return `present: kind must be one of ${SAY_KINDS.join(', ')}`;
+  const kind = b.kind as SayKind | undefined;
+  const where = str(b.where, MAX_SHORT);
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1000 ? v : d);
+  const base = { ...(kind ? { kind } : {}), where: where ?? '', stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null };
   const p = (b.piece && typeof b.piece === 'object' ? b.piece : null) as Record<string, unknown> | null;
   const title = p ? str(p.title, MAX_SHORT) : undefined;
-  if (!title) return 'present needs piece.title';
-  const where = str(b.where, MAX_SHORT);
+  if (!title && (kind === undefined || kind === 'present' || kind === 'floor')) return 'present needs piece.title';
   if (!where) return 'present needs where';
+  if (!title) return base;
   const facts = Array.isArray(p!.facts)
     ? (p!.facts as unknown[])
       .filter((f): f is [string, string] => Array.isArray(f) && typeof f[0] === 'string' && typeof f[1] === 'string')
@@ -57,7 +73,6 @@ export function parsePresent(body: unknown): PresentRequest | string {
       .map(([k, v]) => [k.slice(0, 40), v.slice(0, 200)] as [string, string])
     : [];
   const tags = Array.isArray(p!.tags) ? (p!.tags as unknown[]).filter((t): t is string => typeof t === 'string').slice(0, MAX_TAGS).map((t) => t.slice(0, 40)) : [];
-  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1000 ? v : d);
   const piece: PresentPiece = { title };
   const date = str(p!.date, MAX_SHORT), by = str(p!.by, MAX_SHORT), text = str(p!.text, MAX_TEXT);
   if (date) piece.date = date;
@@ -65,12 +80,25 @@ export function parsePresent(body: unknown): PresentRequest | string {
   if (text) piece.text = text;
   if (facts.length) piece.facts = facts;
   if (tags.length) piece.tags = tags;
-  return { where, stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null, piece };
+  return { ...base, piece };
 }
 
-/** What the turn is told: where they are, the picture, and how to tell about it. */
+const TOUR = '[Gallery tour; no visitor said this]';
+
+/** What the turn is told: where they are, the picture if any, and which line of the tour to say. */
 export function presentContext(r: PresentRequest): string {
-  const p = r.piece;
+  if (r.kind === 'gather') {
+    return `${TOUR} You two are starting a guided tour through a gallery of pictures from the Alan Watts archive, hung in a row through the studio, ${r.of} stops. Tubs holds up a little tour-guide flag. Tubs: call the visitors to gather round here at the ${r.where}, warmly, in one or two short sentences, the way a city tour guide would, your way. Do not describe a picture yet.`;
+  }
+  if (r.kind === 'move') {
+    return r.next
+      ? `${TOUR} Time to move on from the ${r.where}. Tubs raises his tour-guide flag and invites everyone to follow it to the ${r.next} (the next stop), in one short line, maybe a teaser. Small may add a quick quip.`
+      : `${TOUR} That was the last stop of the tour. Tubs thanks the visitors in one short line.`;
+  }
+  const p = r.piece ?? { title: 'the picture' };
+  if (r.kind === 'floor') {
+    return `${TOUR} You have just told the visitors about "${p.title}" at the ${r.where}. Open the floor: ask whether anyone has a question or a thought about it, in one short line. If someone answers, reply to them as usual. Do not tell about the picture again.`;
+  }
   const lines = [
     `[Gallery tour; no visitor said this] You two are guiding the visitors through a gallery of pictures from the Alan Watts archive, hung in a row through the studio. You are at the ${r.where} (stop ${r.stop} of ${r.of}) and have just pulled this picture up for everyone to see:`,
     `"${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.`,
@@ -81,8 +109,9 @@ export function presentContext(r: PresentRequest): string {
   lines.push(
     'Tubs: present it to the visitors in two to four short sentences, your way: what we are looking at, one thing worth knowing, and if it fits a thought of Watts\'s in your own words. Say only what the archive supports; never invent dates, places or names, and do not read the facts out like a list. Small may add one short line about the picture itself.',
   );
-  if (r.first) lines.push('This is the first stop: open the tour in a few words before the picture.');
-  if (r.next) lines.push(`End by inviting everyone on to the ${r.next}.`);
+  // an older director (no kind) said the whole stop in this one line
+  if (!r.kind && r.first) lines.push('This is the first stop: open the tour in a few words before the picture.');
+  if (!r.kind && r.next) lines.push(`End by inviting everyone on to the ${r.next}.`);
   return lines.join('\n');
 }
 

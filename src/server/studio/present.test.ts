@@ -72,16 +72,39 @@ describe('studio present (the gallery tour)', () => {
     expect(presentContext({ ...req, next: null })).not.toContain('inviting everyone on');
   });
 
+  // Asked for: a guide who gathers the group, tells about the picture, opens the floor, and leads on
+  // following the flag. Each is its own line, said by Tubs in his own words.
+  it('says each line of the guided tour: gather, present, floor, move', () => {
+    const gather = presentContext({ kind: 'gather', where: 'Mirror', stop: 1, of: 5, first: true, next: 'Big Wall' });
+    expect(gather).toContain('gather round here at the Mirror');
+    expect(gather).toContain('tour-guide flag');
+    expect(gather).not.toContain('What it shows');
+    const shown = presentContext({ ...req, kind: 'present' });
+    expect(shown).toContain('Two men at a low table');
+    expect(shown).not.toContain('inviting everyone on');   // the move line does that now
+    const floor = presentContext({ ...req, kind: 'floor' });
+    expect(floor).toContain('Open the floor');
+    expect(floor).toContain('Watts and D.T. Suzuki at a tea table');
+    expect(floor).not.toContain('What the archive knows');
+    const move = presentContext({ ...req, kind: 'move' });
+    expect(move).toContain('follow it to the Book');
+    expect(presentContext({ ...req, kind: 'move', next: null })).toContain('last stop');
+    // gather and move need no picture; present and floor do
+    expect(parsePresent({ kind: 'gather', where: 'Mirror' })).toMatchObject({ kind: 'gather', where: 'Mirror' });
+    expect(parsePresent({ kind: 'floor', where: 'Mirror' })).toBe('present needs piece.title');
+    expect(parsePresent({ kind: 'shout', where: 'Mirror' })).toMatch(/kind must be one of/);
+  });
+
   it('takes only a request with a picture and a place, clipped', () => {
     expect(parsePresent({})).toBe('present needs piece.title');
     expect(parsePresent({ piece: { title: 'x' } })).toBe('present needs where');
     const r = parsePresent({ where: 'Book', piece: { title: 't'.repeat(500), text: 'x'.repeat(2000), facts: [['a', 'b'], 'junk', ['c']], tags: ['a', 3] }, stop: -1, first: 'yes' });
     expect(typeof r).toBe('object');
     const ok = r as PresentRequest;
-    expect(ok.piece.title).toHaveLength(120);
-    expect(ok.piece.text).toHaveLength(400);
-    expect(ok.piece.facts).toEqual([['a', 'b']]);
-    expect(ok.piece.tags).toEqual(['a']);
+    expect(ok.piece!.title).toHaveLength(120);
+    expect(ok.piece!.text).toHaveLength(400);
+    expect(ok.piece!.facts).toEqual([['a', 'b']]);
+    expect(ok.piece!.tags).toEqual(['a']);
     expect(ok.stop).toBe(1);
     expect(ok.first).toBe(false);
     expect(ok.next).toBeNull();
