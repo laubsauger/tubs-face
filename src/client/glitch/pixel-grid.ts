@@ -219,6 +219,39 @@ export function buildPixelGrid(
   const hueVar = config.color.hueVariation;
   const brightVar = config.color.brightnessVariation;
 
+  // A worn prop is laid out on the resting face, the same in every
+  // expression, so an expression change never re-lays it; the shader moves
+  // it onto the eyes and mouth as drawn (props.ts packPropTransform). It is
+  // drawn first, under the face: an eye looking all the way to a side passes
+  // over the moustache's end and covers it.
+  let propBase: PropBase | null = null;
+  const rest = config.prop === 'none' ? null : restingPropAnchors(config);
+  if (rest) {
+    const at = (point: { x: number; y: number }) => ({ x: offsetX + point.x * mapScaleX, y: offsetY + point.y * mapScaleY });
+    const anchors: PropAnchors = { eyes: at(rest.eyes), lip: at(rest.lip), jaw: at(rest.jaw) };
+    propBase = {
+      x: anchors.eyes.x,
+      y: anchors.eyes.y,
+      eyeTop: anchors.eyes.y + PROP_GAP * mapScaleY,
+      mouthX: anchors.lip.x,
+      mouthTop: anchors.lip.y,
+      mouthBottom: anchors.jaw.y,
+    };
+    for (const pixel of rasterizeProp(config.prop, anchors, mapScaleX, mapScaleY, sz, gap)) {
+      const tone = PROP_TONES[pixel.tone];
+      pixelGrid.push({
+        x: pixel.x,
+        y: pixel.y,
+        group: pixel.group,
+        scale: 1,
+        hueOff: tone.hue + (Math.random() - 0.5) * 2 * hueVar,
+        brightOff: tone.light + (Math.random() - 0.5) * 2 * brightVar,
+        overrideH: -1,
+        overrideS: tone.sat ?? 0,
+      });
+    }
+  }
+
   for (const [si, shape] of shapes.entries()) {
     const sx = offsetX + shape.x * mapScaleX;
     const sy = offsetY + shape.y * mapScaleY;
@@ -294,37 +327,6 @@ export function buildPixelGrid(
           overrideS,
         });
       }
-    }
-  }
-
-  // A worn prop is laid out on the resting face, the same in every
-  // expression, so an expression change never re-lays it; the shader moves
-  // it onto the eyes and mouth as drawn (props.ts packPropTransform).
-  let propBase: PropBase | null = null;
-  const rest = config.prop === 'none' ? null : restingPropAnchors(config);
-  if (rest) {
-    const at = (point: { x: number; y: number }) => ({ x: offsetX + point.x * mapScaleX, y: offsetY + point.y * mapScaleY });
-    const anchors: PropAnchors = { eyes: at(rest.eyes), lip: at(rest.lip), jaw: at(rest.jaw) };
-    propBase = {
-      x: anchors.eyes.x,
-      y: anchors.eyes.y,
-      eyeTop: anchors.eyes.y + PROP_GAP * mapScaleY,
-      mouthX: anchors.lip.x,
-      mouthTop: anchors.lip.y,
-      mouthBottom: anchors.jaw.y,
-    };
-    for (const pixel of rasterizeProp(config.prop, anchors, mapScaleX, mapScaleY, sz, gap)) {
-      const tone = PROP_TONES[pixel.tone];
-      pixelGrid.push({
-        x: pixel.x,
-        y: pixel.y,
-        group: pixel.group,
-        scale: 1,
-        hueOff: tone.hue + (Math.random() - 0.5) * 2 * hueVar,
-        brightOff: tone.light + (Math.random() - 0.5) * 2 * brightVar,
-        overrideH: -1,
-        overrideS: tone.sat ?? 0,
-      });
     }
   }
 

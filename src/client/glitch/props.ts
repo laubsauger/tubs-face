@@ -217,15 +217,18 @@ const WATTS_BROWS: PropArt = {
   },
 };
 
-/** Bushy over the mouth, its ends drooping past the corners. */
+/**
+ * Bushy over the mouth, arched, its ends drooping past the corners: low at
+ * the ends, so an eye looking all the way to a side passes over them.
+ */
 const WATTS_MOUSTACHE: PropArt = {
-  width: 22,
-  height: 5.6,
+  width: 19.6,
+  height: 5.2,
   depth: 3,
   at(x, y) {
     const ax = Math.abs(x);
-    if (ax > 10.8) return null;
-    const top = 5.6 - (ax / 10.8) ** 2 * 3.6;
+    if (ax > 9.8) return null;
+    const top = 5.2 - (ax / 9.8) ** 2 * 3.6;
     // Clear of the mouth (about 6.3 to either side) above it; past its corners it droops.
     const bottom = Math.max(-3, ax < 7.4 ? 1.2 : 1.2 - (ax - 7.4) * 2.4);
     return y <= top && y >= bottom ? 'ash' : null;
