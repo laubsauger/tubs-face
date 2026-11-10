@@ -152,7 +152,7 @@ export function presentContext(r: PresentRequest): string {
     return `${TOUR} You have just told the visitors about "${p.title}" at the ${r.where}. Open the floor: ask whether anyone has a question or a thought about it, in one short line. If someone answers, reply to them as usual. Do not tell about the picture again.`;
   }
   const lines = [
-    `[Gallery tour; no visitor said this] You two are guiding the visitors through a gallery of pictures from the Alan Watts archive, hung in a row through the studio. You are at the ${r.where} (stop ${r.stop} of ${r.of}) and have just pulled this picture up for everyone to see:`,
+    `[Gallery tour; no visitor said this] You two are guiding the visitors through a gallery of pictures from the Alan Watts archive, hung in a row through the studio. You are at the ${r.where} (stop ${r.stop} of ${r.of}) and are showing everyone this picture:`,
     `"${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.`,
   ];
   if (p.text) lines.push(`What it shows: ${p.text}`);

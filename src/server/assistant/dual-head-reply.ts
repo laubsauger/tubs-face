@@ -2,7 +2,7 @@
 
 import { recordFieldNotes } from './field-notes.js';
 import { studioSettings } from '../studio/state.js';
-import { calloutLine, freshStudioContext } from '../studio/context.js';
+import { calloutLine, freshStudioContext, studioGroupShow } from '../studio/context.js';
 import type { TurnBeat, TurnEmotion } from '../../shared/contracts/turn-script.js';
 import type { SpeechEmotionPayload } from '../../shared/contracts/ws.js';
 import { runtimeConfig } from '../config/runtime.js';
@@ -384,9 +384,13 @@ function fromTurnEmotion(emotion: TurnEmotion): SpeechEmotionPayload {
   };
 }
 
-/** A call-out for a conversation Tubs starts, in studio mode, from the director's fresh studio_context. */
+/**
+ * A call-out for a conversation Tubs starts, in studio mode, from the director's fresh studio_context.
+ * None on the tour or the screening: seen live, every tour line began "Psst! You, by the Photobooth!"
+ * while the heads were talking to the whole group.
+ */
 function studioCallout(): string | null {
-  if (!studioSettings.enabled) return null;
+  if (!studioSettings.enabled || studioGroupShow()) return null;
   const fresh = freshStudioContext();
   return fresh ? calloutLine(fresh.context, fresh.venue) : null;
 }

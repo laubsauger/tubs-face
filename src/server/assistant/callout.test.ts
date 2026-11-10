@@ -88,6 +88,17 @@ describe('call-outs in the studio', () => {
     expect(reply.beats.some((beat) => beat.callout)).toBe(false);
   });
 
+  // Seen live: every gallery tour line began "Psst! You, by the Photobooth!" while the heads spoke
+  // to the whole group they were guiding.
+  it('are left out on the gallery tour, which talks to the whole group', async () => {
+    const { calls } = provider();
+    studioSettings.enabled = true;
+    noteStudioContext({ ...room('far'), tour: { where: 'Book', step: 'move', stop: 2, of: 6, next: 'Immersive' } });
+    const reply = await generateDualHeadProactiveReply('[Gallery tour; no visitor said this] You are done at the Book.');
+    expect(reply!.beats.some((beat) => beat.callout)).toBe(false);
+    expect(calls[0]!.systemInstruction).not.toContain('You have just called out to them');
+  });
+
   it('do nothing outside studio mode', async () => {
     provider();
     noteStudioContext(room('far'));
