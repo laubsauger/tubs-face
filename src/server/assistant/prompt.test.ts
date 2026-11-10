@@ -52,12 +52,29 @@ describe('system instructions built from the persona template', () => {
   });
 
   // With the camera off, the old always-on vision rules made Tubs roast "that
-  // jacket" it had never seen.
-  it('tells Tubs it cannot see when there is no camera description', () => {
+  // jacket" it had never seen. Then, with descriptions off but the camera running
+  // (it names who is here), he told visitors he was blind and his camera black.
+  it('without a description: never guesses looks, but is not blind while the camera runs', () => {
     for (const prompt of [buildAssistantSystemInstruction(), buildDualHeadSystemInstruction()]) {
-      expect(prompt).toContain('you cannot see what anyone looks like');
-      expect(prompt).not.toContain('camera is off');
+      expect(prompt).toContain('never describe or guess what anyone looks like');
+      expect(prompt).toContain('You are not blind and never say you are');
+      expect(prompt).not.toContain('camera is switched off');
       expect(prompt).not.toContain('BACKGROUND VISUAL CONTEXT');
+    }
+  });
+
+  it('with the studio camera switched off, says so, and still knows the pictures and places', async () => {
+    const { studioSettings } = await import('../studio/state.js');
+    const was = { enabled: studioSettings.enabled, cameraOn: studioSettings.cameraOn, visionSource: studioSettings.visionSource };
+    try {
+      Object.assign(studioSettings, { enabled: true, cameraOn: true, visionSource: 'site:cam-test' });
+      expect(buildAssistantSystemInstruction()).toContain('You are not blind');
+      Object.assign(studioSettings, { cameraOn: false });
+      const off = buildAssistantSystemInstruction();
+      expect(off).toContain('Your camera is switched off right now');
+      expect(off).toContain('Pictures and places you are told about you still know');
+    } finally {
+      Object.assign(studioSettings, was);
     }
   });
 
