@@ -43,20 +43,57 @@ export interface StudioContextMessage {
   people: StudioContextPerson[];
   reference: { head: string; window: string } | null;
   venue?: StudioVenue;
+  /** the gallery tour while it runs (sentient-studio contract §6): where, the step, and the picture up on screen */
+  tour?: StudioTour;
   ts: number;
 }
 
+export interface StudioTour {
+  where: string;
+  step: string;
+  stop: number;
+  of: number;
+  next: string | null;
+  piece?: { title: string; date?: string; by?: string; text?: string };
+}
+
+/** the director says the tour still runs at least every 20 s; after this long without word it counts as over (ms) */
+export const STUDIO_TOUR_STALE_MS = 45_000;
+
 let latest: { context: StudioContextMessage; at: number } | null = null;
 let venue: StudioVenue | null = null;
+let tour: { tour: StudioTour; at: number } | null = null;
 
 export function noteStudioContext(context: StudioContextMessage, now = Date.now()): void {
   latest = { context, at: now };
   if (context.venue) venue = context.venue;
+  // every context while the tour runs carries it; one without it means the tour is over
+  tour = context.tour && typeof context.tour.where === 'string' ? { tour: context.tour, at: now } : null;
 }
 
 export function forgetStudioContext(): void {
   latest = null;
   venue = null;
+  tour = null;
+}
+
+/** The gallery tour, while the director says it runs. */
+export function studioTour(now = Date.now()): StudioTour | null {
+  return tour && now - tour.at <= STUDIO_TOUR_STALE_MS ? tour.tour : null;
+}
+
+/**
+ * While the tour runs, what every reply is told: that they are guiding it, where, and the picture on
+ * screen there with what the archive says of it, so a visitor's question about it gets an answer.
+ */
+export function renderTour(t: StudioTour | null): string[] {
+  if (!t) return [];
+  const lines = [`You two are guiding a tour through a gallery of pictures from the Alan Watts archive; you are at the ${t.where} (stop ${t.stop} of ${t.of}${t.next ? `, next the ${t.next}` : ''}), Tubs carrying a little tour-guide flag.`];
+  const p = t.piece;
+  if (p) {
+    lines.push(`On screen here now, pulled up for the visitors: "${p.title}"${p.date ? `, ${p.date}` : ''}${p.by ? `, from the series "${p.by}"` : ''}.${p.text ? ` What it shows: ${p.text}` : ''} A visitor's question now is most likely about it; say only what the archive supports.`);
+  }
+  return lines;
 }
 
 /** The latest context while it is fresh (and the venue), for decisions like a call-out. */
@@ -85,7 +122,7 @@ export function calloutLine(context: StudioContextMessage, v: StudioVenue | null
 /** The lines for the prompt now: the standing venue lines, plus the latest context while it is fresh. */
 export function studioContextLines(now = Date.now()): string[] {
   const fresh = latest && now - latest.at <= STUDIO_CONTEXT_STALE_MS ? latest.context : null;
-  return [...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
+  return [...renderTour(studioTour(now)), ...renderStudioPresence(fresh, venue), ...renderVenue(venue)];
 }
 
 /** How the characters talk about the venue, in studio mode. */

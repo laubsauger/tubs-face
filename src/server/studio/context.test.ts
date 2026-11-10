@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { forgetStudioContext, noteStudioContext, studioContextLines, type StudioContextMessage, type StudioVenue } from './context.js';
+import { STUDIO_TOUR_STALE_MS, forgetStudioContext, noteStudioContext, studioContextLines, studioTour, type StudioContextMessage, type StudioVenue } from './context.js';
 
 // The director tells Tubs where he is and who is around. The model must get
 // that as places a host would talk about ("by the cinema"), never as ids or
@@ -81,5 +81,22 @@ describe('studio context in the prompt', () => {
     const { venue: _unused, ...bare } = context();
     noteStudioContext({ ...bare, heads: { main: { zone: 'photo-booth', window: 'big_book', near: true, mode: 'engaged', speaking: true } } }, 0);
     expect(studioContextLines(0)[0]).toBe('You are behind the big book, next to the photo booth.');
+  });
+
+  // Seen live: a visitor asked about the picture on screen and Tubs did not know which one it was.
+  it('on the gallery tour every reply knows where the tour is and which picture is up', () => {
+    const now = 1_000_000;
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now, tour: { where: 'Big Wall', step: 'floor', stop: 2, of: 5, next: 'Book', piece: { title: 'Haiku session, 1958', date: '1958', by: 'Haiku recording 1958', text: 'Watts at a microphone with musicians.' } } }, now);
+    const text = studioContextLines(now).join('\n');
+    expect(text).toContain('guiding a tour');
+    expect(text).toContain('at the Big Wall');
+    expect(text).toContain('"Haiku session, 1958", 1958');
+    expect(text).toContain('Watts at a microphone with musicians.');
+    // it still runs between the director's beats; a context without it ends it; silence ends it too
+    expect(studioTour(now + STUDIO_TOUR_STALE_MS - 1)).not.toBeNull();
+    expect(studioTour(now + STUDIO_TOUR_STALE_MS + 1)).toBeNull();
+    noteStudioContext({ reason: 'change', heads: {}, people: [], reference: null, ts: now + 1000 }, now + 1000);
+    expect(studioTour(now + 1000)).toBeNull();
+    expect(studioContextLines(now + 1000).join('\n')).not.toContain('guiding a tour');
   });
 });
