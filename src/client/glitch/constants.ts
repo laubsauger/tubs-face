@@ -157,5 +157,5 @@ export const FEATURE_BOX_GLOBAL_SCALE_Y = 0.88;
 export const FEATURE_MOUTH_SCALE_X = 0.88;
 export const FEATURE_MOUTH_SCALE_Y = 0.88;
 
-// 12 shared vec4s, the eyes' and mouth's transforms, and a worn prop's two.
-export const GPU_UNIFORM_FLOATS = 68;
+// 12 shared vec4s, the eyes' and mouth's transforms, and a worn prop's three.
+export const GPU_UNIFORM_FLOATS = 72;

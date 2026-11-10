@@ -1,6 +1,8 @@
 import { useEffect, useRef, type JSX } from 'react';
 import { PROPS, type PropId } from '../../../shared/contracts/config.js';
-import { PROP_TONES, propSize, rasterizeProp } from '../../glitch/props.js';
+import { DEFAULT_CONFIG } from '../../glitch/constants.js';
+import { restingPropAnchors } from '../../glitch/pixel-grid.js';
+import { PROP_TONES, propBounds, rasterizeProp } from '../../glitch/props.js';
 import { hexToHSL } from '../../glitch/utils.js';
 
 const LABELS: Record<PropId, string> = {
@@ -10,6 +12,7 @@ const LABELS: Record<PropId, string> = {
   'witch-hat': 'Witch hat',
   crown: 'Crown',
   'propeller-cap': 'Propeller cap',
+  watts: 'Alan Watts',
 };
 
 const PREVIEW_W = 44;
@@ -32,7 +35,7 @@ export function PropPicker(props: { label: string; value: PropId; color: string;
   );
 }
 
-/** The prop as the face draws it (glitch/props.ts), on a few pixels, without the glitch effects. */
+/** The prop as the face draws it (glitch/props.ts), on a few pixels, without the face or the glitch effects. */
 function PropPreview({ prop, color }: { prop: PropId; color: string }): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
@@ -44,15 +47,22 @@ function PropPreview({ prop, color }: { prop: PropId; color: string }): JSX.Elem
     canvas.height = Math.round(PREVIEW_H * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H);
-    const { width, height } = propSize(prop);
-    if (!width || !height) return;
-    const scale = Math.min((PREVIEW_W - 4) / width, (PREVIEW_H - 4) / height);
+    // Where the parts sit on the default face, fitted into the preview.
+    const rest = restingPropAnchors(DEFAULT_CONFIG);
+    const box = rest && propBounds(prop, rest);
+    if (!rest || !box) return;
+    const scale = Math.min((PREVIEW_W - 4) / (box.right - box.left), (PREVIEW_H - 4) / (box.bottom - box.top));
+    const at = (point: { x: number; y: number }) => ({
+      x: PREVIEW_W / 2 + (point.x - (box.left + box.right) / 2) * scale,
+      y: PREVIEW_H / 2 + (point.y - (box.top + box.bottom) / 2) * scale,
+    });
     // About the face's pixel pitch: some 1.25 face units a pixel.
     const stride = scale * 1.25;
     const base = hexToHSL(color);
-    for (const pixel of rasterizeProp(prop, PREVIEW_W / 2, PREVIEW_H - 2, scale, scale, stride * 0.75, stride * 0.25)) {
+    for (const pixel of rasterizeProp(prop, { eyes: at(rest.eyes), lip: at(rest.lip), jaw: at(rest.jaw) }, scale, scale, stride * 0.75, stride * 0.25)) {
       const tone = PROP_TONES[pixel.tone];
-      ctx.fillStyle = `hsl(${base.h + tone.hue} ${base.s}% ${Math.max(0, Math.min(100, base.l + tone.light))}%)`;
+      const sat = tone.sat === undefined ? base.s : tone.sat * 100;
+      ctx.fillStyle = `hsl(${base.h + tone.hue} ${sat}% ${Math.max(0, Math.min(100, base.l + tone.light))}%)`;
       ctx.fillRect(pixel.x, pixel.y, stride * 0.75, stride * 0.75);
     }
   }, [prop, color]);

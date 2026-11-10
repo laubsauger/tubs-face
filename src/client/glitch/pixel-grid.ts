@@ -11,19 +11,23 @@ import {
   FEATURE_MOUTH_SCALE_Y,
   GAZE_EYE_RANGE_Y,
 } from './constants.js';
-import { PROP_GAP, PROP_TONES, propHeadroom, rasterizeProp, type PropBase } from './props.js';
-import { hexToHSL, testShapeHit } from './utils.js';
+import { PROP_GAP, PROP_TONES, propBounds, rasterizeProp, type PropAnchors, type PropBase } from './props.js';
+import { ARC_REACH, hexToHSL, testShapeHit } from './utils.js';
 
 export interface PixelGridPoint {
   x: number;
   y: number;
-  /** Shape the pixel belongs to: 0 left eye, 1 right eye, 2 mouth, 3-4 tears, 5+ a worn prop (props.ts). */
+  /** Shape the pixel belongs to: 0 left eye, 1 right eye, 2 mouth, 3-4 tears, 5-10 a worn prop (props.ts). */
   group: number;
   /** Size factor. Below 1 only while the pixel grows in or shrinks away in a morph. */
   scale: number;
   hueOff: number;
   brightOff: number;
-  /** Override colour in GPU units (hue and saturation 0..1); a hue below 0 keeps the base colour. */
+  /**
+   * Override colour in GPU units (hue and saturation 0..1); a hue below 0
+   * keeps the base colour, or with a saturation above 0 the base hue washed
+   * out to it (hair).
+   */
   overrideH: number;
   overrideS: number;
 }
@@ -31,7 +35,7 @@ export interface PixelGridPoint {
 export interface ShapeCenter {
   cx: number;
   cy: number;
-  /** Half the shape's height: a lowered lid pivots on the bottom edge. */
+  /** Half the shape's height: a lowered lid pivots on the bottom edge. A mouth's is what it covers. */
   halfH: number;
 }
 
@@ -85,23 +89,72 @@ export const STUDIO_PROP_TOP = GAZE_EYE_RANGE_Y + 0.045;
  * Scale that fits the face's viewBox into the safe area of a width x height
  * box. A worn prop is fitted with the face: on a screen the two share the
  * safe area; in a studio frame the face keeps its size unless face and prop
- * don't fit between STUDIO_PROP_TOP and the same margin at the bottom.
+ * don't fit between STUDIO_PROP_TOP and the same margin at the bottom, or
+ * the prop reaches out past the eyes (hair), which then keeps the margin the
+ * eyes keep for looking all the way to a side.
  */
 export function featureFitScale(width: number, height: number, config: GlitchConfig, layout: FaceLayout = SCREEN_LAYOUT): number {
   const vb = config.svg.viewBox;
-  const headroom = propHeadroom(config.prop);
-  const onScreen = layout.anchor === 'viewBox' ? headroom : 0;
-  const fit = Math.min((width * layout.safeX) / vb.w, (height * layout.safeY) / (vb.h + onScreen));
-  if (layout.anchor !== 'shapes' || headroom === 0 || config.svg.shapes.length === 0) return fit;
+  const reach = propReach(config);
+  if (layout.anchor === 'viewBox') {
+    return Math.min((width * layout.safeX) / (vb.w + 2 * reach.side), (height * layout.safeY) / (vb.h + reach.above + reach.below));
+  }
+  const fitX = (width * layout.safeX) / vb.w;
+  const fit = Math.min(fitX, (height * layout.safeY) / vb.h);
+  const bounds = restingPropBounds(config);
+  if (!bounds) return fit;
   const { top, bottom } = restingSpanY(config);
+  const { left, right } = restingSpanX(config);
   const room = height * (1 - 2 * STUDIO_PROP_TOP);
-  return Math.min(fit, room / ((bottom - top + headroom) * FEATURE_BOX_GLOBAL_SCALE_Y));
+  const tall = Math.max(bottom, bounds.bottom) - Math.min(top, bounds.top);
+  const middle = (left + right) / 2;
+  const half = Math.max(middle - bounds.left, bounds.right - middle, (right - left) / 2);
+  return Math.min(fit, room / (tall * FEATURE_BOX_GLOBAL_SCALE_Y), fitX * ((right - left) / 2 / half));
+}
+
+/**
+ * Where a worn prop's parts sit on the resting face, in viewBox units: above
+ * the eyes, and on the mouth's top and bottom edges as drawn.
+ */
+export function restingPropAnchors(config: GlitchConfig): PropAnchors | null {
+  const [left, right, mouth] = config.svg.shapes;
+  if (!left || !right) return null;
+  const eyes = { x: (Math.min(left.x, right.x) + Math.max(left.x + left.w, right.x + right.w)) / 2, y: Math.min(left.y, right.y) - PROP_GAP };
+  if (!mouth) return { eyes, lip: eyes, jaw: eyes };
+  const x = mouth.x + mouth.w / 2;
+  const cy = mouth.y + mouth.h / 2;
+  const half = (mouth.h * FEATURE_MOUTH_SCALE_Y) / 2;
+  return { eyes, lip: { x, y: cy - half }, jaw: { x, y: cy + half } };
+}
+
+/** The box the worn prop covers on the resting face, in viewBox units; null without one. */
+function restingPropBounds(config: GlitchConfig) {
+  const anchors = config.prop === 'none' ? null : restingPropAnchors(config);
+  return anchors ? propBounds(config.prop, anchors) : null;
+}
+
+/** How far a worn prop reaches past the viewBox: above, below, and out to the further side. */
+function propReach(config: GlitchConfig): { above: number; below: number; side: number } {
+  const bounds = restingPropBounds(config);
+  if (!bounds) return { above: 0, below: 0, side: 0 };
+  const vb = config.svg.viewBox;
+  return {
+    above: Math.max(0, -bounds.top),
+    below: Math.max(0, bounds.bottom - vb.h),
+    side: Math.max(0, -bounds.left, bounds.right - vb.w),
+  };
 }
 
 /** Top and bottom of the face's resting shapes, in viewBox units. */
 function restingSpanY(config: GlitchConfig): { top: number; bottom: number } {
   const rest = config.svg.shapes;
   return { top: Math.min(...rest.map((shape) => shape.y)), bottom: Math.max(...rest.map((shape) => shape.y + shape.h)) };
+}
+
+/** Left and right of the face's resting shapes, in viewBox units. */
+function restingSpanX(config: GlitchConfig): { left: number; right: number } {
+  const rest = config.svg.shapes;
+  return { left: Math.min(...rest.map((shape) => shape.x)), right: Math.max(...rest.map((shape) => shape.x + shape.w)) };
 }
 
 /** Where the face's viewBox is drawn in a width x height box. */
@@ -117,19 +170,26 @@ export function faceBox(config: GlitchConfig, width: number, height: number, lay
   const fitScale = featureFitScale(width, height, config, layout);
   const w = vb.w * fitScale * FEATURE_BOX_GLOBAL_SCALE_X;
   const h = vb.h * fitScale * FEATURE_BOX_GLOBAL_SCALE_Y;
-  // A worn prop sits above the face: on a screen the two are placed together.
-  const headroom = propHeadroom(config.prop) * (h / vb.h);
+  // A worn prop sits round the face: on a screen the two are placed together.
+  const reach = propReach(config);
+  const above = reach.above * (h / vb.h);
+  const below = reach.below * (h / vb.h);
   let x = (width - w) * 0.5;
-  let y = (height - h - headroom) * layout.top + headroom;
+  let y = (height - h - above - below) * layout.top + above;
   if (layout.anchor === 'shapes' && config.svg.shapes.length > 0) {
-    const rest = config.svg.shapes;
-    const centreX = (Math.min(...rest.map((shape) => shape.x)) + Math.max(...rest.map((shape) => shape.x + shape.w))) / 2;
+    const { left, right } = restingSpanX(config);
     const { top, bottom } = restingSpanY(config);
-    x = width * 0.5 - centreX * (w / vb.w);
+    x = width * 0.5 - ((left + right) / 2) * (w / vb.w);
     y = height * layout.top - ((top + bottom) / 2) * (h / vb.h);
     // A studio frame stays centred on the face; only a prop that would rise
-    // past STUDIO_PROP_TOP moves the face down, as far as it needs.
-    if (headroom > 0) y += Math.max(0, height * STUDIO_PROP_TOP - (y + top * (h / vb.h) - headroom));
+    // past STUDIO_PROP_TOP (or hang below the same margin at the bottom)
+    // moves the face, as far as it needs.
+    const bounds = restingPropBounds(config);
+    if (bounds) {
+      const down = height * STUDIO_PROP_TOP - (y + Math.min(top, bounds.top) * (h / vb.h));
+      const up = height * (1 - STUDIO_PROP_TOP) - (y + Math.max(bottom, bounds.bottom) * (h / vb.h));
+      y += Math.min(Math.max(0, down), up);
+    }
   }
   return { x, y, w, h };
 }
@@ -180,13 +240,16 @@ export function buildPixelGrid(
       ty = cy - sh * 0.5;
     }
 
-    shapeCenters.push({ cx: tx + sw / 2, cy: ty + sh / 2, halfH: sh / 2 });
-
     let hitTest = 'rect';
     if (profile) {
       if (si <= 1 && profile.eyeShape) hitTest = profile.eyeShape;
       if (si === 2 && profile.mouthShape) hitTest = profile.mouthShape;
     }
+
+    // A mouth drawn as an arc (a grin) covers only part of its box; its half
+    // height is what it covers, so a worn beard stays on it.
+    const arc = si === 2 && (hitTest === 'smile-arc' || hitTest === 'frown');
+    shapeCenters.push({ cx: tx + sw / 2, cy: ty + sh / 2, halfH: (sh / 2) * (arc ? ARC_REACH : 1) });
 
     let overrideHex: string | undefined;
     if (profile) {
@@ -234,18 +297,23 @@ export function buildPixelGrid(
     }
   }
 
-  // A worn prop is laid out on the resting eyes, the same in every
+  // A worn prop is laid out on the resting face, the same in every
   // expression, so an expression change never re-lays it; the shader moves
-  // it onto the eyes as drawn (props.ts packPropTransform).
+  // it onto the eyes and mouth as drawn (props.ts packPropTransform).
   let propBase: PropBase | null = null;
-  const eyes = config.svg.shapes.slice(0, 2);
-  if (config.prop !== 'none' && eyes.length === 2) {
-    const left = Math.min(...eyes.map((eye) => eye.x));
-    const right = Math.max(...eyes.map((eye) => eye.x + eye.w));
-    const top = Math.min(...eyes.map((eye) => eye.y));
-    const eyeTop = offsetY + top * mapScaleY;
-    propBase = { x: offsetX + ((left + right) / 2) * mapScaleX, y: eyeTop - PROP_GAP * mapScaleY, eyeTop };
-    for (const pixel of rasterizeProp(config.prop, propBase.x, propBase.y, mapScaleX, mapScaleY, sz, gap)) {
+  const rest = config.prop === 'none' ? null : restingPropAnchors(config);
+  if (rest) {
+    const at = (point: { x: number; y: number }) => ({ x: offsetX + point.x * mapScaleX, y: offsetY + point.y * mapScaleY });
+    const anchors: PropAnchors = { eyes: at(rest.eyes), lip: at(rest.lip), jaw: at(rest.jaw) };
+    propBase = {
+      x: anchors.eyes.x,
+      y: anchors.eyes.y,
+      eyeTop: anchors.eyes.y + PROP_GAP * mapScaleY,
+      mouthX: anchors.lip.x,
+      mouthTop: anchors.lip.y,
+      mouthBottom: anchors.jaw.y,
+    };
+    for (const pixel of rasterizeProp(config.prop, anchors, mapScaleX, mapScaleY, sz, gap)) {
       const tone = PROP_TONES[pixel.tone];
       pixelGrid.push({
         x: pixel.x,
@@ -255,7 +323,7 @@ export function buildPixelGrid(
         hueOff: tone.hue + (Math.random() - 0.5) * 2 * hueVar,
         brightOff: tone.light + (Math.random() - 0.5) * 2 * brightVar,
         overrideH: -1,
-        overrideS: 0,
+        overrideS: tone.sat ?? 0,
       });
     }
   }
