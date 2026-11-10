@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROPS } from '../../shared/contracts/config.js';
 import { applyRuntimeConfigPatch, runtimeConfig } from './runtime.js';
 
@@ -74,5 +74,23 @@ describe('built-in Tubs preset look', () => {
     const { readFileSync } = await import('node:fs');
     const preset = JSON.parse(readFileSync(new URL('../../../config/presets/tubs.json', import.meta.url), 'utf8')) as { look: Record<string, unknown> };
     expect(preset.look).toMatchObject({ propMain: 'none', propSmall: 'propeller-cap' });
+  });
+});
+
+// Tubs and Mini speak with their cloned voices: Kokoro is only ever a deliberate choice in .env,
+// never the default a fresh machine quietly ends up with.
+describe('default voices', () => {
+  it('are the cloned Ming voices for both heads', async () => {
+    const saved = { main: process.env.REALTIME_KOKORO_VOICE, small: process.env.SECONDARY_VOICE };
+    delete process.env.REALTIME_KOKORO_VOICE; delete process.env.SECONDARY_VOICE;
+    vi.resetModules();
+    try {
+      const { runtimeConfig: fresh } = await import('./runtime.js');
+      expect(fresh.kokoroVoice).toBe('ming:friend');
+      expect(fresh.secondaryVoice).toBe('ming:friend-b');
+    } finally {
+      if (saved.main !== undefined) process.env.REALTIME_KOKORO_VOICE = saved.main;
+      if (saved.small !== undefined) process.env.SECONDARY_VOICE = saved.small;
+    }
   });
 });

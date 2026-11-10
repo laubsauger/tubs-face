@@ -8,7 +8,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 VENV_DIR="$PROJECT_DIR/venv-ming"
 REQ_FILE="$PROJECT_DIR/requirements-ming.txt"
-VOICE_DIR="${MING_VOICE_DIR:-$PROJECT_DIR/data/ming-voices}"
+# Same order as the service: MING_VOICE_DIR, a local data/ming-voices, then the ones in the repo.
+if [ -n "${MING_VOICE_DIR:-}" ]; then VOICE_DIR="$MING_VOICE_DIR"
+elif [ -f "$PROJECT_DIR/data/ming-voices/ref_rec_full.wav" ]; then VOICE_DIR="$PROJECT_DIR/data/ming-voices"
+else VOICE_DIR="$PROJECT_DIR/assets/ming-voices"; fi
 
 if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
     echo "[setup-ming] Ming runs on MLX, Apple Silicon only. Skipped."
@@ -45,8 +48,7 @@ for ref in ref_rec_full ref_B_full_dn ref_B_alt_full_dn; do
     done
 done
 if [ "$missing" -eq 1 ]; then
-    echo "[setup-ming] The voice references are not in git (recordings of a real person)."
-    echo "             Copy them into $VOICE_DIR; ~/Movies/tubs-voice-lab/README.md says where they come from."
+    echo "[setup-ming] The voice references belong in assets/ming-voices (in git); is the checkout complete?"
     exit 1
 fi
 echo "[setup-ming] Ready. The Tubs server starts the Ming service on port ${MING_PORT:-3003}."
