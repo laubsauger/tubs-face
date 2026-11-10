@@ -76,6 +76,16 @@ export interface MemoryForgetRequest {
   key: string;
 }
 
+/**
+ * POST /memory/names: the names tonight's notes on them go by, first the one used; a name taken off
+ * stays off (the face tracker does not put it back). Tonight's notes only: the face library keeps its
+ * own names (move or remove its photos for that).
+ */
+export interface MemoryNamesRequest {
+  key: string;
+  names: string[];
+}
+
 /** POST /memory/library/remove: delete all face library samples of this name (privacy). */
 export interface MemoryLibraryRemoveRequest {
   name: string;

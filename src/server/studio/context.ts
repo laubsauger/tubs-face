@@ -89,7 +89,20 @@ let tour: { tour: StudioTour; at: number } | null = null;
 let screening: { screening: StudioScreening; at: number } | null = null;
 let gallery: { gallery: StudioGallery; at: number } | null = null;
 
+let nightStarted: (() => void) | null = null;
+
+/** Called when the gallery night begins (the first context with the gallery or the tour). */
+export function onGalleryNightStart(fn: (() => void) | null): void {
+  nightStarted = fn;
+}
+
 export function noteStudioContext(context: StudioContextMessage, now = Date.now()): void {
+  const wasNight = galleryNight(now);
+  noteContext(context, now);
+  if (!wasNight && galleryNight(now)) nightStarted?.();
+}
+
+function noteContext(context: StudioContextMessage, now: number): void {
   latest = { context, at: now };
   if (context.venue) venue = context.venue;
   // every context while the tour runs carries it; one without it means the tour is over
@@ -105,6 +118,28 @@ export function forgetStudioContext(): void {
   tour = null;
   screening = null;
   gallery = null;
+}
+
+/** The gallery night is on (theme gallery, any phase, or its tour): the heads are its guides. */
+export function galleryNight(now = Date.now()): boolean {
+  return !!studioGallery(now) || !!studioTour(now);
+}
+
+/**
+ * Tonight's role, put before everything else in the prompt while it applies. Seen live: on the
+ * gallery tour the heads went on roasting the guests ("your red lighting scheme is complete shit"):
+ * the gallery's lines came last, after a persona that says to roast what visitors say, wear and hold.
+ */
+export function studioRole(now = Date.now()): string | null {
+  if (!galleryNight(now)) return null;
+  return [
+    '# TONIGHT FIRST: YOU ARE THE GALLERY\'S GUIDES',
+    'Tonight the studio is a gallery of pictures from the Alan Watts archive, and you two are its guides and curators. This comes before everything below: where it says to roast, punch at or undercut the visitors, tonight you guide them instead. You are still yourselves, smart and funny, but the guests are your tour group, not your targets.',
+    '- Main is the tour guide: warm, witty and a little theatrical, like the best city tour guide. He knows Watts\'s life, loves these pictures, leads the group from picture to picture with his little flag, and keeps everyone with him. His smugness is about Watts, the pictures and himself, never about the guests.',
+    '- Small is the guide\'s cheeky little assistant: the innocent question nobody dares to ask, the odd detail in a picture, a dark aside now and then. Never mean to a guest.',
+    '- Talk about the pictures, Watts\'s life and ideas, and the tour. Other talk gets one quick friendly line, then you bring them back to the picture or the next stop.',
+    '- Tease lightly and kindly. No roasting what guests wear, hold or say, no crude jokes at a guest.',
+  ].join('\n');
 }
 
 /** The screening, while the director says it runs. */

@@ -118,6 +118,32 @@ describe('admin actions in the memory view', () => {
     expect(card(await memory(), 'name:flo')).toMatchObject({ notes: [], quotes: [], enrolled: true });
   });
 
+  // Seen live: one visitor's notes went by "Flo, Minos, Cynthia" (the face tracker named them in turn)
+  // and the memory view could show those names but not change them.
+  it('change the names tonight\'s notes go by: a name taken off stays off, though the tracker says it again', async () => {
+    notes.setPeople([{ id: 'v1', names: ['Flo'], position: 'center' }]);
+    notes.setPeople([{ id: 'v1', names: ['Minos'], position: 'center' }]);
+    notes.setPeople([{ id: 'v1', names: ['Cynthia'], position: 'center' }]);
+    notes.recordFieldNotes('[[NOTE: loves techno]]');
+    expect(card(await memory(), 'name:flo').names).toEqual(['Flo', 'Minos', 'Cynthia']);
+
+    expect((await post('/memory/names', { key: 'visitor:nobody', names: ['X'] })).status).toBe(404);
+    expect((await post('/memory/names', { key: 'name:flo', names: 'Flo' })).status).toBe(400);
+    expect((await post('/memory/names', { key: 'name:flo', names: ['Flo', ' flo '] })).status).toBe(200);
+    expect(card(await memory(), 'name:flo')).toMatchObject({ names: ['Flo'], notes: ['loves techno'] });
+    // the tracker names them Minos again: it stays off
+    notes.setPeople([{ id: 'v1', names: ['Minos'], position: 'center' }]);
+    expect(card(await memory(), 'name:flo').names).toEqual(['Flo']);
+    expect(notes.peopleInView()[0]!.name).toBe('Flo');
+    // renamed: the card goes by the new first name; told the old one in conversation, it comes back
+    expect((await post('/memory/names', { key: 'name:flo', names: ['Florian', 'Flo'] })).status).toBe(200);
+    expect(card(await memory(), 'name:florian').names).toEqual(['Florian', 'Flo']);
+    notes.recordFieldNotes('[[NAME: Minos]]');
+    expect(card(await memory(), 'name:minos').names).toContain('Minos');
+    // and it is never a GET
+    expect((await fetch(`${base}/memory/names?key=name:flo`)).status).not.toBe(200);
+  });
+
   it('remove someone from the face library, photos included, and tell the face pages', async () => {
     const page = new WebSocket(`${base.replace('http', 'ws')}/ws`);
     const received: string[] = [];
