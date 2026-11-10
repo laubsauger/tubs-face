@@ -200,6 +200,9 @@ describe('assistant turn', () => {
     fakes.ttsChunks = null;
     runtimeConfig.dualHeadEnabled = false;
     runtimeConfig.ttsStreamingEnabled = false;
+    // These tests cover the sentence-by-sentence path (a Kokoro voice); the Ming tests set ming:* themselves.
+    runtimeConfig.kokoroVoice = 'hm_omega';
+    runtimeConfig.secondaryVoice = 'jf_tebukuro';
     interruptAssistantTurns();
   });
 

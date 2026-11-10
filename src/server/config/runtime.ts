@@ -39,10 +39,12 @@ export const runtimeConfig: RuntimeConfig = {
   renderQuality: pickOne(RENDER_QUALITIES, process.env.RENDER_QUALITY, 'high'),
   ttsBackend: pickOne(TTS_BACKENDS, process.env.REALTIME_TTS_BACKEND, 'kokoro'),
   sttBackend: pickOne(STT_BACKENDS, process.env.REALTIME_STT_BACKEND, 'mlx'),
-  kokoroVoice: pickOne(KOKORO_VOICES, process.env.REALTIME_KOKORO_VOICE, 'hm_omega'),
+  // Tubs and Mini speak with their cloned voices (Ming) unless a Kokoro voice is chosen on purpose;
+  // a missing Ming is an error (/healthz 503, the log, the Studio tab), never a quiet switch to Kokoro.
+  kokoroVoice: pickOne(KOKORO_VOICES, process.env.REALTIME_KOKORO_VOICE, 'ming:friend'),
   dualHeadEnabled: parseBoolean(process.env.DUAL_HEAD_ENABLED, false),
   dualHeadMode: normalizeDualHeadModeInput(process.env.DUAL_HEAD_MODE, 'off'),
-  secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'jf_tebukuro'),
+  secondaryVoice: pickOne(KOKORO_VOICES, process.env.SECONDARY_VOICE, 'ming:friend-b'),
   secondaryRenderQuality: pickOne(RENDER_QUALITIES, process.env.SECONDARY_RENDER_QUALITY, 'balanced'),
   secondarySubtitleEnabled: parseBoolean(process.env.SECONDARY_SUBTITLE_ENABLED, true),
   secondaryAudioGain: parseFloatInRange(process.env.SECONDARY_AUDIO_GAIN, 1.0, 0, 1.2),
