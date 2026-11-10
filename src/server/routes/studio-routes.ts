@@ -13,6 +13,7 @@ import { studioPulse } from '../studio/pulse.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
 import { broadcast, syncStudioWatch } from '../ws/server.js';
 import { poke, reasonOf } from '../studio/poke.js';
+import { parsePresent, present } from '../studio/present.js';
 import { startProactiveTurn } from '../assistant/turns.js';
 import { listenerFaceWorker, studioSettings, toStudioResponse } from '../studio/state.js';
 import { libraryPeopleCount } from '../faces/library.js';
@@ -42,6 +43,21 @@ export async function handleStudioRoute(request: IncomingMessage, response: Serv
     }
     const body = await readJsonBody<unknown>(request).catch(() => ({}));
     poke(reasonOf(body), { broadcast, noteAwake: () => visionService.noteSleeping(false), startProactiveTurn });
+    sendJson(response, 200, { ok: true });
+    return true;
+  }
+  // POST /studio/present {where, stop, of, first, next, piece}: the gallery tour; Tubs tells about the picture just pulled up.
+  if (request.method === 'POST' && url.pathname === '/studio/present') {
+    if (!isLocalNetworkAddress(request.socket.remoteAddress)) {
+      sendJson(response, 403, { error: 'The gallery tour is for the local network only' } satisfies ErrorResponse);
+      return true;
+    }
+    const parsed = parsePresent(await readJsonBody<unknown>(request).catch(() => ({})));
+    if (typeof parsed === 'string') {
+      sendJson(response, 400, { error: parsed } satisfies ErrorResponse);
+      return true;
+    }
+    present(parsed, { broadcast, noteAwake: () => visionService.noteSleeping(false), startProactiveTurn });
     sendJson(response, 200, { ok: true });
     return true;
   }
