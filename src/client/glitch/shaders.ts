@@ -19,9 +19,12 @@ struct Globals {
   xformR: vec4f,
   xformM: vec4f,
   // A worn prop (glitch/props.ts): its pivot (the middle of its base) and its
-  // tilt's cos and sin; then how far it moves with the eyes' tops.
+  // tilt's cos and sin; then how far it moves with the eyes' tops (xy) and
+  // with the head (zw); then the mouth's offset x, its top's and bottom's
+  // offsets y, and its half height before talking.
   prop: vec4f,
-  propMove: vec4f
+  propMove: vec4f,
+  propMouth: vec4f
 };
 
 @group(0) @binding(0) var<uniform> u: Globals;
@@ -34,11 +37,20 @@ fn shapeXform(group: f32) -> vec4f {
   return u.xformM;
 }
 
-// A prop pixel's centre (groups 5-7). The propeller's blades (6) turn round
-// the middle: seen from the front a turn squeezes them in and swaps their
-// sides. The tassel (7) swings a little. Then the whole prop tilts about its
-// pivot and moves with the eyes' tops; the gaze moves it with the eyes.
+// A prop pixel's centre (groups 5-10). Hair (8) moves with the head. A
+// moustache (9) stays on the mouth's top edge and a beard (10) on its bottom
+// edge, which part as it talks. The propeller's blades (6) turn round the
+// middle: seen from the front a turn squeezes them in and swaps their sides.
+// The tassel (7) swings a little. The rest (5-7) tilts about the pivot and
+// moves with the eyes' tops. The gaze moves each with the eyes or the mouth.
 fn propCentre(p: vec2f, group: f32) -> vec2f {
+  if (group > 7.5 && group < 8.5) {
+    return p + u.propMove.zw;
+  }
+  if (group > 8.5) {
+    let talk = u.propMouth.w * (u.motion.x - 1.0);
+    return p + vec2f(u.propMouth.x, select(u.propMouth.z + talk, u.propMouth.y - talk, group < 9.5));
+  }
   var local = p - u.prop.xy;
   if (group > 5.5 && group < 6.5) {
     local.x = local.x * cos(u.canvas.w * 9.0);
@@ -143,9 +155,12 @@ fn vsMain(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) ->
     x = x + u.gaze.x;
     y = y + u.gaze.y;
     y = y + sin(u.canvas.w * 1.5 + a.y * 0.05) * u.motion.y * 0.3;
-  } else {
+  } else if (group < 8.5) {
     x = x + u.gaze.x;
     y = y + u.gaze.y;
+  } else {
+    x = x + u.gaze.z;
+    y = y + u.gaze.w;
   }
 
   var visible = 1.0;
@@ -207,6 +222,9 @@ fn fsMain(in: VSOut) -> @location(0) vec4f {
   if (in.overrideColor.x > 0.5) {
     hue = fract(in.overrideColor.y);
     sat = clamp(in.overrideColor.z, 0.0, 1.0);
+  } else if (in.overrideColor.z > 0.0) {
+    // Hair: the head's own hue, washed out to grey.
+    sat = in.overrideColor.z;
   }
   var light = (u.color.z * 100.0 + in.brightOff) * u.motion.w;
 

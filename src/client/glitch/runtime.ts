@@ -542,8 +542,9 @@ export function createGlitchRuntime(store: AppStore, mode: 'main' | 'mini', opti
     expressionMotion.update(state.fxEditorOpen ? null : faceKey(state), now, state.gazeX, faceMotion);
     // Asleep it still breathes and twitches now and then (face/sleep-life.ts).
     const sleepPose = state.sleeping && !state.fxEditorOpen ? sleepLife.sample(now) : null;
-    packShapeTransforms(sleepPose ? applySleepPose(faceMotion, sleepPose, sleepMotion) : faceMotion, drawnCenters, containerCssH, shapeTransforms);
-    packPropTransform(propBase, shapeTransforms, drawnCenters, propTransform);
+    const motion = sleepPose ? applySleepPose(faceMotion, sleepPose, sleepMotion) : faceMotion;
+    packShapeTransforms(motion, drawnCenters, containerCssH, shapeTransforms);
+    packPropTransform(propBase, shapeTransforms, drawnCenters, motion, containerCssH, propTransform);
 
     // The face reads Tubs's mood; not while asleep or while the FX editor shows the true colours.
     const tint = state.sleeping || state.fxEditorOpen

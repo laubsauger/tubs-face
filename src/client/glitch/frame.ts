@@ -138,7 +138,7 @@ export function writeGpuUniforms(
     shapeCenters: Array<{ cy: number }>;
     /** Left eye, right eye, mouth: (sx, sy, tx, ty) each, from the living expression motion. */
     shapeTransforms: Float32Array;
-    /** A worn prop's pivot, tilt and offset (props.ts packPropTransform). */
+    /** A worn prop's pivot, tilt and offsets (props.ts packPropTransform). */
     propTransform: Float32Array;
     baseHSL: { h: number; s: number; l: number };
     glitchBurstSeed: number;

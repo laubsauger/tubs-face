@@ -63,14 +63,20 @@ function isInsideHeart(px: number, py: number, cx: number, cy: number, halfW: nu
   return t * t * t - x2 * y2 * ny < 0;
 }
 
+// An arc (a grin, or upside down a frown) is a ring round a point above its
+// box's middle, in half heights; it reaches ARC_REACH below the middle.
+const ARC_CENTRE = -0.65;
+const ARC_OUTER = 1.35;
+export const ARC_REACH = ARC_CENTRE + ARC_OUTER;
+
 function isInsideArc(px: number, py: number, cx: number, cy: number, w: number, h: number, inverted: boolean): boolean {
   const nx = (px - cx) / (w * 0.5);
   const rawNy = (py - cy) / (h * 0.5);
   const ny = inverted ? -rawNy : rawNy;
-  const ey = -0.65;
+  const ey = ARC_CENTRE;
   const dy = ny - ey;
   const d2 = nx * nx + dy * dy;
-  const outerR2 = 1.35 * 1.35;
+  const outerR2 = ARC_OUTER * ARC_OUTER;
   const innerR2 = 0.8 * 0.8;
   return d2 <= outerR2 && d2 >= innerR2 && ny > ey;
 }
