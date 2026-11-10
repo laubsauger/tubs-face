@@ -9,10 +9,11 @@ export const VISION_PROVIDERS = ['off', 'gemini', 'openai'] as const;
 export const CHAT_VERBOSITIES = ['all', 'user-only', 'assistant-only', 'system-only'] as const;
 /**
  * What a head wears (client/glitch/props.ts draws them as part of the face):
- * a hat, or a look (watts: Alan Watts's hair, brows, moustache and beard).
+ * a hat, or a look (watts: Alan Watts's hair, brows, moustache and beard;
+ * mark-watts: his son Mark's bald dome, sunglasses pushed up and goatee).
  * Fixed ids: the studio director and panel build against them.
  */
-export const PROPS = ['none', 'party-hat', 'top-hat', 'witch-hat', 'crown', 'propeller-cap', 'watts'] as const;
+export const PROPS = ['none', 'party-hat', 'top-hat', 'witch-hat', 'crown', 'propeller-cap', 'watts', 'mark-watts'] as const;
 export const EXPRESSIONS = [
   'idle',
   'idle-flat',

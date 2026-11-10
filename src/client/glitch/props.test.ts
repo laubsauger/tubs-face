@@ -34,7 +34,7 @@ import {
 const FRAME = 1024;
 const WORN = PROPS.filter((prop) => prop !== 'none');
 /** Looks: parts round the whole face (hair, brows, a beard), not a hat on top. */
-const LOOKS: readonly PropId[] = ['watts'];
+const LOOKS: readonly PropId[] = ['watts', 'mark-watts'];
 const HATS = WORN.filter((prop) => !LOOKS.includes(prop));
 /** Widest a mouth opens talking: worked up all the way (glitch/runtime.ts getSpeakMouthScale). */
 const TALK_WIDEST = SPEAK_MIN_SCALE + (SPEAK_MAX_SCALE - SPEAK_MIN_SCALE) * 1.25;
@@ -204,8 +204,8 @@ describe('a worn prop in a studio frame', () => {
   });
 });
 
-describe('a look (Alan Watts) in a studio frame', () => {
-  const config = withProp('watts');
+describe.each(LOOKS)('a look (%s) in a studio frame', (look) => {
+  const config = withProp(look);
 
   it('puts each part where it grows: hair above and beside the eyes, brows over them, a moustache over the mouth, a beard under it', () => {
     const { pixelGrid } = grid(config, 'idle');
@@ -321,6 +321,22 @@ describe('a look (Alan Watts) in a studio frame', () => {
         });
         expect(closest, `${expression} gaze ${gazeX}`).toBeGreaterThan(0);
       }
+    }
+  });
+});
+
+// Mark Watts's sunglasses are amber on either head; the rest of a look is
+// the head's own colour, washed out for hair.
+describe('a look\'s tinted lenses', () => {
+  it('stay amber on a purple head and a cyan one, while the hair follows the head', () => {
+    for (const colour of ['#a855f7', '#22d3ee'] as const) {
+      const config = withProp('mark-watts');
+      config.color.base = colour;
+      const head = grid(config, 'idle').pixelGrid.filter((pixel) => pixel.group === PROP_HEAD_GROUP);
+      const lenses = head.filter((pixel) => pixel.overrideH >= 0);
+      expect(lenses.length, colour).toBeGreaterThan(10);
+      for (const lens of lenses) expect(lens.overrideH * 360, colour).toBeCloseTo(34, 3);
+      expect(head.some((pixel) => pixel.overrideH < 0 && pixel.overrideS > 0), colour).toBe(true);
     }
   });
 });

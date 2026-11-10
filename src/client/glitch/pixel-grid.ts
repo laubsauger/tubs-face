@@ -246,7 +246,7 @@ export function buildPixelGrid(
         scale: 1,
         hueOff: tone.hue + (Math.random() - 0.5) * 2 * hueVar,
         brightOff: tone.light + (Math.random() - 0.5) * 2 * brightVar,
-        overrideH: -1,
+        overrideH: tone.fixed ? tone.hue / 360 : -1,
         overrideS: tone.sat ?? 0,
       });
     }
