@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import unittest
 import wave
 
@@ -109,3 +110,28 @@ class VoiceGate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClipDecode(unittest.TestCase):
+    # Seen on 10 Nov: the service crashed twice (Metal "A command encoder is already encoding to this
+    # command buffer", then a segfault). The MLX loader's clip is a lazy GPU array; the voice check turned
+    # it into numpy outside _gpu_lock while another request's Whisper ran on the GPU.
+    @unittest.skipUnless(svc.STT_BACKEND == "mlx" and shutil.which("ffmpeg"), "needs the MLX speech-to-text and ffmpeg")
+    def test_the_clip_waits_for_the_gpu_and_leaves_as_numpy(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "clip.wav")
+            with open(path, "wb") as f:
+                f.write(_wav_bytes(_noises()["mains hum"]))
+            got = {}
+            svc._gpu_lock.acquire()   # another request is on the GPU
+            try:
+                t = threading.Thread(target=lambda: got.setdefault("audio", svc._decode_clip(path)))
+                t.start()
+                t.join(1.0)
+                self.assertTrue(t.is_alive(), "the clip was decoded on the GPU while another request held it")
+            finally:
+                svc._gpu_lock.release()
+            t.join(10)
+            self.assertIsInstance(got["audio"], np.ndarray, "only numpy leaves the lock")
+            self.assertEqual(got["audio"].dtype, np.float32)
+            self.assertEqual(len(got["audio"]), 3 * RATE)

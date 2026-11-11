@@ -65,12 +65,18 @@ VAD_MIN_SPEECH_MS = int(os.environ.get("REALTIME_VAD_MIN_SPEECH_MS", "250"))
 
 
 def _decode_clip(path):
-    """The clip as 16 kHz mono float32, decoded once for the voice check and for Whisper. The same samples
-    Whisper's own loader got from the file (ffmpeg for MLX, PyAV for faster-whisper); decoding it three
-    times (voice check, ffmpeg to WAV, Whisper reading the WAV) cost about 75 ms per turn."""
+    """The clip as 16 kHz mono float32 numpy, decoded once for the voice check and for Whisper. The same
+    samples Whisper's own loader got from the file (ffmpeg for MLX, PyAV for faster-whisper); decoding it
+    three times (voice check, ffmpeg to WAV, Whisper reading the WAV) cost about 75 ms per turn.
+
+    lightning-whisper-mlx's loader returns a lazy MLX array (the conversion to float is queued for the
+    GPU), so turning it into numpy runs on the GPU: under _gpu_lock. Done outside it, it crashed this
+    service twice on 10 Nov while another request's Whisper ran (Metal: "A command encoder is already
+    encoding to this command buffer", then a segfault)."""
     if STT_BACKEND == "mlx":
         from lightning_whisper_mlx.audio import load_audio
-        return load_audio(path)
+        with _gpu_lock:
+            return np.asarray(load_audio(path), dtype=np.float32)
     from faster_whisper.audio import decode_audio
     return decode_audio(path, sampling_rate=16000)
 
