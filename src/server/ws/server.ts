@@ -31,6 +31,9 @@ import { notePageConnection, notePageStatus, studioConfigMessage, studioSettings
 import { siteLogin } from '../studio/site-auth.js';
 import { noteStudioContext } from '../studio/context.js';
 import { setLeadSink } from '../studio/lead.js';
+import { noteSceneListen } from '../studio/listen.js';
+import { updateStudio } from '../studio/control.js';
+import { persistState } from '../state-file.js';
 import { forgetRecognised, noteRecognised } from '../assistant/relationships.js';
 import { isRendering, onRenderingChange } from '../tts/rendering.js';
 import { isLocalNetworkAddress } from '../memory/view.js';
@@ -431,6 +434,11 @@ function handleClientMessage(socket: WebSocket, message: WsClientMessage): void 
         ...(message.gallery && Array.isArray(message.gallery.showing) ? { gallery: message.gallery } : {}),
         ts: message.ts,
       });
+      // the scene's listening: a scene change sets the wake-word switch (the dashboard holds until the next)
+      {
+        const wake = noteSceneListen(message.listen);
+        if (wake !== null) void updateStudio({ switches: { wakeWord: wake } }).then(() => persistState()).catch((error: unknown) => console.warn('[studio] scene listen', error));
+      }
       // vision on: the heads take their own look at the picture pulled up and the ones where they stand
       lookAtGalleryPictures([
         ...(message.tour?.piece ? [message.tour.piece] : []),

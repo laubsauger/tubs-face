@@ -16,6 +16,8 @@ const PRESENT_POLL_MS = 250;
 export interface PresentDeps extends PokeDeps {
   /** a reply is being made, or a head is talking or about to */
   busy(): boolean;
+  /** the heads invite answers (the open floor): what visitors say next needs no wake word */
+  invite?(): void;
 }
 
 export interface PresentPiece {
@@ -209,7 +211,8 @@ export function present(r: PresentRequest, deps: PresentDeps): Promise<void> {
   if (waiting) { clearTimeout(waiting.timer); waiting.reject(new Error('a newer picture replaced it')); waiting = null; }
   const since = Date.now();
   return new Promise((resolve, reject) => {
-    const take = (heard: string) => { resolve(); return `${presentContext(r)}\n${heardLine(heard)}`; };
+    const invite = () => { if (r.kind === 'floor') deps.invite?.(); };
+    const take = (heard: string) => { resolve(); invite(); return `${presentContext(r)}\n${heardLine(heard)}`; };
     const check = () => {
       if (deps.busy()) {
         if (Date.now() - since > PRESENT_WAIT_MAX_MS) { waiting = null; reject(new Error('the heads were busy the whole time')); return; }
@@ -218,6 +221,7 @@ export function present(r: PresentRequest, deps: PresentDeps): Promise<void> {
       }
       waiting = null;
       deps.startProactiveTurn(presentContext(r), deps.broadcast);
+      invite();
       resolve();
     };
     check();

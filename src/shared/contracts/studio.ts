@@ -116,6 +116,10 @@ export interface StudioResponse {
  *   visionDescriptions  pictures described by the vision provider (the provider choice stays)
  *   relationships       the attitude lines for recognised people
  *   mic                 listening from the mic source at all (the source choice stays)
+ *   wakeWord            (additive) answer only speech that calls them ("hey Tubs", or tonight's names
+ *                       from the director's scene), and follow-ups for a short while after a reply or an
+ *                       invitation; off: answer everything heard. A scene change sets it (studio_context
+ *                       listen); a change here holds until the next scene change.
  */
 export interface StudioSwitches {
   camera: boolean;
@@ -123,6 +127,7 @@ export interface StudioSwitches {
   visionDescriptions: boolean;
   relationships: boolean;
   mic: boolean;
+  wakeWord: boolean;
 }
 
 export type StudioWindowsMode = 'offscreen' | 'visible';

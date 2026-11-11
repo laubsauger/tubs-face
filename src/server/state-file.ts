@@ -28,6 +28,7 @@ export interface PersistedState {
   cameraOn?: boolean;
   micOn?: boolean;
   faceRecognition?: boolean;
+  wakeWord?: boolean;
   savedAt?: string;
 }
 
@@ -51,6 +52,7 @@ export function snapshotState(): PersistedState {
     cameraOn: studioSettings.cameraOn,
     micOn: studioSettings.micOn,
     faceRecognition: studioSettings.faceRecognition,
+    wakeWord: studioSettings.wakeWord,
   };
 }
 
@@ -109,7 +111,7 @@ export function restoreState(): string[] {
   for (const key of ['micSource', 'visionSource'] as const) {
     if (typeof saved[key] === 'string') attempt(key, () => applyStudioPatch({ [key]: saved[key] }));
   }
-  const switches = { camera: saved.cameraOn, mic: saved.micOn, faceRecognition: saved.faceRecognition };
+  const switches = { camera: saved.cameraOn, mic: saved.micOn, faceRecognition: saved.faceRecognition, wakeWord: saved.wakeWord };
   for (const [key, on] of Object.entries(switches)) {
     if (on !== undefined) attempt(`switch ${key}`, () => applyStudioPatch({ switches: { [key]: on } }));
   }
