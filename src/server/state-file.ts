@@ -107,6 +107,13 @@ export function restoreState(): string[] {
   for (const key of ['relationshipsEnabled', 'visionProvider', 'visionModel', 'visionBaseUrl', 'propMain', 'propSmall', 'visionDescriptions'] as const) {
     if (saved[key] !== undefined) config[key] = saved[key];
   }
+  // Vision descriptions are paid per picture with every provider there is (gemini, openai): a session
+  // never starts with them on, whatever was saved; they are switched on in the Studio tab when wanted.
+  // Seen 11 Nov 2026: left on (and restored at every start) they ate the budget.
+  if (config.visionDescriptions === true) {
+    delete config.visionDescriptions;
+    console.log('[state] vision descriptions start off (paid per picture); switch them on in the Studio tab when wanted');
+  }
   for (const [key, value] of Object.entries(config)) attempt(key, () => applyRuntimeConfigPatch({ [key]: value }));
   for (const key of ['micSource', 'visionSource'] as const) {
     if (typeof saved[key] === 'string') attempt(key, () => applyStudioPatch({ [key]: saved[key] }));
