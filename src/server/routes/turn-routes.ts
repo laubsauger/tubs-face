@@ -6,7 +6,8 @@ import type { ErrorResponse, IncomingRequest, IncomingResponse, ManualTurnScript
 import type { WsExpressionServerMessage, WsSpeakServerMessage } from '../../shared/contracts/ws.js';
 import type { TurnBeat } from '../../shared/contracts/turn-script.js';
 import { playManualTurnScript } from '../assistant/service.js';
-import { isInConversation, startUserTurn } from '../assistant/turns.js';
+import { isInConversation, startUserTurn, wakeWordMode } from '../assistant/turns.js';
+import { studioSettings } from '../studio/state.js';
 import { sanitizeForTts, stripFormatting, unwrapJsonSpeechText } from '../assistant/text.js';
 import { readJsonBody } from '../http/body.js';
 import { sendError, sendJson } from '../http/response.js';
@@ -98,7 +99,8 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
         return true;
       }
 
-      const wakeWord = url.searchParams.get('wakeWord') === 'true';
+      // the page asks for it (its Voice panel), or the studio waits for "hey Tubs" (its switch, set by the scene or the dashboard)
+      const wakeWord = url.searchParams.get('wakeWord') === 'true' || wakeWordMode();
       const audioBuffer = await readRawBody(request);
       // The reply's LLM request follows the transcript; its connection opens meanwhile.
       if (!wakeWord) resolveLlmProvider().warmUp?.();
@@ -125,7 +127,7 @@ export async function handleTurnRoute(request: IncomingMessage, response: Server
       const inConversation = isInConversation();
 
       if (wakeWord) {
-        wake = detectWakeWord(text);
+        wake = detectWakeWord(text, studioSettings.enabled ? studioSettings.wakeNames : []);
         const skipWake = !wake.detected && inConversation;
         console.log(
           `[WakeWord:${WAKE_MATCHER_VERSION}] detected=${wake.detected} convo=${inConversation} skip=${skipWake} reason=${wake.reason} source=${wake.matchedSource || ''} normalized="${wake.normalized || ''}" matched="${wake.matchedToken || ''}"`,

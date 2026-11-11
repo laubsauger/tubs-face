@@ -190,6 +190,11 @@ export interface WsStudioContextClientMessage {
   tour?: { where: string; step: string; stop: number; of: number; next: string | null; piece?: { title: string; date?: string; by?: string; text?: string; img?: string } };
   /** The gallery night: what hangs where, in detail at the windows the heads are at. */
   gallery?: { showing: Array<{ where: string; here?: boolean; pictures: Array<{ title: string; at?: 'left' | 'middle' | 'right'; cut?: boolean; date?: string; by?: string; text?: string; img?: string }> }> };
+  /**
+   * Additive: how the scene listens. wake: answer only speech that calls the heads ("hey Tubs", or one of
+   * `names`); false: answer everything heard. A change sets the studio's wake-word switch (studio/listen.ts).
+   */
+  listen?: { wake: boolean; names?: string[] };
   /** The screening while it runs: the film on every screen and the shot up now; host while the heads comment on it at `where` (sentient-studio contract §8). */
   screening?: { film: string; about?: string; cast?: string; host: boolean; where?: string | null; shot: { title: string; date?: string; text?: string }; n: number; of: number };
   ts: number;

@@ -38,6 +38,10 @@ export interface StudioSettings {
   cameraOn: boolean;
   micOn: boolean;
   faceRecognition: boolean;
+  /** Answer only speech that calls them (StudioSwitches.wakeWord); TUBS_WAKE_WORD sets the default. */
+  wakeWord: boolean;
+  /** Tonight's extra names that call them too, from the director's scene (studio_context listen); not kept. */
+  wakeNames: string[];
   /** TUBS_STUDIO_WINDOWS: the launched face pages' windows off screen (default) or on screen. */
   windows: StudioWindowsMode;
 }
@@ -64,6 +68,8 @@ export function studioSettingsFromEnv(env: NodeJS.ProcessEnv): StudioSettings {
     cameraOn: true,
     micOn: true,
     faceRecognition: !/^(0|false|no|off)$/i.test(env.TUBS_FACE_RECOGNITION?.trim() ?? ''),
+    wakeWord: /^(1|true|yes|on)$/i.test(env.TUBS_WAKE_WORD?.trim() ?? ''),
+    wakeNames: [],
     windows: env.TUBS_STUDIO_WINDOWS?.trim() === 'visible' ? 'visible' : 'offscreen',
   };
 }
@@ -109,9 +115,10 @@ export function studioConfigMessage(settings: StudioSettings = studioSettings): 
 export function applyStudioPatch(patch: unknown, settings: StudioSettings = studioSettings): Array<keyof StudioSettings> {
   if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) throw badRequest('Body must be a JSON object');
   const body = patch as Record<string, unknown>;
-  const next: Partial<Pick<StudioSettings, 'enabled' | 'site' | 'micSource' | 'visionSource' | 'cameraOn' | 'micOn' | 'faceRecognition' | 'windows'>> = {};
+  const next: Partial<Pick<StudioSettings, 'enabled' | 'site' | 'micSource' | 'visionSource' | 'cameraOn' | 'micOn' | 'faceRecognition' | 'wakeWord' | 'windows'>> = {};
   if (body.switches !== undefined) {
     const switches = studioSwitchesPatch(body.switches);
+    if (switches.wakeWord !== undefined) next.wakeWord = switches.wakeWord;
     if (switches.camera !== undefined) next.cameraOn = switches.camera;
     if (switches.mic !== undefined) next.micOn = switches.mic;
     if (switches.faceRecognition !== undefined) next.faceRecognition = switches.faceRecognition;
@@ -239,12 +246,13 @@ export function toStudioResponse(settings: StudioSettings = studioSettings): Stu
       visionDescriptions: runtimeConfig.visionDescriptions,
       relationships: runtimeConfig.relationshipsEnabled,
       mic: settings.micOn,
+      wakeWord: settings.wakeWord,
     },
     windows: settings.windows,
   };
 }
 
-const SWITCHES = ['camera', 'faceRecognition', 'visionDescriptions', 'relationships', 'mic'] as const;
+const SWITCHES = ['camera', 'faceRecognition', 'visionDescriptions', 'relationships', 'mic', 'wakeWord'] as const;
 
 /** A switches patch: known names, true or false; anything else is a BadRequestError. */
 export function studioSwitchesPatch(value: unknown): Partial<StudioSwitches> {

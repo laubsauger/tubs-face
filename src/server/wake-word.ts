@@ -2,12 +2,14 @@ import type { WakeWordResult } from '../shared/contracts/http.js';
 
 const WAKE_PREFIXES = new Set(['hey', 'hi', 'yo', 'okay', 'ok', 'oi', 'ey', 'ay']);
 const WAKE_NOISE_PREFIXES = new Set(['a', 'at', 'ah', 'uh', 'oh', 'um', 'hm', 'hmm']);
-export const WAKE_MATCHER_VERSION = '2026-02-11.3';
+export const WAKE_MATCHER_VERSION = '2026-11-11.1';
 const WAKE_ALIASES = new Set([
   'tubs', 'tub', 'tubbs', 'top', 'tops', 'tab', 'tap', 'tup',
   'tob', 'toob', 'dub', 'dubs', 'tobbs', 'etab', 'hotops',
 ]);
 const WAKE_WEAK_ALIASES = new Set(['terps', 'turps']);
+// Common words the sound-alike rule took for "tubs": "hey, what is this?" woke him. Never fuzzy matches.
+const WAKE_FUZZY_BLOCK = new Set(['this', 'thus', 'tips', 'tons', 'tens', 'turns', 'times', 'teams', 'terms', 'tubes']);
 const WAKE_GLUE_PREFIXES = ['h', 'ho', 'hey', 'e', 'eh', 'a', 'at', 'yo', 'ok', 'okay'];
 const WAKE_POLITE_LEAD_TOKENS = new Set(['thank', 'thanks', 'you', 'please', 'sorry', 'excuse', 'me']);
 const WAKE_DIRECT_CUE_TOKENS = new Set([
@@ -32,7 +34,12 @@ interface WakeTokenMatch {
   source: string | null;
 }
 
-export function detectWakeWord(text: string): WakeWordResult {
+/**
+ * Whether the speech calls Tubs ("hey Tubs", "Tubs, what is that?"). `names`: tonight's extra names
+ * that call them too (the director's scene, studio_context listen), matched exactly (no fuzzy match:
+ * a short name heard as another word would wake them on chatter).
+ */
+export function detectWakeWord(text: string, names: readonly string[] = []): WakeWordResult {
   const normalized = normalizeWakeText(text);
   if (!normalized) {
     return {
@@ -44,7 +51,8 @@ export function detectWakeWord(text: string): WakeWordResult {
   }
 
   const tokens = normalized.split(' ');
-  const wakeMatch = findWakeToken(tokens);
+  const extra = new Set(names.map((name) => normalizeWakeText(name)).filter((name) => name && !name.includes(' ')));
+  const wakeMatch = findWakeToken(tokens, extra);
   const wakeIndex = wakeMatch.index;
   const prefixIndex = tokens.findIndex((token) => WAKE_PREFIXES.has(token));
 
@@ -153,7 +161,11 @@ function normalizeWakeText(text: string): string {
     .trim();
 }
 
-function findWakeToken(tokens: string[]): WakeTokenMatch {
+function findWakeToken(tokens: string[], extra: ReadonlySet<string> = new Set()): WakeTokenMatch {
+  const named = tokens.findIndex((token) => extra.has(token));
+  if (named !== -1) {
+    return { index: named, token: tokens[named] ?? null, source: 'name' };
+  }
   const directIndex = tokens.findIndex((token) => isWakeAlias(token));
   if (directIndex !== -1) {
     return { index: directIndex, token: tokens[directIndex] ?? null, source: 'token' };
@@ -184,6 +196,9 @@ function isWakeAlias(token: string): boolean {
   for (const candidate of getWakeCandidates(token)) {
     if (WAKE_ALIASES.has(candidate) || WAKE_WEAK_ALIASES.has(candidate)) {
       return true;
+    }
+    if (WAKE_FUZZY_BLOCK.has(candidate)) {
+      continue;
     }
     if (candidate.length < 3 || candidate.length > 6) {
       continue;

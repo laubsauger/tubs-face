@@ -31,6 +31,9 @@ describe('studio settings', () => {
       cameraOn: true,
       micOn: true,
       faceRecognition: true,
+      // Answers everything heard unless the scene or the dashboard says to wait for "hey Tubs".
+      wakeWord: false,
+      wakeNames: [],
       windows: 'offscreen',
     });
   });

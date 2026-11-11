@@ -133,7 +133,7 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
 
         {studio?.switches && (
           <ControlGroup title="Switches">
-            {SWITCHES.map((entry) => (
+            {SWITCHES.filter((entry) => entry.key in studio.switches!).map((entry) => (
               <ToggleControl
                 key={entry.key}
                 label={entry.label}
@@ -142,6 +142,7 @@ export function StudioPanel({ store }: { store: AppStore }): JSX.Element {
               />
             ))}
             <p className="text-slate-500 text-[10px]">Vision descriptions run when a face is detected; face recognition names the faces (and onboards new ones).</p>
+            <p className="text-slate-500 text-[10px]">Wake word: they answer only when called (“hey Tubs”, or tonight's names from the scene), then follow-ups for 20 s and the tour's open floor. The scene sets it; a change here holds until the next scene change.</p>
             {studio.launch === 'chrome' && (
               <ToggleControl
                 label="Show face windows"
@@ -234,6 +235,8 @@ const SWITCHES: Array<{ key: keyof StudioSwitches; label: string }> = [
   { key: 'visionDescriptions', label: 'Vision descriptions' },
   { key: 'relationships', label: 'Relationships' },
   { key: 'mic', label: 'Mic' },
+  // Asked for: switch between answering everything and answering only when called, by scene or here.
+  { key: 'wakeWord', label: 'Wake word ("hey Tubs")' },
 ];
 
 /** The status bar meter's colours, by what the studio mic is doing. */

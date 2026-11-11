@@ -60,7 +60,7 @@ describe('the studio switches', () => {
     try {
       const off = (await (await post({ switches: { visionDescriptions: false } })).json()) as StudioResponse;
       // Descriptions off: recognition, the camera and the rest stay on.
-      expect(off.switches).toEqual({ camera: true, faceRecognition: true, visionDescriptions: false, relationships: true, mic: true });
+      expect(off.switches).toEqual({ camera: true, faceRecognition: true, visionDescriptions: false, relationships: true, mic: true, wakeWord: false });
       expect(runtimeConfig.visionDescriptions).toBe(false);
       expect(off.parts?.find((part) => part.id === 'vision')).toMatchObject({ where: 'off', ok: null, detail: expect.stringContaining('switched off') });
 

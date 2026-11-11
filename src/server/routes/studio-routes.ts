@@ -16,7 +16,7 @@ import { poke, reasonOf } from '../studio/poke.js';
 import { parsePresent, present } from '../studio/present.js';
 import { hasActiveAssistantTurn } from '../assistant/turn-state.js';
 import { headsQuiet } from '../assistant/heads.js';
-import { startProactiveTurn } from '../assistant/turns.js';
+import { openConversation, startProactiveTurn } from '../assistant/turns.js';
 import { listenerFaceWorker, studioSettings, toStudioResponse } from '../studio/state.js';
 import { libraryPeopleCount } from '../faces/library.js';
 import { lastObservation } from '../studio/faces.js';
@@ -61,7 +61,7 @@ export async function handleStudioRoute(request: IncomingMessage, response: Serv
     }
     // answered once the turn has started (it waits for a reply or a line still playing), or 409 when it could not
     try {
-      await present(parsed, { broadcast, noteAwake: () => visionService.noteSleeping(false), startProactiveTurn, busy: () => hasActiveAssistantTurn() || !headsQuiet() });
+      await present(parsed, { broadcast, noteAwake: () => visionService.noteSleeping(false), startProactiveTurn, busy: () => hasActiveAssistantTurn() || !headsQuiet(), invite: () => openConversation() });
       sendJson(response, 200, { ok: true, startedAt: Date.now() });
     } catch (err) {
       sendJson(response, 409, { error: (err as Error).message } satisfies ErrorResponse);

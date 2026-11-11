@@ -12,6 +12,7 @@ import { hasActiveAssistantTurn, interruptAssistantTurns, runAssistantTurn, runP
 import { noteHeard } from '../studio/pulse.js';
 import { takeWaitingLine } from '../studio/present.js';
 import { headsQuiet } from './heads.js';
+import { studioSettings } from '../studio/state.js';
 
 /**
  * Every way a turn can start (typed chat over HTTP or WS, a voice clip, a
@@ -36,8 +37,25 @@ let lastConversationAt = 0;
 let pendingGreetingTimer: NodeJS.Timeout | null = null;
 let pendingGreetingPrompt = '';
 
+/**
+ * In the studio's wake-word mode (StudioSwitches.wakeWord), follow-up speech without "hey Tubs" counts
+ * for this long after a reply or an invitation (the tour's open floor). Shorter than the usual window:
+ * seen live, visitors talking among themselves got every word answered, and each answer reopened it.
+ */
+export const WAKE_FOLLOW_UP_MS = 20_000;
+
+/** The studio waits for "hey Tubs" (its switch, set by the scene or the dashboard). */
+export function wakeWordMode(): boolean {
+  return studioSettings.enabled && studioSettings.wakeWord;
+}
+
 export function isInConversation(now = Date.now()): boolean {
-  return now - lastConversationAt < CONVERSATION_WINDOW_MS;
+  return now - lastConversationAt < (wakeWordMode() ? WAKE_FOLLOW_UP_MS : CONVERSATION_WINDOW_MS);
+}
+
+/** The heads invited an answer (the tour's open floor): what visitors say next needs no wake word. */
+export function openConversation(now = Date.now()): void {
+  lastConversationAt = now;
 }
 
 export function endConversation(): void {
