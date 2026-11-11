@@ -64,6 +64,21 @@ describe('the studio state file', () => {
     expect(listPresets().active).toBe('Pirate');
   });
 
+  // Seen 11 Nov 2026: vision descriptions left on (and restored at every start) ate the budget; every
+  // provider is paid per picture. They start off by default and a saved "on" is never restored.
+  it('never starts with paid vision descriptions on, whatever was saved', async () => {
+    writeFileSync(file, JSON.stringify({ visionProvider: 'gemini', visionDescriptions: true, relationshipsEnabled: false }));
+    vi.resetModules();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { restoreState } = await import('./state-file.js');
+    const { runtimeConfig } = await import('./config/runtime.js');
+    expect(runtimeConfig.visionDescriptions).toBe(false);   // the default
+    const restored = restoreState();
+    expect(restored).not.toContain('visionDescriptions');
+    expect(runtimeConfig).toMatchObject({ visionProvider: 'gemini', visionDescriptions: false, relationshipsEnabled: false });
+    vi.restoreAllMocks();
+  });
+
   it('starts on defaults from a broken file, and skips a value that is no longer valid', async () => {
     vi.resetModules();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -131,7 +131,8 @@ export const runtimeConfig: RuntimeConfig = {
   visionMaxPerHour: parseIntegerInRange(process.env.VISION_MAX_PER_HOUR, 120, 0, 100_000),
   visionWhileAsleep: parseBoolean(process.env.VISION_WHILE_ASLEEP, false),
   relationshipsEnabled: parseBoolean(process.env.RELATIONSHIPS_ENABLED, true),
-  visionDescriptions: parseBoolean(process.env.VISION_DESCRIPTIONS, true),
+  // Off unless asked for: every description is a paid call (gemini, openai). Seen 11 Nov 2026: it ate the budget.
+  visionDescriptions: parseBoolean(process.env.VISION_DESCRIPTIONS, false),
 };
 
 export const sessionStats: SessionStats = {
