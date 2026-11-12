@@ -93,6 +93,16 @@ describe('studio present (the gallery tour)', () => {
     expect(move).toContain('follow it to the Book');
     expect(move).toContain('give them a reason to come');
     expect(presentContext({ ...req, kind: 'move', next: null })).toContain('last stop');
+    // Asked for live: the guide named a picture for the next stop and another came up there. The director
+    // picks it before the move line; the line names that one, and no picture at all when none is given
+    const named = presentContext({ ...req, kind: 'move', nextPiece: { title: 'Zen calligraphy, Sausalito', date: '1962' } });
+    expect(named).toContain('"Zen calligraphy, Sausalito" (1962)');
+    expect(named).toContain('name this one, and no other');
+    expect(move).toContain('Do not name a picture there');
+    expect(parsePresent({ kind: 'move', where: 'Gold Frame', next: 'Book', nextPiece: { title: 'Zen calligraphy', date: '1962', extra: 'x' } }))
+      .toMatchObject({ kind: 'move', next: 'Book', nextPiece: { title: 'Zen calligraphy', date: '1962' } });
+    expect(parsePresent({ kind: 'move', where: 'Gold Frame', next: 'Book', nextPiece: { title: '' } })).not.toHaveProperty('nextPiece');
+    expect(parsePresent({ kind: 'present', where: 'Book', piece: { title: 'A' }, nextPiece: { title: 'B' } })).not.toHaveProperty('nextPiece');
     // gather and move need no picture; present and floor do
     expect(parsePresent({ kind: 'gather', where: 'Mirror' })).toMatchObject({ kind: 'gather', where: 'Mirror' });
     expect(parsePresent({ kind: 'floor', where: 'Mirror' })).toBe('present needs piece.title');

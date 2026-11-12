@@ -44,6 +44,8 @@ const FRAME = `data:image/jpeg;base64,${Buffer.from('a jpeg, scaled by the face 
 let snapshot: typeof runtimeConfig;
 beforeEach(() => {
   snapshot = structuredClone(runtimeConfig);
+  // descriptions are off by default (paid per picture); these tests are about making them
+  runtimeConfig.visionDescriptions = true;
   updateVisualContext('', 0);
 });
 afterEach(() => {

@@ -19,6 +19,8 @@ let visionBase = '';
 const snapshot = structuredClone(runtimeConfig);
 
 beforeAll(async () => {
+  // descriptions are off by default (paid per picture); this test is about making them
+  runtimeConfig.visionDescriptions = true;
   server = http.createServer();
   initWebSocketServer(server);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
