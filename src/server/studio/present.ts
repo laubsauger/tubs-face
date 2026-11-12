@@ -66,6 +66,11 @@ export interface PresentRequest {
   next: string | null;
   /** the picture: needed to present it or open the floor on it */
   piece?: PresentPiece;
+  /**
+   * The move line: the picture waiting at the next stop, the one pulled up there (the director picks it
+   * before the line). Asked for live: the guide named a picture for the next stop and another came up.
+   */
+  nextPiece?: { title: string; date?: string; by?: string };
 }
 
 const MAX_TEXT = 400, MAX_SHORT = 120, MAX_FACTS = 8, MAX_TAGS = 8;
@@ -86,7 +91,11 @@ export function parsePresent(body: unknown): PresentRequest | string {
   const screening = b.show === 'screening' ? { show: 'screening' as const, film: { title: filmTitle!, ...(filmAbout ? { about: filmAbout } : {}) }, ...(cast ? { cast } : {}) } : {};
   const where = str(b.where, MAX_SHORT);
   const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isInteger(v) && v > 0 && v < 1000 ? v : d);
-  const base = { ...(kind ? { kind } : {}), ...screening, where: where ?? '', stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null };
+  const np = (b.nextPiece && typeof b.nextPiece === 'object' ? b.nextPiece : null) as Record<string, unknown> | null;
+  const npTitle = np ? str(np.title, MAX_SHORT) : undefined;
+  const npDate = np ? str(np.date, MAX_SHORT) : undefined, npBy = np ? str(np.by, MAX_SHORT) : undefined;
+  const nextPiece = kind === 'move' && npTitle ? { nextPiece: { title: npTitle, ...(npDate ? { date: npDate } : {}), ...(npBy ? { by: npBy } : {}) } } : {};
+  const base = { ...(kind ? { kind } : {}), ...screening, where: where ?? '', stop: num(b.stop, 1), of: num(b.of, 1), first: b.first === true, next: str(b.next, MAX_SHORT) ?? null, ...nextPiece };
   const p = (b.piece && typeof b.piece === 'object' ? b.piece : null) as Record<string, unknown> | null;
   const title = p ? str(p.title, MAX_SHORT) : undefined;
   if (!title && (kind === undefined || kind === 'present' || kind === 'floor')) return 'present needs piece.title';
@@ -147,9 +156,12 @@ export function presentContext(r: PresentRequest): string {
     return `${TOUR} You two are starting a guided tour: a walk through Alan Watts's life in pictures from his archive, hung through the studio's windows, ${r.of} stops${r.next ? `, starting here at the ${r.where} and then on to the ${r.next}` : ''}. Tubs holds up his little tour-guide flag. Tubs: open the tour like a city tour guide, your way, quickly, in one or two short sentences: welcome them, say who you two are and what the tour is, and tell them to gather round and stay close to the flag. The first picture comes right after, so keep it brief. Small may add one quick line. Do not describe a picture yet.`;
   }
   if (r.kind === 'move') {
-    return r.next
-      ? `${TOUR} You are done at the ${r.where} (stop ${r.stop} of ${r.of}). Tubs raises his tour-guide flag and leads: tell everyone to follow it to the ${r.next}, the next stop, and give them a reason to come (the next chapter of Watts's life waits there), in one or two short lines. Small may add a quick quip.`
-      : `${TOUR} That was the last stop of the tour. Tubs thanks the visitors in one short line.`;
+    if (!r.next) return `${TOUR} That was the last stop of the tour. Tubs thanks the visitors in one short line.`;
+    // the picture waiting there, the one he pulls up on arrival: named exactly, never another one
+    const waits = r.nextPiece
+      ? ` The picture waiting there is "${r.nextPiece.title}"${r.nextPiece.date ? ` (${r.nextPiece.date})` : ''}: if you name a picture, name this one, and no other; the pictures hanging there now are changing.`
+      : ' Do not name a picture there: the pictures are changing.';
+    return `${TOUR} You are done at the ${r.where} (stop ${r.stop} of ${r.of}). Tubs raises his tour-guide flag and leads: tell everyone to follow it to the ${r.next}, the next stop, and give them a reason to come (the next chapter of Watts's life waits there), in one or two short lines.${waits} Small may add a quick quip.`;
   }
   const p = r.piece ?? { title: 'the picture' };
   if (r.kind === 'floor') {
